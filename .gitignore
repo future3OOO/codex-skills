@@ -1,0 +1,16 @@
+.DS_Store
+*.log
+*.tmp
+*.bak
+*.pyc
+__pycache__/
+*:Zone.Identifier
+
+# Runtime or installer-owned skill content should not be committed here.
+.system/
+
+# Local editor and agent state.
+.codex/
+.claude/
+.gitnexus/
+.soulforge/

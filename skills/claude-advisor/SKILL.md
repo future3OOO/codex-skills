@@ -1,0 +1,286 @@
+---
+name: claude-advisor
+description: Consult Claude as a one-on-one advisor or explicitly delegated write-capable worker from Codex using the local Claude CLI. Default mode is read-only; write mode is opt-in with `--write`; full tool access is opt-in with `--full-tools` and requires a delegated git worktree. Mandatory after Repo Context Forge and packet-scoped GitNexus checks in production repo workflow; also use when the user asks Codex to ask Claude or when architecture, migration, correctness, security, concurrency, idempotency, or non-obvious PR/worktree risk needs advisory review.
+---
+
+# Claude Advisor
+
+Claude Advisor is a challenge Interface around Codex's work. Codex owns the
+decision, implementation, tests, and final report. Claude supplies independent
+pressure against the evidence Codex provides.
+
+Use the wrapper by default:
+
+```bash
+/home/prop_/.codex/skills/claude-advisor/scripts/ask-claude-advisor.sh \
+  --slug "<stable-task>" \
+  --cwd "$PWD" \
+  -- "Question: <one focused question>"
+```
+
+The wrapper streams the composed prompt to Claude over stdin, so large diffs do
+not hit shell or OS argument-length limits.
+
+Claude does not load this skill file. Any rubric Claude must follow has to be
+included in the wrapper phase prompt or in the question sent to Claude.
+Changes to checkpoint rules here are inert unless the wrapper phase prompts are
+kept in sync.
+The wrapper phase prompts at `scripts/ask-claude-advisor.sh` are the
+operational source of truth for phase output shape and tool policy.
+
+## Production Checkpoints
+
+In production repo work that uses Repo Context Forge, use Claude twice:
+
+1. **Before code**: after Repo Context Forge and packet-scoped GitNexus checks,
+   before `$production-preflight` and before edits.
+2. **After code**: after proof for non-trivial edits, before commit or push.
+
+### Before Code: Scope Challenge
+
+Ask whether the Repo Context Forge + GitNexus packet covers the PRD slice,
+correct Seams, and correct surface area before production preflight.
+
+Supply:
+
+- task contract and PRD slice outcomes
+- Repo Context Forge packet target surface, coverage plan, and skipped high-ranked targets
+- packet-scoped GitNexus findings: callers, callees, blast radius, contracts
+- intended Module, public Interface, hidden Implementation complexity
+- existing reuse path
+- new Seam justification, or why the existing Module should be deepened
+- touched shallow Module debt
+- `$tdd` hypothesis or first failing behavior test
+- test surface and named no-change surfaces
+- ordering, idempotency, data-loss, security, or regression risks
+- Codex's implementation hypothesis
+
+Command:
+
+```bash
+/home/prop_/.codex/skills/claude-advisor/scripts/ask-claude-advisor.sh \
+  --slug "<stable-task>" \
+  --phase preflight-advice \
+  --cwd "$PWD" \
+  -- "Question: Does the Repo Context Forge + GitNexus packet cover the PRD slice, correct Seams, and correct surface area before production preflight?"
+```
+
+Claude must use `/tdd` and `/improve-codebase-architecture` as read-only rubric
+references, remind Codex how `$tdd` applies, and say whether a targeted
+Module/Interface/Seam decision is needed before editing. It must challenge
+whether the work deepens an existing Module, creates a real Seam, or risks
+shallow helper/service/manager/wrapper complexity.
+
+The Interface is the test surface. A new Seam needs a real reason; one Adapter
+is usually hypothetical, while two Adapters usually prove the Seam.
+
+### After Code: Diff Challenge
+
+Ask whether the live diff satisfies the PRD slice and production contract
+without extra behavior or no-change surface drift.
+
+Supply:
+
+- exact PRD, reviewer issue, or issue tracker item
+- branch, base, and head SHA
+- TDD proof: RED command/failure and GREEN command/pass
+- verification outcomes and any skipped or weak proof
+- changed Module, public Interface, and hidden Implementation complexity
+- existing reuse path and touched shallow Module debt
+- named no-change surfaces
+- Codex's commit-readiness hypothesis
+
+Do not provide a prose diff summary as evidence. The wrapper attaches the live
+dirty diff, staged diff, or PR/base diff from `--cwd`; Claude must critique that
+evidence directly.
+
+If the wrapper-provided diff does not match the requested PR, PRD, reviewer
+issue, branch, or head SHA, treat Claude answer as a blocker and fix the call
+context before relying on it.
+
+Command:
+
+```bash
+/home/prop_/.codex/skills/claude-advisor/scripts/ask-claude-advisor.sh \
+  --slug "<stable-task>" \
+  --phase precommit-challenge \
+  --cwd "$PWD" \
+  --base-ref origin/main \
+  --budget 700 \
+  -- "Question: Does the wrapper-provided live diff satisfy the PRD slice and production contract without extra behavior or no-change surface drift?"
+```
+
+Expected challenge shape:
+
+- Verdict: commit-ready, fix-before-commit, or context-mismatch
+- PRD reconciliation: implemented, missing, extra, and unproven outcomes
+- Reviewer coverage: Greptile/Cubic/CodeRabbit/Devin/human findings, when present
+- `TDD check`: whether a vertical red-green loop was shown
+- Module shape: public Interface, test surface, deep Module pressure, and any shallow unnecessary helper/service/manager/wrapper split
+- `Minimality/bloat`: unnecessary code, duplication, or broad refactor
+- `Regression risk`: no-change surfaces needing more proof
+- `Action`: one exact next Codex step
+
+Challenge focus:
+
+- exact PRD/reviewer issue resolved, not just adjacent cleanup
+- change belongs in the touched slice/worktree
+- proof is real behavior proof, not mock-heavy or fake-green coverage
+- no broad refactor, duplicate path, stale workaround, or speculative option
+- `$improve-codebase-architecture` stayed targeted to Module/Interface/Seam
+
+Use a larger budget for precommit challenges when Claude must reconcile a real
+PRD/reviewer issue against a live diff. Keep simpler advisor questions near the
+default budget. The wrapper controls the default; `--budget 700` is illustrative
+for real PRD/reviewer reconciliation, not a new default.
+
+On `context-mismatch`, fix `--cwd`, `--base-ref`, branch state, or the exact
+issue/PRD context and re-ask. Do not act on the prior answer.
+
+Precommit challenge passing does not complete PR/review work. When a PR has
+external or human reviewers, Codex must still pass the `AGENTS.md` PR Reviewer
+Completion Gate on the current head.
+
+## When To Ask Claude
+
+Ask Claude:
+
+- after Repo Context Forge and packet-scoped GitNexus checks in production repo
+  work
+- before commit for a non-trivial diff that claims to resolve a PRD, reviewer,
+  or issue tracker item
+- for architecture, migration, correctness, security, concurrency,
+  idempotency, data-loss, or non-obvious PR/worktree risk
+- when the user explicitly asks for Claude, advisor mode, or a Claude worker
+- when Codex is stuck after two focused attempts
+
+Skip Claude for mechanical edits, formatting, obvious single-file fixes, and
+questions the test suite answers directly, unless the user asks for Claude.
+
+## Prompt Contract
+
+Ask one focused question per call. Include:
+
+- `Role`: advisor, read-only, stdout only
+- `Question`: bounded and explicit
+- `Evidence`: packet, graph result, diff, error, file path, or excerpt
+- `Hypothesis`: what Codex currently believes
+- `Budget`: usually `<=300 words`; raise only for real review depth
+
+Good questions:
+
+```text
+Given this PRD slice, Repo Context Forge packet, GitNexus findings, and Module-shape hypothesis, what is the highest-risk missing surface before production preflight?
+Challenge the wrapper-provided live diff against PR #39 head <sha> and this PRD item. What is missing, extra, or under-proven?
+Hypothesis: retries are safe because writes are idempotent. Strongest counter-argument with file:line evidence?
+Options A vs B. Which fails first under the migration constraint?
+```
+
+Avoid broad prompts such as "what do you think?", whole-repo dumps, or
+instructions that ask Claude to run Codex's workflow for it.
+
+## Modes
+
+Default mode is read-only advisor mode. It disallows write tools and restricts
+inspection to read/search/git-diff style commands through the wrapper.
+
+The wrapper's read-only tool policy is the source of truth:
+
+```bash
+--allowed-tools "Read Grep Glob Bash(git diff:*) Bash(git status:*) Bash(git branch:*) Bash(git rev-parse:*) Bash(gh issue view:*) Bash(gh pr view:*) Bash(gh run view:*) Bash(rg:*) Bash(ls:*) Bash(sed:*) Bash(cat:*)"
+--disallowed-tools "Edit Write MultiEdit NotebookEdit"
+```
+
+`--phase` is only valid in read-only advisor mode. Do not combine it with
+`--write` or `--full-tools`.
+
+- `preflight-advice`: before code, after Repo Context Forge + GitNexus
+- `precommit-challenge`: after proof, before commit or push
+
+Use `--write` only when the user explicitly wants Claude to own a bounded edit.
+The prompt must name the task, target worktree, allowed tests, and whether
+commits or pushes are allowed. Default: no commit or push.
+
+Write mode still blocks commits, pushes, destructive git operations, `rm`,
+`sudo`, package-download commands, and plan artifacts. Codex must inspect
+Claude's resulting diff before relying on it. Treat the wrapper as the exact
+tool-policy source of truth.
+
+Claude may use `/tdd` and `/improve-codebase-architecture` only as read-only
+rubric references. Do not ask Claude to invoke heavyweight repo execution
+skills, bootstrap scripts, or `/production-preflight` as a substitute workflow;
+Claude should report missing preflight or Module-shape evidence instead.
+
+Use `--full-tools` only for delegated worker tasks in a dedicated git worktree:
+
+```bash
+/home/prop_/.codex/skills/claude-advisor/scripts/ask-claude-advisor.sh \
+  --slug "<stable-task>" \
+  --cwd "/path/to/delegated-worktree" \
+  --full-tools \
+  -- "Task: Implement <bounded task> in this worktree only. Do not commit or push unless explicitly allowed. Report changed files and verification."
+```
+
+Before using `--full-tools`, Codex must ensure:
+
+- the target worktree was intentionally created or selected for Claude
+- the base is clear: current main head, current PR head, or a named branch/SHA
+- the prompt says Claude owns only that worktree
+- the prompt states whether commits or pushes are allowed; default is no
+- Codex will inspect Claude's diff before integrating or reporting completion
+
+Do not use `--full-tools` for work Codex has not already scoped with the repo
+workflow, or for shared contracts, persistence, deploy/runtime, or risky
+external integrations unless the delegation surface is explicit and bounded.
+
+Use `--add-dir` only when Claude needs read-only context outside the target
+worktree.
+
+The Claude CLI has no `--cwd` flag. Use the wrapper's `--cwd`; without the
+wrapper, `cd` into the target worktree before running `claude -p`.
+
+Without the wrapper, keep Claude read-only and mirror the wrapper policy:
+
+```bash
+claude -p --output-format text --allowed-tools "Read Grep Glob Bash(git diff:*) Bash(git status:*) Bash(git branch:*) Bash(git rev-parse:*) Bash(gh issue view:*) Bash(gh pr view:*) Bash(gh run view:*) Bash(rg:*) Bash(ls:*) Bash(sed:*) Bash(cat:*)" --disallowed-tools "Edit Write MultiEdit NotebookEdit" "Advisor mode. Do not create files. Stdout only. <=300 words. Question: ..."
+```
+
+Never use `--bare`; it bypasses local auth and reports `Not logged in`. Avoid
+`--permission-mode plan`; it can create plan artifacts under `~/.claude/plans`.
+
+## Session Discipline
+
+Use one short stable slug per task, such as `cass` or `issue82`. Reuse it across
+preflight advice, follow-up questions, and precommit challenge.
+
+Do not put phase words in the slug: `pre-edit`, `pre-commit`, `review`,
+`challenge`, `final`, or `preflight`. Phase belongs in `--phase`, not identity.
+
+Every wrapper call emits one stderr session line with raw slug, normalized slug,
+create/resume/fresh mode, session id prefix, phase, and warning state. Claude
+stdout remains Claude's answer only.
+
+Resume only when prior advice is load-bearing. Start fresh when the task, repo,
+branch, or assumptions changed.
+
+Use `--fresh` only when the current task's stored Claude session is stale or
+intentionally reset.
+
+Existing or previous split sessions are historical local state. Do not migrate,
+merge, rename, delete, or reconcile old `.sid` files.
+
+## Reporting
+
+Report Claude as evidence, not authority:
+
+- `Claude said`: concise summary
+- `Codex judgment`: accepted, rejected, or needs verification
+- `Action`: exact next step or no change
+
+Do not follow Claude blindly. Do not let Claude replace Repo Context Forge,
+GitNexus, `$production-preflight`, `$production-code`, `$tdd`, or Codex's final
+verification. Claude should report missing preflight or Module-shape evidence,
+not generate substitute preflight artifacts.
+
+Claude write mode does not replace Repo Context Forge, GitNexus checks,
+`$production-code`, or Codex's final verification.

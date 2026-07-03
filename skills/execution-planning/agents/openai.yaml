@@ -1,0 +1,4 @@
+interface:
+  display_name: "Execution Planning"
+  short_description: "Save tracked execution plans"
+  default_prompt: "Use $execution-planning to save a tracked implementation or remediation plan on disk before large repo work."

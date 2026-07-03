@@ -1,0 +1,4 @@
+interface:
+  display_name: "Delivery Governance"
+  short_description: "Plan PR structure and consolidation"
+  default_prompt: "Use $delivery-governance to split this implementation into mergeable PRs, control stack depth, and define consolidation triggers before coding."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Repo Large Implementation"
+  short_description: "Plan large repo work with delivery governance"
+  default_prompt: "Use $repo-large-implementation to enforce execution-planning, production-preflight, and production-code before starting non-trivial work in this repo, with $delivery-governance first when that global skill is available."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Production Code"
+  short_description: "Production-only implementation gate"
+  default_prompt: "Use $production-code to enforce production-only implementation standards before finalizing changes."

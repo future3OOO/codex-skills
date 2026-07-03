@@ -1,0 +1,4 @@
+interface:
+  display_name: "Code Quality"
+  short_description: "Production code quality gate for edits"
+  default_prompt: "Use $code-quality to enforce minimal, production-grade code quality before finalizing changes."
