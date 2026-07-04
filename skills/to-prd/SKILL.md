@@ -5,17 +5,23 @@ description: Turn the current conversation context into a PRD and publish it to 
 
 This skill takes the current conversation context and codebase understanding and produces a PRD. Do NOT interview the user — just synthesize what you already know.
 
-The issue tracker and triage label vocabulary should have been provided to you — use `$setup-matt-pocock-skills` if not.
+Issue tracker and triage label vocabulary come from the target checkout. Read
+`docs/agents/issue-tracker.md`, `docs/agents/triage-labels.md`, and
+`docs/agents/domain.md` when present. If they are missing, inspect the current
+repo's Git remote and labels directly; do not assume this skills repo is the
+project tracker.
 
 ## Process
 
 1. Explore the repo to understand the current state of the codebase, if you haven't already. Use the project's domain glossary vocabulary throughout the PRD, and respect any ADRs in the area you're touching.
 
-2. Sketch out the major modules you will need to build or modify to complete the implementation. Actively look for opportunities to extract deep modules that can be tested in isolation.
+2. Sketch the public seams where the feature should be tested. Existing seams
+   are preferred. Use the highest seam that proves user-visible behavior. If a
+   new seam is needed, propose one at the highest point possible; the ideal is
+   one strong seam, not many small ones.
 
-A deep module (as opposed to a shallow module) is one which encapsulates a lot of functionality in a simple, testable interface which rarely changes.
-
-Check with the user that these modules match their expectations. Check with the user which modules they want tests written for.
+Check with the user that these seams match their expectations when the PRD is
+not already fully specified.
 
 3. Write the PRD using the template below, then publish it to the project issue tracker. Apply the `needs-triage` triage label so it enters the normal triage flow.
 
@@ -55,12 +61,16 @@ A list of implementation decisions that were made. This can include:
 
 Do NOT include specific file paths or code snippets. They may end up being outdated very quickly.
 
+Exception: if a prototype produced a snippet that encodes a decision more
+precisely than prose can, such as a state machine, reducer, schema, or type
+shape, inline only the decision-rich part and say it came from a prototype.
+
 ## Testing Decisions
 
 A list of testing decisions that were made. Include:
 
 - A description of what makes a good test (only test external behavior, not implementation details)
-- Which modules will be tested
+- Which public seams will be tested
 - Prior art for the tests (i.e. similar types of tests in the codebase)
 
 ## Out of Scope

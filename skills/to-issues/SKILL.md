@@ -7,7 +7,11 @@ description: Break a plan, spec, or PRD into independently-grabbable issues on t
 
 Break a plan into independently-grabbable issues using vertical slices (tracer bullets).
 
-The issue tracker and triage label vocabulary should have been provided to you — use `$setup-matt-pocock-skills` if not.
+Issue tracker and triage label vocabulary come from the target checkout. Read
+`docs/agents/issue-tracker.md`, `docs/agents/triage-labels.md`, and
+`docs/agents/domain.md` when present. If they are missing, inspect the current
+repo's Git remote and labels directly; do not assume this skills repo is the
+project tracker.
 
 ## Process
 
@@ -17,7 +21,14 @@ Work from whatever is already in the conversation context. If the user passes an
 
 ### 2. Explore the codebase (optional)
 
-If you have not already explored the codebase, do so to understand the current state of the code. Issue titles and descriptions should use the project's domain glossary vocabulary, and respect ADRs in the area you're touching.
+If you have not already explored the codebase, do so to understand the current
+state of the code. Issue titles and descriptions should use the project's
+domain glossary vocabulary, and respect ADRs in the area you're touching.
+
+Look for opportunities to prefactor first: make the change easy, then make the
+easy change. If a small preparatory slice would deepen a Module, create a real
+Seam, or remove shallow pass-through work from the implementation path, put it
+before behavior slices.
 
 ### 3. Draft vertical slices
 
@@ -28,7 +39,8 @@ Slices may be 'HITL' or 'AFK'. HITL slices require human interaction, such as an
 <vertical-slice-rules>
 - Each slice delivers a narrow but COMPLETE path through every layer (schema, API, UI, tests)
 - A completed slice is demoable or verifiable on its own
-- Prefer many thin slices over few thick ones
+- Any prefactoring should be done first
+- Prefer a few meaningful tracer bullets over many thin administrative slices
 </vertical-slice-rules>
 
 ### 4. Quiz the user
@@ -62,7 +74,12 @@ A reference to the parent issue on the issue tracker (if the source was an exist
 
 ## What to build
 
-A concise description of this vertical slice. Describe the end-to-end behavior, not layer-by-layer implementation.
+A concise description of this vertical slice. Describe the end-to-end behavior,
+not layer-by-layer implementation.
+
+Avoid specific file paths or code snippets — they go stale fast. Exception: if
+a prototype produced a snippet that encodes a decision more precisely than
+prose can, inline only the decision-rich part and say it came from a prototype.
 
 ## Acceptance criteria
 

@@ -17,7 +17,10 @@ Seeing the symptom is not root cause. A stack trace line, failing assertion, or 
 
 ## Phase 1 — Build a feedback loop
 
-**This is the skill.** Everything else is mechanical. If you have a fast, deterministic, agent-runnable pass/fail signal for the bug, you will find the cause — bisection, hypothesis-testing, and instrumentation all just consume that signal. If you don't have one, no amount of staring at code will save you.
+**This is the skill.** Everything else is mechanical. If you have a **tight**
+pass/fail signal for the bug — one that goes red on _this_ bug — you will find
+the cause; bisection, hypothesis-testing, and instrumentation all just consume
+it. If you don't have one, no amount of staring at code will save you.
 
 Spend disproportionate effort here. **Be aggressive. Be creative. Refuse to give up.**
 
@@ -36,15 +39,16 @@ Spend disproportionate effort here. **Be aggressive. Be creative. Refuse to give
 
 Build the right feedback loop, and the bug is 90% fixed.
 
-### Iterate on the loop itself
+### Tighten the loop
 
-Treat the loop as a product. Once you have _a_ loop, ask:
+Treat the loop as a product. Once you have _a_ loop, **tighten** it:
 
 - Can I make it faster? (Cache setup, skip unrelated init, narrow the test scope.)
 - Can I make the signal sharper? (Assert on the specific symptom, not "didn't crash".)
 - Can I make it more deterministic? (Pin time, seed RNG, isolate filesystem, freeze network.)
 
-A 30-second flaky loop is barely better than no loop. A 2-second deterministic loop is a debugging superpower.
+A 30-second flaky loop is barely better than no loop. A 2-second deterministic
+loop is tight.
 
 ### Non-deterministic bugs
 
@@ -54,9 +58,23 @@ The goal is not a clean repro but a **higher reproduction rate**. Loop the trigg
 
 Stop and say so explicitly. List what you tried. Ask the user for: (a) access to whatever environment reproduces it, (b) a captured artifact (HAR file, log dump, core dump, screen recording with timestamps), or (c) permission to add temporary production instrumentation. Do **not** proceed to hypothesise without a loop.
 
-Do not proceed to Phase 2 until you have a loop you believe in.
+### Completion criterion — a tight loop that goes red
 
-## Phase 2 — Reproduce
+Phase 1 is done when the loop is **tight** and **red-capable**: you can name
+**one command** — a script path, a test invocation, or a curl — that you have
+**already run at least once**, and that is:
+
+- [ ] **Red-capable** — it drives the actual bug path and asserts the user's
+      exact symptom. Not "runs without erroring".
+- [ ] **Deterministic** — same verdict every run, or a pinned high
+      reproduction rate for flaky bugs.
+- [ ] **Fast** — seconds, not minutes.
+- [ ] **Agent-runnable** — unattended, or human-in-the-loop only through
+      `scripts/hitl-loop.template.sh`.
+
+No red-capable command, no Phase 2.
+
+## Phase 2 — Reproduce + minimise
 
 Run the loop. Watch the bug appear.
 
@@ -66,7 +84,16 @@ Confirm:
 - [ ] The failure is reproducible across multiple runs (or, for non-deterministic bugs, reproducible at a high enough rate to debug against).
 - [ ] You have captured the exact symptom (error message, wrong output, slow timing) so later phases can verify the fix actually addresses it.
 
-Do not proceed until you reproduce the bug.
+### Minimise
+
+Once it is red, shrink the repro to the smallest scenario that still goes red.
+Cut inputs, callers, config, data, and steps one at a time, re-running the loop
+after each cut. Keep only what is load-bearing for the failure.
+
+Done when every remaining element is load-bearing: removing any one of them
+makes the loop go green.
+
+Do not proceed until you have reproduced **and** minimised.
 
 ### Surface Map Checkpoint A — Observed Surface
 

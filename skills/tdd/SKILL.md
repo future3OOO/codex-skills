@@ -13,13 +13,25 @@ The test must fail for the expected product/code reason. If it passes immediatel
 
 ## Philosophy
 
-**Core principle**: Tests should verify behavior through the public Interface, not Implementation details. Code can change entirely; tests shouldn't. Use the Module / Interface / Seam vocabulary from `$improve-codebase-architecture`.
+**Core principle**: Tests should verify behavior through the public Interface,
+not Implementation details. Code can change entirely; tests shouldn't. Use the
+Module / Interface / Seam vocabulary from `$codebase-design`.
 
 **Good tests** are integration-style: they exercise real code paths through public APIs. They describe _what_ the system does, not _how_ it does it. A good test reads like a specification - "user can checkout with valid cart" tells you exactly what capability exists. These tests survive refactors because they don't care about internal structure.
 
 **Bad tests** are coupled to Implementation. They mock internal collaborators, test private methods, or verify through external means (like querying a database directly instead of using the Interface). The warning sign: your test breaks when you refactor, but behavior hasn't changed. If you rename an internal function and tests fail, those tests were testing Implementation, not behavior.
 
-See [tests.md](tests.md) for examples and [mocking.md](mocking.md) for mocking guidelines.
+See [tests.md](tests.md) for examples and [mocking.md](mocking.md) for mocking
+guidelines.
+
+## Seams — where tests go
+
+A **Seam** is the public boundary you test at: the Interface where behavior is
+observed without reaching inside. Tests live at Seams, not internals.
+
+Test only at agreed Seams. Before writing a test, name the Seam under test and
+confirm it when the request leaves room for interpretation. Ask: "What is the
+public Interface, and which Seam should this test cross?"
 
 ## Anti-Pattern: Horizontal Slices
 
@@ -59,8 +71,8 @@ Before production edits:
 - [ ] Confirm with user which behaviors to test (prioritize)
 - [ ] Identify the public Interface or observable workflow being changed
 - [ ] Identify whether the current Module/Interface is testable
-- [ ] Identify opportunities for [deep Modules](deep-modules.md) (Ousterhout-style small stable Interface, deep Implementation)
-- [ ] Design Interfaces for [testability](interface-design.md)
+- [ ] Identify opportunities for deep Modules using `$codebase-design`
+- [ ] Design Interfaces for testability using `$codebase-design`
 - [ ] List the behaviors to test (not implementation steps)
 - [ ] Name the first behavior slice to prove
 - [ ] For non-trivial work, list remaining behavior slices
@@ -74,7 +86,10 @@ Ask: "What should the public Interface look like? Which behaviors are most impor
 
 If a behavior cannot be tested cleanly through a public Interface, requires mocking internal collaborators, or coordinates several shallow Modules, do not force a bad test.
 
-Stop and use `improve-codebase-architecture` to inspect the Module, Interface, Seam, and deepening opportunity. TDD should prove behavior through a good Interface; it should not normalize shallow Modules.
+Stop and use `$codebase-design` to inspect the Module, Interface, Seam, and
+deepening opportunity. Use `$improve-codebase-architecture` when the decision
+requires a repo scan or multiple candidate refactors. TDD should prove behavior
+through a good Interface; it should not normalize shallow Modules.
 
 When `$diagnose` ran first, consume its surface map. The failing test should cross the mapped Interface at a real Seam; do not regenerate the diagnose map here. If no real Seam exists, escalate to `$improve-codebase-architecture` instead of mocking the Module under test.
 
@@ -107,11 +122,11 @@ Rules:
 
 ### 4. Refactor
 
-After all tests pass, look for [refactor candidates](refactoring.md):
+After all tests pass, look for refactor candidates through `$codebase-design`:
 
 - [ ] Extract duplication
 - [ ] Deepen modules (move complexity behind simple interfaces)
-- [ ] Apply SOLID principles where natural
+- [ ] Apply the deletion test to shallow pass-through Modules
 - [ ] Consider what new code reveals about existing code
 - [ ] Run tests after each refactor step
 
