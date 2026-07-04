@@ -27,7 +27,6 @@ directory:
 |-- docs/
 |   |-- adr/
 |   `-- agents/
-`-- skills/
 ```
 
 `CONTEXT.md` is a glossary, not a spec, scratch pad, or implementation plan.
