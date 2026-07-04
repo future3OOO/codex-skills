@@ -2,11 +2,10 @@
 
 This repository uses GitHub Issues as its only supported issue tracker.
 
-Repository: `future3OOO/codex-skills`
-
 All issue and PRD operations must use the `gh` CLI from inside this checkout.
 Do not use Linear, GitLab, local Markdown issue files, or another tracker for
-this repository unless the repository contract is explicitly changed.
+this repository unless the repository contract is explicitly changed. The `gh`
+CLI resolves the repository from the current checkout's Git remote.
 
 ## Operations
 
@@ -19,8 +18,9 @@ this repository unless the repository contract is explicitly changed.
 - Close an issue: `gh issue close <number> --comment "..."`
 
 When a skill says "publish to the issue tracker", create a GitHub issue in
-`future3OOO/codex-skills`. When a skill says "fetch the relevant ticket", read
-the matching GitHub issue with `gh issue view`.
+the current checkout's GitHub repository. When a skill says "fetch the relevant
+ticket", read the matching GitHub issue with `gh issue view`. If the target
+repository is unclear, verify it with `gh repo view --json nameWithOwner`.
 
 ## Pull Requests
 
