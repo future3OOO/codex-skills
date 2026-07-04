@@ -61,32 +61,32 @@ It is an orchestration skill; it does not replace the referenced skills.
      follow-up with a tracked issue.
    - After any fix, rerun the affected tests and the production-code gate.
 10. Use `$claude-advisor` in challenge mode before commit for non-trivial code
-   changes.
-   - Use the Claude Advisor wrapper from the target worktree so Claude receives
-     live branch/head/PR metadata plus the actual dirty or PR/base diff.
-   - Identify the exact PR number or branch/head SHA, base ref when needed,
-     reviewer/PRD issue text, TDD proof, `$code-review` findings and their
-     dispositions, and no-change surfaces.
-   - Ask whether the wrapper-provided live diff resolves the exact PRD or
-     reviewer issue with the smallest production-safe change.
-   - Do not use a prose diff summary as the evidence source.
-   - Require focus on Greptile/Cubic/CodeRabbit/Devin/human finding coverage,
-     bloat, duplicated logic, behavior drift, weak proof, wrong slice ownership,
-     and hidden regression risk.
-   - Require Claude to challenge whether the implemented test path satisfies
-     `$tdd` and whether any architecture change stayed targeted rather than
-     becoming a broad refactor.
-   - Validate Claude's advice against code, tests, PRDs, reviewers, GitNexus,
-     and production-code gates before changing or committing.
+    changes.
+    - Use the Claude Advisor wrapper from the target worktree so Claude receives
+      live branch/head/PR metadata plus the actual dirty or PR/base diff.
+    - Identify the exact PR number or branch/head SHA, base ref when needed,
+      reviewer/PRD issue text, TDD proof, `$code-review` findings and their
+      dispositions, and no-change surfaces.
+    - Ask whether the wrapper-provided live diff resolves the exact PRD or
+      reviewer issue with the smallest production-safe change.
+    - Do not use a prose diff summary as the evidence source.
+    - Require focus on Greptile/Cubic/CodeRabbit/Devin/human finding coverage,
+      bloat, duplicated logic, behavior drift, weak proof, wrong slice ownership,
+      and hidden regression risk.
+    - Require Claude to challenge whether the implemented test path satisfies
+      `$tdd` and whether any architecture change stayed targeted rather than
+      becoming a broad refactor.
+    - Validate Claude's advice against code, tests, PRDs, reviewers, GitNexus,
+      and production-code gates before changing or committing.
 11. After commit/push/PR-update, run the **PR Reviewer Completion Gate**
     (`AGENTS.md`) before declaring complete or moving to another slice/PRD.
     The task is not complete until that gate passes for the current head.
 12. Final response must include:
-   - summary of the behavior changed
-   - verification commands and outcomes
-   - GitNexus authority repo/status used for packet-scoped checks
-   - reviewer-loop status for the current PR head, when a PR/review exists
-   - blockers, unverified surfaces, or follow-ups
+    - summary of the behavior changed
+    - verification commands and outcomes
+    - GitNexus authority repo/status used for packet-scoped checks
+    - reviewer-loop status for the current PR head, when a PR/review exists
+    - blockers, unverified surfaces, or follow-ups
 
 ## Scope Rules
 

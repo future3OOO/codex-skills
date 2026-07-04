@@ -64,8 +64,9 @@ Query the issue tracker and present three buckets, oldest first:
 3. **`needs-info` with reporter activity since the last triage notes** — needs re-evaluation.
 
 When PRs are in scope, include external PRs in these buckets and tag each line
-`[PR]` or `[issue]`. Discovery surfaces only external PRs if the tracker config
-defines that distinction; an explicitly named PR is always triaged.
+`[PR]` or `[issue]`. Discovery surfaces only external PRs if the target
+checkout's tracker rules (`docs/agents/issue-tracker.md`) define that
+distinction; an explicitly named PR is always triaged.
 
 Show counts and a one-line summary per item. Let the maintainer pick.
 

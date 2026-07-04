@@ -36,13 +36,16 @@ Apply the **deletion test** to anything you suspect is shallow: would deleting i
 ### 2. Present candidates as an HTML report
 
 Write a self-contained HTML file to the OS temp directory so nothing lands in
-the repo. Resolve the temp dir from `$TMPDIR`, falling back to `/tmp` (or
-`%TEMP%` on Windows), and write to
+the repo. On POSIX, resolve the temp dir from `$TMPDIR`, falling back to `/tmp`;
+on Windows, use `%TEMP%` or `%TMP%`. Write to
 `<tmpdir>/architecture-review-<timestamp>.html`. Open it for the user and tell
 them the absolute path.
 
 The report uses Tailwind via CDN for layout and Mermaid via CDN for
 graph-shaped diagrams. Each candidate gets a before/after visualization.
+HTML-escape every repo-derived value before interpolation, including repo
+names, file paths, identifiers, prose, and Mermaid labels. Do not use raw HTML
+inside Mermaid labels.
 
 For each candidate, render a card with:
 
