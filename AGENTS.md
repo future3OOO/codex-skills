@@ -117,8 +117,9 @@ Required order for production work:
 12. For non-trivial diffs, run `$code-review` after production code changes and
     before Claude Advisor challenge mode. Review against the correct fixed
     point and keep Standards findings separate from Spec findings. Classify
-    each finding as fixed, rejected-with-evidence, or accepted follow-up before
-    asking Claude whether the work is ready to commit.
+    each finding as fixed, rejected-with-evidence, or an accepted follow-up
+    with a tracked issue before asking Claude whether the work is ready to
+    commit.
 13. For non-trivial code edits, run Claude Advisor challenge mode before
     commit from the target worktree. The wrapper must provide live branch/head
     and dirty or PR/base diff evidence; the prompt must name the exact PR or

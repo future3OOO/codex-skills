@@ -11,15 +11,19 @@ Review the diff between `HEAD` and a fixed point along two separate axes:
 - **Spec** — does the change implement the originating issue, PRD, or spec?
 
 This skill is advisory. Codex remains responsible for validating findings
-against the repo, tests, PRD, reviewers, and production gates.
+against the repo, tests, PRD, reviewers, and production gates. Do not resolve
+review threads, commit, push, or mark PR work complete from this skill; its
+findings are evidence for the production loop and the PR Reviewer Completion
+Gate, never gate state.
 
 ## Process
 
 ### 1. Pin the fixed point
 
 Use the fixed point the user supplied: commit SHA, branch, tag, `main`,
-`origin/main`, or another ref. If none was supplied, default to the merge-base
-with the branch's upstream or `origin/main`.
+`origin/main`, or another ref. If none was supplied, default to the PR base
+branch when a PR exists, otherwise the merge-base with the branch's upstream or
+`origin/main`.
 
 Verify it before reviewing:
 
@@ -29,7 +33,9 @@ git diff --stat <fixed-point>...HEAD
 git log --oneline <fixed-point>..HEAD
 ```
 
-Use three-dot diff form so the comparison is against the merge-base.
+Use three-dot diff form so the comparison is against the merge-base. If the
+ref does not resolve or the diff is empty, stop and report that instead of
+reviewing.
 
 ### 2. Identify the spec source
 
@@ -45,7 +51,8 @@ Look for the originating spec in this order:
 
 Read repo standards such as `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`,
 `CODING_STANDARDS.md`, `CONTEXT.md`, and relevant ADRs. Repo-local standards
-override generic smells.
+override generic smells; they supplement but never weaken stricter global
+`AGENTS.md` or production workflow rules.
 
 Always carry this smell baseline as judgement calls, not hard violations:
 

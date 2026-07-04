@@ -9,7 +9,7 @@ description: Test-driven development with red-green-refactor loop. Use when user
 
 Production behavior changes require one failing behavior test before production code changes.
 
-The test must fail for the expected product/code reason. If it passes immediately, errors because of invalid setup, or only proves implementation shape, it is not a valid RED gate.
+The test must fail for the expected product/code reason. If it passes immediately, errors because of invalid setup, or only proves implementation shape, it is not a valid RED gate. A tautological test — one that asserts a mock you configured or restates the implementation — can never go RED for a product reason; rewrite it at a real Seam.
 
 ## Philosophy
 

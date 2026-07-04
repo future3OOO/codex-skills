@@ -8,5 +8,4 @@ description: Compatibility alias for diagnose. Use when upstream docs or users i
 Use `$diagnose`.
 
 This alias exists only for upstream compatibility. Do not duplicate or fork the
-diagnosis workflow here; keep the canonical instructions in
-`skills/diagnose/SKILL.md`.
+diagnosis workflow here; keep the canonical instructions in `$diagnose`.

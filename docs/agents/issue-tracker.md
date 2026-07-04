@@ -40,5 +40,4 @@ about code review or PR state; otherwise use `gh issue view <number>`.
 
 These files are the checked-in local setup contract for tracker-aware skills.
 They do not change root `AGENTS.md` authority. Skills that need issue tracker
-configuration should read this file directly; later PRD1 consumer-skill slices
-must wire explicit references to `docs/agents/` where needed.
+configuration read this file directly.

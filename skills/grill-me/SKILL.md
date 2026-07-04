@@ -8,5 +8,4 @@ description: Compatibility alias for grilling. Use when users say "grill me" or 
 Use `$grilling`.
 
 This alias exists for compatibility with older prompts. Do not duplicate the
-grilling workflow here; keep the canonical questioning loop in
-`skills/grilling/SKILL.md`.
+grilling workflow here; keep the canonical questioning loop in `$grilling`.

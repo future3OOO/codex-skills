@@ -9,4 +9,4 @@ Use `$writing-great-skills`.
 
 This alias exists only for compatibility with older prompts. Do not duplicate
 skill-authoring guidance here; keep the canonical instructions in
-`skills/writing-great-skills/SKILL.md`.
+`$writing-great-skills`.
