@@ -13,8 +13,9 @@ Review the diff between `HEAD` and a fixed point along two separate axes:
 This skill is advisory. Codex remains responsible for validating findings
 against the repo, tests, PRD, reviewers, and production gates. Do not resolve
 review threads, commit, push, or mark PR work complete from this skill; its
-findings are evidence for the production loop and the PR Reviewer Completion
-Gate, never gate state.
+findings and their dispositions are evidence for the production loop, the
+Claude Advisor pre-commit challenge, and the PR Reviewer Completion Gate,
+never gate state.
 
 ## Process
 
@@ -49,10 +50,12 @@ Look for the originating spec in this order:
 
 ### 3. Identify standards sources
 
-Read repo standards such as `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`,
-`CODING_STANDARDS.md`, `CONTEXT.md`, and relevant ADRs. Repo-local standards
-override generic smells; they supplement but never weaken stricter global
-`AGENTS.md` or production workflow rules.
+Authority order: root `AGENTS.md` is the live global contract; local standards
+skills such as `$code-quality`, `$production-code`, `$production-preflight`,
+and the repo workflow skills are authoritative where relevant; repo docs such
+as `CLAUDE.md`, `CONTRIBUTING.md`, `CODING_STANDARDS.md`, `CONTEXT.md`, and
+relevant ADRs supplement but never weaken stricter global or production
+workflow rules. Repo-local standards override generic smells.
 
 Always carry this smell baseline as judgement calls, not hard violations:
 
@@ -71,8 +74,9 @@ Always carry this smell baseline as judgement calls, not hard violations:
 
 ### 4. Review both axes
 
-Run Standards and Spec as independent reviews. Keep findings separate so one
-axis cannot mask the other.
+Run Standards and Spec as independent reviews, serially by default (Standards,
+then Spec); use parallel delegates only where local delegation rules explicitly
+allow more than one. Keep findings separate so one axis cannot mask the other.
 
 For **Standards**, report:
 

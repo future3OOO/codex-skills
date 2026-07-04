@@ -53,12 +53,20 @@ It is an orchestration skill; it does not replace the referenced skills.
    - Re-check no-change surfaces named in preflight and in any `$diagnose` surface map.
    - If `$diagnose` ran, reconcile the implementation against its Surface Map B before finalizing.
    - Run `gitnexus_detect_changes` after edits when GitNexus MCP is available and before committing.
-9. Use `$claude-advisor` in challenge mode before commit for non-trivial code
+9. For non-trivial diffs, run `$code-review` after the production-code gate and
+   before the Claude Advisor challenge.
+   - Review against the correct fixed point and the governing PRD/issue/spec.
+   - Keep Standards findings separate from Spec findings.
+   - Disposition every finding: fixed, rejected-with-evidence, or an accepted
+     follow-up with a tracked issue.
+   - After any fix, rerun the affected tests and the production-code gate.
+10. Use `$claude-advisor` in challenge mode before commit for non-trivial code
    changes.
    - Use the Claude Advisor wrapper from the target worktree so Claude receives
      live branch/head/PR metadata plus the actual dirty or PR/base diff.
    - Identify the exact PR number or branch/head SHA, base ref when needed,
-     reviewer/PRD issue text, TDD proof, and no-change surfaces.
+     reviewer/PRD issue text, TDD proof, `$code-review` findings and their
+     dispositions, and no-change surfaces.
    - Ask whether the wrapper-provided live diff resolves the exact PRD or
      reviewer issue with the smallest production-safe change.
    - Do not use a prose diff summary as the evidence source.
@@ -70,10 +78,10 @@ It is an orchestration skill; it does not replace the referenced skills.
      becoming a broad refactor.
    - Validate Claude's advice against code, tests, PRDs, reviewers, GitNexus,
      and production-code gates before changing or committing.
-10. After commit/push/PR-update, run the **PR Reviewer Completion Gate**
+11. After commit/push/PR-update, run the **PR Reviewer Completion Gate**
     (`AGENTS.md`) before declaring complete or moving to another slice/PRD.
     The task is not complete until that gate passes for the current head.
-11. Final response must include:
+12. Final response must include:
    - summary of the behavior changed
    - verification commands and outcomes
    - GitNexus authority repo/status used for packet-scoped checks

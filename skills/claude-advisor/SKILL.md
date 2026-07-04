@@ -85,6 +85,7 @@ Supply:
 - branch, base, and head SHA
 - TDD proof: RED command/failure and GREEN command/pass
 - verification outcomes and any skipped or weak proof
+- `$code-review` Standards/Spec findings and their dispositions, when it ran
 - changed Module, public Interface, and hidden Implementation complexity
 - existing reuse path and touched shallow Module debt
 - named no-change surfaces

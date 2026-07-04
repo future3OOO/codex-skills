@@ -23,7 +23,10 @@ project tracker.
 Check with the user that these seams match their expectations when the PRD is
 not already fully specified.
 
-3. Write the PRD using the template below, then publish it to the project issue tracker. Apply the `needs-triage` triage label so it enters the normal triage flow.
+3. Write the PRD using the template below, then publish it to the project issue tracker. Apply `ready-for-agent` when the PRD is fully specified and that label exists in the target repo; otherwise apply `needs-triage` so it enters the normal triage flow.
+
+When the target repo's `AGENTS.md` or production workflow rules are stricter
+than this template, the PRD must preserve the stricter rules.
 
 <prd-template>
 
