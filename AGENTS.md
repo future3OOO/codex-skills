@@ -114,7 +114,14 @@ Required order for production work:
     transaction-sensitive flows, re-analyze the edited checkout with GitNexus
     before final graph checks.
 11. Run the production-code quality gate before finalizing.
-12. For non-trivial code edits, run Claude Advisor challenge mode before
+12. For non-trivial diffs, run `$code-review` after production code changes and
+    before Claude Advisor challenge mode. Review against the correct fixed
+    point and keep Standards findings separate from Spec findings. Classify
+    each finding as fixed, rejected-with-evidence, or an accepted follow-up
+    with a tracked issue; after any fix, rerun the affected proof and the
+    quality gate. Include the findings and dispositions in the Claude Advisor
+    prompt context.
+13. For non-trivial code edits, run Claude Advisor challenge mode before
     commit from the target worktree. The wrapper must provide live branch/head
     and dirty or PR/base diff evidence; the prompt must name the exact PR or
     branch/head, reviewer/PRD issue, module shape, touched shallow-module debt,
