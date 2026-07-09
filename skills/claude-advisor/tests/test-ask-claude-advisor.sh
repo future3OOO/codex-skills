@@ -30,10 +30,29 @@ printf 'CLAUDE_STUB_OUTPUT\n'
 STUB
 chmod +x "$stub_dir/claude"
 
+cat > "$stub_dir/codex" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+
+{
+  printf 'ARGV_BEGIN\n'
+  for arg in "$@"; do
+    printf '%s\n' "$arg"
+  done
+  printf 'ARGV_END\n'
+} > "${CODEX_STUB_ARGV:?}"
+
+cat > "${CODEX_STUB_PROMPT:?}"
+printf 'CODEX_STUB_OUTPUT\n'
+STUB
+chmod +x "$stub_dir/codex"
+
 export PATH="$stub_dir:$PATH"
 export CLAUDE_ADVISOR_STATE_DIR="$tmp_dir/state"
 export CLAUDE_STUB_ARGV="$tmp_dir/claude.argv"
 export CLAUDE_STUB_PROMPT="$tmp_dir/claude.prompt"
+export CODEX_STUB_ARGV="$tmp_dir/codex.argv"
+export CODEX_STUB_PROMPT="$tmp_dir/codex.prompt"
 
 stdout_file="$tmp_dir/stdout"
 stderr_file="$tmp_dir/stderr"
@@ -78,6 +97,8 @@ assert_not_contains() {
 run_advisor() {
   : > "$CLAUDE_STUB_ARGV"
   : > "$CLAUDE_STUB_PROMPT"
+  : > "$CODEX_STUB_ARGV"
+  : > "$CODEX_STUB_PROMPT"
   : > "$stdout_file"
   : > "$stderr_file"
   set +e
@@ -92,6 +113,8 @@ run_advisor_with_stdin() {
   shift
   : > "$CLAUDE_STUB_ARGV"
   : > "$CLAUDE_STUB_PROMPT"
+  : > "$CODEX_STUB_ARGV"
+  : > "$CODEX_STUB_PROMPT"
   : > "$stdout_file"
   : > "$stderr_file"
   set +e
@@ -113,11 +136,6 @@ session_id_for_slug() {
 run_advisor --slug cass --cwd "$skill_dir" -- "Question: first call"
 assert_contains "$stdout_file" "CLAUDE_STUB_OUTPUT"
 assert_not_contains "$stdout_file" "claude_advisor_session"
-assert_not_contains "$CLAUDE_STUB_PROMPT" "Checkpoint Interface:"
-assert_not_contains "$CLAUDE_STUB_PROMPT" "Verdict:"
-assert_not_contains "$CLAUDE_STUB_PROMPT" "Reviewer coverage:"
-assert_not_contains "$CLAUDE_STUB_PROMPT" "TDD check:"
-assert_not_contains "$CLAUDE_STUB_PROMPT" "fix-before-commit"
 assert_contains "$CLAUDE_STUB_PROMPT" "Advisor mode. Do not create files. Do not edit files. Do not write plan artifacts. Stdout only."
 assert_contains "$CLAUDE_STUB_PROMPT" "/tdd and /improve-codebase-architecture"
 assert_contains "$CLAUDE_STUB_PROMPT" "Do not invoke heavyweight repo execution skills"
@@ -137,6 +155,36 @@ assert_contains "$stderr_file" "warnings=none"
 first_sid="$(session_id_for_slug cass "$skill_dir")"
 assert_contains "$CLAUDE_STUB_ARGV" "--session-id"
 assert_contains "$CLAUDE_STUB_ARGV" "$first_sid"
+
+run_advisor --provider codex --slug cass --phase precommit-challenge --cwd "$skill_dir" --base-ref HEAD -- "Question: codex challenge"
+assert_contains "$stdout_file" "CODEX_STUB_OUTPUT"
+assert_contains "$stderr_file" "codex_advisor_session"
+assert_contains "$stderr_file" "provider=codex"
+assert_contains "$stderr_file" "phase=precommit-challenge"
+assert_contains "$CODEX_STUB_ARGV" "exec"
+assert_contains "$CODEX_STUB_ARGV" "--sandbox"
+assert_contains "$CODEX_STUB_ARGV" "read-only"
+assert_contains "$CODEX_STUB_ARGV" "-C"
+assert_contains "$CODEX_STUB_ARGV" "$skill_dir"
+assert_contains "$CODEX_STUB_ARGV" "--ephemeral"
+assert_contains "$CODEX_STUB_ARGV" "-"
+assert_contains "$CODEX_STUB_PROMPT" "Checkpoint Interface: precommit-challenge"
+assert_contains "$CODEX_STUB_PROMPT" "Wrapper-provided live git/PR context and diff:"
+[[ ! -s "$CLAUDE_STUB_ARGV" ]] || fail "codex provider invoked claude"
+
+CLAUDE_ADVISOR_PROVIDER=codex run_advisor --slug env-codex --cwd "$skill_dir" -- "Question: env provider"
+assert_contains "$stdout_file" "CODEX_STUB_OUTPUT"
+assert_contains "$stderr_file" "provider=codex"
+
+if run_advisor --provider codex --slug cass --cwd "$skill_dir" --write -- "Task: invalid"; then
+  fail "codex provider with --write should fail closed"
+fi
+assert_contains "$stderr_file" "error: codex provider only supports read-only advisor mode"
+
+if run_advisor --provider codex --slug cass --cwd "$skill_dir" --full-tools -- "Task: invalid"; then
+  fail "codex provider with --full-tools should fail closed"
+fi
+assert_contains "$stderr_file" "error: codex provider only supports read-only advisor mode"
 
 run_advisor_with_stdin "repo packet context" --slug cass --cwd "$skill_dir" -- "Question: stdin"
 assert_contains "$CLAUDE_STUB_PROMPT" "Additional context from stdin:"

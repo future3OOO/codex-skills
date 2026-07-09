@@ -6,8 +6,10 @@ description: Consult Claude as a one-on-one advisor or explicitly delegated writ
 # Claude Advisor
 
 Claude Advisor is a challenge Interface around Codex's work. Codex owns the
-decision, implementation, tests, and final report. Claude supplies independent
-pressure against the evidence Codex provides.
+decision, implementation, tests, and final report. The advisor supplies
+independent pressure against the evidence Codex provides. Claude is the default
+advisor provider; Codex can be selected as an explicit fallback when Claude
+tokens are unavailable.
 
 Use the wrapper by default:
 
@@ -21,8 +23,24 @@ Use the wrapper by default:
 The wrapper streams the composed prompt to Claude over stdin, so large diffs do
 not hit shell or OS argument-length limits.
 
-Claude does not load this skill file. Any rubric Claude must follow has to be
-included in the wrapper phase prompt or in the question sent to Claude.
+Use Codex Advisor as the fallback provider without changing the prompt contract:
+
+```bash
+/home/prop_/.codex/skills/claude-advisor/scripts/ask-claude-advisor.sh \
+  --provider codex \
+  --slug "<stable-task>" \
+  --phase precommit-challenge \
+  --cwd "$PWD" \
+  --base-ref origin/main \
+  -- "Question: Does the wrapper-provided live diff satisfy the production contract?"
+```
+
+`CLAUDE_ADVISOR_PROVIDER=codex` selects the same fallback through the
+environment. The default provider remains `claude`.
+
+The advisor provider does not load this skill file. Any rubric it must follow
+has to be included in the wrapper phase prompt or in the question sent through
+the wrapper.
 Changes to checkpoint rules here are inert unless the wrapper phase prompts are
 kept in sync.
 The wrapper phase prompts at `scripts/ask-claude-advisor.sh` are the
@@ -65,8 +83,8 @@ Command:
   -- "Question: Does the Repo Context Forge + GitNexus packet cover the PRD slice, correct Seams, and correct surface area before production preflight?"
 ```
 
-Claude must use `/tdd` and `/improve-codebase-architecture` as read-only rubric
-references, remind Codex how `$tdd` applies, and say whether a targeted
+The advisor must use `/tdd` and `/improve-codebase-architecture` as read-only
+rubric references, remind Codex how `$tdd` applies, and say whether a targeted
 Module/Interface/Seam decision is needed before editing. It must challenge
 whether the work deepens an existing Module, creates a real Seam, or risks
 shallow helper/service/manager/wrapper complexity.
@@ -92,8 +110,8 @@ Supply:
 - Codex's commit-readiness hypothesis
 
 Do not provide a prose diff summary as evidence. The wrapper attaches the live
-dirty diff, staged diff, or PR/base diff from `--cwd`; Claude must critique that
-evidence directly.
+dirty diff, staged diff, or PR/base diff from `--cwd`; the advisor must critique
+that evidence directly.
 
 If the wrapper-provided diff does not match the requested PR, PRD, reviewer
 issue, branch, or head SHA, treat Claude answer as a blocker and fix the call
@@ -130,7 +148,7 @@ Challenge focus:
 - no broad refactor, duplicate path, stale workaround, or speculative option
 - `$improve-codebase-architecture` stayed targeted to Module/Interface/Seam
 
-Use a larger budget for precommit challenges when Claude must reconcile a real
+Use a larger budget for precommit challenges when the advisor must reconcile a real
 PRD/reviewer issue against a live diff. Keep simpler advisor questions near the
 default budget. The wrapper controls the default; `--budget 700` is illustrative
 for real PRD/reviewer reconciliation, not a new default.
@@ -144,7 +162,7 @@ Completion Gate on the current head.
 
 ## When To Ask Claude
 
-Ask Claude:
+Ask the advisor:
 
 - after Repo Context Forge and packet-scoped GitNexus checks in production repo
   work
@@ -152,7 +170,8 @@ Ask Claude:
   or issue tracker item
 - for architecture, migration, correctness, security, concurrency,
   idempotency, data-loss, or non-obvious PR/worktree risk
-- when the user explicitly asks for Claude, advisor mode, or a Claude worker
+- when the user explicitly asks for Claude, Codex Advisor, advisor mode, or a
+  Claude worker
 - when Codex is stuck after two focused attempts
 
 Skip Claude for mechanical edits, formatting, obvious single-file fixes, and
@@ -179,6 +198,28 @@ Options A vs B. Which fails first under the migration constraint?
 
 Avoid broad prompts such as "what do you think?", whole-repo dumps, or
 instructions that ask Claude to run Codex's workflow for it.
+
+## Providers
+
+`--provider claude` is the default and preserves the existing Claude CLI path,
+including session resume state, `--write`, and `--full-tools`.
+
+`--provider codex` starts a fresh read-only `codex exec` advisor run with the
+same wrapper-built prompt, live diff evidence, and phase rubric. It is intended
+as an advisory fallback only. It does not support `--write` or `--full-tools`;
+those modes remain Claude-only.
+
+Provider environment:
+
+- `CLAUDE_ADVISOR_PROVIDER=codex` or `ADVISOR_PROVIDER=codex`: select Codex.
+- `CODEX_ADVISOR_MODEL=<model>` or `--codex-model <model>`: optional Codex
+  model override.
+- `CLAUDE_ADVISOR_MODEL` and `CLAUDE_ADVISOR_FALLBACK_MODEL`: unchanged Claude
+  provider settings.
+
+Codex Advisor is not model-diverse from Codex implementation work, but it is a
+separate session with read-only constraints and raw wrapper evidence. Treat it
+as an emergency substitute for Claude pressure, not as stronger authority.
 
 ## Modes
 
@@ -207,10 +248,10 @@ Write mode still blocks commits, pushes, destructive git operations, `rm`,
 Claude's resulting diff before relying on it. Treat the wrapper as the exact
 tool-policy source of truth.
 
-Claude may use `/tdd` and `/improve-codebase-architecture` only as read-only
-rubric references. Do not ask Claude to invoke heavyweight repo execution
+The advisor may use `/tdd` and `/improve-codebase-architecture` only as read-only
+rubric references. Do not ask it to invoke heavyweight repo execution
 skills, bootstrap scripts, or `/production-preflight` as a substitute workflow;
-Claude should report missing preflight or Module-shape evidence instead.
+the advisor should report missing preflight or Module-shape evidence instead.
 
 Use `--full-tools` only for delegated worker tasks in a dedicated git worktree:
 
@@ -272,16 +313,16 @@ merge, rename, delete, or reconcile old `.sid` files.
 
 ## Reporting
 
-Report Claude as evidence, not authority:
+Report advisor output as evidence, not authority:
 
-- `Claude said`: concise summary
+- `Advisor said`: concise summary
 - `Codex judgment`: accepted, rejected, or needs verification
 - `Action`: exact next step or no change
 
-Do not follow Claude blindly. Do not let Claude replace Repo Context Forge,
+Do not follow advisor output blindly. Do not let any advisor replace Repo Context Forge,
 GitNexus, `$production-preflight`, `$production-code`, `$tdd`, or Codex's final
-verification. Claude should report missing preflight or Module-shape evidence,
-not generate substitute preflight artifacts.
+verification. The advisor should report missing preflight or Module-shape
+evidence, not generate substitute preflight artifacts.
 
 Claude write mode does not replace Repo Context Forge, GitNexus checks,
 `$production-code`, or Codex's final verification.

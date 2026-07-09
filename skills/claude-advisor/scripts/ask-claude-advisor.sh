@@ -2,9 +2,10 @@
 set -euo pipefail
 
 usage() {
-  printf 'Usage: %s [--slug name] [--phase preflight-advice|precommit-challenge] [--cwd path] [--fresh] [--budget words] [--base-ref ref] [--model model] [--fallback-model model] [--write] [--full-tools] -- "question"\n' "$0" >&2
+  printf 'Usage: %s [--provider claude|codex] [--slug name] [--phase preflight-advice|precommit-challenge] [--cwd path] [--fresh] [--budget words] [--base-ref ref] [--model model] [--fallback-model model] [--codex-model model] [--write] [--full-tools] -- "question"\n' "$0" >&2
 }
 
+provider="${CLAUDE_ADVISOR_PROVIDER:-${ADVISOR_PROVIDER:-claude}}"
 slug="default"
 phase=""
 cwd="$PWD"
@@ -13,6 +14,7 @@ budget="300"
 base_ref=""
 advisor_model="${CLAUDE_ADVISOR_MODEL:-fable}"
 advisor_fallback_model="${CLAUDE_ADVISOR_FALLBACK_MODEL:-claude-opus-4-8}"
+codex_model="${CODEX_ADVISOR_MODEL:-}"
 write_mode=0
 full_tools=0
 
@@ -151,6 +153,10 @@ EOF
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --provider)
+      provider="${2:?missing --provider value}"
+      shift 2
+      ;;
     --slug)
       slug="${2:?missing --slug value}"
       shift 2
@@ -181,6 +187,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --fallback-model)
       advisor_fallback_model="${2:?missing --fallback-model value}"
+      shift 2
+      ;;
+    --codex-model)
+      codex_model="${2:?missing --codex-model value}"
       shift 2
       ;;
     --write)
@@ -220,15 +230,28 @@ case "$phase" in
     ;;
 esac
 
+case "$provider" in
+  claude|codex)
+    ;;
+  *)
+    printf 'error: unsupported advisor provider: %s\n' "$provider" >&2
+    exit 2
+    ;;
+esac
+
 if [[ -n "$phase" && "$write_mode" -eq 1 ]]; then
   printf 'error: --phase is only valid for read-only advisor mode\n' >&2
+  exit 2
+fi
+
+if [[ "$provider" == "codex" && ( "$write_mode" -eq 1 || "$full_tools" -eq 1 ) ]]; then
+  printf 'error: codex provider only supports read-only advisor mode\n' >&2
   exit 2
 fi
 
 question="$*"
 session_cwd="$(cd "$cwd" && pwd -P)"
 state_dir="${CLAUDE_ADVISOR_STATE_DIR:-$HOME/.codex/claude-advisor}"
-mkdir -p "$state_dir"
 sid=""
 sid_file=""
 normalized_slug=""
@@ -236,12 +259,24 @@ session_mode=""
 warning_state=""
 phase_display=""
 session_args=()
-resolve_task_session "$slug" "$fresh" "$phase"
+if [[ "$provider" == "claude" ]]; then
+  mkdir -p "$state_dir"
+  resolve_task_session "$slug" "$fresh" "$phase"
 
-printf 'claude_advisor_session raw_slug=%q normalized_slug=%q mode=%s sid_prefix=%s phase=%s warnings=%s\n' \
-  "$slug" "$normalized_slug" "$session_mode" "${sid:0:8}" "$phase_display" "$warning_state" >&2
-printf 'claude_advisor_model model=%q\n' "$advisor_model" >&2
-printf 'claude_advisor_fallback_model model=%q\n' "$advisor_fallback_model" >&2
+  printf 'claude_advisor_session raw_slug=%q normalized_slug=%q mode=%s sid_prefix=%s phase=%s warnings=%s\n' \
+    "$slug" "$normalized_slug" "$session_mode" "${sid:0:8}" "$phase_display" "$warning_state" >&2
+  printf 'claude_advisor_model model=%q\n' "$advisor_model" >&2
+  printf 'claude_advisor_fallback_model model=%q\n' "$advisor_fallback_model" >&2
+else
+  sid="$(new_session_id)"
+  normalized_slug="${slug//[^A-Za-z0-9_.-]/_}"
+  session_mode="ephemeral"
+  warning_state="$(phase_slug_warning "$normalized_slug")"
+  phase_display="${phase:-none}"
+  printf 'codex_advisor_session raw_slug=%q normalized_slug=%q mode=%s sid_prefix=%s phase=%s warnings=%s provider=codex\n' \
+    "$slug" "$normalized_slug" "$session_mode" "${sid:0:8}" "$phase_display" "$warning_state" >&2
+  printf 'codex_advisor_model model=%q\n' "${codex_model:-default}" >&2
+fi
 
 stdin_context=""
 if [[ ! -t 0 ]]; then
@@ -378,11 +413,19 @@ Additional context from stdin:
 ${stdin_context}"
 fi
 
-printf '%s' "$prompt" | claude -p \
-  --model "$advisor_model" \
-  --fallback-model "$advisor_fallback_model" \
-  --output-format text \
-  --append-system-prompt "$append_prompt" \
-  ${permission_args[@]+"${permission_args[@]}"} \
-  ${tool_args[@]+"${tool_args[@]}"} \
-  ${session_args[@]+"${session_args[@]}"}
+if [[ "$provider" == "codex" ]]; then
+  codex_args=(exec --sandbox read-only -C "$session_cwd" --ephemeral)
+  if [[ -n "$codex_model" ]]; then
+    codex_args+=(--model "$codex_model")
+  fi
+  printf '%s' "$prompt" | codex "${codex_args[@]}" -
+else
+  printf '%s' "$prompt" | claude -p \
+    --model "$advisor_model" \
+    --fallback-model "$advisor_fallback_model" \
+    --output-format text \
+    --append-system-prompt "$append_prompt" \
+    ${permission_args[@]+"${permission_args[@]}"} \
+    ${tool_args[@]+"${tool_args[@]}"} \
+    ${session_args[@]+"${session_args[@]}"}
+fi
