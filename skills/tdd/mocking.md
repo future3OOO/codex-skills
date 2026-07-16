@@ -1,59 +1,22 @@
-# When to Mock
+# Mocking Is Banned
 
-Mock at **system boundaries** only:
+Every test crosses a real production seam. Do not mock, stub, fake, or
+fixture-substitute ANY collaborator — internal or boundary. A test that cannot
+drive the real seam is not written; the proof gap is surfaced as a finding
+instead: name the seam, why it cannot be driven, and what real proof would
+require.
 
-- External APIs (payment, email, etc.)
-- Databases (sometimes - prefer test DB)
-- Time/randomness
-- File system (sometimes)
+What to do instead of mocking, by situation:
 
-Don't mock:
-
-- Your own classes/modules
-- Internal collaborators
-- Anything you control
-
-## Designing for Mockability
-
-At system boundaries, design interfaces that are easy to mock:
-
-**1. Use dependency injection**
-
-Pass external dependencies in rather than creating them internally:
-
-```typescript
-// Easy to mock
-function processPayment(order, paymentClient) {
-  return paymentClient.charge(order.total);
-}
-
-// Hard to mock
-function processPayment(order) {
-  const client = new StripeClient(process.env.STRIPE_KEY);
-  return client.charge(order.total);
-}
-```
-
-**2. Prefer SDK-style interfaces over generic fetchers**
-
-Create specific functions for each external operation instead of one generic function with conditional logic:
-
-```typescript
-// GOOD: Each function is independently mockable
-const api = {
-  getUser: (id) => fetch(`/users/${id}`),
-  getOrders: (userId) => fetch(`/users/${userId}/orders`),
-  createOrder: (data) => fetch('/orders', { method: 'POST', body: data }),
-};
-
-// BAD: Mocking requires conditional logic inside the mock
-const api = {
-  fetch: (endpoint, options) => fetch(endpoint, options),
-};
-```
-
-The SDK approach means:
-- Each mock returns one specific shape
-- No conditional logic in test setup
-- Easier to see which endpoints a test exercises
-- Type safety per endpoint
+- **An internal collaborator "needs" a mock** — the Module is shallow or the
+  Seam is wrong. Use `$codebase-design` for a targeted Interface/Seam decision
+  or `$improve-codebase-architecture` for broader deepening before forcing a
+  test.
+- **An external system boundary** — drive the real integration through
+  product-owned setup paths per the repo proof surfaces: staging session,
+  captured external-system evidence, live MCP/API probes.
+- **Time or randomness** — pass values through the public Interface as
+  explicit parameters; do not patch internals.
+- **None of these are possible in this pass** — report the untested branch
+  honestly and stop. An absent test is a visible gap; a fake test is a hidden
+  one.

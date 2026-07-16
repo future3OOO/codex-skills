@@ -11,6 +11,23 @@ Production behavior changes require one failing behavior test before production 
 
 The test must fail for the expected product/code reason. If it passes immediately, errors because of invalid setup, or only proves implementation shape, it is not a valid RED gate. A tautological test — one that asserts a mock you configured or restates the implementation — can never go RED for a product reason; rewrite it at a real Seam.
 
+## Real Seams Only — No Mocks
+
+Every test crosses a real production seam. Do not mock, stub, fake, or
+fixture-substitute any collaborator — internal or boundary. A test that cannot
+drive the real seam is not written; surface the proof gap as a finding instead
+(see [mocking.md](mocking.md) for what to do at each boundary type). An absent
+test is a visible gap; a fake test is a hidden one.
+
+## Over-Testing Rules
+
+- Tests may serve only the task's deliverables. No tests for unchanged code.
+- Rewriting an existing test or fixture requires the governing contract
+  (issue, PRD, or user instruction) to have explicitly declared the old
+  contract wrong, and every rewrite must be listed in the handoff.
+- When a test goes red after an edit, the edit is the suspect — not the test.
+- Never build the next deliverable on a red baseline.
+
 ## Philosophy
 
 **Core principle**: Tests should verify behavior through the public Interface,
@@ -21,8 +38,8 @@ Module / Interface / Seam vocabulary from `$codebase-design`.
 
 **Bad tests** are coupled to Implementation. They mock internal collaborators, test private methods, or verify through external means (like querying a database directly instead of using the Interface). The warning sign: your test breaks when you refactor, but behavior hasn't changed. If you rename an internal function and tests fail, those tests were testing Implementation, not behavior.
 
-See [tests.md](tests.md) for examples and [mocking.md](mocking.md) for mocking
-guidelines.
+See [tests.md](tests.md) for examples and [mocking.md](mocking.md) for why
+mocks are banned and what to do instead.
 
 ## Seams — where tests go
 

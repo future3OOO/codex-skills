@@ -93,12 +93,12 @@ Name:
 - branch names
 - owner slice per PR
 - commit structure per PR
-- estimated changed-code-line budget per PR, measured as additions plus deletions in human-authored source files and excluding generated files, lockfiles, vendored code, and pure docs
+- estimated net-line budget per PR (review-budget measurement rules live in the `$delivery-governance` skill)
 - scope breaker or regroup rule
 
 If the plan cannot answer “which PR owns this behavior,” it is not ready.
 
-If any PR slice is likely to exceed 1,000 changed code lines, record the reason and shrink it where practical. If any PR slice is likely to exceed 1,300 changed code lines, split it before implementation or record explicit user approval for the exception.
+If any PR slice is likely to run past the review-budget target (~500 net lines), record the reason and shrink it where practical. If any slice is likely to exceed the split threshold (1,000 net lines), split it before implementation or record explicit user approval for the exception.
 
 If the work updates an existing PR, also name:
 
@@ -200,7 +200,7 @@ Do not call the plan ready unless it names all of the following:
 - PR ownership
 - PR order
 - commit structure
-- changed-code-line budget per PR, with no unapproved slice above 1,300 changed code lines
+- net-line budget per PR, with no unapproved slice above the split threshold
 - verification commands
 - regroup or consolidation rule
 
@@ -246,7 +246,7 @@ Rules for that prompt:
 - say explicitly: do not re-plan this pass
 - when the work targets an existing PR, say explicitly: fetch the branch and realign the exact checkout to the live PR head before the first tracked edit
 - when the work targets an existing PR, say explicitly: commit changes, push the branch, and do not resolve review threads as fixed until the relevant commit is pushed
-- say explicitly: keep the PR below the 1,300 changed-code-line budget unless the user approved a concrete exception
+- say explicitly: keep the PR near the review-budget target unless the user approved a concrete exception
 - say explicitly: re-walk the real affected surface before edits and again before calling the pass complete
 - when the artifact marks transaction-sensitive work, say explicitly: re-walk the full affected transaction system before edits and again before calling the pass complete
 - name only the execution skills:

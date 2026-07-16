@@ -51,9 +51,9 @@ Use this unless there is a strong reason not to:
 
 - Max 5 active dependent PRs.
 - Max 2 branch classes mixed in one PR.
-- Max 1,300 changed code lines per PR, measured as additions plus deletions in human-authored source files and excluding generated files, lockfiles, vendored code, and pure docs.
-- Target 800 changed code lines or fewer per PR. Treat 1,000 changed code lines as a preflight warning that requires shrinking or a written justification in the governing artifact.
-- If the planned PR would exceed 1,300 changed code lines, split by integration boundary or remove scope before coding. Do not rely on review to catch oversize after the branch is built.
+- The **review budget**: target ~500 net lines of code per PR, measured as additions minus deletions in human-authored source files and excluding generated files, lockfiles, vendored code, and pure docs. This is the canonical definition other skills reference.
+- Treat a planned slice tracking materially above the target as a preflight warning that requires shrinking or a written justification in the governing artifact.
+- The **split threshold** is 1,000 net lines: a planned PR likely to exceed it must be split by integration boundary or descoped before coding, absent explicit user approval for a concrete exception. Do not rely on review to catch oversize after the branch is built.
 - If the same file appears in 4 or more open branches, stop and regroup.
 - If a lower branch needs a second significant rewrite after reviews start, stop stacking upward.
 
@@ -99,7 +99,7 @@ When using this skill, produce:
 
 - a delivery map with branch or PR ownership
 - a commit structure for each branch or PR slice
-- an estimated changed-code-line budget for each PR slice, with any slice over 1,000 lines justified and any slice over 1,300 lines rejected or split
+- an estimated net-line budget for each PR slice, with any slice above the review-budget target justified and any slice above the split threshold rejected or split
 - the target stack depth and consolidation rule
 - the active-branch order
 - verification gates per branch

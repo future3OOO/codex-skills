@@ -71,6 +71,8 @@ Always carry this smell baseline as judgement calls, not hard violations:
 - **Message Chains** — callers depend on long navigation chains.
 - **Middle Man** — a module mostly delegates onward.
 - **Refused Bequest** — inheritance or implementation contract mostly ignored.
+- **Fake Test** — a test that mocks, stubs, or fixture-substitutes a collaborator instead of crossing a real production seam. Hard violation in this setup, not a judgement call.
+- **Imaginary Risk** — code guarding a theoretical failure nobody demonstrated: speculative fallbacks, defensive layers, or configuration for scenarios with no observed occurrence.
 
 ### 4. Review both axes
 

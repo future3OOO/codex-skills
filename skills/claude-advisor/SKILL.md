@@ -133,7 +133,7 @@ Expected challenge shape:
 
 - Verdict: commit-ready, fix-before-commit, or context-mismatch
 - PRD reconciliation: implemented, missing, extra, and unproven outcomes
-- Reviewer coverage: Greptile/Cubic/CodeRabbit/Devin/human findings, when present
+- Reviewer coverage: automated and human reviewer findings on the current head (roster: `docs/agents/reviewers.md` when present)
 - `TDD check`: whether a vertical red-green loop was shown
 - Module shape: public Interface, test surface, deep Module pressure, and any shallow unnecessary helper/service/manager/wrapper split
 - `Minimality/bloat`: unnecessary code, duplication, or broad refactor
@@ -167,7 +167,9 @@ Ask the advisor:
 - after Repo Context Forge and packet-scoped GitNexus checks in production repo
   work
 - before commit for a non-trivial diff that claims to resolve a PRD, reviewer,
-  or issue tracker item
+  or issue tracker item. Exception: fix-only commits whose every change
+  addresses a finding already confirmed in this pass's challenge, code-review,
+  or PR reviewer loop; state the skipped round in the final report
 - for architecture, migration, correctness, security, concurrency,
   idempotency, data-loss, or non-obvious PR/worktree risk
 - when the user explicitly asks for Claude, Codex Advisor, advisor mode, or a
@@ -214,8 +216,8 @@ Provider environment:
 - `CLAUDE_ADVISOR_PROVIDER=codex` or `ADVISOR_PROVIDER=codex`: select Codex.
 - `CODEX_ADVISOR_MODEL=<model>` or `--codex-model <model>`: optional Codex
   model override.
-- `CLAUDE_ADVISOR_MODEL` and `CLAUDE_ADVISOR_FALLBACK_MODEL`: unchanged Claude
-  provider settings.
+- `CLAUDE_ADVISOR_MODEL` and `CLAUDE_ADVISOR_FALLBACK_MODEL`: optional Claude
+  provider overrides; both default to `claude-fable-5`.
 
 Codex Advisor is not model-diverse from Codex implementation work, but it is a
 separate session with read-only constraints and raw wrapper evidence. Treat it
@@ -230,7 +232,7 @@ The wrapper's read-only tool policy is the source of truth:
 
 ```bash
 --allowed-tools "Read Grep Glob Bash(git diff:*) Bash(git status:*) Bash(git branch:*) Bash(git rev-parse:*) Bash(gh issue view:*) Bash(gh pr view:*) Bash(gh run view:*) Bash(rg:*) Bash(ls:*) Bash(sed:*) Bash(cat:*)"
---disallowed-tools "Edit Write MultiEdit NotebookEdit"
+--disallowed-tools "Edit Write NotebookEdit"
 ```
 
 `--phase` is only valid in read-only advisor mode. Do not combine it with
@@ -284,7 +286,7 @@ wrapper, `cd` into the target worktree before running `claude -p`.
 Without the wrapper, keep Claude read-only and mirror the wrapper policy:
 
 ```bash
-claude -p --output-format text --allowed-tools "Read Grep Glob Bash(git diff:*) Bash(git status:*) Bash(git branch:*) Bash(git rev-parse:*) Bash(gh issue view:*) Bash(gh pr view:*) Bash(gh run view:*) Bash(rg:*) Bash(ls:*) Bash(sed:*) Bash(cat:*)" --disallowed-tools "Edit Write MultiEdit NotebookEdit" "Advisor mode. Do not create files. Stdout only. <=300 words. Question: ..."
+claude -p --model claude-fable-5 --fallback-model claude-fable-5 --output-format text --allowed-tools "Read Grep Glob Bash(git diff:*) Bash(git status:*) Bash(git branch:*) Bash(git rev-parse:*) Bash(gh issue view:*) Bash(gh pr view:*) Bash(gh run view:*) Bash(rg:*) Bash(ls:*) Bash(sed:*) Bash(cat:*)" --disallowed-tools "Edit Write NotebookEdit" "Advisor mode. Do not create files. Stdout only. <=300 words. Question: ..."
 ```
 
 Never use `--bare`; it bypasses local auth and reports `Not logged in`. Avoid
@@ -302,16 +304,31 @@ Every wrapper call emits one stderr session line with raw slug, normalized slug,
 create/resume/fresh mode, session id prefix, phase, and warning state. Claude
 stdout remains Claude's answer only.
 
-Resume only when prior advice is load-bearing. Start fresh when the task, repo,
-branch, or assumptions changed.
+For the production pair (preflight advice → precommit challenge), reusing the
+same slug/session is required so the challenge retains the original scope; if
+the stored session is unreachable, replay the full original scope plus the
+current diff and label the round a fallback. Outside that pair, resume only
+when prior advice is load-bearing; start fresh when the task, repo, branch, or
+assumptions changed.
 
 Use `--fresh` only when the current task's stored Claude session is stale or
 intentionally reset.
+
+If Claude reports that a stored resume session no longer exists, the wrapper
+rotates that task's session ID and retries once as a fresh session. Do not treat
+that recoverable local-state condition as a Fable outage.
 
 Existing or previous split sessions are historical local state. Do not migrate,
 merge, rename, delete, or reconcile old `.sid` files.
 
 ## Reporting
+
+Wrapper success requires exit zero and non-empty advisor stdout. Warning-only
+stderr is not a provider failure when stdout contains advice; provider
+non-zero status and empty or whitespace-only stdout fail closed.
+
+When the advisor is unavailable or the Codex fallback provider is used, say so
+in the final report; a degraded or skipped round is never silent.
 
 Report advisor output as evidence, not authority:
 

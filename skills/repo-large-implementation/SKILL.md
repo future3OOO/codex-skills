@@ -79,9 +79,8 @@ Do not accept a review-local remediation plan that only mirrors the named commen
 - For existing-PR remediation, use one explicit implementation checkout and realign that exact checkout to the live PR head before editing.
 - Detached review worktrees are for inspection only unless they are deliberately realigned and used as the implementation checkout.
 - Keep active dependent stack depth as low as possible. If the plan would create more than `3` active dependent PRs, stop and regroup.
-- Keep each PR below `1,300` changed code lines, measured as additions plus deletions in human-authored source files and excluding generated files, lockfiles, vendored code, and pure docs.
-- Treat `800` changed code lines as the normal target and `1,000` changed code lines as a warning threshold that requires shrinking or explicit written justification in the governing artifact.
-- If a planned or active PR exceeds `1,300` changed code lines, stop adding scope and either split by integration boundary, remove nonessential changes, or ask the user for explicit approval to exceed the budget for a concrete reason.
+- Keep each PR near the review budget (target ~500 net lines; measurement and split threshold in the `$delivery-governance` skill).
+- If a planned or active PR is likely to exceed the split threshold, stop adding scope and either split by integration boundary, remove nonessential changes, or ask the user for explicit approval to exceed it for a concrete reason.
 - When drift appears, preserve behavior, not branch archaeology.
 
 ## Required Planning Output
@@ -93,7 +92,7 @@ Before tracked edits begin, the governing artifact must define:
 - target branch
 - commit structure
 - PR structure and ownership map
-- estimated changed-code-line budget per PR, including a split plan for any slice likely to exceed `1,300` changed code lines
+- estimated net-line budget per PR, including a split plan for any slice likely to exceed the split threshold
 - verification gates per PR
 - active branch order
 - stack depth limit
@@ -118,6 +117,6 @@ A large implementation is not complete until:
 
 - the governing artifact exists and was followed
 - the owning PR is green under the repo quality gate
-- the owning PR is under the `1,300` changed-code-line budget, or the user explicitly approved a justified exception before the oversize work continued
+- the owning PR is within the review budget, or the user explicitly approved a justified exception before the oversize work continued
 - coupled tests/docs/contracts moved with the code
 - drift or supersession status is recorded honestly

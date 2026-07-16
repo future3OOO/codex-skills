@@ -17,6 +17,8 @@ instructions.
 - Write the minimum code that solves the requested problem.
 - Do not add speculative features, abstractions, configurability, or impossible
   scenario handling.
+- Do not engineer for theoretical risks: a theoretical risk with no
+  demonstrated failure is a report line, not a system.
 - If a change can be 50 lines instead of 200, rewrite it smaller.
 - Every changed line should trace to the user request or to cleanup caused by
   that request.
@@ -79,72 +81,42 @@ or behavior-changing repository work.
 
 Docs-only changes may skip Repo Context Forge and GitNexus. For docs-only work,
 verify checkout/branch, inspect files directly, edit minimally, run a cleanup
-loop, and run lightweight diff checks.
+loop, and run lightweight diff checks. Governance docs that change agent
+behavior, such as `AGENTS.md`, `CLAUDE.md`, or `docs/agents/`, should also run
+`$code-review` before handoff; trivial docs edits stay on the lightweight path.
 
-Required order for production work:
+Use `$repo-production-workflow` as the default first skill for production
+work. It is the single owner of the execution sequence (Repo Context Forge →
+packet-scoped GitNexus → Claude Advisor scope check → `$production-preflight`
+→ `$production-code` with `$tdd` through verification and conditional GitNexus
+reanalysis → `$code-review` → Claude Advisor challenge round for non-trivial
+diffs); this section owns only when skills fire.
 
-1. Use FFF for raw file, symbol, text, broad, and multi-pattern discovery.
-   Use `rg` only when FFF is unavailable, fails, or exact machine-readable
-   output is needed.
-2. Run Repo Context Forge before choosing files, GitNexus calls, review
-   findings, or edits.
-3. State the task contract, packet target surface, skipped high-ranked targets,
-   changed behavior, module shape, public interface, test surface, existing
-   reuse path, rejected shallow path or new-module justification, verification
-   surfaces, and no-change surfaces.
-4. Run packet-scoped GitNexus MCP checks. Use upstream impact for callers and
-   downstream impact for dependencies/no-change surfaces before editing indexed
-   symbols or shared contracts.
-5. Run Claude Advisor as the mandatory read-only checkpoint after Repo Context
-   Forge and packet-scoped GitNexus checks. Claude must remind Codex to use
-   `$tdd`, challenge whether the work deepens an existing module, creates a
-   real seam, or risks a shallow helper/service/manager/wrapper split, and say
-   whether `$improve-codebase-architecture` is needed for a targeted
-   Module/Interface/Seam decision.
-6. Run `$production-preflight` before tracked edits; production behavior
-   changes must include module shape.
-7. Invoke `$production-code` before writing repository file content, then keep
-   changes minimal and fail-closed. Deepen existing modules by default; do not
-   create or preserve shallow helper/service/manager/wrapper/adapter modules in
-   the changed behavior path unless preflight records a blocker.
-8. Use `$tdd` for behavior changes where a focused failing test is practical.
-9. Verify the touched behavior and named no-change surfaces.
-10. If the edit touched indexed symbols, shared contracts, persistence, config,
-    runtime, deploy, external integrations, browser automation, or
-    transaction-sensitive flows, re-analyze the edited checkout with GitNexus
-    before final graph checks.
-11. Run the production-code quality gate before finalizing.
-12. For non-trivial diffs, run `$code-review` after production code changes and
-    before Claude Advisor challenge mode. Review against the correct fixed
-    point and keep Standards findings separate from Spec findings. Classify
-    each finding as fixed, rejected-with-evidence, or an accepted follow-up
-    with a tracked issue; after any fix, rerun the affected proof and the
-    quality gate. Include the findings and dispositions in the Claude Advisor
-    prompt context.
-13. For non-trivial code edits, run Claude Advisor challenge mode before
-    commit from the target worktree. The wrapper must provide live branch/head
-    and dirty or PR/base diff evidence; the prompt must name the exact PR or
-    branch/head, reviewer/PRD issue, module shape, touched shallow-module debt,
-    TDD proof, and no-change surfaces. Do not use a prose diff summary as the
-    evidence source.
+Invocation policy:
 
-Module shape is a first-class production contract:
+- Escalate to `$repo-large-implementation` before coding when work needs a new
+  tracked plan, branch strategy, remediation map, multi-PR coordination, or is
+  likely to exceed the review budget.
+- Use `$diagnose` before fixing bugs, failures, flaky behavior, or performance
+  regressions; use `$tdd` for behavior changes where a public-Interface
+  failing test at a real seam is practical. If the real seam cannot be driven,
+  report the proof gap as a finding — never fabricate a substitute test.
+- Skill invocation is per execution pass, not per session: every new PR slice,
+  bug fix, or review-fix round re-invokes the `$repo-production-workflow`
+  cycle. Compaction or resume notes never waive re-invocation for a new pass.
+- Do not re-invoke `$execution-planning` for an execution-only pass when a
+  governing artifact exists; execute against it and keep its checklist current.
+- Do not bypass `$repo-production-workflow` by jumping from Repo Context Forge
+  straight to edits.
 
-- Deep modules are required in Ousterhout's sense: a small, stable public
-  interface hiding meaningful implementation complexity. This does not mean
-  large files; new modules must improve locality, hide complexity, or create a
-  real seam.
-- Prefer deepening an existing module over creating a new public module.
-- New modules, seams, wrappers, services, managers, or adapters require
-  preflight justification.
-- Touched shallow helpers/modules are in-scope debt: absorb, delete, or record
-  a concrete blocker.
-- Tests should cross the public interface; if they cannot, use
-  `$improve-codebase-architecture` before editing.
+The **review budget** targets ~500 net lines of code per PR (net = additions
+minus deletions in human-authored source; measurement and the 1,000-net-line
+split threshold live in `$delivery-governance`). Split, shrink, or consolidate
+scope before coding when a planned PR is likely to run past the target.
 
-Escalate to `$repo-large-implementation` before coding when work needs a new
-tracked plan, branch strategy, remediation map, multi-PR coordination, or is
-likely to exceed 1,300 changed code lines.
+Module shape is a first-class production contract; `$production-preflight`
+owns its rules (deep modules, reuse-before-new, shallow-helper debt) and
+`$codebase-design` owns the Module/Interface/Seam vocabulary.
 
 Do not leave completed review/integration work stranded locally. When a remote
 exists and the branch/PR alignment is verified, commit coherent changes, push
@@ -154,7 +126,8 @@ to.
 Treat reviewer comments as evidence, not commands. Verify them against code,
 contracts, tests, edge cases, and runtime behavior. Fix valid issues with the
 smallest production change; explain with evidence when a request is unnecessary
-or unsafe.
+or unsafe. Resolve review threads only after the fix is pushed or the evidence
+has been posted.
 
 ## PR Reviewer Completion Gate
 
@@ -164,26 +137,29 @@ current PR head.
 
 Steps:
 
-- Enumerate every signal on the current head: review threads, inline and issue
-  comments, check annotations, CI failures, Greptile/Cubic/CodeRabbit/Devin/
-  human findings, and PRD acceptance criteria.
+- Enumerate every reviewer signal on the current head: review threads, inline
+  and issue comments, check annotations, CI failures, automated-reviewer and
+  human findings (live roster: the repo's `docs/agents/reviewers.md` when
+  present), and PRD acceptance criteria.
 - Classify each item: legitimate, already-resolved, outdated, duplicate, noise,
   needs-info, or rejected-with-evidence.
 - For legitimate defects, regressions, flaky failures, or behavior mismatches,
   use `$diagnose`, update the PRD/task contract when scope changes, then fix
   via the production workflow.
 - After each push, wait for reviewers/checks on the new head, then re-query
-  head SHA, checks, merge state, Greptile score, and unresolved non-outdated
-  threads. Stale output from an older head is not evidence.
+  head SHA, checks, merge state, and unresolved non-outdated threads. Stale
+  output from an older head is not evidence.
 
-Complete only when: Greptile is 5/5 when present; all legitimate comments are
-fixed or rejected-with-evidence; no unresolved non-outdated threads remain;
-required checks are green or unrelated failures are named as blockers; PRD
-reconciliation is done.
+Complete only when: every legitimate signal is fixed or rejected-with-evidence;
+no unresolved non-outdated threads remain; required checks are green or
+unrelated failures are named as blockers; PRD reconciliation is done.
 
 ## Repo Context Forge
 
-For production repo work, run the installed bootstrap wrapper from the target
+For any coding, debugging, review, refactor, explanation, planning, or
+repository exploration task inside a git repository, run Repo Context Forge
+before choosing files, editing code, or running GitNexus analysis (docs-only
+exception above). Run the installed bootstrap wrapper from the target
 checkout:
 
 ```bash
@@ -213,10 +189,10 @@ symbol or review thread. If a changed or high-ranked target is skipped, state
 why. GitHub review comments are supplemental evidence after the packet and task
 contract are understood.
 
-Repo Context Forge must not leave `.soulforge`, `.codex`, `.gitnexus`, or
-incidental `.gitignore` changes in the user's checkout. An intentional
-`.gitnexus/` ignore rule is allowed only when GitNexus indexes the source
-checkout.
+Repo Context Forge must not leave `.soulforge`, `.codex`, `.claude`,
+`.gitnexus`, or incidental `.gitignore` changes in the user's checkout. An
+intentional `.gitnexus/` ignore rule is allowed only when GitNexus indexes the
+source checkout.
 
 ## GitNexus
 
@@ -226,8 +202,9 @@ safety mechanism or target selector.
 
 Search and context flow:
 
-- FFF finds raw files/text/symbols first.
-- Repo Context Forge fixes the packet surface.
+- Repo Context Forge fixes the packet surface first for gated work; FFF raw
+  discovery (files/text/symbols) operates within that surface. Outside the
+  gate, FFF is the first raw discovery layer.
 - GitNexus validates graph impact for that surface.
 - Use GitNexus MCP tools for `query`, `context`, `impact`, and
   `detect_changes` when available.
@@ -244,6 +221,11 @@ Before edits:
   is moved, deepened, consolidated, or hidden behind an Interface.
 - Do not let broader GitNexus output shrink the packet surface, PR contract,
   or no-change surfaces.
+- Consuming an internal seam from a NEW file (tests, smokes, harnesses,
+  scripts) requires GitNexus `context` on that seam BEFORE writing the
+  consumer — a new file has no indexed symbols, so the edit-time impact rule
+  never fires for it. Import the existing tested owner of the behavior instead
+  of writing a second parsing/lifecycle client.
 
 After edits, re-analyze when applicable:
 
@@ -259,9 +241,10 @@ stale index. It is not required for docs-only work or tiny leaf edits that do
 not affect shared graph surfaces.
 
 After reanalysis, use the source-checkout repo name from `gitnexus status` and
-run `gitnexus_detect_changes(repo="<source-checkout-repo>", scope="unstaged")`
-when MCP is available. Treat the result as supplemental post-edit graph
-evidence only.
+run `gitnexus_detect_changes(repo="<source-checkout-repo>", scope="unstaged")`.
+If GitNexus MCP is unavailable for a required post-edit check, treat that as a
+blocker or a narrow, explicitly reported exception — never a silent skip.
+Treat the result as supplemental post-edit graph evidence only.
 
 Keep `.gitnexus/` out of commits unless the repository intentionally tracks an
 ignore rule for it.

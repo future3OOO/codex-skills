@@ -12,8 +12,8 @@ cwd="$PWD"
 fresh=0
 budget="300"
 base_ref=""
-advisor_model="${CLAUDE_ADVISOR_MODEL:-fable}"
-advisor_fallback_model="${CLAUDE_ADVISOR_FALLBACK_MODEL:-claude-opus-4-8}"
+advisor_model="${CLAUDE_ADVISOR_MODEL:-claude-fable-5}"
+advisor_fallback_model="${CLAUDE_ADVISOR_FALLBACK_MODEL:-claude-fable-5}"
 codex_model="${CODEX_ADVISOR_MODEL:-}"
 write_mode=0
 full_tools=0
@@ -364,7 +364,7 @@ elif [[ "$write_mode" -eq 1 ]]; then
   permission_args=(--permission-mode acceptEdits)
   tool_args=(
     --allowed-tools
-    "Read Grep Glob Edit Write MultiEdit NotebookEdit Bash(git diff:*) Bash(git status:*) Bash(git branch:*) Bash(git rev-parse:*) Bash(git grep:*) Bash(rg:*) Bash(ls:*) Bash(sed:*) Bash(cat:*) Bash(npm test:*) Bash(npm run:*) Bash(pnpm test:*) Bash(pnpm run:*) Bash(pytest:*) Bash(cargo test:*)"
+    "Read Grep Glob Edit Write NotebookEdit Bash(git diff:*) Bash(git status:*) Bash(git branch:*) Bash(git rev-parse:*) Bash(git grep:*) Bash(rg:*) Bash(ls:*) Bash(sed:*) Bash(cat:*) Bash(npm test:*) Bash(npm run:*) Bash(pnpm test:*) Bash(pnpm run:*) Bash(pytest:*) Bash(cargo test:*)"
     --disallowed-tools
     "Bash(git commit:*) Bash(git push:*) Bash(git reset:*) Bash(git checkout:*) Bash(git clean:*) Bash(rm:*) Bash(sudo:*) Bash(curl:*) Bash(wget:*)"
   )
@@ -376,7 +376,7 @@ else
     --allowed-tools
     "Read Grep Glob Bash(git diff:*) Bash(git status:*) Bash(git branch:*) Bash(git rev-parse:*) Bash(gh issue view:*) Bash(gh pr view:*) Bash(gh run view:*) Bash(rg:*) Bash(ls:*) Bash(sed:*) Bash(cat:*)"
     --disallowed-tools
-    "Edit Write MultiEdit NotebookEdit"
+    "Edit Write NotebookEdit"
   )
 fi
 
@@ -413,19 +413,57 @@ Additional context from stdin:
 ${stdin_context}"
 fi
 
+advisor_output=""
+advisor_status=0
 if [[ "$provider" == "codex" ]]; then
   codex_args=(exec --sandbox read-only -C "$session_cwd" --ephemeral)
   if [[ -n "$codex_model" ]]; then
     codex_args+=(--model "$codex_model")
   fi
-  printf '%s' "$prompt" | codex "${codex_args[@]}" -
+  set +e
+  advisor_output="$(printf '%s' "$prompt" | codex "${codex_args[@]}" -)"
+  advisor_status=$?
+  set -e
 else
-  printf '%s' "$prompt" | claude -p \
-    --model "$advisor_model" \
-    --fallback-model "$advisor_fallback_model" \
-    --output-format text \
-    --append-system-prompt "$append_prompt" \
-    ${permission_args[@]+"${permission_args[@]}"} \
-    ${tool_args[@]+"${tool_args[@]}"} \
-    ${session_args[@]+"${session_args[@]}"}
+  run_claude_advisor() {
+    printf '%s' "$prompt" | claude -p \
+      --model "$advisor_model" \
+      --fallback-model "$advisor_fallback_model" \
+      --output-format text \
+      --append-system-prompt "$append_prompt" \
+      ${permission_args[@]+"${permission_args[@]}"} \
+      ${tool_args[@]+"${tool_args[@]}"} \
+      "$@"
+  }
+  capture_claude_advisor() {
+    local stderr_file
+    stderr_file="$(mktemp)"
+    set +e
+    advisor_output="$(run_claude_advisor "$@" 2>"$stderr_file")"
+    advisor_status=$?
+    set -e
+    advisor_stderr="$(<"$stderr_file")"
+    rm -f "$stderr_file"
+  }
+  advisor_stderr=""
+  capture_claude_advisor "${session_args[@]}"
+  if [[ "$session_mode" == "resume" && ( "$advisor_output" == *"No conversation found with session ID:"* || "$advisor_stderr" == *"No conversation found with session ID:"* ) ]]; then
+    sid="$(new_session_id)"
+    printf '%s\n' "$sid" > "$sid_file"
+    printf 'claude_advisor_session_recovery reason=stale-resume sid_prefix=%s\n' "${sid:0:8}" >&2
+    capture_claude_advisor --session-id "$sid"
+  fi
+  if [[ -n "$advisor_stderr" ]]; then
+    printf '%s\n' "$advisor_stderr" >&2
+  fi
 fi
+
+if [[ "$advisor_status" -ne 0 ]]; then
+  printf 'error: %s advisor command failed (exit %s)\n' "$provider" "$advisor_status" >&2
+  exit "$advisor_status"
+fi
+if [[ -z "$(printf '%s' "$advisor_output" | tr -d '[:space:]')" ]]; then
+  printf 'error: %s advisor returned empty output\n' "$provider" >&2
+  exit 1
+fi
+printf '%s\n' "$advisor_output"

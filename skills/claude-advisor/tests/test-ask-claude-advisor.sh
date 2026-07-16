@@ -26,6 +26,16 @@ set -euo pipefail
 } > "${CLAUDE_STUB_ARGV:?}"
 
 cat > "${CLAUDE_STUB_PROMPT:?}"
+if [[ "${CLAUDE_STUB_EMPTY:-0}" == "1" ]]; then
+  exit 0
+fi
+if [[ -n "${CLAUDE_STUB_FAIL:-}" ]]; then
+  exit "$CLAUDE_STUB_FAIL"
+fi
+if [[ "${CLAUDE_STUB_STALE_RESUME:-0}" == "1" ]] && printf '%s\n' "$@" | grep -Fx -- '--resume' >/dev/null; then
+  printf 'No conversation found with session ID: stale-test-session\n' >&2
+  exit 1
+fi
 printf 'CLAUDE_STUB_OUTPUT\n'
 STUB
 chmod +x "$stub_dir/claude"
@@ -156,7 +166,40 @@ first_sid="$(session_id_for_slug cass "$skill_dir")"
 assert_contains "$CLAUDE_STUB_ARGV" "--session-id"
 assert_contains "$CLAUDE_STUB_ARGV" "$first_sid"
 
-run_advisor --provider codex --slug cass --phase precommit-challenge --cwd "$skill_dir" --base-ref HEAD -- "Question: codex challenge"
+export CLAUDE_STUB_STALE_RESUME=1
+run_advisor --slug cass --cwd "$skill_dir" -- "Question: stale resume"
+recovered_sid="$(session_id_for_slug cass "$skill_dir")"
+[[ "$recovered_sid" != "$first_sid" ]] || fail "stale resume did not rotate the session id"
+assert_contains "$stdout_file" "CLAUDE_STUB_OUTPUT"
+assert_not_contains "$stdout_file" "No conversation found"
+assert_contains "$stderr_file" "claude_advisor_session_recovery reason=stale-resume"
+unset CLAUDE_STUB_STALE_RESUME
+first_sid="$recovered_sid"
+
+export CLAUDE_STUB_EMPTY=1
+if run_advisor --slug empty-output --cwd "$skill_dir" -- "Question: empty output"; then
+  fail "empty Claude output should fail closed"
+fi
+assert_contains "$stderr_file" "error: claude advisor returned empty output"
+unset CLAUDE_STUB_EMPTY
+
+export CLAUDE_STUB_FAIL=7
+if run_advisor --slug failed-provider --cwd "$skill_dir" -- "Question: provider failure"; then
+  fail "failed Claude command should fail closed"
+fi
+assert_contains "$stderr_file" "error: claude advisor command failed (exit 7)"
+unset CLAUDE_STUB_FAIL
+
+git_tmp="$tmp_dir/git-worktree"
+mkdir -p "$git_tmp"
+git -C "$git_tmp" init -q
+git -C "$git_tmp" config user.email "test@example.com"
+git -C "$git_tmp" config user.name "Test User"
+printf 'x\n' > "$git_tmp/file.txt"
+git -C "$git_tmp" add file.txt
+git -C "$git_tmp" commit -q -m init
+
+run_advisor --provider codex --slug cass --phase precommit-challenge --cwd "$git_tmp" --base-ref HEAD -- "Question: codex challenge"
 assert_contains "$stdout_file" "CODEX_STUB_OUTPUT"
 assert_contains "$stderr_file" "codex_advisor_session"
 assert_contains "$stderr_file" "provider=codex"
@@ -165,7 +208,7 @@ assert_contains "$CODEX_STUB_ARGV" "exec"
 assert_contains "$CODEX_STUB_ARGV" "--sandbox"
 assert_contains "$CODEX_STUB_ARGV" "read-only"
 assert_contains "$CODEX_STUB_ARGV" "-C"
-assert_contains "$CODEX_STUB_ARGV" "$skill_dir"
+assert_contains "$CODEX_STUB_ARGV" "$git_tmp"
 assert_contains "$CODEX_STUB_ARGV" "--ephemeral"
 assert_contains "$CODEX_STUB_ARGV" "-"
 assert_contains "$CODEX_STUB_PROMPT" "Checkpoint Interface: precommit-challenge"
@@ -284,9 +327,11 @@ assert_contains "$CLAUDE_STUB_PROMPT" "test surface"
 assert_contains "$CLAUDE_STUB_PROMPT" "no-change surfaces"
 
 run_advisor --slug cass --cwd "$skill_dir" --write -- "Task: write mode"
+assert_contains "$CLAUDE_STUB_ARGV" "claude-fable-5"
 assert_contains "$CLAUDE_STUB_ARGV" "--permission-mode"
 assert_contains "$CLAUDE_STUB_ARGV" "acceptEdits"
-assert_contains "$CLAUDE_STUB_ARGV" "Edit Write MultiEdit NotebookEdit"
+assert_contains "$CLAUDE_STUB_ARGV" "Edit Write NotebookEdit"
+assert_not_contains "$CLAUDE_STUB_ARGV" "MultiEdit"
 assert_contains "$CLAUDE_STUB_ARGV" "Bash(git commit:*)"
 
 if run_advisor --slug cass --phase preflight-advice --cwd "$skill_dir" --write -- "Task: invalid"; then
@@ -294,14 +339,6 @@ if run_advisor --slug cass --phase preflight-advice --cwd "$skill_dir" --write -
 fi
 assert_contains "$stderr_file" "error: --phase is only valid for read-only advisor mode"
 
-git_tmp="$tmp_dir/git-worktree"
-mkdir -p "$git_tmp"
-git -C "$git_tmp" init -q
-git -C "$git_tmp" config user.email "test@example.com"
-git -C "$git_tmp" config user.name "Test User"
-printf 'x\n' > "$git_tmp/file.txt"
-git -C "$git_tmp" add file.txt
-git -C "$git_tmp" commit -q -m init
 run_advisor --slug cass --cwd "$git_tmp" --full-tools -- "Task: full tools"
 assert_contains "$CLAUDE_STUB_ARGV" "--permission-mode"
 assert_contains "$CLAUDE_STUB_ARGV" "bypassPermissions"

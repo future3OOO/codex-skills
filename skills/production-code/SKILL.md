@@ -51,6 +51,9 @@ PYTHONDONTWRITEBYTECODE=1 python3 "$HOME/.codex/skills/production-code/scripts/c
 - Never leave `TODO`, `FIXME`, `HACK`, placeholder stubs, dummy implementations, fake adapters, or temporary bypasses in shippable code.
 - Treat uncertainty as a stop-and-verify condition, not a reason to guess.
 - Treat review comments as evidence to verify against the code and contract, not authority to obey blindly.
+- Do not engineer for theoretical risks: a theoretical risk with no demonstrated failure is a report line, not a system. No guards, fallbacks, retries, or configuration for failures nobody has demonstrated.
+- Stay on task: if the cumulative diff grows past roughly 3× what the task implies, stop and justify the overrun before continuing.
+- Tests in the changed surface must cross real production seams; never add mock, stub, fake-collaborator, or fixture-only tests (the `$tdd` skill owns the full rules).
 
 ## Data, Types, and Boundaries
 
