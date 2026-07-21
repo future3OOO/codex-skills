@@ -164,6 +164,7 @@ assert_contains "$stderr_file" "normalized_slug=cass"
 assert_contains "$stderr_file" "mode=create"
 assert_contains "$stderr_file" "phase=none"
 assert_contains "$stderr_file" "warnings=none"
+assert_contains "$stderr_file" "claude_advisor_complete status=0 provider=claude"
 first_sid="$(session_id_for_slug cass "$skill_dir")"
 assert_contains "$CLAUDE_STUB_ARGV" "--session-id"
 assert_contains "$CLAUDE_STUB_ARGV" "$first_sid"
@@ -183,6 +184,7 @@ if run_advisor --slug empty-output --cwd "$skill_dir" -- "Question: empty output
   fail "empty Claude output should fail closed"
 fi
 assert_contains "$stderr_file" "error: claude advisor returned empty output"
+assert_not_contains "$stderr_file" "claude_advisor_complete"
 unset CLAUDE_STUB_EMPTY
 
 export CLAUDE_STUB_FAIL=7
@@ -190,6 +192,7 @@ if run_advisor --slug failed-provider --cwd "$skill_dir" -- "Question: provider 
   fail "failed Claude command should fail closed"
 fi
 assert_contains "$stderr_file" "error: claude advisor command failed (exit 7)"
+assert_not_contains "$stderr_file" "claude_advisor_complete"
 unset CLAUDE_STUB_FAIL
 
 git_tmp="$tmp_dir/git-worktree"
@@ -200,10 +203,30 @@ git -C "$git_tmp" config user.name "Test User"
 printf 'x\n' > "$git_tmp/file.txt"
 git -C "$git_tmp" add file.txt
 git -C "$git_tmp" commit -q -m init
+git -C "$git_tmp" branch base
+printf 'x\ny\n' > "$git_tmp/file.txt"
+git -C "$git_tmp" add file.txt
+git -C "$git_tmp" commit -q -m feature
+git -C "$git_tmp" branch --set-upstream-to=base >/dev/null
+
+run_advisor --slug generic-diff --cwd "$git_tmp" -- "Question: generic advice"
+assert_not_contains "$CLAUDE_STUB_PROMPT" "PR/base diff ref:"
+
+run_advisor --slug preflight-diff --phase preflight-advice --cwd "$git_tmp" -- "Question: scope advice"
+assert_not_contains "$CLAUDE_STUB_PROMPT" "PR/base diff ref:"
+
+run_advisor --slug explicit-diff --cwd "$git_tmp" --base-ref base -- "Question: explicit diff"
+assert_contains "$CLAUDE_STUB_PROMPT" "PR/base diff ref: base...HEAD"
+assert_contains "$CLAUDE_STUB_PROMPT" "+y"
+
+run_advisor --slug precommit-diff --phase precommit-challenge --cwd "$git_tmp" -- "Question: challenge diff"
+assert_contains "$CLAUDE_STUB_PROMPT" "PR/base diff ref: base...HEAD"
+assert_contains "$CLAUDE_STUB_PROMPT" "+y"
 
 run_advisor --provider codex --slug cass --phase precommit-challenge --cwd "$git_tmp" --base-ref HEAD -- "Question: codex challenge"
 assert_contains "$stdout_file" "CODEX_STUB_OUTPUT"
 assert_contains "$stderr_file" "codex_advisor_session"
+assert_contains "$stderr_file" "claude_advisor_complete status=0 provider=codex"
 assert_contains "$stderr_file" "provider=codex"
 assert_contains "$stderr_file" "phase=precommit-challenge"
 assert_contains "$CODEX_STUB_ARGV" "exec"

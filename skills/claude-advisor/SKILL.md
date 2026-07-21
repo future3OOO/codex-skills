@@ -23,6 +23,49 @@ Use the wrapper by default:
 The wrapper streams the composed prompt to Claude over stdin, so large diffs do
 not hit shell or OS argument-length limits.
 
+## Required Codex Execution
+
+Preserve the complete nested command result when invoking the wrapper through
+`functions.exec`. Never render only `result.output`; doing so discards a live
+`session_id` and the final `exit_code`:
+
+In this host, `functions.exec` is the outer tool,
+`tools.exec_command`/`tools.write_stdin` are its nested operations, and
+`functions.wait` resumes an outer cell.
+
+```javascript
+const result = await tools.exec_command({
+  cmd: "/home/prop_/.codex/skills/claude-advisor/scripts/ask-claude-advisor.sh --slug '<task>' --cwd '<worktree>' -- 'Question: <question>'",
+  workdir: "<worktree>",
+  yield_time_ms: 30000,
+  max_output_tokens: 6000,
+});
+text(JSON.stringify(result));
+```
+
+Apply the **live-handle invariant**: treat the call as running until the nested
+result contains `exit_code`. If `functions.exec` yields a cell ID, wait on that
+exact cell with `functions.wait`. If the nested result contains `session_id`
+without `exit_code`, continue that exact command session with
+`tools.write_stdin` and again render the complete result. Repeat as needed.
+Never retry, start a fallback, or start a second wrapper call with the same slug
+while either handle is live.
+
+```javascript
+const next = await tools.write_stdin({
+  session_id: result.session_id,
+  chars: "",
+  yield_time_ms: 30000,
+  max_output_tokens: 6000,
+});
+text(JSON.stringify(next));
+```
+
+Success requires all three signals: `exit_code=0`, non-empty advisor stdout,
+and the final stderr marker
+`claude_advisor_complete status=0 provider=<provider>`. Startup session/model
+lines are metadata, not completion.
+
 Use Codex Advisor as the fallback provider without changing the prompt contract:
 
 ```bash
@@ -290,6 +333,12 @@ worktree.
 The Claude CLI has no `--cwd` flag. Use the wrapper's `--cwd`; without the
 wrapper, `cd` into the target worktree before running `claude -p`.
 
+The wrapper attaches staged and unstaged changes to every consultation. It
+infers a PR/upstream base diff only for `precommit-challenge`; pass
+`--base-ref` explicitly when another consultation needs committed branch
+changes as evidence. For a design-only question that must exclude branch
+history, omit `--base-ref`.
+
 Without the wrapper, keep Claude read-only, mirror the wrapper policy, and pipe
 the prompt over stdin. The tool-list flags are variadic, so a trailing
 positional prompt can be consumed as another tool rule:
@@ -338,13 +387,8 @@ merge, rename, delete, or reconcile old `.sid` files.
 
 ## Reporting
 
-Wrapper success requires a final `exit_code=0` and non-empty advisor stdout.
-Startup stderr is metadata, not completion. If a command result has a
-`session_id` without `exit_code`, continue that exact command session with the
-environment's `write_stdin` or polling operation. If the orchestration layer
-yields a cell ID, wait on that exact cell (exposed as `functions.wait` in the
-current Codex environment). Repeat until `exit_code` appears. Do not retry or
-start a fallback while either handle is live.
+Apply the Required Codex Execution and live-handle invariant above before
+classifying the advisor result.
 
 Judge failure only from the final result: provider non-zero status or the exact
 `error: <provider> advisor returned empty output` line. Warning-only stderr is
