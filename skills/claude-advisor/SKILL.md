@@ -395,10 +395,13 @@ classifying the advisor result.
 Final success requires provider status zero, non-empty advice, and the exact
 terminal line `claude_advisor_complete status=0 provider=<provider>` on stderr.
 A missing, malformed, or non-terminal marker is incomplete, not success: do not
-accept the advice or advance the checkpoint. Continue a live handle; after a
-terminal result, classify the consultation as unavailable under the caller's
-explicit unavailable policy. Provider non-zero status or the exact
-`error: <provider> advisor returned empty output` line is failure. Warning-only
+accept the advice, advance the checkpoint, classify the consultation as
+unavailable, or start a fallback. Continue a live handle. After a terminal
+result, verify that the active wrapper implements the marker contract, correct
+any installed-version mismatch, and rerun the same slug once; if the marker is
+still invalid, surface a blocker. Provider non-zero status or the exact
+`error: <provider> advisor returned empty output` line is a terminal provider
+failure eligible for the caller's explicit unavailable policy. Warning-only
 stderr is not a provider failure when valid advice and the terminal marker are
 present.
 

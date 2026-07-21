@@ -39,7 +39,7 @@ success requires exit zero, non-empty advice, and the wrapper's final
    - Read-only and advisory only. Use the wrapper with a stable task slug; the challenge round in step 9 must resume this same slug/session.
    - Complete the Advisor Completion Invariant before proceeding or classifying the consult as unavailable.
    - Forward the task contract, packet targets, and GitNexus impact summary; ask whether the packet covers the correct Seams and surface area, whether the work deepens an existing Module or risks a shallow split, and whether `$improve-codebase-architecture` is needed before editing.
-   - If the advisor is unavailable, do not block on an advisory input: proceed under the remaining gates and state the skipped consult in the final response.
+   - Only a terminal provider failure classified by `$claude-advisor` qualifies as unavailable; then proceed under the remaining gates and state the skipped consult in the final response. A live or unknown handle and a missing, malformed, or non-terminal completion marker remain blocked under the Advisor Completion Invariant.
    - Advisor findings are advisory: validate them against the packet and GitNexus before adopting; feed confirmed missed seams into preflight.
 5. Run `$production-preflight` before the first tracked edit. This gate is unconditional for production code changes.
    - Anchor its proof to the Repo Context Forge packet, GitNexus checks, and confirmed advisor scope findings.
