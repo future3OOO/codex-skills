@@ -1,6 +1,6 @@
 ---
 name: claude-advisor
-description: Consult Claude as a one-on-one advisor or explicitly delegated write-capable worker from Codex using the local Claude CLI. Default mode is read-only; write mode is opt-in with `--write`; full tool access is opt-in with `--full-tools` and requires a delegated git worktree. Mandatory after Repo Context Forge and packet-scoped GitNexus checks in production repo workflow; also use when the user asks Codex to ask Claude or when architecture, migration, correctness, security, concurrency, idempotency, or non-obvious PR/worktree risk needs advisory review.
+description: Consult Claude as a one-on-one advisor or explicitly delegated write-capable worker from Codex using the local Claude CLI. Keep Claude read-only unless the user explicitly authorizes `--write` or `--full-tools`; full tool access also requires a delegated git worktree. Mandatory after Repo Context Forge and packet-scoped GitNexus checks in production repo workflow; also use when the user asks Codex to ask Claude or when architecture, migration, correctness, security, concurrency, idempotency, or non-obvious PR/worktree risk needs advisory review.
 ---
 
 # Claude Advisor
@@ -225,8 +225,10 @@ as an emergency substitute for Claude pressure, not as stronger authority.
 
 ## Modes
 
-Default mode is read-only advisor mode. It disallows write tools and restricts
-inspection to read/search/git-diff style commands through the wrapper.
+Keep Claude read-only unless the user explicitly authorizes Claude to modify
+files. Do not infer authorization from the task type, production workflow,
+worktree availability, or a request merely to consult or test Claude. Use the
+wrapper for every authorized write mode.
 
 The wrapper's read-only tool policy is the source of truth:
 
@@ -241,9 +243,13 @@ The wrapper's read-only tool policy is the source of truth:
 - `preflight-advice`: before code, after Repo Context Forge + GitNexus
 - `precommit-challenge`: after proof, before commit or push
 
-Use `--write` only when the user explicitly wants Claude to own a bounded edit.
-The prompt must name the task, target worktree, allowed tests, and whether
-commits or pushes are allowed. Default: no commit or push.
+When explicitly authorized, use `--write` only for a bounded edit. The prompt
+must name the task, target worktree, allowed tests, and whether commits or
+pushes are allowed. Default: no commit or push. Write mode permits `Edit`,
+`Write`, and `NotebookEdit`. For multiple changes, let Claude call `Edit` as
+often as the task requires. Do not add `MultiEdit` to tool rules unless it
+appears in the live `--tools default` inventory; an unknown name produces a
+warning.
 
 Write mode still blocks commits, pushes, destructive git operations, `rm`,
 `sudo`, package-download commands, and plan artifacts. Codex must inspect
@@ -255,7 +261,8 @@ rubric references. Do not ask it to invoke heavyweight repo execution
 skills, bootstrap scripts, or `/production-preflight` as a substitute workflow;
 the advisor should report missing preflight or Module-shape evidence instead.
 
-Use `--full-tools` only for delegated worker tasks in a dedicated git worktree:
+When explicitly authorized, use `--full-tools` only for delegated worker tasks
+in a dedicated git worktree:
 
 ```bash
 /home/prop_/.codex/skills/claude-advisor/scripts/ask-claude-advisor.sh \
@@ -283,10 +290,18 @@ worktree.
 The Claude CLI has no `--cwd` flag. Use the wrapper's `--cwd`; without the
 wrapper, `cd` into the target worktree before running `claude -p`.
 
-Without the wrapper, keep Claude read-only and mirror the wrapper policy:
+Without the wrapper, keep Claude read-only, mirror the wrapper policy, and pipe
+the prompt over stdin. The tool-list flags are variadic, so a trailing
+positional prompt can be consumed as another tool rule:
 
 ```bash
-claude -p --model claude-fable-5 --fallback-model claude-fable-5 --output-format text --allowed-tools "Read Grep Glob Bash(git diff:*) Bash(git status:*) Bash(git branch:*) Bash(git rev-parse:*) Bash(gh issue view:*) Bash(gh pr view:*) Bash(gh run view:*) Bash(rg:*) Bash(ls:*) Bash(sed:*) Bash(cat:*)" --disallowed-tools "Edit Write NotebookEdit" "Advisor mode. Do not create files. Stdout only. <=300 words. Question: ..."
+printf %s 'Advisor mode. Do not create files. Stdout only. <=300 words. Question: ...' |
+  claude -p \
+    --model claude-fable-5 \
+    --fallback-model claude-fable-5 \
+    --output-format text \
+    --allowed-tools "Read Grep Glob Bash(git diff:*) Bash(git status:*) Bash(git branch:*) Bash(git rev-parse:*) Bash(gh issue view:*) Bash(gh pr view:*) Bash(gh run view:*) Bash(rg:*) Bash(ls:*) Bash(sed:*) Bash(cat:*)" \
+    --disallowed-tools "Edit Write NotebookEdit"
 ```
 
 Never use `--bare`; it bypasses local auth and reports `Not logged in`. Avoid
@@ -323,9 +338,17 @@ merge, rename, delete, or reconcile old `.sid` files.
 
 ## Reporting
 
-Wrapper success requires exit zero and non-empty advisor stdout. Warning-only
-stderr is not a provider failure when stdout contains advice; provider
-non-zero status and empty or whitespace-only stdout fail closed.
+Wrapper success requires a final `exit_code=0` and non-empty advisor stdout.
+Startup stderr is metadata, not completion. If a command result has a
+`session_id` without `exit_code`, continue that exact command session with the
+environment's `write_stdin` or polling operation. If the orchestration layer
+yields a cell ID, wait on that exact cell (exposed as `functions.wait` in the
+current Codex environment). Repeat until `exit_code` appears. Do not retry or
+start a fallback while either handle is live.
+
+Judge failure only from the final result: provider non-zero status or the exact
+`error: <provider> advisor returned empty output` line. Warning-only stderr is
+not a provider failure when final stdout contains advice.
 
 When the advisor is unavailable or the Codex fallback provider is used, say so
 in the final report; a degraded or skipped round is never silent.
