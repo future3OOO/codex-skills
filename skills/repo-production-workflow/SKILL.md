@@ -9,6 +9,15 @@ Use this skill for production code changes inside a git repository.
 It is an orchestration skill and the single owner of the production sequence;
 it does not replace the referenced skills.
 
+## Advisor Completion Invariant
+
+At both Claude Advisor checkpoints, apply the `$claude-advisor` live-handle
+invariant: preserve the complete command result, continue the same cell and
+command session until `exit_code` appears, and never retry, fall back, or call
+the same slug again while a handle is live. Startup metadata is not advice;
+success requires exit zero, non-empty advice, and the wrapper's final
+`claude_advisor_complete` marker.
+
 ## Mandatory Order
 
 1. Run `$repo-context-forge` before choosing files, GitNexus queries, review findings, or edits.
@@ -28,6 +37,7 @@ it does not replace the referenced skills.
    - If a required GitNexus MCP tool is not currently loaded, run tool discovery for that exact capability before reporting it unavailable or falling back.
 4. Run the `$claude-advisor` scope check after the GitNexus checks and before preflight.
    - Read-only and advisory only. Use the wrapper with a stable task slug; the challenge round in step 9 must resume this same slug/session.
+   - Complete the Advisor Completion Invariant before proceeding or classifying the consult as unavailable.
    - Forward the task contract, packet targets, and GitNexus impact summary; ask whether the packet covers the correct Seams and surface area, whether the work deepens an existing Module or risks a shallow split, and whether `$improve-codebase-architecture` is needed before editing.
    - If the advisor is unavailable, do not block on an advisory input: proceed under the remaining gates and state the skipped consult in the final response.
    - Advisor findings are advisory: validate them against the packet and GitNexus before adopting; feed confirmed missed seams into preflight.
@@ -57,6 +67,7 @@ it does not replace the referenced skills.
    - After any fix, rerun the affected tests and the production-code gate.
 9. For non-trivial diffs (same threshold as step 8), run the `$claude-advisor` challenge round before any commit, push, PR open, or PR update.
    - Fix-only commits whose every change addresses a finding already confirmed in this pass's challenge round, code-review, or the PR reviewer loop do not need a new round; state the skipped round in the final response.
+   - Complete the Advisor Completion Invariant before committing, pushing, opening, or updating a PR.
    - Resume the SAME advisor slug/session from the step-4 scope check so the advisor retains the original scope. If the stored session is unreachable, run a fresh consult re-forwarding the step-4 payload plus the current diff and label it a fallback.
    - Use the wrapper from the target worktree so Claude receives live branch/head/PR metadata plus the actual dirty or PR/base diff; do not use a prose diff summary as the evidence source.
    - Identify the exact PR number or branch/head SHA, base ref when needed, reviewer/PRD issue text, TDD proof, and `$code-review` findings and dispositions.

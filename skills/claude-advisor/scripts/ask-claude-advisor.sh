@@ -310,15 +310,16 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   fi
 
   diff_ref="$base_ref"
-  if [[ -z "$diff_ref" && -n "$pr_base" && "$pr_base" != "null" ]]; then
-    if git rev-parse --verify "origin/$pr_base" >/dev/null 2>&1; then
-      diff_ref="origin/$pr_base"
-    else
-      diff_ref="$pr_base"
+  if [[ -z "$diff_ref" && "$phase" == "precommit-challenge" ]]; then
+    if [[ -n "$pr_base" && "$pr_base" != "null" ]]; then
+      if git rev-parse --verify "origin/$pr_base" >/dev/null 2>&1; then
+        diff_ref="origin/$pr_base"
+      else
+        diff_ref="$pr_base"
+      fi
+    elif [[ -n "$upstream" ]]; then
+      diff_ref="$upstream"
     fi
-  fi
-  if [[ -z "$diff_ref" && -n "$upstream" ]]; then
-    diff_ref="$upstream"
   fi
 
   staged_context=""
@@ -467,3 +468,4 @@ if [[ -z "$(printf '%s' "$advisor_output" | tr -d '[:space:]')" ]]; then
   exit 1
 fi
 printf '%s\n' "$advisor_output"
+printf 'claude_advisor_complete status=0 provider=%s\n' "$provider" >&2
