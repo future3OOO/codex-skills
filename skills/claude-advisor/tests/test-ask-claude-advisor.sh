@@ -104,6 +104,19 @@ assert_not_contains() {
   fi
 }
 
+assert_exact_final_line() {
+  local file="$1"
+  local expected="$2"
+  local actual
+  if ! grep -Fx -- "$expected" "$file" >/dev/null; then
+    printf 'Expected %s to contain exact line:\n%s\n\nActual:\n' "$file" "$expected" >&2
+    sed -n '1,220p' "$file" >&2
+    exit 1
+  fi
+  actual="$(tail -n 1 "$file")"
+  [[ "$actual" == "$expected" ]] || fail "expected final line '$expected', got '$actual'"
+}
+
 run_advisor() {
   : > "$CLAUDE_STUB_ARGV"
   : > "$CLAUDE_STUB_PROMPT"
@@ -164,7 +177,7 @@ assert_contains "$stderr_file" "normalized_slug=cass"
 assert_contains "$stderr_file" "mode=create"
 assert_contains "$stderr_file" "phase=none"
 assert_contains "$stderr_file" "warnings=none"
-assert_contains "$stderr_file" "claude_advisor_complete status=0 provider=claude"
+assert_exact_final_line "$stderr_file" "claude_advisor_complete status=0 provider=claude"
 first_sid="$(session_id_for_slug cass "$skill_dir")"
 assert_contains "$CLAUDE_STUB_ARGV" "--session-id"
 assert_contains "$CLAUDE_STUB_ARGV" "$first_sid"
@@ -226,7 +239,7 @@ assert_contains "$CLAUDE_STUB_PROMPT" "+y"
 run_advisor --provider codex --slug cass --phase precommit-challenge --cwd "$git_tmp" --base-ref HEAD -- "Question: codex challenge"
 assert_contains "$stdout_file" "CODEX_STUB_OUTPUT"
 assert_contains "$stderr_file" "codex_advisor_session"
-assert_contains "$stderr_file" "claude_advisor_complete status=0 provider=codex"
+assert_exact_final_line "$stderr_file" "claude_advisor_complete status=0 provider=codex"
 assert_contains "$stderr_file" "provider=codex"
 assert_contains "$stderr_file" "phase=precommit-challenge"
 assert_contains "$CODEX_STUB_ARGV" "exec"

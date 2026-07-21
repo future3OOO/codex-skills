@@ -369,11 +369,13 @@ create/resume/fresh mode, session id prefix, phase, and warning state. Claude
 stdout remains Claude's answer only.
 
 For the production pair (preflight advice → precommit challenge), reusing the
-same slug/session is required so the challenge retains the original scope; if
-the stored session is unreachable, replay the full original scope plus the
-current diff and label the round a fallback. Outside that pair, resume only
-when prior advice is load-bearing; start fresh when the task, repo, branch, or
-assumptions changed.
+same slug/session is required so the challenge retains the original scope. A
+fresh fallback is allowed only after the prior wrapper invocation returned a
+terminal `exit_code` and its stored session later proves unreachable; replay
+the full original scope plus the current diff and label the round a fallback.
+If the prior handle lacks `exit_code` or its state is unknown, keep it pending
+and surface the block. Outside that pair, resume only when prior advice is
+load-bearing; start fresh when the task, repo, branch, or assumptions changed.
 
 Use `--fresh` only when the current task's stored Claude session is stale or
 intentionally reset.
@@ -390,9 +392,15 @@ merge, rename, delete, or reconcile old `.sid` files.
 Apply the Required Codex Execution and live-handle invariant above before
 classifying the advisor result.
 
-Judge failure only from the final result: provider non-zero status or the exact
-`error: <provider> advisor returned empty output` line. Warning-only stderr is
-not a provider failure when final stdout contains advice.
+Final success requires provider status zero, non-empty advice, and the exact
+terminal line `claude_advisor_complete status=0 provider=<provider>` on stderr.
+A missing, malformed, or non-terminal marker is incomplete, not success: do not
+accept the advice or advance the checkpoint. Continue a live handle; after a
+terminal result, classify the consultation as unavailable under the caller's
+explicit unavailable policy. Provider non-zero status or the exact
+`error: <provider> advisor returned empty output` line is failure. Warning-only
+stderr is not a provider failure when valid advice and the terminal marker are
+present.
 
 When the advisor is unavailable or the Codex fallback provider is used, say so
 in the final report; a degraded or skipped round is never silent.
