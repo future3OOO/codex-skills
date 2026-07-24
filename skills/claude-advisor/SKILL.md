@@ -260,7 +260,7 @@ Provider environment:
 - `CODEX_ADVISOR_MODEL=<model>` or `--codex-model <model>`: optional Codex
   model override.
 - `CLAUDE_ADVISOR_MODEL` and `CLAUDE_ADVISOR_FALLBACK_MODEL`: optional Claude
-  provider overrides; both default to `claude-fable-5`.
+  provider overrides; both default to `claude-opus-5`.
 
 Codex Advisor is not model-diverse from Codex implementation work, but it is a
 separate session with read-only constraints and raw wrapper evidence. Treat it
@@ -346,8 +346,8 @@ positional prompt can be consumed as another tool rule:
 ```bash
 printf %s 'Advisor mode. Do not create files. Stdout only. <=300 words. Question: ...' |
   claude -p \
-    --model claude-fable-5 \
-    --fallback-model claude-fable-5 \
+    --model claude-opus-5 \
+    --fallback-model claude-opus-5 \
     --output-format text \
     --allowed-tools "Read Grep Glob Bash(git diff:*) Bash(git status:*) Bash(git branch:*) Bash(git rev-parse:*) Bash(gh issue view:*) Bash(gh pr view:*) Bash(gh run view:*) Bash(rg:*) Bash(ls:*) Bash(sed:*) Bash(cat:*)" \
     --disallowed-tools "Edit Write NotebookEdit"
@@ -382,7 +382,7 @@ intentionally reset.
 
 If Claude reports that a stored resume session no longer exists, the wrapper
 rotates that task's session ID and retries once as a fresh session. Do not treat
-that recoverable local-state condition as a Fable outage.
+that recoverable local-state condition as an Opus outage.
 
 Existing or previous split sessions are historical local state. Do not migrate,
 merge, rename, delete, or reconcile old `.sid` files.

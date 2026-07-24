@@ -365,7 +365,7 @@ assert_contains "$CLAUDE_STUB_PROMPT" "test surface"
 assert_contains "$CLAUDE_STUB_PROMPT" "no-change surfaces"
 
 run_advisor --slug cass --cwd "$skill_dir" --write -- "Task: write mode"
-assert_contains "$CLAUDE_STUB_ARGV" "claude-fable-5"
+assert_contains "$CLAUDE_STUB_ARGV" "claude-opus-5"
 assert_contains "$CLAUDE_STUB_ARGV" "--permission-mode"
 assert_contains "$CLAUDE_STUB_ARGV" "acceptEdits"
 assert_contains "$CLAUDE_STUB_ARGV" "Edit Write NotebookEdit"
