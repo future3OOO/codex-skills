@@ -102,8 +102,9 @@ surface map for what actually failed. This prevents bug-report prose from
 becoming the affected surface.
 
 Use the Module / Interface / Implementation / Depth / Seam / Adapter /
-Leverage / Locality vocabulary from `$improve-codebase-architecture`; do not
-redefine the glossary here.
+Leverage / Locality vocabulary from `$codebase-design`, which owns that
+glossary; do not redefine it here. `$improve-codebase-architecture` is the
+escalation target for doing the refactor, not the vocabulary source.
 
 Every field must cite evidence: file:line, command output, runtime artifact,
 reviewer link, or a named contract. If you cannot cite it, omit it. Do not
