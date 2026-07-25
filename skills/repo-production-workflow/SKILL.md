@@ -26,7 +26,7 @@ success requires exit zero, non-empty advice, and the wrapper's final
    - Use packet targets and coverage plan as the first-pass surface. FFF raw discovery (per the global search flow) operates within that surface, not ahead of it.
    - When the packet lists `delegation_tasks`, spawn the consolidated specialist before GitNexus calls or edits; pass the existing intake/packet summary and instruct it not to re-run Repo Context Forge or spawn further agents.
 2. State the task contract from the user request and packet surface.
-   - Name the changed behavior, module shape, public Interface, test surface, existing reuse path, and rejected shallow path or new-module justification.
+   - Name the changed behavior, module shape, public Interface, test surface, existing reuse path, and rejected shallow path or new-module justification, using the Module / Interface / Seam / Depth vocabulary `$codebase-design` owns.
    - Name verification surfaces, no-change surfaces, and skipped high-ranked targets with reasons.
    - Estimate whether the implementation can stay near the review-budget target (~500 net lines); if not, escalate to `$repo-large-implementation` before editing.
    - For bug, regression, or flaky-failure fixes, invoke `$diagnose` before preflight: no fix until the root cause is reproduced and stated as a testable hypothesis.
