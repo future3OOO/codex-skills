@@ -300,10 +300,13 @@ Write mode still blocks commits, pushes, destructive git operations, `rm`,
 Claude's resulting diff before relying on it. Treat the wrapper as the exact
 tool-policy source of truth.
 
-The advisor may use `/tdd` and `/improve-codebase-architecture` only as read-only
-rubric references. Do not ask it to invoke heavyweight repo execution
-skills, bootstrap scripts, or `/production-preflight` as a substitute workflow;
-the advisor should report missing preflight or Module-shape evidence instead.
+The advisor may use `/tdd`, `/codebase-design`, `/code-review`, and
+`/code-quality` only as read-only rubric references — `codebase-design` owns
+the Module/Interface/Seam vocabulary. Do not ask it to invoke heavyweight repo
+execution skills, bootstrap scripts, or `/production-preflight` as a substitute
+workflow; the advisor should report missing preflight or Module-shape evidence
+instead, and may recommend `/improve-codebase-architecture` as a follow-up
+without invoking it.
 
 When explicitly authorized, use `--full-tools` only for delegated worker tasks
 in a dedicated git worktree:
