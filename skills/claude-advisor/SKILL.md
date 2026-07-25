@@ -126,7 +126,7 @@ Command:
   -- "Question: Does the Repo Context Forge + GitNexus packet cover the PRD slice, correct Seams, and correct surface area before production preflight?"
 ```
 
-The advisor must use `/tdd` and `/improve-codebase-architecture` as read-only
+The advisor must use `/tdd` and `/codebase-design` as read-only
 rubric references, remind Codex how `$tdd` applies, and say whether a targeted
 Module/Interface/Seam decision is needed before editing. It must challenge
 whether the work deepens an existing Module, creates a real Seam, or risks
@@ -189,7 +189,7 @@ Challenge focus:
 - change belongs in the touched slice/worktree
 - proof is real behavior proof, not mock-heavy or fake-green coverage
 - no broad refactor, duplicate path, stale workaround, or speculative option
-- `$improve-codebase-architecture` stayed targeted to Module/Interface/Seam
+- Module/Interface/Seam critique stayed targeted; recommend `$improve-codebase-architecture` as a follow-up only when the shape problem is genuinely out of this slice's scope
 
 Use a larger budget for precommit challenges when the advisor must reconcile a real
 PRD/reviewer issue against a live diff. Keep simpler advisor questions near the

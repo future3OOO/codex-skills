@@ -385,7 +385,7 @@ phase_prompt="$(build_phase_prompt "$phase")"
 
 prompt="${mode_prompt}
 
-You may use /tdd and /improve-codebase-architecture as read-only rubric references. Do not invoke heavyweight repo execution skills, bootstrap scripts, or /production-preflight as a separate workflow unless explicitly asked. Preflight remains Codex-owned; report missing preflight/module-shape evidence instead of generating a substitute preflight.
+You may use /tdd and /codebase-design as read-only rubric references (codebase-design owns the Module/Interface/Seam vocabulary; do not invoke /improve-codebase-architecture — recommend it as a follow-up if the shape problem is out of slice scope). Do not invoke heavyweight repo execution skills, bootstrap scripts, or /production-preflight as a separate workflow unless explicitly asked. Preflight remains Codex-owned; report missing preflight/module-shape evidence instead of generating a substitute preflight.
 
 For review or pre-commit challenge requests, use the live git/PR context and diff collected by this wrapper as the evidence base. Critique Codex's claim against that evidence, not against Codex's prose summary. If the wrapper-provided diff shows no relevant change, say that directly and explain what exact evidence is missing or inconsistent.
 "
