@@ -102,7 +102,7 @@ build_phase_prompt() {
       cat <<'EOF'
 
 Checkpoint Interface: preflight-advice
-Rubric: LOAD /codebase-design (Module/Interface/Seam judgement) and /tdd (is the planned first failing test at a REAL seam?). Load no unrelated skills.
+Rubric: LOAD /codebase-design (Module/Interface/Seam judgement), /tdd (is the planned first failing test at a REAL seam?), and /code-quality (reuse-before-new: is this about to duplicate logic that already exists? — a before-code question, not only a diff question). Load no unrelated skills.
 
 Use this as the post-Repo Context Forge / post-GitNexus / pre-production-preflight checkpoint before edits. Challenge whether the Repo Context Forge + GitNexus packet covers the PRD slice, correct seams, and correct surface area before production preflight:
 - task contract
