@@ -49,7 +49,10 @@ exact cell with `functions.wait`. If the nested result contains `session_id`
 without `exit_code`, continue that exact command session with
 `tools.write_stdin` and again render the complete result. Repeat as needed.
 Never retry, start a fallback, or start a second wrapper call with the same slug
-while either handle is live.
+while either handle is live. When checking for strays, LIST first with
+`pgrep -af`, then kill explicit PIDs — a bare `pkill -f` matches your own
+shell (its command line contains the pattern) and self-kills while the real
+stray survives.
 
 ```javascript
 const next = await tools.write_stdin({
