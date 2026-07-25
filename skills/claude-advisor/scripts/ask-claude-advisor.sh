@@ -1,6 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Shared cross-tool recursion guard (2026-07-25). Advisor delegates are full
+# agents: unguarded, a delegate reads the repo, follows its production workflow
+# to the advisor step, and consults ANOTHER advisor. That loop is bidirectional
+# — Codex -> claude-advisor -> Claude -> codex-advisor -> Codex — so both
+# wrappers set and honour the SAME marker. Observed live: a codex exec delegate
+# attempted its own claude-advisor consult and was stopped only incidentally by
+# a read-only sandbox blocking a state write.
+if [[ -n "${ADVISOR_ACTIVE:-}${CODEX_ADVISOR_ACTIVE:-}" ]]; then
+  printf 'error: refusing nested advisor consult — you ARE the advisor delegate. Answer from the payload and your own reads; do not delegate onward.\n' >&2
+  exit 3
+fi
+export ADVISOR_ACTIVE=1
+
 usage() {
   printf 'Usage: %s [--provider claude|codex] [--slug name] [--phase preflight-advice|precommit-challenge] [--cwd path] [--fresh] [--budget words] [--base-ref ref] [--model model] [--fallback-model model] [--codex-model model] [--write] [--full-tools] -- "question"\n' "$0" >&2
 }
