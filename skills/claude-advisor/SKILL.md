@@ -126,8 +126,9 @@ Command:
   -- "Question: Does the Repo Context Forge + GitNexus packet cover the PRD slice, correct Seams, and correct surface area before production preflight?"
 ```
 
-The advisor must use `/tdd` and `/codebase-design` as read-only
-rubric references, remind Codex how `$tdd` applies, and say whether a targeted
+The advisor must load its per-checkpoint rubric (`/codebase-design` + `/tdd`
+before code; plus `/code-review` and `/code-quality` before commit) as
+read-only references, remind Codex how `$tdd` applies, and say whether a targeted
 Module/Interface/Seam decision is needed before editing. It must challenge
 whether the work deepens an existing Module, creates a real Seam, or risks
 shallow helper/service/manager/wrapper complexity.

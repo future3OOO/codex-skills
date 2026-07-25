@@ -102,6 +102,7 @@ build_phase_prompt() {
       cat <<'EOF'
 
 Checkpoint Interface: preflight-advice
+Rubric: LOAD /codebase-design (Module/Interface/Seam judgement) and /tdd (is the planned first failing test at a REAL seam?). Load no unrelated skills.
 
 Use this as the post-Repo Context Forge / post-GitNexus / pre-production-preflight checkpoint before edits. Challenge whether the Repo Context Forge + GitNexus packet covers the PRD slice, correct seams, and correct surface area before production preflight:
 - task contract
@@ -123,6 +124,7 @@ EOF
       cat <<'EOF'
 
 Checkpoint Interface: precommit-challenge
+Rubric: LOAD /code-review (Standards vs Spec axes and its smell baseline — Fake Test and Imaginary Risk are hard violations there), /codebase-design, /tdd, and /code-quality. Load no unrelated skills.
 
 Use this as the post-edit / post-proof / pre-commit checkpoint. Challenge whether the implementation satisfies the PRD slice and production contract without extra behavior or no-change surface drift:
 - exact PRD, issue, or reviewer finding
@@ -142,7 +144,7 @@ Challenge output:
 - Verdict: commit-ready, fix-before-commit, or context-mismatch
 - PRD reconciliation: implemented, missing, extra, and unproven outcomes
 - Reviewer coverage: Greptile/Cubic/CodeRabbit/Devin/human findings, when present
-- TDD check
+- TDD check: real red-green against a REAL production seam (any mock/stub/fixture-substitute collaborator = hard violation, state it plainly)
 - Module shape: public Interface, test surface, deep Module pressure, and any shallow unnecessary helper/service/manager/wrapper split
 - Minimality/bloat
 - Regression risk
@@ -383,8 +385,8 @@ elif [[ "$write_mode" -eq 1 ]]; then
     "Bash(git commit:*) Bash(git push:*) Bash(git reset:*) Bash(git checkout:*) Bash(git clean:*) Bash(rm:*) Bash(sudo:*) Bash(curl:*) Bash(wget:*)"
   )
 else
-  mode_prompt="Advisor mode. Do not create files. Do not edit files. Do not write plan artifacts. Stdout only. Answer in <=${budget} words."
-  append_prompt="Advisor mode: read-only; cite file:line when using repo evidence; flag uncertainty; no orders; stdout only."
+  mode_prompt="Advisor mode. Do not create files. Do not edit files. Do not write plan artifacts. HARD CRITERIA: a test that mocks, stubs, or fixture-substitutes a collaborator instead of crossing a real production seam is NOT proof — call it a hard violation, never a judgement call; and never demand a guard, fallback, retry, or config for a theoretical failure nobody has demonstrated — an undemonstrated risk is at most one report line, never a required change. Be terse: no restating the question, no speculative tangents, no hedging padding. Stdout only. Answer in <=${budget} words."
+  append_prompt="Advisor mode: read-only; cite file:line when using repo evidence; flag uncertainty; no orders; stdout only. Mock/stub/fixture-substitute collaborators are never proof; never require guards for undemonstrated failures; be terse."
   permission_args=()
   tool_args=(
     --allowed-tools
