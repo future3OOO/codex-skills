@@ -87,7 +87,8 @@ behavior, such as `AGENTS.md`, `CLAUDE.md`, or `docs/agents/`, should also run
 
 Use `$repo-production-workflow` as the default first skill for production
 work. It is the single owner of the execution sequence (Repo Context Forge →
-packet-scoped GitNexus → Claude Advisor scope check → `$production-preflight`
+`$diagnose` for bugs/regressions/perf → packet-scoped GitNexus → Claude Advisor
+scope check → `$production-preflight`
 → `$production-code` with `$tdd` through verification and conditional GitNexus
 reanalysis → `$code-review` → Claude Advisor challenge round for non-trivial
 diffs); this section owns only when skills fire.
