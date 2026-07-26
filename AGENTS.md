@@ -227,12 +227,6 @@ Search and context flow:
   discovery (files/text/symbols) operates within that surface. Outside the
   gate, FFF is the first raw discovery layer.
 - GitNexus validates graph impact for that surface.
-- `query` is optional discovery only, never seam evidence: it returns empty
-  past ~4 terms and cannot retrieve a symbol by exact name (measured
-  identically through Codex and Claude). Keep it to 2-4 keywords, and use
-  `context` whenever the name is known. An empty `processes: []` is not
-  evidence that no flow exists; process coverage is a small fraction of the
-  graph.
 - Use GitNexus MCP tools for `query`, `context`, `impact`, and
   `detect_changes` when available.
 - Use GitNexus CLI for indexing/admin only: `analyze`, `status`, `clean`, and
