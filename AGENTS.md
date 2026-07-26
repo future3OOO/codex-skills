@@ -130,6 +130,26 @@ smallest production change; explain with evidence when a request is unnecessary
 or unsafe. Resolve review threads only after the fix is pushed or the evidence
 has been posted.
 
+Before acting on ANY reviewer or automated finding, run two checks. They are
+unconditional and apply to one-line fixes, not only to passes that invoke
+`$production-preflight`. Severity labels are not a work queue: automated
+reviewers are reliable about what code *can* do and unreliable about whether it
+*does*. Check the **premise** by naming the finding's assumption about runtime,
+config, or installed state and verifying it against the live system with a
+command — a false premise is rejected with the measurement quoted and no code
+changes. Check **occurrence** by counting the failing shape in captured data,
+logs, or reachable callers — zero occurrences means report line, not change.
+
+Validating a finding is not validating a fix. Before shipping a change to a
+parser, matcher, predicate, or anything consuming external text or markup, run
+the NEW code over values already captured in the system and require zero
+regressions. A test written from the same assumption that produced the fix cannot
+detect its error; only the corpus can.
+
+Give every finding a disposition with evidence — fixed, rejected-with-evidence,
+or reported-not-actioned — where the reviewer loop can see it. A rejection
+without a measurement is indistinguishable from one ignored.
+
 ## PR Reviewer Completion Gate
 
 Commit/push/PR-update does not complete review work. Do not mark complete,
