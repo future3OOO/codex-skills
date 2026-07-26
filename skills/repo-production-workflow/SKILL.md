@@ -33,7 +33,9 @@ success requires exit zero, non-empty advice, and the wrapper's final
 3. Run the packet-listed GitNexus required checks.
    - Use the packet repo value and state it as the GitNexus authority for this packet.
    - Do not let broader GitNexus output shrink the packet surface.
-   - Before editing indexed symbols or shared contracts, run upstream impact; also run downstream impact when behavior is moved, deepened, consolidated, or hidden behind an Interface.
+   - Before editing indexed symbols or shared contracts, run upstream impact with `includeTests=true`; also run downstream impact when behavior is moved, deepened, consolidated, or hidden behind an Interface.
+   - Also run `context` on each changed target, for callers AND callees; `impact` is caller-only, so an impact-only pass cannot see the callee a change usually breaks.
+   - For shared-state work (same table, row, lease, claim token, or transition helper), run `context` on every symbol that mutates that state and compare their risk ratings; the writer you are not editing is often the riskier one.
    - If a required GitNexus MCP tool is not currently loaded, run tool discovery for that exact capability before reporting it unavailable or falling back.
 4. Run the `$claude-advisor` scope check after the GitNexus checks and before preflight.
    - Read-only and advisory only. Use the wrapper with a stable task slug; the challenge round in step 9 must resume this same slug/session.

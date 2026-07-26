@@ -240,6 +240,15 @@ Before edits:
   `impact(direction="upstream", includeTests=true)` on each changed target.
 - Also run `impact(direction="downstream", includeTests=true)` when behavior
   is moved, deepened, consolidated, or hidden behind an Interface.
+- Also run `context` on each changed target, for callers AND callees. `impact`
+  walks callers only, so an impact-only pass is structurally blind to callees —
+  and the thing a change actually breaks is usually a callee: the shared
+  writer, lock, or transition helper the edited symbol calls.
+- When the change touches shared state — the same table, row, file, lease,
+  claim token, or transition helper — run `context` on every symbol that
+  mutates that state and compare their risk ratings, not only the one being
+  edited. Two writers to one row is the case a single upstream impact call
+  always misses, and the second writer is routinely the higher-risk one.
 - Do not let broader GitNexus output shrink the packet surface, PR contract,
   or no-change surfaces.
 - Consuming an internal seam from a NEW file (tests, smokes, harnesses,
