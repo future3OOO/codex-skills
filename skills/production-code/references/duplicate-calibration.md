@@ -64,8 +64,8 @@ Three shell paths are reported as unreadable scope rather than clean, because
 no tokenizer proves what a comment or a heredoc interior is in shell:
 
 - `hooks/tests/run.sh`
-- `skills/claude-advisor/scripts/ask-claude-advisor.sh`
-- `skills/claude-advisor/tests/test-ask-claude-advisor.sh`
+- `skills/codex-advisor/scripts/ask-codex-advisor.sh`
+- `skills/codex-advisor/tests/test-ask-codex-advisor.sh`
 
 All three exact rules therefore report `status=incomplete` on this corpus and
 project `QG54-ANALYSIS-INCOMPLETE`. Reporting these as passed would claim a

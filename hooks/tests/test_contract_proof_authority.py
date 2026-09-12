@@ -57,7 +57,7 @@ class ContractProofAuthorityTests(unittest.TestCase):
         self.assertEqual(begun.returncode, 0, begun.stdout + begun.stderr)
         slug, workflow_id = json.loads(begun.stdout)["slug"], json.loads(begun.stdout)["workflowId"]
         identity = record_context_forge(self.repo, self.h.tmp)
-        record_advisor_result(identity, slug, workflow_id, "preflight", "claude-advisor", "completed")
+        record_advisor_result(identity, slug, workflow_id, "preflight", "codex-advisor", "completed")
         advisor_disposition(identity, slug, workflow_id, "preflight", "none")
         return slug, workflow_id
 
@@ -411,7 +411,7 @@ class ContractProofAuthorityTests(unittest.TestCase):
         # The prompt literal is the production artifact; its delivery to the
         # delegate is proven by the wrapper's captured-payload suite.
         marker = "FINAL_REVIEW_EVIDENCE_ONLY_CONTRACT_ABSENT"
-        script = (ROOT / "skills" / "claude-advisor" / "scripts" / "ask-claude-advisor.sh").read_text(encoding="utf-8")
+        script = (ROOT / "skills" / "codex-advisor" / "scripts" / "ask-codex-advisor.sh").read_text(encoding="utf-8")
         preflight, final = script.split("  final-review)\n", 1)
         clause = "do not require omitted Behavior Map, TDD, code-review, verification, preservation"
         self.assertIn(clause, final.split("esac", 1)[0], marker)

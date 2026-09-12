@@ -103,7 +103,7 @@ class MappedIntakeFailureTests(unittest.TestCase):
         workflow_id = str(state["workflowId"])
         identity = record_context_forge(self.repo, self.tmp)
         record_advisor_result(
-            identity, slug, workflow_id, "preflight", "claude-advisor", "completed"
+            identity, slug, workflow_id, "preflight", "codex-advisor", "completed"
         )
         advisor_disposition(identity, slug, workflow_id, "preflight", "none")
         preflight = self.tmp / "preflight.json"

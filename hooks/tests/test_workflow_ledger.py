@@ -106,7 +106,7 @@ class WorkflowLedgerTests(unittest.TestCase):
         record_context_forge(self.repo, self.tmp)
         workflow_id = str(state["workflowId"])
         for command in (
-            ("advisor-result", "--slug", slug, "--workflow-id", workflow_id, "--stage", "preflight", "--source", "claude-advisor", "--verdict", "completed"),
+            ("advisor-result", "--slug", slug, "--workflow-id", workflow_id, "--stage", "preflight", "--source", "codex-advisor", "--verdict", "completed"),
             ("advisor-disposition", "--slug", slug, "--workflow-id", workflow_id, "--stage", "preflight", "--findings", "none"),
         ):
             result = self.cli(*command, "--repo", str(self.repo))
@@ -141,7 +141,7 @@ class WorkflowLedgerTests(unittest.TestCase):
             "nextAction": "tdd",
             "repoContextForge": "passed",
             "gitnexus": "passed",
-            "advisorPreflight": {"source": "claude-advisor", "status": "completed", "findings": "none", "reason": None},
+            "advisorPreflight": {"source": "codex-advisor", "status": "completed", "findings": "none", "reason": None},
             "preflight": "passed",
             "preflightEvidence": str(evidence_path),
             "tdd": "pending",
@@ -801,7 +801,7 @@ class WorkflowLedgerTests(unittest.TestCase):
         refused = self.cli(
             "advisor-result", "--repo", str(self.repo),
             "--slug", "concurrent", "--workflow-id", str(inactive["workflowId"]),
-            "--stage", "preflight", "--source", "claude-advisor", "--verdict", "completed",
+            "--stage", "preflight", "--source", "codex-advisor", "--verdict", "completed",
         )
         self.assertEqual(refused.returncode, 2)
         self.assertIn("workflow instance", refused.stderr)

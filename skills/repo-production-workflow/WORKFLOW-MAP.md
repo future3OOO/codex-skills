@@ -138,7 +138,7 @@ readiness for the advisor phases without mutating anything.
 - preflight, production-code, and verification each carrying their producer's
   evidence reference;
 - code review recorded (delegate intake, or not required) with material findings addressed;
-- a context-matched final review from `claude-advisor` whose effective findings
+- a context-matched final review from `codex-advisor` whose effective findings
   are terminal: the immutable raw verdict remains evidence, but
   `fix-before-commit` is not a veto after closure;
 - no pending final rejection appeal and no re-raised finding awaiting its second disposition;

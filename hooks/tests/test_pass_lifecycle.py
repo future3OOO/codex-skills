@@ -21,7 +21,7 @@ if str(ROOT) not in sys.path:
 WORKFLOW = ROOT / "skills" / "repo-production-workflow" / "scripts" / "workflow.py"
 REARM = ROOT / "hooks" / "skill-discipline-rearm.py"
 QUALITY_GATE = ROOT / "skills" / "production-code" / "scripts" / "code_quality_gate.py"
-ADVISOR = ROOT / "skills" / "claude-advisor" / "scripts" / "ask-claude-advisor.sh"
+ADVISOR = ROOT / "skills" / "codex-advisor" / "scripts" / "ask-codex-advisor.sh"
 
 from hooks.lib.preflight_document import SECTIONS as PREFLIGHT_SECTIONS  # noqa: E402
 from hooks.tests.support import (  # noqa: E402
@@ -315,7 +315,7 @@ class PassLifecycleTests(unittest.TestCase):
     def advance_to_preflight(self, slug: str, wid: str) -> None:
         self.advance_to_context_forge()
         self.run_cli(
-            ("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "preflight", "--source", "claude-advisor", "--verdict", "completed"),
+            ("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "preflight", "--source", "codex-advisor", "--verdict", "completed"),
             ("advisor-disposition", "--slug", slug, "--workflow-id", wid, "--stage", "preflight", "--findings", "none"),
         )
         recorded = self.record_preflight(wid, self.preflight_document())
@@ -334,7 +334,7 @@ class PassLifecycleTests(unittest.TestCase):
         self.advance_to_verification(slug, wid)
         self.owner_phase("code-review", "passed", findings="none")
         self.run_cli(
-            ("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final", "--source", "claude-advisor", "--verdict", "commit-ready"),
+            ("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final", "--source", "codex-advisor", "--verdict", "commit-ready"),
             ("advisor-disposition", "--slug", slug, "--workflow-id", wid, "--stage", "final", "--findings", "none"),
             ("complete",),
         )
@@ -352,7 +352,7 @@ class PassLifecycleTests(unittest.TestCase):
         each test: it refreshes the manifest, so where it happens is the behavior."""
         self.run_cli(
             ("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final",
-             "--source", "claude-advisor", "--verdict", "commit-ready"),
+             "--source", "codex-advisor", "--verdict", "commit-ready"),
             ("advisor-disposition", "--slug", slug, "--workflow-id", wid, "--stage", "final", "--findings", "none"),
         )
 
@@ -686,7 +686,7 @@ class PassLifecycleTests(unittest.TestCase):
 
         result = self.cli(
             "advisor-result", "--slug", slug, "--workflow-id", wid,
-            "--stage", "preflight", "--source", "claude-advisor",
+            "--stage", "preflight", "--source", "codex-advisor",
             "--input", str(envelope),
             "--expected-candidate-tree", str(checkpoint_candidate),
         )
@@ -730,7 +730,7 @@ class PassLifecycleTests(unittest.TestCase):
                                            "MUTATION_RESPONSE_COMMITTED_STALE_CANDIDATE")
         slug, wid = "atomic-replay", self.begin_slug("atomic-replay"); self.advance_to_context_forge()
         replay = ["advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
-                  "--source", "claude-advisor", "--verdict", "completed", "--design-declaration", str(self.design_declaration)]
+                  "--source", "codex-advisor", "--verdict", "completed", "--design-declaration", str(self.design_declaration)]
         self.run_cli(tuple(replay)); self.assert_candidate_race_refused(replay, "IDEMPOTENT_REPLAY_RETURNED_STALE_CANDIDATE")
         self.begin_slug("before-racing-begin")
         self.assert_candidate_race_refused(["begin", "--slug", "racing-begin"], "BEGIN_RESPONSE_COMMITTED_STALE_CANDIDATE")
@@ -740,7 +740,7 @@ class PassLifecycleTests(unittest.TestCase):
                                             "--slug", slug, "--workflow-id", wid], "FINAL_SAMPLE_CONTRACT_OVERCLAIMED")
         slug, wid = "atomic-disposition", self.begin_slug("atomic-disposition"); self.advance_to_context_forge()
         self.run_cli(("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
-                      "--source", "claude-advisor", "--verdict", "completed"))
+                      "--source", "codex-advisor", "--verdict", "completed"))
         self.assert_candidate_race_refused(["advisor-disposition", "--slug", slug, "--workflow-id", wid,
                                             "--stage", "preflight", "--findings", "none"],
                                            "FINAL_SAMPLE_CONTRACT_OVERCLAIMED")
@@ -753,7 +753,7 @@ class PassLifecycleTests(unittest.TestCase):
         (self.repo / ".gitattributes").write_text("app.py filter=guard\n", encoding="utf-8")
         self.git("add", ".gitattributes"); self.git("commit", "-q", "-m", "configure filter")
         slug, wid = "guarded-writer", self.begin_slug("guarded-writer"); self.advance_to_context_forge()
-        self.run_cli(("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "preflight", "--source", "claude-advisor", "--verdict", "completed"),
+        self.run_cli(("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "preflight", "--source", "codex-advisor", "--verdict", "completed"),
                      ("advisor-disposition", "--slug", slug, "--workflow-id", wid, "--stage", "preflight", "--findings", "none"))
         payload = self.json_file("busy-preflight.json", self.preflight_document())
         holder = sqlite3.connect(database_path(resolve_repo_identity(self.repo))); holder.execute("BEGIN IMMEDIATE")
@@ -824,7 +824,7 @@ class PassLifecycleTests(unittest.TestCase):
         self.advance_to_context_forge()
         self.run_cli(
             ("advisor-result", "--slug", "preflight-echo", "--workflow-id", wid,
-             "--stage", "preflight", "--source", "claude-advisor", "--verdict", "completed"),
+             "--stage", "preflight", "--source", "codex-advisor", "--verdict", "completed"),
             ("advisor-disposition", "--slug", "preflight-echo", "--workflow-id", wid,
              "--stage", "preflight", "--findings", "none"),
         )
@@ -843,7 +843,7 @@ class PassLifecycleTests(unittest.TestCase):
 
         refused = self.cli(
             "advisor-result", "--slug", "review-to-final-window", "--workflow-id", wid,
-            "--stage", "final", "--source", "claude-advisor", "--verdict", "commit-ready",
+            "--stage", "final", "--source", "codex-advisor", "--verdict", "commit-ready",
         )
         self.assertEqual(refused.returncode, 2, refused.stdout + refused.stderr)
         self.assertIn("app.py", refused.stderr, "the refusal did not name the changed path")
@@ -917,7 +917,7 @@ class PassLifecycleTests(unittest.TestCase):
         )
         refused = self.cli(
             "advisor-result", "--slug", "mode-drift", "--workflow-id", wid,
-            "--stage", "final", "--source", "claude-advisor", "--verdict", "commit-ready",
+            "--stage", "final", "--source", "codex-advisor", "--verdict", "commit-ready",
         )
         self.assertEqual(refused.returncode, 2, refused.stdout + refused.stderr)
 
@@ -1122,7 +1122,7 @@ class PassLifecycleTests(unittest.TestCase):
 
         refused_final = self.cli(
             "advisor-result", "--slug", "legacy-manifest", "--workflow-id", wid, "--stage", "final",
-            "--source", "claude-advisor", "--verdict", "commit-ready",
+            "--source", "codex-advisor", "--verdict", "commit-ready",
         )
         self.assertEqual(refused_final.returncode, 2, refused_final.stdout + refused_final.stderr)
         self.assertIn("review-manifest-missing", refused_final.stderr)
@@ -1213,7 +1213,7 @@ class PassLifecycleTests(unittest.TestCase):
         self.advance_to_context_forge()
         self.run_cli(
             ("advisor-result", "--slug", "evidence-preflight", "--workflow-id", wid,
-             "--stage", "preflight", "--source", "claude-advisor", "--verdict", "completed"),
+             "--stage", "preflight", "--source", "codex-advisor", "--verdict", "completed"),
             ("advisor-disposition", "--slug", "evidence-preflight", "--workflow-id", wid,
              "--stage", "preflight", "--findings", "none"),
         )
@@ -1654,7 +1654,7 @@ class PassLifecycleTests(unittest.TestCase):
         wid = self.begin_slug("fresh-evidence")
         self.advance_to_context_forge()
         self.run_cli(
-            ("advisor-result", "--slug", "fresh-evidence", "--workflow-id", wid, "--stage", "preflight", "--source", "claude-advisor", "--verdict", "completed"),
+            ("advisor-result", "--slug", "fresh-evidence", "--workflow-id", wid, "--stage", "preflight", "--source", "codex-advisor", "--verdict", "completed"),
             ("advisor-disposition", "--slug", "fresh-evidence", "--workflow-id", wid, "--stage", "preflight", "--findings", "none"),
         )
 
@@ -1682,7 +1682,7 @@ class PassLifecycleTests(unittest.TestCase):
                          "the replacement instance inherited a recorded preflight")
         self.advance_to_context_forge()
         self.run_cli(
-            ("advisor-result", "--slug", "fresh-evidence", "--workflow-id", new_wid, "--stage", "preflight", "--source", "claude-advisor", "--verdict", "completed"),
+            ("advisor-result", "--slug", "fresh-evidence", "--workflow-id", new_wid, "--stage", "preflight", "--source", "codex-advisor", "--verdict", "completed"),
             ("advisor-disposition", "--slug", "fresh-evidence", "--workflow-id", new_wid, "--stage", "preflight", "--findings", "none"),
         )
         stale = self.record_preflight(wid, self.preflight_document())
@@ -1724,7 +1724,7 @@ class PassLifecycleTests(unittest.TestCase):
         wid = self.begin_slug("bare-preflight-tdd")
         self.advance_to_context_forge()
         self.run_cli(
-            ("advisor-result", "--slug", "bare-preflight-tdd", "--workflow-id", wid, "--stage", "preflight", "--source", "claude-advisor", "--verdict", "completed"),
+            ("advisor-result", "--slug", "bare-preflight-tdd", "--workflow-id", wid, "--stage", "preflight", "--source", "codex-advisor", "--verdict", "completed"),
             ("advisor-disposition", "--slug", "bare-preflight-tdd", "--workflow-id", wid, "--stage", "preflight", "--findings", "none"),
         )
         self.owner_phase("preflight", "passed")  # bare claim: status without evidence
@@ -1745,7 +1745,7 @@ class PassLifecycleTests(unittest.TestCase):
         wid = self.begin_slug("exit-honesty")
         self.advance_to_context_forge()
         self.run_cli(
-            ("advisor-result", "--slug", "exit-honesty", "--workflow-id", wid, "--stage", "preflight", "--source", "claude-advisor", "--verdict", "completed"),
+            ("advisor-result", "--slug", "exit-honesty", "--workflow-id", wid, "--stage", "preflight", "--source", "codex-advisor", "--verdict", "completed"),
             ("advisor-disposition", "--slug", "exit-honesty", "--workflow-id", wid, "--stage", "preflight", "--findings", "none"),
         )
 
@@ -1851,7 +1851,7 @@ class PassLifecycleTests(unittest.TestCase):
             (candidate, True), "SAME_TREE_REVIEW_INVALIDATED",
         )
         final = self.cli(
-            "advisor-result", "--slug", "pr2-replacement", "--workflow-id", wid, "--stage", "final", "--source", "claude-advisor",
+            "advisor-result", "--slug", "pr2-replacement", "--workflow-id", wid, "--stage", "final", "--source", "codex-advisor",
             "--verdict", "commit-ready",
         )
         self.assertEqual(final.returncode, 0, final.stdout + final.stderr)
@@ -1864,7 +1864,7 @@ class PassLifecycleTests(unittest.TestCase):
         self.assertEqual(state["phase"], "complete")
         self.assertEqual(state["finalReview"], {
             "findings": "none",
-            "source": "claude-advisor",
+            "source": "codex-advisor",
             "status": "commit-ready",
         })
 
@@ -1951,7 +1951,7 @@ class PassLifecycleTests(unittest.TestCase):
         early_review = self.cli("set-phase", "--phase", "code-review", "--status", "not-required", "--findings", "none")
         self.assertEqual(early_review.returncode, 2, early_review.stdout + early_review.stderr)
         early_final = self.cli(
-            "advisor-result", "--slug", "tdd-gates", "--workflow-id", wid, "--stage", "final", "--source", "claude-advisor", "--verdict", "commit-ready",
+            "advisor-result", "--slug", "tdd-gates", "--workflow-id", wid, "--stage", "final", "--source", "codex-advisor", "--verdict", "commit-ready",
         )
         self.assertEqual(early_final.returncode, 2, early_final.stdout + early_final.stderr)
 
@@ -1969,14 +1969,14 @@ class PassLifecycleTests(unittest.TestCase):
         self.advance_to_context_forge()
 
         unavailable = self.cli(
-            "advisor-result", "--slug", "advisor-preflight-contract", "--workflow-id", wid, "--stage", "preflight", "--source", "claude-advisor",
+            "advisor-result", "--slug", "advisor-preflight-contract", "--workflow-id", wid, "--stage", "preflight", "--source", "codex-advisor",
             "--verdict", "unavailable", "--reason", "",
         )
         self.assertEqual(unavailable.returncode, 2, unavailable.stdout + unavailable.stderr)
         self.assertIn("unavailable requires --reason", unavailable.stderr)
 
         pending = self.cli(
-            "advisor-result", "--slug", "advisor-preflight-contract", "--workflow-id", wid, "--stage", "preflight", "--source", "claude-advisor",
+            "advisor-result", "--slug", "advisor-preflight-contract", "--workflow-id", wid, "--stage", "preflight", "--source", "codex-advisor",
             "--verdict", "completed",
         )
         self.assertEqual(pending.returncode, 0, pending.stdout + pending.stderr)
@@ -2021,7 +2021,7 @@ class PassLifecycleTests(unittest.TestCase):
                 "id": "SPEC-1", "claim": "shape is wrong", "material": True, "kind": kind,
             }], "verdict": "completed"}), encoding="utf-8")
             recorded = self.cli("advisor-result", "--slug", slug, "--workflow-id", wid,
-                                "--stage", "preflight", "--source", "claude-advisor", "--input", str(envelope))
+                                "--stage", "preflight", "--source", "codex-advisor", "--input", str(envelope))
             intake_id = json.loads(recorded.stdout)["advisorPreflight"]["intakeEvidence"]
             path = self.finding_disposition_document(
                 intake_id, status, kind, "false" if status == "report-only" else "material",
@@ -2052,7 +2052,7 @@ class PassLifecycleTests(unittest.TestCase):
         wid = self.begin_slug(slug)
         self.advance_to_context_forge()
         self.rewrite_latest_state(lambda state: state.__setitem__(
-            "advisorPreflight", {"source": "claude-advisor", "status": "completed"}))
+            "advisorPreflight", {"source": "codex-advisor", "status": "completed"}))
         path = Path(self.disposition_document("accepted-follow-up"))
         document = json.loads(path.read_text(encoding="utf-8"))
         document["dispositions"][0]["kind"] = "behavioral"
@@ -2072,19 +2072,19 @@ class PassLifecycleTests(unittest.TestCase):
         self.assertIn("cannot create", orphan.stderr)
 
         direct = self.cli(
-            "advisor-result", "--slug", "producer-owned-advice", "--workflow-id", wid, "--stage", "preflight", "--source", "claude-advisor",
+            "advisor-result", "--slug", "producer-owned-advice", "--workflow-id", wid, "--stage", "preflight", "--source", "codex-advisor",
             "--verdict", "completed", "--findings", "addressed",
         )
         self.assertEqual(direct.returncode, 2, direct.stdout + direct.stderr)
         self.assertIn("findings=pending", direct.stderr)
 
         recorded = self.cli(
-            "advisor-result", "--slug", "producer-owned-advice", "--workflow-id", wid, "--stage", "preflight", "--source", "claude-advisor",
+            "advisor-result", "--slug", "producer-owned-advice", "--workflow-id", wid, "--stage", "preflight", "--source", "codex-advisor",
             "--verdict", "completed",
         )
         self.assertEqual(recorded.returncode, 0, recorded.stdout + recorded.stderr)
         raw = json.loads(recorded.stdout)["advisorPreflight"]
-        self.assertEqual(raw, {"source": "claude-advisor", "status": "completed", "findings": "none", "reason": None})
+        self.assertEqual(raw, {"source": "codex-advisor", "status": "completed", "findings": "none", "reason": None})
 
         stale = self.dispose("some-other-pass", wid, "preflight", "addressed", self.disposition_document("accepted-follow-up"))
         self.assertEqual(stale.returncode, 2, stale.stdout + stale.stderr)
@@ -2102,7 +2102,7 @@ class PassLifecycleTests(unittest.TestCase):
         self.assertEqual(disposed.returncode, 0, disposed.stdout + disposed.stderr)
         after = json.loads(disposed.stdout)["advisorPreflight"]
         disposition_id = after.pop("dispositionEvidence")
-        self.assertEqual(after, {"source": "claude-advisor", "status": "completed", "findings": "addressed", "reason": None})
+        self.assertEqual(after, {"source": "codex-advisor", "status": "completed", "findings": "addressed", "reason": None})
         self.assertEqual(self.evidence(disposition_id)["stage"], "preflight")
 
     def test_preflight_behavioral_finding_rides_the_map_and_closes_through_green(self) -> None:
@@ -2119,7 +2119,7 @@ class PassLifecycleTests(unittest.TestCase):
             {"id": "SPEC-2", "claim": "documentation is incomplete", "material": True, "kind": "nonbehavioral"},
         ], "verdict": "completed"}), encoding="utf-8")
         recorded = self.cli("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
-                            "--source", "claude-advisor", "--input", str(envelope))
+                            "--source", "codex-advisor", "--input", str(envelope))
         self.assertEqual(recorded.returncode, 0, marker + recorded.stdout + recorded.stderr)
         intake_id = json.loads(recorded.stdout)["advisorPreflight"]["intakeEvidence"]
         # A subset disposition resolves the nonbehavioral finding; the behavioral
@@ -2183,7 +2183,7 @@ class PassLifecycleTests(unittest.TestCase):
         self.owner_phase("code-review", "passed", findings="none")
         envelope = self.tmp / f"{slug}-mismatch.json"
         envelope.write_text('{"schemaVersion":1,"findings":[],"verdict":"context-mismatch"}', encoding="utf-8")
-        mismatch = self.cli("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final", "--source", "claude-advisor", "--input", str(envelope))
+        mismatch = self.cli("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final", "--source", "codex-advisor", "--input", str(envelope))
         self.assertEqual(mismatch.returncode, 0, mismatch.stdout + mismatch.stderr)
         self.post_edit_hook(slug)
         return json.loads(mismatch.stdout), json.loads(self.cli("status").stdout)
@@ -2211,7 +2211,7 @@ class PassLifecycleTests(unittest.TestCase):
                 {"id": item, "claim": f"{item} remains material", "material": True, "kind": "nonbehavioral"}
                 for item in identifiers], "verdict": "fix-before-commit"})
             recorded = self.cli("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final",
-                                "--source", "claude-advisor", "--input", str(envelope))
+                                "--source", "codex-advisor", "--input", str(envelope))
             intake = json.loads(recorded.stdout)["finalReview"]["intakeEvidence"]
             disposition = self.json_file(f"{slug}-rejections.json", {"context": self.disposition_context(),
                 "intakeEvidenceId": intake, "dispositions": [{"finding_id": item, "status": "rejected-with-evidence",
@@ -2231,7 +2231,7 @@ class PassLifecycleTests(unittest.TestCase):
         envelope.write_text('{"schemaVersion":1,"findings":[],"verdict":"commit-ready"}', encoding="utf-8")
         (self.repo / "app.py").write_text("value = 2\n", encoding="utf-8"); events = len(self.history_events())
         stale = self.cli("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final",
-                         "--source", "claude-advisor", "--input", str(envelope))
+                         "--source", "codex-advisor", "--input", str(envelope))
         self.assertEqual((stale.returncode, len(self.history_events()) - events), (2, 0), "APPEAL_STALE_CANDIDATE_ACCEPTED")
         generic = self.verify_run(sys.executable, "-c", "pass", gate=False)
         gate = self.cli("verify", "--slug", slug, "--kind", "quality-gate", "--base-ref", "HEAD")
@@ -2246,7 +2246,7 @@ class PassLifecycleTests(unittest.TestCase):
         self.owner_phase("implementation", "passed"); self.assertEqual(self.verify_run(sys.executable, "-c", "pass").returncode, 0)
         self.owner_phase("code-review", "passed", findings="none")
         appeal_args = ("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final",
-                       "--source", "claude-advisor", "--input", str(envelope))
+                       "--source", "codex-advisor", "--input", str(envelope))
         events = len(self.history_events()); appealed = self.cli(*appeal_args); state = json.loads(appealed.stdout)
         events = len(self.history_events()); second = self.cli(*appeal_args); delta = len(self.history_events()) - events; completed = self.cli("complete")
         self.assertEqual((appealed.returncode, state["finalAppealConsumed"], second.returncode, delta, completed.returncode),
@@ -2258,7 +2258,7 @@ class PassLifecycleTests(unittest.TestCase):
             {"id": "SPEC-NEW", "claim": "new issue", "material": True, "kind": "nonbehavioral"}],
             "verdict": "fix-before-commit"})
         appealed = self.cli("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final",
-                            "--source", "claude-advisor", "--input", str(appeal)); state = json.loads(appealed.stdout)
+                            "--source", "codex-advisor", "--input", str(appeal)); state = json.loads(appealed.stdout)
         by_id = {entry["findingId"]: entry for entry in state["findingStates"]}
         self.assertEqual((by_id["SPEC-1"]["appealStatus"], by_id["SPEC-2"]["appealStatus"], by_id["SPEC-NEW"]["status"]),
                          ("conceded", "conceded", "pending"), marker)
@@ -2270,7 +2270,7 @@ class PassLifecycleTests(unittest.TestCase):
             "materialConsequence": {"claim": "runtime", "command": "inspect", "result": "false"}, "evidence": "no consequence"}]})
         closed = json.loads(self.dispose(slug, wid, "final", "addressed", str(closure)).stdout)
         events = len(self.history_events()); second = self.cli("advisor-result", "--slug", slug, "--workflow-id", wid,
-            "--stage", "final", "--source", "claude-advisor", "--input", str(appeal))
+            "--stage", "final", "--source", "codex-advisor", "--input", str(appeal))
         self.assertEqual((closed["nextAction"], next(x for x in closed["findingStates"] if x["findingId"] == "SPEC-NEW")["appealStatus"],
                           self.checkpoint("final-review")["ready"], second.returncode, len(self.history_events()) - events),
                          ("complete-workflow", "disagreement", False, 2, 0), "REJECTION_AFTER_APPEAL_DID_NOT_STAND")
@@ -2278,11 +2278,11 @@ class PassLifecycleTests(unittest.TestCase):
     def test_terminal_context_mismatch_allows_reconsult(self) -> None:
         marker, slug = "TERMINAL_MISMATCH_RECONSULT_REJECTED", "terminal-mismatch-reconsult"
         wid = self.begin_slug(slug); self.advance_to_verification(slug, wid)
-        self.owner_phase("code-review", "passed", findings="none"); self.run_cli(("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final", "--source", "claude-advisor", "--verdict", "commit-ready"), ("advisor-disposition", "--slug", slug, "--workflow-id", wid, "--stage", "final", "--findings", "none"))
+        self.owner_phase("code-review", "passed", findings="none"); self.run_cli(("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final", "--source", "codex-advisor", "--verdict", "commit-ready"), ("advisor-disposition", "--slug", slug, "--workflow-id", wid, "--stage", "final", "--findings", "none"))
         mismatch = self.tmp / "terminal-context-mismatch.json"; mismatch.write_text('{"schemaVersion":1,"findings":[],"verdict":"context-mismatch"}', encoding="utf-8")
-        self.run_cli(("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final", "--source", "claude-advisor", "--input", str(mismatch)))
+        self.run_cli(("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final", "--source", "codex-advisor", "--input", str(mismatch)))
         self.assertEqual(self.cli("complete").returncode, 2, marker)
-        before = len(self.history_events()); response = self.cli("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final", "--source", "claude-advisor", "--verdict", "commit-ready")
+        before = len(self.history_events()); response = self.cli("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final", "--source", "codex-advisor", "--verdict", "commit-ready")
         self.assertEqual((response.returncode, len(self.history_events()) - before), (0, 1), marker + response.stdout + response.stderr)
 
     def test_open_correction_batch_blocks_broad_gates_and_routes_tdd_reassessment(self) -> None:
@@ -2300,9 +2300,9 @@ class PassLifecycleTests(unittest.TestCase):
             {"id": "SPEC-1", "claim": "proof missing", "material": True, "kind": "behavioral"},
             {"id": "SPEC-2", "claim": "rejected", "material": True, "kind": "behavioral"}], "verdict": "fix-before-commit"})
         recorded = self.cli("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final",
-                            "--source", "claude-advisor", "--input", str(envelope)); state = json.loads(recorded.stdout)
+                            "--source", "codex-advisor", "--input", str(envelope)); state = json.loads(recorded.stdout)
         events = len(self.history_events()); duplicate = self.cli("advisor-result", "--slug", slug, "--workflow-id", wid,
-            "--stage", "final", "--source", "claude-advisor", "--input", str(envelope))
+            "--stage", "final", "--source", "codex-advisor", "--input", str(envelope))
         self.assertEqual((state["nextAction"], duplicate.returncode, len(self.history_events()) - events),
                          ("classify-current-findings", 2, 0), "INVALID_FINAL_INTAKE_ADMITTED")
         ran = self.tmp / "blocked-generic-ran"; review_input = self.json_file("blocked-review.json", {"findings": []})
@@ -2318,7 +2318,7 @@ class PassLifecycleTests(unittest.TestCase):
         appeal = self.json_file("mixed-appeal.json", {"schemaVersion": 1, "findings": [
             {"id": "SPEC-2", "claim": "rejected", "material": False, "kind": "behavioral"}], "verdict": "commit-ready"})
         events = len(self.history_events()); blocked = self.cli("advisor-result", "--slug", slug, "--workflow-id", wid,
-            "--stage", "final", "--source", "claude-advisor", "--input", str(appeal))
+            "--stage", "final", "--source", "codex-advisor", "--input", str(appeal))
         self.assertEqual((blocked.returncode, len(self.history_events()) - events), (2, 0), appeal_marker)
         ref = [{"type": "finding", "evidenceId": intake, "id": "SPEC-1"}]
         update = self.json_file("correction-map.json", {"reassessment": "map correction", "dispositions": [], "items": [
@@ -2344,7 +2344,7 @@ class PassLifecycleTests(unittest.TestCase):
         self.owner_phase("implementation", "passed"); self.assertEqual(self.verify_run(sys.executable, "-c", "pass").returncode, 0)
         self.owner_phase("code-review", "passed", findings="none")
         appealed = self.cli("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final",
-                            "--source", "claude-advisor", "--input", str(appeal))
+                            "--source", "codex-advisor", "--input", str(appeal))
         self.assertEqual((appealed.returncode, json.loads(appealed.stdout)["nextAction"]), (0, "complete-workflow"), appeal_marker)
 
     def test_behavioral_fixed_requires_linked_green_and_reassessment(self) -> None:
@@ -2366,7 +2366,7 @@ class PassLifecycleTests(unittest.TestCase):
         }), encoding="utf-8")
         recorded = self.cli(
             "advisor-result", "--slug", slug, "--workflow-id", wid,
-            "--stage", "final", "--source", "claude-advisor", "--input", str(envelope),
+            "--stage", "final", "--source", "codex-advisor", "--input", str(envelope),
         )
         self.assertEqual(recorded.returncode, 0, marker + recorded.stdout + recorded.stderr)
         intake_id = json.loads(recorded.stdout)["finalReview"]["intakeEvidence"]
@@ -2422,7 +2422,7 @@ class PassLifecycleTests(unittest.TestCase):
         self.owner_phase("code-review", "passed", findings="none")
         self.run_cli(
             ("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final",
-             "--source", "claude-advisor", "--verdict", "commit-ready"),
+             "--source", "codex-advisor", "--verdict", "commit-ready"),
             ("advisor-disposition", "--slug", slug, "--workflow-id", wid,
              "--stage", "final", "--findings", "none"),
         )
@@ -2474,7 +2474,7 @@ class PassLifecycleTests(unittest.TestCase):
         self.owner_phase("code-review", "passed", findings="none")
         self.run_cli(
             ("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final",
-             "--source", "claude-advisor", "--verdict", "commit-ready"),
+             "--source", "codex-advisor", "--verdict", "commit-ready"),
             ("advisor-disposition", "--slug", slug, "--workflow-id", wid,
              "--stage", "final", "--findings", "none"),
         )
@@ -2549,7 +2549,7 @@ class PassLifecycleTests(unittest.TestCase):
         self.advance_to_context_forge()
         self.run_cli((
             "advisor-result", "--slug", "disposition-document", "--workflow-id", wid,
-            "--stage", "preflight", "--source", "claude-advisor", "--verdict", "completed",
+            "--stage", "preflight", "--source", "codex-advisor", "--verdict", "completed",
         ))
         initial_events = len(self.history_events())
 
@@ -2650,7 +2650,7 @@ class PassLifecycleTests(unittest.TestCase):
         self.advance_to_context_forge()
         self.run_cli((
             "advisor-result", "--slug", "disposition-lifetime", "--workflow-id", wid,
-            "--stage", "preflight", "--source", "claude-advisor", "--verdict", "completed",
+            "--stage", "preflight", "--source", "codex-advisor", "--verdict", "completed",
         ))
         self.assertEqual(
             self.dispose("disposition-lifetime", wid, "preflight", "addressed", self.disposition_document("accepted-follow-up")).returncode,
@@ -2672,7 +2672,7 @@ class PassLifecycleTests(unittest.TestCase):
         self.owner_phase("code-review", "passed", findings="none")
         envelope = self.tmp / "report-only.json"
         envelope.write_text('{"schemaVersion":1,"findings":[{"id":"SPEC-1","claim":"harmless","material":true,"kind":"nonbehavioral"}],"verdict":"fix-before-commit"}', encoding="utf-8")
-        result = self.cli("advisor-result", "--slug", "disposition-lifetime", "--workflow-id", wid, "--stage", "final", "--source", "claude-advisor", "--input", str(envelope))
+        result = self.cli("advisor-result", "--slug", "disposition-lifetime", "--workflow-id", wid, "--stage", "final", "--source", "codex-advisor", "--input", str(envelope))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         intake_id = json.loads(result.stdout)["finalReview"]["intakeEvidence"]
         reported = self.dispose("disposition-lifetime", wid, "final", "addressed", str(self.finding_disposition_document(intake_id, "report-only", "nonbehavioral", "false")))
@@ -2690,7 +2690,7 @@ class PassLifecycleTests(unittest.TestCase):
         self.advance_to_context_forge()
         self.run_cli(
             ("advisor-result", "--slug", "disposition-lifetime", "--workflow-id", reused,
-             "--stage", "preflight", "--source", "claude-advisor", "--verdict", "completed"),
+             "--stage", "preflight", "--source", "codex-advisor", "--verdict", "completed"),
             ("advisor-disposition", "--slug", "disposition-lifetime", "--workflow-id", reused,
              "--stage", "preflight", "--findings", "none"),
         )
@@ -2706,7 +2706,7 @@ class PassLifecycleTests(unittest.TestCase):
         repo = self.tmp / "design-shape-repo"
         repo.mkdir()
         subprocess.run(["git", "init", "-q"], cwd=repo, env=self.env, check=True)
-        wrapper = ROOT / "skills" / "claude-advisor" / "scripts" / "ask-claude-advisor.sh"
+        wrapper = ROOT / "skills" / "codex-advisor" / "scripts" / "ask-codex-advisor.sh"
 
         def run(path: Path) -> subprocess.CompletedProcess[str]:
             return subprocess.run([
@@ -2732,14 +2732,14 @@ class PassLifecycleTests(unittest.TestCase):
         self.advance_to_context_forge()
         first = self.cli(
             "advisor-result", "--slug", "design-replay", "--workflow-id", wid,
-            "--stage", "preflight", "--source", "claude-advisor", "--verdict", "completed",
+            "--stage", "preflight", "--source", "codex-advisor", "--verdict", "completed",
         )
         self.assertEqual(first.returncode, 0, first.stderr)
         before = json.loads(self.cli("status").stdout)
         before_events = json.loads(self.cli("history", "--workflow-id", wid).stdout)["events"]
         replay = self.cli(
             "advisor-result", "--slug", "design-replay", "--workflow-id", wid,
-            "--stage", "preflight", "--source", "claude-advisor", "--verdict", "completed",
+            "--stage", "preflight", "--source", "codex-advisor", "--verdict", "completed",
         )
         self.assertEqual(replay.returncode, 0, replay.stderr)
         after = json.loads(self.cli("status").stdout)
@@ -2758,7 +2758,7 @@ class PassLifecycleTests(unittest.TestCase):
         self.advance_to_context_forge()
 
         bound = self.cli(
-            "advisor-result", "--stage", "preflight", "--source", "claude-advisor",
+            "advisor-result", "--stage", "preflight", "--source", "codex-advisor",
             "--verdict", "completed", "--slug", "reused-slug", "--workflow-id", first["workflowId"],
         )
         self.assertEqual(bound.returncode, 0, bound.stdout + bound.stderr)
@@ -2770,14 +2770,14 @@ class PassLifecycleTests(unittest.TestCase):
         self.advance_to_context_forge()
 
         delayed = self.cli(
-            "advisor-result", "--stage", "preflight", "--source", "claude-advisor",
+            "advisor-result", "--stage", "preflight", "--source", "codex-advisor",
             "--verdict", "completed", "--slug", "reused-slug", "--workflow-id", first["workflowId"],
         )
         self.assertEqual(delayed.returncode, 2, "a delayed consult updated a later workflow with a reused slug")
         self.assertIn("workflow instance", delayed.stderr)
 
         unbound = self.cli(
-            "advisor-result", "--stage", "preflight", "--source", "claude-advisor",
+            "advisor-result", "--stage", "preflight", "--source", "codex-advisor",
             "--verdict", "completed", "--slug", "reused-slug",
         )
         self.assertEqual(unbound.returncode, 2, unbound.stdout + unbound.stderr)
@@ -2797,7 +2797,7 @@ class PassLifecycleTests(unittest.TestCase):
         self.assertIn("terminal", terminal_verify.stderr)
 
         for mutation in (
-            ("advisor-result", "--slug", "terminal-state", "--workflow-id", wid, "--stage", "final", "--source", "claude-advisor", "--verdict", "commit-ready"),
+            ("advisor-result", "--slug", "terminal-state", "--workflow-id", wid, "--stage", "final", "--source", "codex-advisor", "--verdict", "commit-ready"),
             ("advisor-disposition", "--slug", "terminal-state", "--workflow-id", wid, "--stage", "final", "--findings", "none"),
             ("pause", "--slug", "terminal-state", "--workflow-id", wid, "--reason", "waiting"),
         ):
@@ -2885,7 +2885,7 @@ annotate_tdd_evidence(resolve_repo_identity(sys.argv[1]), 'terminal-state', sys.
         self.assertFalse(marker.exists(), "workflow.py tdd launched the command for a closed revalidation window")
         preflight_consult = self.cli(
             "advisor-result", "--slug", "terminal-state", "--workflow-id", wid,
-            "--stage", "preflight", "--source", "claude-advisor", "--verdict", "completed",
+            "--stage", "preflight", "--source", "codex-advisor", "--verdict", "completed",
         )
         self.assertEqual(preflight_consult.returncode, 2, "a preflight consult was recorded during revalidation")
         preflight_disposition = self.dispose(
@@ -2909,7 +2909,7 @@ annotate_tdd_evidence(resolve_repo_identity(sys.argv[1]), 'terminal-state', sys.
             self.checkpoint("final-review")["ready"],
             "revalidation closed the final review it exists to re-run",
         )
-        final = self.cli("advisor-result", "--slug", "terminal-state", "--workflow-id", wid, "--stage", "final", "--source", "claude-advisor", "--verdict", "commit-ready")
+        final = self.cli("advisor-result", "--slug", "terminal-state", "--workflow-id", wid, "--stage", "final", "--source", "codex-advisor", "--verdict", "commit-ready")
         self.assertEqual(final.returncode, 0, final.stdout + final.stderr)
         disposed = self.cli("advisor-disposition", "--slug", "terminal-state", "--workflow-id", wid, "--stage", "final", "--findings", "none")
         self.assertEqual(disposed.returncode, 0, disposed.stdout + disposed.stderr)
@@ -2989,7 +2989,7 @@ annotate_tdd_evidence(resolve_repo_identity(sys.argv[1]), 'terminal-state', sys.
         self.assertEqual(legacy_verified.returncode, 0, legacy_verified.stdout + legacy_verified.stderr)
         self.owner_phase("code-review", "passed", findings="none")
         self.run_cli(
-            ("advisor-result", "--slug", "production-code-lifetime", "--workflow-id", wid, "--stage", "final", "--source", "claude-advisor", "--verdict", "commit-ready"),
+            ("advisor-result", "--slug", "production-code-lifetime", "--workflow-id", wid, "--stage", "final", "--source", "codex-advisor", "--verdict", "commit-ready"),
             ("advisor-disposition", "--slug", "production-code-lifetime", "--workflow-id", wid, "--stage", "final", "--findings", "none"),
             ("complete",),
         )
@@ -3018,7 +3018,7 @@ annotate_tdd_evidence(resolve_repo_identity(sys.argv[1]), 'terminal-state', sys.
             "nextAction": "tdd",
             "repoContextForge": "passed",
             "gitnexus": "passed",
-            "advisorPreflight": {"source": "claude-advisor", "status": "completed", "findings": "none", "reason": None},
+            "advisorPreflight": {"source": "codex-advisor", "status": "completed", "findings": "none", "reason": None},
             "preflight": "passed",
             "tdd": "pending",
             "productionCode": "pending",
@@ -3123,7 +3123,7 @@ annotate_tdd_evidence(resolve_repo_identity(sys.argv[1]), 'terminal-state', sys.
         before_events = len(self.history_events())
         mismatch = self.cli(
             "advisor-result", "--slug", "completion-contract", "--workflow-id", wid,
-            "--stage", "final", "--source", "claude-advisor", "--verdict", "context-mismatch",
+            "--stage", "final", "--source", "codex-advisor", "--verdict", "context-mismatch",
         )
         self.assertEqual(
             (mismatch.returncode, len(self.history_events())), (2, before_events),
@@ -3131,7 +3131,7 @@ annotate_tdd_evidence(resolve_repo_identity(sys.argv[1]), 'terminal-state', sys.
         )
 
         rejected = self.cli(
-            "advisor-result", "--slug", "completion-contract", "--workflow-id", wid, "--stage", "final", "--source", "claude-advisor",
+            "advisor-result", "--slug", "completion-contract", "--workflow-id", wid, "--stage", "final", "--source", "codex-advisor",
             "--verdict", "fix-before-commit", "--findings", "pending",
         )
         self.assertEqual(rejected.returncode, 0, rejected.stdout + rejected.stderr)
@@ -3154,9 +3154,9 @@ annotate_tdd_evidence(resolve_repo_identity(sys.argv[1]), 'terminal-state', sys.
         for raw, marker in (('{"schemaVersion":1,"findings":[{"id":"SPEC-1","claim":"must fix","material":true,"kind":"nonbehavioral"}],"verdict":"commit-ready"}', "MATERIAL_COMMIT_READY_ACCEPTED"), ('{"schemaVersion":1,"findings":[],"verdict":"fix-before-commit"}', "EMPTY_FIX_VERDICT_ACCEPTED")):
             envelope.write_text(raw, encoding="utf-8")
             before = json.loads(self.cli("status").stdout), len(self.history_events())
-            refused = self.cli("advisor-result", "--slug", "completion-contract", "--workflow-id", wid, "--stage", "final", "--source", "claude-advisor", "--input", str(envelope))
+            refused = self.cli("advisor-result", "--slug", "completion-contract", "--workflow-id", wid, "--stage", "final", "--source", "codex-advisor", "--input", str(envelope))
             self.assertEqual((refused.returncode, json.loads(self.cli("status").stdout), len(self.history_events())), (2, *before), marker + refused.stdout + refused.stderr)
-        recovered = self.cli("advisor-result", "--slug", "completion-contract", "--workflow-id", wid, "--stage", "final", "--source", "claude-advisor", "--verdict", "commit-ready")
+        recovered = self.cli("advisor-result", "--slug", "completion-contract", "--workflow-id", wid, "--stage", "final", "--source", "codex-advisor", "--verdict", "commit-ready")
         self.assertEqual(recovered.returncode, 0, "REAL_LEGACY_FINAL_RECOVERY_REJECTED" + recovered.stdout + recovered.stderr)
         self.assertEqual(self.cli("complete").returncode, 0, "a final review with no finding did not complete")
 

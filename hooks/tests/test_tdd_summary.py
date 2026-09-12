@@ -68,7 +68,7 @@ class LegacyImportFreeFormTests(unittest.TestCase):
             "phase": "preflight", "nextAction": "tdd",
             "repoContextForge": "passed", "preflight": "passed",
             "preflightEvidence": str(evidence_path),
-            "advisorPreflight": {"source": "claude-advisor", "status": "completed", "findings": "none", "reason": None},
+            "advisorPreflight": {"source": "codex-advisor", "status": "completed", "findings": "none", "reason": None},
             "tdd": "pending", "productionCode": "pending", "implementation": "pending",
             "verification": "pending",
             "codeReview": {"status": "pending", "findings": "pending"},
@@ -144,7 +144,7 @@ class TddSummaryTests(unittest.TestCase):
         begun = self.run_script(WORKFLOW, "begin", "--repo", str(self.repo), "--slug", "tdd-summary")
         self.assertEqual(begun.returncode, 0, begun.stdout + begun.stderr)
         identity = record_context_forge(self.repo, self.tmp)
-        record_advisor_result(identity, "tdd-summary", read_workflow(identity)["workflowId"], "preflight", "claude-advisor", "completed")
+        record_advisor_result(identity, "tdd-summary", read_workflow(identity)["workflowId"], "preflight", "codex-advisor", "completed")
         advisor_disposition(identity, "tdd-summary", read_workflow(identity)["workflowId"], "preflight", "none")
         self.record_preflight_evidence()
 
@@ -551,7 +551,7 @@ class TddSummaryTests(unittest.TestCase):
         rebegun = self.run_script(WORKFLOW, "begin", "--repo", str(self.repo), "--slug", "tdd-summary")
         self.assertEqual(rebegun.returncode, 0, rebegun.stdout + rebegun.stderr)
         record_context_forge(self.repo, self.tmp)
-        record_advisor_result(identity, "tdd-summary", read_workflow(identity)["workflowId"], "preflight", "claude-advisor", "completed")
+        record_advisor_result(identity, "tdd-summary", read_workflow(identity)["workflowId"], "preflight", "codex-advisor", "completed")
         advisor_disposition(identity, "tdd-summary", read_workflow(identity)["workflowId"], "preflight", "none")
         self.record_preflight_evidence()
 
@@ -657,7 +657,7 @@ class TddSummaryTests(unittest.TestCase):
         self.assertEqual((state["tdd"], state["implementation"]), ("pending", "pending"))
 
         identity = record_context_forge(self.repo, self.tmp)
-        record_advisor_result(identity, "tdd-summary", read_workflow(identity)["workflowId"], "preflight", "claude-advisor", "completed")
+        record_advisor_result(identity, "tdd-summary", read_workflow(identity)["workflowId"], "preflight", "codex-advisor", "completed")
         advisor_disposition(identity, "tdd-summary", read_workflow(identity)["workflowId"], "preflight", "none")
         self.record_preflight_evidence()
 
@@ -734,7 +734,7 @@ class TddSummaryTests(unittest.TestCase):
                                   "--kind", "quality-gate", "--base-ref", "HEAD")
         self.assertEqual(quality.returncode, 0, quality.stdout + quality.stderr)
         set_phase(identity, "code-review", "passed", findings="none")
-        record_advisor_result(identity, "tdd-summary", wid, "final", "claude-advisor", "commit-ready")
+        record_advisor_result(identity, "tdd-summary", wid, "final", "codex-advisor", "commit-ready")
         advisor_disposition(identity, "tdd-summary", wid, "final", "none")
         completed = self.run_script(WORKFLOW, "complete", "--repo", str(self.repo))
         self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)

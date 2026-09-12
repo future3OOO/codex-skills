@@ -11,7 +11,7 @@ MANUAL=(
   hooks/lib/hook_input.py
   skills/code-review/SKILL.md
 )
-MANUAL_PREFIX=(skills/codex-advisor/ skills/claude-advisor/)
+MANUAL_PREFIX=(skills/codex-advisor/)
 is_manual() {
   local f="$1" m
   for m in "${MANUAL[@]}"; do [[ "$f" == "$m" ]] && return 0; done

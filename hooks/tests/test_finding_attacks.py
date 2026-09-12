@@ -107,7 +107,7 @@ class AttackHarness(unittest.TestCase):
             "id": "SPEC-1", "claim": claim, "material": True, "kind": "behavioral",
         }], "verdict": "completed"})
         recorded = self.ok("advisor-result", "--slug", slug, "--workflow-id", wid,
-                           "--stage", "preflight", "--source", "claude-advisor",
+                           "--stage", "preflight", "--source", "codex-advisor",
                            "--input", str(envelope))
         return str(recorded["advisorPreflight"]["intakeEvidence"])
 
@@ -176,7 +176,7 @@ class AttackHarness(unittest.TestCase):
     def open_pytest_pass(self, slug: str, marker: str) -> str:
         wid = self.begin(slug)
         self.ok("advisor-result", "--slug", slug, "--workflow-id", wid,
-                "--stage", "preflight", "--source", "claude-advisor", "--verdict", "completed")
+                "--stage", "preflight", "--source", "codex-advisor", "--verdict", "completed")
         self.ok("advisor-disposition", "--slug", slug, "--workflow-id", wid,
                 "--stage", "preflight", "--findings", "none")
         owned = self.record_preflight(slug, wid, [{
@@ -249,14 +249,14 @@ class SamePassDesign(AttackHarness):
         marker = "SAME_PASS_DESIGN_DEEPENING_REFUSED"
         wid = self.begin("design-deepening")
         first = self.ok("advisor-result", "--slug", "design-deepening", "--workflow-id", wid,
-                        "--stage", "preflight", "--source", "claude-advisor",
+                        "--stage", "preflight", "--source", "codex-advisor",
                         "--verdict", "completed")
         first_evidence = first.get("governedDesignEvidence")
         deepened = self.json_file("design-b.json", {
             "schemaVersion": 1, "status": "present", "sha256": "b" * 64,
         })
         second = self.cli("advisor-result", "--slug", "design-deepening", "--workflow-id", wid,
-                          "--stage", "preflight", "--source", "claude-advisor",
+                          "--stage", "preflight", "--source", "codex-advisor",
                           "--verdict", "completed", "--design-declaration", str(deepened))
         self.assertEqual(second.returncode, 0, marker + ": " + second.stdout + second.stderr)
         after = json.loads(second.stdout)
@@ -375,7 +375,7 @@ class SamePassAttack(AttackHarness):
         consult = ("--slug", slug, "--phase", "final-review", "--design-absent", "attack fixture")
         wid = self.begin(slug)
         self.ok("advisor-result", "--slug", slug, "--workflow-id", wid,
-                "--stage", "preflight", "--source", "claude-advisor", "--verdict", "completed")
+                "--stage", "preflight", "--source", "codex-advisor", "--verdict", "completed")
         self.ok("advisor-disposition", "--slug", slug, "--workflow-id", wid,
                 "--stage", "preflight", "--findings", "none")
         main_marker = "MAIN_VALUE_NOT_TWO"
@@ -797,7 +797,7 @@ class BulkRejectionAdvisorTests(AttackHarness):
             for i in range(1, count + 1)
         ], "verdict": "completed"})
         recorded = self.ok("advisor-result", "--slug", slug, "--workflow-id", wid,
-                           "--stage", "preflight", "--source", "claude-advisor",
+                           "--stage", "preflight", "--source", "codex-advisor",
                            "--input", str(envelope))
         return str(recorded["advisorPreflight"]["intakeEvidence"])
 
@@ -908,7 +908,7 @@ class MapCorrectionAttacks(AttackHarness):
     def open_pass(self, slug: str, behavior_map: list[dict[str, object]]) -> str:
         wid = self.begin(slug)
         self.ok("advisor-result", "--slug", slug, "--workflow-id", wid,
-                "--stage", "preflight", "--source", "claude-advisor", "--verdict", "completed")
+                "--stage", "preflight", "--source", "codex-advisor", "--verdict", "completed")
         self.ok("advisor-disposition", "--slug", slug, "--workflow-id", wid,
                 "--stage", "preflight", "--findings", "none")
         recorded = self.record_preflight(slug, wid, behavior_map)
@@ -1854,7 +1854,7 @@ class ReportOnlyProofAttacks(AttackHarness):
         slug = "estate-path"
         wid = self.begin(slug)
         intake_id = self.behavioral_intake(slug, wid, "the reviewed value is wrong")
-        estate = str(Path.home() / ".claude" / "skills" / "claude-advisor" / "scripts" / "ask-claude-advisor.sh")
+        estate = str(Path.home() / ".claude" / "skills" / "codex-advisor" / "scripts" / "ask-codex-advisor.sh")
         document = self.disposition(wid, intake_id, "rejected-with-evidence",
                                     command=f"sed -n 1,5p {estate}", premise_result="false")
         accepted = self.dispose(slug, wid, document)

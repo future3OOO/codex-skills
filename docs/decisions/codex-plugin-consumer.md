@@ -10,7 +10,7 @@ outside the governed production workflow.
 
 The governed production contract is unchanged: the sole advisor transport for
 `preflight-advice` and `final-review` is
-`skills/claude-advisor/scripts/ask-claude-advisor.sh`. The plugin forwarder and
+`skills/codex-advisor/scripts/ask-codex-advisor.sh`. The plugin forwarder and
 the spawn_agent are not fallbacks for those checkpoints, and no plugin surface
 records workflow state.
 

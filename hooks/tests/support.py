@@ -276,7 +276,7 @@ def advance_to_final_review(repo: Path, tmp: Path, design=None) -> RepoIdentity:
         assert result.returncode == 0, result.stdout + result.stderr
 
     record_advisor_result(
-        identity, slug, workflow_id, "preflight", "claude-advisor", "completed", design=design
+        identity, slug, workflow_id, "preflight", "codex-advisor", "completed", design=design
     )
     advisor_disposition(identity, slug, workflow_id, "preflight", "none")
     producer(

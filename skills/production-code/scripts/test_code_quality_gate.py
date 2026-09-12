@@ -2492,7 +2492,7 @@ def test_owner_manifest_calibration_is_reproducible() -> None:
          "disposition": "same-responsibility", "repair": "consolidate",
          "base": CORPUS_BASE, "candidate": CORPUS_CANDIDATE,
          "owners": [{"path": "hooks/lib/state_store.py", "symbol": "state_root"},
-                    {"path": "skills/claude-advisor/scripts/ask-claude-advisor.sh", "content": _P1_SHELL_ANCHOR}],
+                    {"path": "skills/codex-advisor/scripts/ask-codex-advisor.sh", "content": _P1_SHELL_ANCHOR}],
          "parentRecord": _MANIFEST_PARENT},
         {"ruleId": "QG54-OWNER-COMPETITION-PRODUCTION",
          "responsibilityKey": "session-association-marker-consumption",
@@ -2516,7 +2516,7 @@ def test_owner_manifest_calibration_is_reproducible() -> None:
                  if item["state"] == "confirmed-unresolved"]
     assert confirmed[0]["evidence"]["responsibilityKey"] == "workflow-state-root-location", confirmed
     assert {region["path"] for region in confirmed[0]["region"]["regions"]} == {
-        "hooks/lib/state_store.py", "skills/claude-advisor/scripts/ask-claude-advisor.sh"}, confirmed
+        "hooks/lib/state_store.py", "skills/codex-advisor/scripts/ask-codex-advisor.sh"}, confirmed
     assert [(item["evidence"]["responsibilityKey"], item["state"]) for item in payload["resolvedFindings"]] == [
         ("session-association-marker-consumption", "resolved")], payload["resolvedFindings"]
     assert _active_states(payload, "QG54-OWNER-COMPETITION-TEST") == ["candidate"] * 8, (
@@ -2584,8 +2584,8 @@ def test_captured_corpus_duplicate_calibration_is_reproducible() -> None:
     # adjudication; an unexamined one would be a silent regression.
     unreadable = [
         "hooks/tests/run.sh",
-        "skills/claude-advisor/scripts/ask-claude-advisor.sh",
-        "skills/claude-advisor/tests/test-ask-claude-advisor.sh",
+        "skills/codex-advisor/scripts/ask-codex-advisor.sh",
+        "skills/codex-advisor/tests/test-ask-codex-advisor.sh",
     ]
     for rule in fires:
         state = check_named(payload, rule)

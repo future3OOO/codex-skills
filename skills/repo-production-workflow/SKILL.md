@@ -71,7 +71,7 @@ result; run further MCP checks when they widen the surface the packet fixed.
 
 ### 4. Advisor scope check
 
-Invoke `claude-advisor` with phase `preflight-advice` through its sole wrapper,
+Invoke `codex-advisor` with phase `preflight-advice` through its sole wrapper,
 preferably in a dedicated chat pane. It attaches the recorded graph evidence
 itself. Supply the contract, packet, intended proof, and no-change surfaces. Invoke `codebase-design` first
 when adding/changing a Module, public Interface, or Seam.
@@ -249,7 +249,7 @@ each disposition carries `kind`, `premise`, `occurrence`, and
 `materialConsequence`. A document carrying both forms refuses. Print the
 canonical disposition shape table, generated from its installed validator
 declarations, with `python3 -I -c 'import sys; from pathlib import Path; sys.path.insert(0, str(Path.home() / ".codex")); from hooks.lib.workflow_documents import DOCUMENT_SHAPE_TABLE; print(DOCUMENT_SHAPE_TABLE)'`;
-the `claude-advisor` skill's disposition section owns the recorder's other
+the `codex-advisor` skill's disposition section owns the recorder's other
 refusals (temporary-directory paths, behavioral `report-only` without a proved
 owning attack).
 
@@ -297,7 +297,7 @@ python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" \
   complete --repo "$PWD"
 ```
 
-`complete` refuses, from inside its transaction, unless every contract item is GREEN, baseline `already-satisfied`, or `withdrawn`, every preservation item is GREEN or validly dispositioned — a superseded item of either kind instead needs a GREEN terminal replacement — no proof gap remains, required phases are ready, material code-review findings are dispositioned, and the context-matched final `claude-advisor` intake has only effective terminal findings. The immutable raw verdict remains evidence but is not an indefinite veto after closure; `context-mismatch` or a pending one-response rejection appeal still blocks; a material re-raise reopens the finding as pending until the lead dispositions it once more against the new measurement; that second measured disposition stands. The reviewable working tree must match the manifest recorded by the lead review, and every evidence phase must carry its producer's evidence reference — a passed phase without one is a bare claim and reads pending, including legacy in-flight state at upgrade time. It changes workflow state only. It does not inspect, intercept, authorize, or execute Git.
+`complete` refuses, from inside its transaction, unless every contract item is GREEN, baseline `already-satisfied`, or `withdrawn`, every preservation item is GREEN or validly dispositioned — a superseded item of either kind instead needs a GREEN terminal replacement — no proof gap remains, required phases are ready, material code-review findings are dispositioned, and the context-matched final `codex-advisor` intake has only effective terminal findings. The immutable raw verdict remains evidence but is not an indefinite veto after closure; `context-mismatch` or a pending one-response rejection appeal still blocks; a material re-raise reopens the finding as pending until the lead dispositions it once more against the new measurement; that second measured disposition stands. The reviewable working tree must match the manifest recorded by the lead review, and every evidence phase must carry its producer's evidence reference — a passed phase without one is a bare claim and reads pending, including legacy in-flight state at upgrade time. It changes workflow state only. It does not inspect, intercept, authorize, or execute Git.
 
 ### 13. Delivery and reviewer completion
 

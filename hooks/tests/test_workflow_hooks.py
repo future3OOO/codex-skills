@@ -31,7 +31,7 @@ WORKFLOW = ROOT / "skills" / "repo-production-workflow" / "scripts" / "workflow.
 QUALITY_GATE = ROOT / "skills" / "production-code" / "scripts" / "code_quality_gate.py"
 INTAKE = ROOT / "hooks" / "rcf-intake-gate.py"
 RCF_BOOTSTRAP = ROOT / "skills" / "repo-context-forge" / "scripts" / "bootstrap.py"
-ADVISOR = ROOT / "skills" / "claude-advisor" / "scripts" / "ask-claude-advisor.sh"
+ADVISOR = ROOT / "skills" / "codex-advisor" / "scripts" / "ask-codex-advisor.sh"
 SESSION = "real-hook-session"
 
 
@@ -215,7 +215,7 @@ class HookHarness(unittest.TestCase):
             wid = json.loads(begun.stdout)["workflowId"]
         record_context_forge(self.repo, self.tmp)
         transitions = (
-            ("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "preflight", "--source", "claude-advisor", "--verdict", "completed"),
+            ("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "preflight", "--source", "codex-advisor", "--verdict", "completed"),
             ("advisor-disposition", "--slug", slug, "--workflow-id", wid, "--stage", "preflight", "--findings", "none"),
             ("set-phase", "--phase", "implementation", "--status", "passed"),
         )
@@ -233,7 +233,7 @@ class HookHarness(unittest.TestCase):
         self.run_verification(slug)
         self.owner_phase("code-review", "passed", findings="none")
         tail = [
-            ("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final", "--source", "claude-advisor", "--verdict", "commit-ready"),
+            ("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final", "--source", "codex-advisor", "--verdict", "commit-ready"),
             ("advisor-disposition", "--slug", slug, "--workflow-id", wid, "--stage", "final", "--findings", "none"),
         ]
         if finish:
@@ -266,7 +266,7 @@ class WorkflowHookTests(HookHarness):
         wid = json.loads(begun.stdout)["workflowId"]
         record_context_forge(self.repo, self.tmp)
         for transition in (
-            ("advisor-result", "--slug", "tdd-ordering", "--workflow-id", wid, "--stage", "preflight", "--source", "claude-advisor", "--verdict", "completed"),
+            ("advisor-result", "--slug", "tdd-ordering", "--workflow-id", wid, "--stage", "preflight", "--source", "codex-advisor", "--verdict", "completed"),
             ("advisor-disposition", "--slug", "tdd-ordering", "--workflow-id", wid, "--stage", "preflight", "--findings", "none"),
         ):
             result = self.state(*transition)
@@ -496,7 +496,7 @@ class WorkflowHookTests(HookHarness):
         wid = json.loads(begun.stdout)["workflowId"]
         record_context_forge(self.repo, self.tmp)
         for transition in (
-            ("advisor-result", "--slug", "governance-sequence", "--workflow-id", wid, "--stage", "preflight", "--source", "claude-advisor", "--verdict", "completed"),
+            ("advisor-result", "--slug", "governance-sequence", "--workflow-id", wid, "--stage", "preflight", "--source", "codex-advisor", "--verdict", "completed"),
             ("advisor-disposition", "--slug", "governance-sequence", "--workflow-id", wid, "--stage", "preflight", "--findings", "none"),
         ):
             result = self.state(*transition)
@@ -720,7 +720,7 @@ class RevalidateWithoutProducerTests(HookHarness):
         self.assertIn("repo-context-forge source bootstrap not found", combined, marker + ": " + combined)
 
 
-ADVISOR_WRAPPER = ROOT / "skills" / "claude-advisor" / "scripts" / "ask-claude-advisor.sh"
+ADVISOR_WRAPPER = ROOT / "skills" / "codex-advisor" / "scripts" / "ask-codex-advisor.sh"
 
 PROVIDER_SHIM = """#!/usr/bin/env bash
 set -u
@@ -1126,7 +1126,7 @@ class SkillTextTests(unittest.TestCase):
 
     def test_the_advisor_skill_mirrors_the_reserved_verdict_rule(self) -> None:
         marker = "SKILL_VERDICT_TEXT_STALE"
-        skill = (ROOT / "skills" / "claude-advisor" / "SKILL.md").read_text(encoding="utf-8")
+        skill = (ROOT / "skills" / "codex-advisor" / "SKILL.md").read_text(encoding="utf-8")
         self.assertIn("reserved for a candidate or projection identity mismatch", skill, marker)
         self.assertIn("literal wording", skill, marker)
 
@@ -1146,7 +1146,7 @@ class TollDeletionTests(HookHarness):
         if consult:
             for transition in (
                 ("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
-                 "--source", "claude-advisor", "--verdict", "completed"),
+                 "--source", "codex-advisor", "--verdict", "completed"),
                 ("advisor-disposition", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
                  "--findings", "none"),
             ):
@@ -1179,7 +1179,7 @@ class TollDeletionTests(HookHarness):
         envelope = self.tmp / f"{slug}-final.json"
         envelope.write_text(json.dumps({"schemaVersion": 1, "findings": findings, "verdict": verdict}), encoding="utf-8")
         return self.state("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final",
-                          "--source", "claude-advisor", "--input", str(envelope))
+                          "--source", "codex-advisor", "--input", str(envelope))
 
     def advance_to_review(self, slug: str) -> str:
         wid = self.open_pass(slug)
@@ -1303,7 +1303,7 @@ class TollDeletionTests(HookHarness):
         intake.write_text(json.dumps({"schemaVersion": 1, "verdict": "completed", "findings": [
             {"id": "SPEC-1", "claim": "unattacked promise", "material": True, "kind": "behavioral"}]}), encoding="utf-8")
         consulted = self.state("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
-                               "--source", "claude-advisor", "--input", str(intake))
+                               "--source", "codex-advisor", "--input", str(intake))
         self.assertEqual(consulted.returncode, 0, consulted.stdout + consulted.stderr)
         intake_id = json.loads(self.state("status").stdout)["advisorPreflight"]["intakeEvidence"]
         owned = [{**self.MAP[0], "sourceRefs": [{"type": "finding", "evidenceId": intake_id, "id": "SPEC-1"}]}]
@@ -1329,7 +1329,7 @@ class TollDeletionTests(HookHarness):
         intake.write_text(json.dumps({"schemaVersion": 1, "verdict": "completed", "findings": [
             {"id": "SPEC-1", "claim": "unattacked promise", "material": True, "kind": "behavioral"}]}), encoding="utf-8")
         consulted = self.state("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
-                               "--source", "claude-advisor", "--input", str(intake))
+                               "--source", "codex-advisor", "--input", str(intake))
         self.assertEqual(consulted.returncode, 0, consulted.stdout + consulted.stderr)
         intake_id = json.loads(self.state("status").stdout)["advisorPreflight"]["intakeEvidence"]
         owned = [{**self.MAP[0], "sourceRefs": [{"type": "finding", "evidenceId": intake_id, "id": "SPEC-1"}]}]
@@ -1357,7 +1357,7 @@ class TollDeletionTests(HookHarness):
         intake = self.tmp / "empty-intake.json"
         intake.write_text('{"schemaVersion":1,"findings":[],"verdict":"completed"}', encoding="utf-8")
         consulted = self.state("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
-                               "--source", "claude-advisor", "--input", str(intake))
+                               "--source", "codex-advisor", "--input", str(intake))
         self.assertEqual(consulted.returncode, 0, consulted.stdout + consulted.stderr)
         self.assertEqual(json.loads(self.state("status").stdout)["advisorPreflight"]["findings"], "none", marker)
         self.record_preflight_evidence(slug, wid)
@@ -1432,7 +1432,7 @@ class RedFirstTests(HookHarness):
         wid = json.loads(begun.stdout)["workflowId"]
         record_context_forge(self.repo, self.tmp)
         consulted = self.state("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
-                               "--source", "claude-advisor", "--verdict", "completed")
+                               "--source", "codex-advisor", "--verdict", "completed")
         self.assertEqual(consulted.returncode, 0, consulted.stdout + consulted.stderr)
         self.record_preflight_evidence(slug, wid, behavior_map=behavior_map or self.two_items())
         return wid
@@ -1508,7 +1508,7 @@ class RedFirstTests(HookHarness):
         envelope.write_text(json.dumps({"schemaVersion": 1, "verdict": "completed", "findings": [
             {"id": "SPEC-1", "claim": "an unattacked promise", "material": True, "kind": "other", "severity": "high"}]}), encoding="utf-8")
         recorded = self.state("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
-                              "--source", "claude-advisor", "--input", str(envelope))
+                              "--source", "codex-advisor", "--input", str(envelope))
         self.assertEqual(recorded.returncode, 0, marker + ": " + recorded.stdout + recorded.stderr)
         [entry] = json.loads(self.state("status").stdout)["findingStates"]
         self.assertEqual((entry["findingId"], entry["kind"], entry["status"]), ("SPEC-1", "behavioral", "pending"), marker)
@@ -1527,7 +1527,7 @@ class RedFirstTests(HookHarness):
         envelope.write_text(json.dumps({"schemaVersion": 1, "verdict": "commit-ready", "findings": [
             {"id": "SCOPE-1", "claim": "promises restated", "material": False, "kind": "nonbehavioral"}]}), encoding="utf-8")
         final = self.state("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final",
-                           "--source", "claude-advisor", "--input", str(envelope))
+                           "--source", "codex-advisor", "--input", str(envelope))
         self.assertEqual(final.returncode, 0, final.stdout + final.stderr)
         self.assertEqual(json.loads(self.state("status").stdout)["nextAction"], "complete-workflow", marker)
         self.assertEqual(self.state("complete").returncode, 0, marker)
@@ -1556,7 +1556,7 @@ class RedFirstTests(HookHarness):
         envelope = self.tmp / "final-f1.json"
         envelope.write_text(json.dumps({"schemaVersion": 1, "verdict": "fix-before-commit", "findings": [finding]}), encoding="utf-8")
         first = self.state("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final",
-                           "--source", "claude-advisor", "--input", str(envelope))
+                           "--source", "codex-advisor", "--input", str(envelope))
         self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
         intake_id = [e["intakeEvidenceId"] for e in json.loads(self.state("status").stdout)["findingStates"] if e["findingId"] == "F-1"][0]
         rejected = self.state("advisor-disposition", "--slug", slug, "--workflow-id", wid, "--stage", "final",
@@ -1564,7 +1564,7 @@ class RedFirstTests(HookHarness):
         self.assertEqual(rejected.returncode, 0, rejected.stdout + rejected.stderr)
         self.first_rejection = self.finding_entry()["dispositionEvidenceId"]
         appeal = self.state("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final",
-                            "--source", "claude-advisor", "--input", str(envelope))
+                            "--source", "codex-advisor", "--input", str(envelope))
         self.assertEqual(appeal.returncode, 0, appeal.stdout + appeal.stderr)
         return wid, intake_id
 
@@ -1597,7 +1597,7 @@ class RedFirstTests(HookHarness):
         envelope = self.tmp / "final-f1.json"
         envelope.write_text(json.dumps({"schemaVersion": 1, "verdict": "fix-before-commit", "findings": [finding]}), encoding="utf-8")
         first = self.state("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final",
-                           "--source", "claude-advisor", "--input", str(envelope))
+                           "--source", "codex-advisor", "--input", str(envelope))
         self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
         status = json.loads(self.state("status").stdout)
         intake_id = [e["intakeEvidenceId"] for e in status["findingStates"] if e["findingId"] == "F-1"][0]
@@ -1614,7 +1614,7 @@ class RedFirstTests(HookHarness):
         self.assertEqual(rejected.returncode, 0, rejected.stdout + rejected.stderr)
         # The advisor's one response re-raises the same finding as material.
         appeal = self.state("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final",
-                            "--source", "claude-advisor", "--input", str(envelope))
+                            "--source", "codex-advisor", "--input", str(envelope))
         self.assertEqual(appeal.returncode, 0, appeal.stdout + appeal.stderr)
         after = json.loads(self.state("status").stdout)
         self.assertNotEqual(after["nextAction"], "needs-human-owner-adjudication", marker + ": " + after["nextAction"])
@@ -1672,7 +1672,7 @@ class RedFirstTests(HookHarness):
         wid = json.loads(begun.stdout)["workflowId"]
         record_context_forge(self.repo, self.tmp)
         self.state("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
-                   "--source", "claude-advisor", "--verdict", "completed")
+                   "--source", "codex-advisor", "--verdict", "completed")
         doc = self.tmp / "prose.json"
         doc.write_text(json.dumps({"behaviorMap": self.two_items()}), encoding="utf-8")
         bare = self.state("record-preflight", "--slug", slug, "--workflow-id", wid, "--input", str(doc))
@@ -1768,7 +1768,7 @@ class RedFirstTests(HookHarness):
             {"id": "SPEC-1", "claim": "an unattacked promise", "material": True, "kind": []},
             {"id": "SPEC-2", "claim": "another", "material": False, "kind": {"type": "note"}}]}), encoding="utf-8")
         recorded = self.state("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
-                              "--source", "claude-advisor", "--input", str(envelope))
+                              "--source", "codex-advisor", "--input", str(envelope))
         self.assertEqual(recorded.returncode, 0, marker + ": " + recorded.stdout + recorded.stderr)
         kinds = {e["findingId"]: e["kind"] for e in json.loads(self.state("status").stdout)["findingStates"]}
         self.assertEqual(kinds, {"SPEC-1": "behavioral", "SPEC-2": "behavioral"}, marker)
@@ -1799,7 +1799,7 @@ class RedFirstTests(HookHarness):
         wid = json.loads(begun.stdout)["workflowId"]
         record_context_forge(self.repo, self.tmp)
         self.state("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
-                   "--source", "claude-advisor", "--verdict", "completed")
+                   "--source", "codex-advisor", "--verdict", "completed")
         before, events = self.state("status").stdout, self.events()
         doc = self.tmp / "refused.json"
         blank = build_document("prose", behavior_map=self.two_items()); blank["invariants"] = "   "
@@ -1845,7 +1845,7 @@ class RedFirstTests(HookHarness):
         envelope.write_text(json.dumps({"schemaVersion": 1, "verdict": verdict, "findings": [
             {"id": "F-1", "claim": "an operation is unattacked", "material": material, "kind": "behavioral"}]}), encoding="utf-8")
         return self.state("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final",
-                          "--source", "claude-advisor", "--input", str(envelope))
+                          "--source", "codex-advisor", "--input", str(envelope))
 
     def finding_entry(self) -> dict:
         return [e for e in json.loads(self.state("status").stdout)["findingStates"] if e["findingId"] == "F-1"][0]

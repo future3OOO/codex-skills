@@ -22,7 +22,7 @@ second source of truth that drifts on its own.
 | Hook operational documentation | `WORKFLOW-MAP.md` | `config.toml` and the hook scripts remain the executable Interface; `AGENTS.md` §9 keeps only what changes lead action |
 | Repo Context Forge downstream contract | `repo-context-forge/SKILL.md` | `AGENTS.md` §8 owns the intake gate |
 | Review-budget measurement | `delivery-governance/SKILL.md` | `AGENTS.md` §7 states the ~500 net-line target |
-| Advisor transport | `claude-advisor/SKILL.md` | The workflow retains the stable slug, phase, and terminal-marker contract |
+| Advisor transport | `codex-advisor/SKILL.md` | The workflow retains the stable slug, phase, and terminal-marker contract |
 | Transaction doctrine | `production-code/references/transaction-doctrine.md` | Preflight, production-code, and planning skills point to it |
 | Quality-review vocabulary | `code-quality/SKILL.md` | `production-code` extends it for implementation |
 | Module shape rules | `production-preflight/SKILL.md` | Deep modules, reuse-before-new, shallow-helper debt; `codebase-design` owns the vocabulary |

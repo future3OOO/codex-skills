@@ -27,7 +27,7 @@ BUDGET = 300
 # constant under test cannot catch that constant being wrong.
 OPTIONAL = ".github/scripts/test_pr_scope.py"
 REQUIRED = ("skills/production-code/scripts/test_code_quality_gate.py",
-            "skills/claude-advisor/tests/test-ask-claude-advisor.sh")
+            "skills/codex-advisor/tests/test-ask-codex-advisor.sh")
 
 
 class RunnerAttack(unittest.TestCase):

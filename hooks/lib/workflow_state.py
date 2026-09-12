@@ -53,7 +53,7 @@ WORKFLOW_SEQUENCE = (
 )
 STEP_STATUSES = {"pending", "in-progress", "passed", "not-required", "unavailable"}
 FINDING_STATUSES = {"pending", "none", "addressed"}
-REVIEW_SOURCES = {"claude-advisor"}
+REVIEW_SOURCES = {"codex-advisor"}
 FINAL_VERDICTS = {"commit-ready", "fix-before-commit", "context-mismatch"}
 NO_INSTANCE_ID = "this state predates workflow instance identity and can no longer advance; begin a new workflow"
 SLUG_MISMATCH = "--slug does not match the active workflow"
@@ -968,8 +968,8 @@ def record_advisor_result(
                 raise WorkflowError(PREFLIGHT_CLOSED)
             if not _allows_next(state, "repo-context-forge"):
                 raise WorkflowIncomplete("advisor-preflight requires repo-context-forge")
-            if source != "claude-advisor":
-                raise ValueError("preflight advisor source must be claude-advisor")
+            if source != "codex-advisor":
+                raise ValueError("preflight advisor source must be codex-advisor")
             if verdict not in {"completed", "unavailable"}:
                 raise ValueError("preflight verdict must be completed or unavailable")
             measured_reason = str(reason or "").strip() or None

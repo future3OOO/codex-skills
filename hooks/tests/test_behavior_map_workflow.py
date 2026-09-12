@@ -77,7 +77,7 @@ class BehaviorMapWorkflowTests(unittest.TestCase):
         state = json.loads(begun.stdout)
         slug, workflow_id = state["slug"], state["workflowId"]
         identity = record_context_forge(self.repo, self.tmp)
-        record_advisor_result(identity, slug, workflow_id, "preflight", "claude-advisor", "completed")
+        record_advisor_result(identity, slug, workflow_id, "preflight", "codex-advisor", "completed")
         advisor_disposition(identity, slug, workflow_id, "preflight", "none")
         payload = self.tmp / "preflight.json"
         payload.write_text(
@@ -327,7 +327,7 @@ finally:
         identity = record_context_forge(self.repo, self.tmp)
         record_advisor_result(
             identity, state["slug"], state["workflowId"],
-            "preflight", "claude-advisor", "completed",
+            "preflight", "codex-advisor", "completed",
         )
         advisor_disposition(identity, state["slug"], state["workflowId"], "preflight", "none")
 

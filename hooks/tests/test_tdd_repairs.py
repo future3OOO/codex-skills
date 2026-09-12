@@ -113,7 +113,7 @@ class MappedTddRepairTests(unittest.TestCase):
         workflow_id = str(json.loads(begun.stdout)["workflowId"])
         identity = record_context_forge(self.repo, self.tmp)
         record_advisor_result(
-            identity, slug, workflow_id, "preflight", "claude-advisor", "completed"
+            identity, slug, workflow_id, "preflight", "codex-advisor", "completed"
         )
         advisor_disposition(identity, slug, workflow_id, "preflight", "none")
         preflight = self.tmp / f"{slug}-preflight.json"
@@ -514,7 +514,7 @@ class MappedTddRepairTests(unittest.TestCase):
         workflow_id = str(json.loads(begun.stdout)["workflowId"])
         identity = record_context_forge(self.repo, self.tmp)
         record_advisor_result(
-            identity, "zero-test-marker", workflow_id, "preflight", "claude-advisor", "completed"
+            identity, "zero-test-marker", workflow_id, "preflight", "codex-advisor", "completed"
         )
         advisor_disposition(identity, "zero-test-marker", workflow_id, "preflight", "none")
         for marker in ("Ran 0 tests", "0 tests ran"):

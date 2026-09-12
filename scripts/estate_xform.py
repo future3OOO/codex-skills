@@ -12,11 +12,10 @@ BASENAME = {
     "devin": {"CLAUDE.md": "AGENTS.md", "settings.json": "config.json",
               "settings.local.json": "config.local.json"},
     "codex": {"CLAUDE.md": "AGENTS.md", "settings.json": "config.toml",
-              "settings.local.json": "config.local.toml",
-              "ask-codex-advisor.sh": "ask-claude-advisor.sh"},
+              "settings.local.json": "config.local.toml"},
 }
 # Whole-path-component maps (dir renames).
-COMPONENT = {"codex": {"codex-advisor": "claude-advisor"}}
+COMPONENT = {}
 
 TOKENS = {
 "devin": [
@@ -53,8 +52,6 @@ TOKENS = {
     ("settings.local.json", "config.local.toml"),
     ("settings.json", "config.toml"),
     ("CLAUDE.md", "AGENTS.md"),
-    ("codex-advisor", "claude-advisor"),
-    ("ask-codex-advisor", "ask-claude-advisor"),
     ("`Agent` tool", "`spawn_agent`"),
     ("Agent tool", "spawn_agent"),
     ("subagent_type", "agent_type"),

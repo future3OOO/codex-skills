@@ -230,7 +230,7 @@ preflight and must stop well below 1,000.
 
 Every implementation pass must run Repo Context Forge, packet-scoped GitNexus
 caller/callee checks, production preflight, TDD where practical, code review,
-and the Claude Advisor checkpoints required by the repository workflow.
+and the Codex Advisor checkpoints required by the repository workflow.
 
 Required proof includes:
 
@@ -292,11 +292,11 @@ Required proof includes:
 
 ## Change log
 
-- 2026-08-05: created after operator approval and Claude Advisor challenge.
+- 2026-08-05: created after operator approval and Codex Advisor challenge.
 - 2026-08-05: linked published children #75, #76, and #77 and reconciled
   parent #54.
 - 2026-08-05: made the one-owner deletion/deepening contract explicit after
-  operator direction and Claude Advisor challenge; PR count and order remain
+  operator direction and Codex Advisor challenge; PR count and order remain
   unchanged.
 - 2026-08-05: added complete owner/reference discovery, explicit finding
   states, mechanical rewiring proof, and the parent-owned PR C corpus gate

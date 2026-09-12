@@ -16,7 +16,7 @@ TESTS = Path("hooks/tests")
 # Not unittest modules: one pytest file and one shell script.
 WHOLE = (
     "skills/production-code/scripts/test_code_quality_gate.py",
-    "skills/claude-advisor/tests/test-ask-claude-advisor.sh",
+    "skills/codex-advisor/tests/test-ask-codex-advisor.sh",
 )
 # The installed estate carries skills/ and hooks/ only, so this one is absent
 # there. Every other job is required: a missing one fails the run, loudly.

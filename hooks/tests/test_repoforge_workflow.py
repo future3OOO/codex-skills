@@ -430,7 +430,7 @@ class RepoForgeWorkflowTests(unittest.TestCase):
         declaration.write_text(json.dumps({"schemaVersion": 1, "status": "absent", "reason": "test pass has no governing design"}), encoding="utf-8")
         for step in (
             ("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
-             "--source", "claude-advisor", "--verdict", "completed", "--design-declaration", str(declaration)),
+             "--source", "codex-advisor", "--verdict", "completed", "--design-declaration", str(declaration)),
             ("advisor-disposition", "--slug", slug, "--workflow-id", wid,
              "--stage", "preflight", "--findings", "none"),
         ):

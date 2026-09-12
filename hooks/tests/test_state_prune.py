@@ -661,7 +661,7 @@ class StatePruneTests(unittest.TestCase):
         the pointer is written); nothing may land under the distinct
         CODEX_HOME fallback.
         """
-        wrapper = ROOT / "skills" / "claude-advisor" / "scripts" / "ask-claude-advisor.sh"
+        wrapper = ROOT / "skills" / "codex-advisor" / "scripts" / "ask-codex-advisor.sh"
         repo = self.tmp / "wrapperrepo"
         repo.mkdir()
         subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)

@@ -4,9 +4,9 @@ set -euo pipefail
 # Shared cross-tool recursion guard (2026-07-25). Advisor delegates are full
 # agents: unguarded, a delegate reads the repo, follows its production workflow
 # to the advisor step, and consults ANOTHER advisor. That loop is bidirectional
-# — Codex -> claude-advisor -> Claude -> codex-advisor -> Codex — so both
+# — Codex -> codex-advisor -> Claude -> codex-advisor -> Codex — so both
 # wrappers set and honour the SAME marker. Observed live: a codex exec delegate
-# attempted its own claude-advisor consult and was stopped only incidentally by
+# attempted its own codex-advisor consult and was stopped only incidentally by
 # a read-only sandbox blocking a state write.
 if [[ -n "${ADVISOR_ACTIVE:-}${CODEX_ADVISOR_ACTIVE:-}" ]]; then
   printf 'error: refusing nested advisor consult — you ARE the advisor delegate. Answer from the payload and your own reads; do not delegate onward.\n' >&2
@@ -15,19 +15,20 @@ fi
 export ADVISOR_ACTIVE=1
 
 usage() {
-  printf 'Usage: %s [--provider claude|codex] [--slug name] [--phase preflight-advice|precommit-challenge] [--cwd path] [--fresh] [--budget words] [--base-ref ref] [--model model] [--fallback-model model] [--codex-model model] [--write] [--full-tools] -- "question"\n' "$0" >&2
+  printf 'Usage: %s [--provider claude|codex] [--slug name] [--phase preflight-advice|final-review] [--cwd path] [--fresh] [--budget words] [--base-ref ref] [--model model] [--fallback-model model] [--codex-model model] [--write] [--full-tools] -- "question"\n' "$0" >&2
 }
 
-provider="${CLAUDE_ADVISOR_PROVIDER:-${ADVISOR_PROVIDER:-claude}}"
+provider="${CODEX_ADVISOR_PROVIDER:-${ADVISOR_PROVIDER:-codex}}"
 slug="default"
 phase=""
 cwd="$PWD"
 fresh=0
 budget="300"
 base_ref=""
-advisor_model="${CLAUDE_ADVISOR_MODEL:-claude-opus-5}"
-advisor_fallback_model="${CLAUDE_ADVISOR_FALLBACK_MODEL:-claude-opus-5}"
-codex_model="${CODEX_ADVISOR_MODEL:-}"
+advisor_model="${ADVISOR_CLAUDE_MODEL:-claude-opus-5}"
+advisor_fallback_model="${ADVISOR_CLAUDE_FALLBACK_MODEL:-claude-opus-5}"
+codex_model="${CODEX_ADVISOR_MODEL:-gpt-6-astra}"
+codex_effort="${CODEX_ADVISOR_EFFORT:-xhigh}"
 write_mode=0
 full_tools=0
 
@@ -120,10 +121,10 @@ Use this as the post-Repo Context Forge / post-GitNexus / pre-production-preflig
 EOF
       next_action_target="before editing"
       ;;
-    precommit-challenge)
+    final-review)
       cat <<'EOF'
 
-Checkpoint Interface: precommit-challenge
+Checkpoint Interface: final-review
 Rubric: LOAD /code-review (Standards vs Spec axes and its smell baseline — Fake Test and Imaginary Risk are hard violations there), /codebase-design, /tdd, and /code-quality. Load no unrelated skills.
 
 Use this as the post-edit / post-proof / pre-commit checkpoint. Challenge whether the implementation satisfies the PRD slice and production contract without extra behavior or no-change surface drift:
@@ -237,7 +238,7 @@ if [[ $# -eq 0 ]]; then
 fi
 
 case "$phase" in
-  ""|preflight-advice|precommit-challenge)
+  ""|preflight-advice|final-review)
     ;;
   *)
     printf 'error: unsupported advisor phase: %s\n' "$phase" >&2
@@ -266,7 +267,7 @@ fi
 
 question="$*"
 session_cwd="$(cd "$cwd" && pwd -P)"
-state_dir="${CLAUDE_ADVISOR_STATE_DIR:-$HOME/.codex/claude-advisor}"
+state_dir="${CODEX_ADVISOR_STATE_DIR:-$HOME/.codex/codex-advisor}"
 sid=""
 sid_file=""
 normalized_slug=""
@@ -278,19 +279,19 @@ if [[ "$provider" == "claude" ]]; then
   mkdir -p "$state_dir"
   resolve_task_session "$slug" "$fresh" "$phase"
 
-  printf 'claude_advisor_session raw_slug=%q normalized_slug=%q mode=%s sid_prefix=%s phase=%s warnings=%s\n' \
+  printf 'advisor_session raw_slug=%q normalized_slug=%q mode=%s sid_prefix=%s phase=%s warnings=%s provider=claude\n' \
     "$slug" "$normalized_slug" "$session_mode" "${sid:0:8}" "$phase_display" "$warning_state" >&2
-  printf 'claude_advisor_model model=%q\n' "$advisor_model" >&2
-  printf 'claude_advisor_fallback_model model=%q\n' "$advisor_fallback_model" >&2
+  printf 'advisor_model model=%q\n' "$advisor_model" >&2
+  printf 'advisor_fallback_model model=%q\n' "$advisor_fallback_model" >&2
 else
   sid="$(new_session_id)"
   normalized_slug="${slug//[^A-Za-z0-9_.-]/_}"
   session_mode="ephemeral"
   warning_state="$(phase_slug_warning "$normalized_slug")"
   phase_display="${phase:-none}"
-  printf 'codex_advisor_session raw_slug=%q normalized_slug=%q mode=%s sid_prefix=%s phase=%s warnings=%s provider=codex\n' \
+  printf 'advisor_session raw_slug=%q normalized_slug=%q mode=%s sid_prefix=%s phase=%s warnings=%s provider=codex\n' \
     "$slug" "$normalized_slug" "$session_mode" "${sid:0:8}" "$phase_display" "$warning_state" >&2
-  printf 'codex_advisor_model model=%q\n' "${codex_model:-default}" >&2
+  printf 'advisor_model model=%q effort=%q\n' "$codex_model" "${codex_effort:-default}" >&2
 fi
 
 stdin_context=""
@@ -325,7 +326,7 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   fi
 
   diff_ref="$base_ref"
-  if [[ -z "$diff_ref" && "$phase" == "precommit-challenge" ]]; then
+  if [[ -z "$diff_ref" && "$phase" == "final-review" ]]; then
     if [[ -n "$pr_base" && "$pr_base" != "null" ]]; then
       if git rev-parse --verify "origin/$pr_base" >/dev/null 2>&1; then
         diff_ref="origin/$pr_base"
@@ -432,9 +433,9 @@ fi
 advisor_output=""
 advisor_status=0
 if [[ "$provider" == "codex" ]]; then
-  codex_args=(exec --sandbox read-only -C "$session_cwd" --ephemeral)
-  if [[ -n "$codex_model" ]]; then
-    codex_args+=(--model "$codex_model")
+  codex_args=(exec --sandbox read-only -C "$session_cwd" --ephemeral --model "$codex_model")
+  if [[ -n "$codex_effort" ]]; then
+    codex_args+=(-c "model_reasoning_effort=$codex_effort")
   fi
   set +e
   advisor_output="$(printf '%s' "$prompt" | codex "${codex_args[@]}" -)"
@@ -466,7 +467,7 @@ else
   if [[ "$session_mode" == "resume" && ( "$advisor_output" == *"No conversation found with session ID:"* || "$advisor_stderr" == *"No conversation found with session ID:"* ) ]]; then
     sid="$(new_session_id)"
     printf '%s\n' "$sid" > "$sid_file"
-    printf 'claude_advisor_session_recovery reason=stale-resume sid_prefix=%s\n' "${sid:0:8}" >&2
+    printf 'advisor_session_recovery reason=stale-resume sid_prefix=%s\n' "${sid:0:8}" >&2
     capture_claude_advisor --session-id "$sid"
   fi
   if [[ -n "$advisor_stderr" ]]; then
@@ -483,4 +484,4 @@ if [[ -z "$(printf '%s' "$advisor_output" | tr -d '[:space:]')" ]]; then
   exit 1
 fi
 printf '%s\n' "$advisor_output"
-printf 'claude_advisor_complete status=0 provider=%s\n' "$provider" >&2
+printf 'advisor_complete status=0 provider=%s\n' "$provider" >&2

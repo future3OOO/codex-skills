@@ -52,7 +52,7 @@ class ReviewSummaryHarness(unittest.TestCase):
         self.assertEqual(begun.returncode, 0, begun.stdout + begun.stderr)
         identity = record_context_forge(self.repo, self.tmp)
         self.wid = read_workflow(identity)["workflowId"]
-        record_advisor_result(identity, "review-summary", read_workflow(identity)["workflowId"], "preflight", "claude-advisor", "completed")
+        record_advisor_result(identity, "review-summary", read_workflow(identity)["workflowId"], "preflight", "codex-advisor", "completed")
         advisor_disposition(identity, "review-summary", read_workflow(identity)["workflowId"], "preflight", "none")
         doc_path = self.tmp / "setup-preflight.json"
         doc_path.write_text(json.dumps(build_no_change_document("suite setup")), encoding="utf-8")
@@ -311,7 +311,7 @@ class ReviewSummaryTests(ReviewSummaryHarness):
         command = 'python3 -I -c \'import sys; from pathlib import Path; sys.path.insert(0, str(Path.home() / ".codex")); from hooks.lib.workflow_documents import DOCUMENT_SHAPE_TABLE; print(DOCUMENT_SHAPE_TABLE)\''
         delegate_prompt = (ROOT / "skills/code-review/SKILL.md").read_text(encoding="utf-8")
         self.assertNotIn(command, delegate_prompt, "DELEGATE_PROMPT_CARRIES_LEAD_RECORDING")
-        for relative in ("skills/claude-advisor/SKILL.md", "skills/repo-production-workflow/SKILL.md"):
+        for relative in ("skills/codex-advisor/SKILL.md", "skills/repo-production-workflow/SKILL.md"):
             text = (ROOT / relative).read_text(encoding="utf-8")
             self.assertIn(command, text, "AUTHOR_TABLE_COMMAND_USED_CALLER_PATH")
             self.assertNotIn("| `fixed` |", text, marker)

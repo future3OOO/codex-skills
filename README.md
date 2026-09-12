@@ -14,7 +14,7 @@ The project is the source of truth; the estate is an install artifact.
 
 - `AGENTS.md` — global Codex rules (`~/.codex/AGENTS.md`).
 - `skills/` — custom skills, one directory per skill. Codex-only extras that
-  do not exist upstream: `claude-advisor` (the codex-side advisor name),
+  do not exist upstream: `codex-advisor` (the codex-side advisor name),
   `frontend-design`, `setup-pre-commit`, `.system/` is excluded.
 - `hooks/` — lifecycle hooks (workflow state lib, intake gate, quality gate,
   discipline re-arm).
@@ -66,7 +66,7 @@ Diverged files (manual merge — sync will not overwrite):
 - `README.md`, `install.sh`, `decisions.md`, `mcp_config.json`
 - `hooks/lib/hook_input.py` — codex payload dialect (`apply_patch` patch
   headers, `Bash` write-target detection)
-- `skills/claude-advisor/` — codex's own advisor skill (upstream's
+- `skills/codex-advisor/` — codex's own advisor skill (upstream's
   `codex-advisor` is the same role under the other harness's name)
 - `skills/code-review/SKILL.md` — codex delegate frontmatter
 

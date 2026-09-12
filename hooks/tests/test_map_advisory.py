@@ -134,7 +134,7 @@ class MapAdvisoryTests(unittest.TestCase):
         self.intake()
         identity = resolve_repo_identity(self.repo)
         workflow_id = instance_id(read_workflow(identity))
-        record_advisor_result(identity, self.slug, workflow_id, "preflight", "claude-advisor", "completed")
+        record_advisor_result(identity, self.slug, workflow_id, "preflight", "codex-advisor", "completed")
         advisor_disposition(identity, self.slug, workflow_id, "preflight", "none")
         document = self.tmp / "preflight.json"
         document.write_text(json.dumps(build_document("map advisory fixture", behavior_map=[pending_behavior(

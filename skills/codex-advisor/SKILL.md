@@ -1,27 +1,28 @@
 ---
-name: claude-advisor
-description: Consult Claude as a one-on-one advisor or explicitly delegated write-capable worker from Codex using the local Claude CLI. Keep Claude read-only unless the user explicitly authorizes `--write` or `--full-tools`; full tool access also requires a delegated git worktree. Mandatory after Repo Context Forge and packet-scoped GitNexus checks in production repo workflow; also use when the user asks Codex to ask Claude or when architecture, migration, correctness, security, concurrency, idempotency, or non-obvious PR/worktree risk needs advisory review.
+name: codex-advisor
+description: Consult the Codex advisor — a fresh read-only `codex exec` run by default — as a one-on-one challenger of Codex's work; a Claude provider (`claude -p`) is available via `--provider claude` and is required for `--write` or `--full-tools` delegated-worker modes. Mandatory after Repo Context Forge and packet-scoped GitNexus checks in production repo workflow; also use when architecture, migration, correctness, security, concurrency, idempotency, or non-obvious PR/worktree risk needs advisory review.
 ---
 
-# Claude Advisor
+# Codex Advisor
 
-Claude Advisor is a challenge Interface around Codex's work. Codex owns the
+Codex Advisor is a challenge Interface around Codex's work. Codex owns the
 decision, implementation, tests, and final report. The advisor supplies
-independent pressure against the evidence Codex provides. Claude is the default
-advisor provider; Codex can be selected as an explicit fallback when Claude
-tokens are unavailable.
+independent pressure against the evidence Codex provides. The Codex provider —
+a fresh read-only `codex exec` run — is the default; `--provider claude`
+selects the Claude CLI path when Claude tokens are available or when write
+modes are needed.
 
 Use the wrapper by default:
 
 ```bash
-/home/prop_/.codex/skills/claude-advisor/scripts/ask-claude-advisor.sh \
+/home/prop_/.codex/skills/codex-advisor/scripts/ask-codex-advisor.sh \
   --slug "<stable-task>" \
   --cwd "$PWD" \
   -- "Question: <one focused question>"
 ```
 
-The wrapper streams the composed prompt to Claude over stdin, so large diffs do
-not hit shell or OS argument-length limits.
+The wrapper streams the composed prompt to the advisor provider over stdin, so
+large diffs do not hit shell or OS argument-length limits.
 
 ## Required Codex Execution
 
@@ -35,7 +36,7 @@ In this host, `functions.exec` is the outer tool,
 
 ```javascript
 const result = await tools.exec_command({
-  cmd: "/home/prop_/.codex/skills/claude-advisor/scripts/ask-claude-advisor.sh --slug '<task>' --cwd '<worktree>' -- 'Question: <question>'",
+  cmd: "/home/prop_/.codex/skills/codex-advisor/scripts/ask-codex-advisor.sh --slug '<task>' --cwd '<worktree>' -- 'Question: <question>'",
   workdir: "<worktree>",
   yield_time_ms: 30000,
   max_output_tokens: 6000,
@@ -66,35 +67,35 @@ text(JSON.stringify(next));
 
 Success requires all three signals: `exit_code=0`, non-empty advisor stdout,
 and the final stderr marker
-`claude_advisor_complete status=0 provider=<provider>`. Startup session/model
+`advisor_complete status=0 provider=<provider>`. Startup session/model
 lines are metadata, not completion.
 
-Use Codex Advisor as the fallback provider without changing the prompt contract:
+Use the Claude provider without changing the prompt contract:
 
 ```bash
-/home/prop_/.codex/skills/claude-advisor/scripts/ask-claude-advisor.sh \
-  --provider codex \
+/home/prop_/.codex/skills/codex-advisor/scripts/ask-codex-advisor.sh \
+  --provider claude \
   --slug "<stable-task>" \
-  --phase precommit-challenge \
+  --phase final-review \
   --cwd "$PWD" \
   --base-ref origin/main \
   -- "Question: Does the wrapper-provided live diff satisfy the production contract?"
 ```
 
-`CLAUDE_ADVISOR_PROVIDER=codex` selects the same fallback through the
-environment. The default provider remains `claude`.
+`CODEX_ADVISOR_PROVIDER=claude` or `ADVISOR_PROVIDER=claude` selects the same
+path through the environment. The default provider is `codex`.
 
 The advisor provider does not load this skill file. Any rubric it must follow
 has to be included in the wrapper phase prompt or in the question sent through
 the wrapper.
 Changes to checkpoint rules here are inert unless the wrapper phase prompts are
 kept in sync.
-The wrapper phase prompts at `scripts/ask-claude-advisor.sh` are the
+The wrapper phase prompts at `scripts/ask-codex-advisor.sh` are the
 operational source of truth for phase output shape and tool policy.
 
 ## Production Checkpoints
 
-In production repo work that uses Repo Context Forge, use Claude twice:
+In production repo work that uses Repo Context Forge, consult the advisor twice:
 
 1. **Before code**: after Repo Context Forge and packet-scoped GitNexus checks,
    before `$production-preflight` and before edits.
@@ -122,7 +123,7 @@ Supply:
 Command:
 
 ```bash
-/home/prop_/.codex/skills/claude-advisor/scripts/ask-claude-advisor.sh \
+/home/prop_/.codex/skills/codex-advisor/scripts/ask-codex-advisor.sh \
   --slug "<stable-task>" \
   --phase preflight-advice \
   --cwd "$PWD" \
@@ -161,15 +162,15 @@ dirty diff, staged diff, or PR/base diff from `--cwd`; the advisor must critique
 that evidence directly.
 
 If the wrapper-provided diff does not match the requested PR, PRD, reviewer
-issue, branch, or head SHA, treat Claude answer as a blocker and fix the call
-context before relying on it.
+issue, branch, or head SHA, treat the advisor answer as a blocker and fix the
+call context before relying on it.
 
 Command:
 
 ```bash
-/home/prop_/.codex/skills/claude-advisor/scripts/ask-claude-advisor.sh \
+/home/prop_/.codex/skills/codex-advisor/scripts/ask-codex-advisor.sh \
   --slug "<stable-task>" \
-  --phase precommit-challenge \
+  --phase final-review \
   --cwd "$PWD" \
   --base-ref origin/main \
   --budget 700 \
@@ -207,7 +208,7 @@ Precommit challenge passing does not complete PR/review work. When a PR has
 external or human reviewers, Codex must still pass the `AGENTS.md` PR Reviewer
 Completion Gate on the current head.
 
-## When To Ask Claude
+## When To Ask The Advisor
 
 Ask the advisor:
 
@@ -219,12 +220,12 @@ Ask the advisor:
   or PR reviewer loop; state the skipped round in the final report
 - for architecture, migration, correctness, security, concurrency,
   idempotency, data-loss, or non-obvious PR/worktree risk
-- when the user explicitly asks for Claude, Codex Advisor, advisor mode, or a
+- when the user explicitly asks for the advisor, advisor mode, or a delegated
   Claude worker
 - when Codex is stuck after two focused attempts
 
-Skip Claude for mechanical edits, formatting, obvious single-file fixes, and
-questions the test suite answers directly, unless the user asks for Claude.
+Skip the advisor for mechanical edits, formatting, obvious single-file fixes,
+and questions the test suite answers directly, unless the user asks for it.
 
 ## Prompt Contract
 
@@ -246,35 +247,37 @@ Options A vs B. Which fails first under the migration constraint?
 ```
 
 Avoid broad prompts such as "what do you think?", whole-repo dumps, or
-instructions that ask Claude to run Codex's workflow for it.
+instructions that ask the advisor to run Codex's workflow for it.
 
 ## Providers
 
-`--provider claude` is the default and preserves the existing Claude CLI path,
-including session resume state, `--write`, and `--full-tools`.
+`--provider codex` is the default: a fresh read-only `codex exec` advisor run
+with the wrapper-built prompt, live diff evidence, and phase rubric. It does
+not support `--write` or `--full-tools`; those modes remain Claude-only.
 
-`--provider codex` starts a fresh read-only `codex exec` advisor run with the
-same wrapper-built prompt, live diff evidence, and phase rubric. It is intended
-as an advisory fallback only. It does not support `--write` or `--full-tools`;
-those modes remain Claude-only.
+`--provider claude` preserves the existing Claude CLI path, including session
+resume state, `--write`, and `--full-tools`. Use it when Claude tokens are
+available and the consult needs write-capable delegation or session resume.
 
 Provider environment:
 
-- `CLAUDE_ADVISOR_PROVIDER=codex` or `ADVISOR_PROVIDER=codex`: select Codex.
+- `CODEX_ADVISOR_PROVIDER` or `ADVISOR_PROVIDER`: `codex` (default) or `claude`.
 - `CODEX_ADVISOR_MODEL=<model>` or `--codex-model <model>`: optional Codex
   model override.
-- `CLAUDE_ADVISOR_MODEL` and `CLAUDE_ADVISOR_FALLBACK_MODEL`: optional Claude
+- `ADVISOR_CLAUDE_MODEL` and `ADVISOR_CLAUDE_FALLBACK_MODEL`: optional Claude
   provider overrides; both default to `claude-opus-5`.
 
-Codex Advisor is not model-diverse from Codex implementation work, but it is a
-separate session with read-only constraints and raw wrapper evidence. Treat it
-as an emergency substitute for Claude pressure, not as stronger authority.
+The Codex provider is not model-diverse from Codex implementation work, but it
+is a separate session with read-only constraints and raw wrapper evidence. The
+Claude provider adds model diversity when available; neither is stronger
+authority than the workflow's own evidence chain.
 
 ## Modes
 
-Keep Claude read-only unless the user explicitly authorizes Claude to modify
-files. Do not infer authorization from the task type, production workflow,
-worktree availability, or a request merely to consult or test Claude. Use the
+Keep the advisor read-only unless the user explicitly authorizes file
+modification — write modes require `--provider claude`. Do not infer
+authorization from the task type, production workflow, worktree availability,
+or a request merely to consult or test the advisor. Use the
 wrapper for every authorized write mode.
 
 The wrapper's read-only tool policy is the source of truth:
@@ -288,7 +291,7 @@ The wrapper's read-only tool policy is the source of truth:
 `--write` or `--full-tools`.
 
 - `preflight-advice`: before code, after Repo Context Forge + GitNexus
-- `precommit-challenge`: after proof, before commit or push
+- `final-review`: after proof, before commit or push
 
 When explicitly authorized, use `--write` only for a bounded edit. The prompt
 must name the task, target worktree, allowed tests, and whether commits or
@@ -315,7 +318,7 @@ When explicitly authorized, use `--full-tools` only for delegated worker tasks
 in a dedicated git worktree:
 
 ```bash
-/home/prop_/.codex/skills/claude-advisor/scripts/ask-claude-advisor.sh \
+/home/prop_/.codex/skills/codex-advisor/scripts/ask-codex-advisor.sh \
   --slug "<stable-task>" \
   --cwd "/path/to/delegated-worktree" \
   --full-tools \
@@ -341,7 +344,7 @@ The Claude CLI has no `--cwd` flag. Use the wrapper's `--cwd`; without the
 wrapper, `cd` into the target worktree before running `claude -p`.
 
 The wrapper attaches staged and unstaged changes to every consultation. It
-infers a PR/upstream base diff only for `precommit-challenge`; pass
+infers a PR/upstream base diff only for `final-review`; pass
 `--base-ref` explicitly when another consultation needs committed branch
 changes as evidence. For a design-only question that must exclude branch
 history, omit `--base-ref`.
@@ -372,8 +375,8 @@ Do not put phase words in the slug: `pre-edit`, `pre-commit`, `review`,
 `challenge`, `final`, or `preflight`. Phase belongs in `--phase`, not identity.
 
 Every wrapper call emits one stderr session line with raw slug, normalized slug,
-create/resume/fresh mode, session id prefix, phase, and warning state. Claude
-stdout remains Claude's answer only.
+create/resume/fresh mode, session id prefix, phase, and warning state.
+Advisor stdout remains the advisor's answer only.
 
 For the production pair (preflight advice → precommit challenge), reusing the
 same slug/session is required so the challenge retains the original scope. A
@@ -400,7 +403,7 @@ Apply the Required Codex Execution and live-handle invariant above before
 classifying the advisor result.
 
 Final success requires provider status zero, non-empty advice, and the exact
-terminal line `claude_advisor_complete status=0 provider=<provider>` on stderr.
+terminal line `advisor_complete status=0 provider=<provider>` on stderr.
 A missing, malformed, or non-terminal marker is incomplete, not success: do not
 accept the advice, advance the checkpoint, classify the consultation as
 unavailable, or start a fallback. Continue a live handle. After a terminal
@@ -412,7 +415,7 @@ failure eligible for the caller's explicit unavailable policy. Warning-only
 stderr is not a provider failure when valid advice and the terminal marker are
 present.
 
-When the advisor is unavailable or the Codex fallback provider is used, say so
+When the advisor is unavailable, say so
 in the final report; a degraded or skipped round is never silent.
 
 Report advisor output as evidence, not authority:
@@ -426,5 +429,5 @@ GitNexus, `$production-preflight`, `$production-code`, `$tdd`, or Codex's final
 verification. The advisor should report missing preflight or Module-shape
 evidence, not generate substitute preflight artifacts.
 
-Claude write mode does not replace Repo Context Forge, GitNexus checks,
+Advisor write mode does not replace Repo Context Forge, GitNexus checks,
 `$production-code`, or Codex's final verification.
