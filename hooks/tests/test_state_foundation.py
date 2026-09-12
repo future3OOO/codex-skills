@@ -36,7 +36,7 @@ def git(repo: Path, *args: str) -> str:
 class StateFoundationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = Path(tempfile.mkdtemp(prefix="workflow-state-foundation-"))
-        self.codex_home = self.tmp / "claude-home"
+        self.codex_home = self.tmp / "codex-home"
         self.codex_home.mkdir(mode=0o700)
         self.previous_home = os.environ.get("CODEX_HOME")
         os.environ["CODEX_HOME"] = str(self.codex_home)
