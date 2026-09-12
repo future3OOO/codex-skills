@@ -11,16 +11,14 @@ When exploring the codebase, use the project's domain glossary to get a clear me
 
 ## Iron Law
 
-No fix until root cause is reproduced, traced, and stated as a testable hypothesis.
+The canonical root-cause-first gate in `AGENTS.md` governs entry to a fix; this
+skill owns the reproduction, tracing, and hypothesis procedure.
 
 Seeing the symptom is not root cause. A stack trace line, failing assertion, or bad final state is the starting point. Trace the failure back to the original trigger before proposing code changes.
 
 ## Phase 1 — Build a feedback loop
 
-**This is the skill.** Everything else is mechanical. If you have a **tight**
-pass/fail signal for the bug — one that goes red on _this_ bug — you will find
-the cause; bisection, hypothesis-testing, and instrumentation all just consume
-it. If you don't have one, no amount of staring at code will save you.
+**This is the skill.** Everything else is mechanical. If you have a fast, deterministic, agent-runnable pass/fail signal for the bug, you will find the cause — bisection, hypothesis-testing, and instrumentation all just consume that signal. If you don't have one, no amount of staring at code will save you.
 
 Spend disproportionate effort here. **Be aggressive. Be creative. Refuse to give up.**
 
@@ -31,7 +29,7 @@ Spend disproportionate effort here. **Be aggressive. Be creative. Refuse to give
 3. **CLI invocation** with a fixture input, diffing stdout against a known-good snapshot.
 4. **Headless browser script** (Playwright / Puppeteer) — drives the UI, asserts on DOM/console/network.
 5. **Replay a captured trace.** Save a real network request / payload / event log to disk; replay it through the code path in isolation.
-6. **Throwaway harness.** Spin up a minimal subset of the system (one service, mocked deps) that exercises the bug code path with a single function call.
+6. **Throwaway harness.** Spin up the smallest real subset that exercises the bug path. A temporary stand-in may isolate one diagnostic hypothesis only; label it non-proof and never use it for RED/GREEN or production verification.
 7. **Property / fuzz loop.** If the bug is "sometimes wrong output", run 1000 random inputs and look for the failure mode.
 8. **Bisection harness.** If the bug appeared between two known states (commit, dataset, version), automate "boot at state X, check, repeat" so you can `git bisect run` it.
 9. **Differential loop.** Run the same input through old-version vs new-version (or two configs) and diff outputs.
@@ -39,16 +37,15 @@ Spend disproportionate effort here. **Be aggressive. Be creative. Refuse to give
 
 Build the right feedback loop, and the bug is 90% fixed.
 
-### Tighten the loop
+### Iterate on the loop itself
 
-Treat the loop as a product. Once you have _a_ loop, **tighten** it:
+Treat the loop as a product. Once you have _a_ loop, ask:
 
 - Can I make it faster? (Cache setup, skip unrelated init, narrow the test scope.)
 - Can I make the signal sharper? (Assert on the specific symptom, not "didn't crash".)
 - Can I make it more deterministic? (Pin time, seed RNG, isolate filesystem, freeze network.)
 
-A 30-second flaky loop is barely better than no loop. A 2-second deterministic
-loop is tight.
+A 30-second flaky loop is barely better than no loop. A 2-second deterministic loop is a debugging superpower.
 
 ### Non-deterministic bugs
 
@@ -58,23 +55,9 @@ The goal is not a clean repro but a **higher reproduction rate**. Loop the trigg
 
 Stop and say so explicitly. List what you tried. Ask the user for: (a) access to whatever environment reproduces it, (b) a captured artifact (HAR file, log dump, core dump, screen recording with timestamps), or (c) permission to add temporary production instrumentation. Do **not** proceed to hypothesise without a loop.
 
-### Completion criterion — a tight loop that goes red
+Do not proceed to Phase 2 until you have a loop you believe in.
 
-Phase 1 is done when the loop is **tight** and **red-capable**: you can name
-**one command** — a script path, a test invocation, or a curl — that you have
-**already run at least once**, and that is:
-
-- [ ] **Red-capable** — it drives the actual bug path and asserts the user's
-      exact symptom. Not "runs without erroring".
-- [ ] **Deterministic** — same verdict every run, or a pinned high
-      reproduction rate for flaky bugs.
-- [ ] **Fast** — seconds, not minutes.
-- [ ] **Agent-runnable** — unattended, or human-in-the-loop only through
-      `scripts/hitl-loop.template.sh`.
-
-No red-capable command, no Phase 2.
-
-## Phase 2 — Reproduce + minimise
+## Phase 2 — Reproduce
 
 Run the loop. Watch the bug appear.
 
@@ -84,49 +67,7 @@ Confirm:
 - [ ] The failure is reproducible across multiple runs (or, for non-deterministic bugs, reproducible at a high enough rate to debug against).
 - [ ] You have captured the exact symptom (error message, wrong output, slow timing) so later phases can verify the fix actually addresses it.
 
-### Minimise
-
-Once it is red, shrink the repro to the smallest scenario that still goes red.
-Cut inputs, callers, config, data, and steps one at a time, re-running the loop
-after each cut. Keep only what is load-bearing for the failure.
-
-Done when every remaining element is load-bearing: removing any one of them
-makes the loop go green.
-
-Do not proceed until you have reproduced **and** minimised.
-
-### Surface Map Checkpoint A — Observed Surface
-
-After reproduction, before tracing or hypothesising, emit an evidence-bound
-surface map for what actually failed. This prevents bug-report prose from
-becoming the affected surface.
-
-Use the Module / Interface / Implementation / Depth / Seam / Adapter /
-Leverage / Locality vocabulary from `$codebase-design`, which owns that
-glossary; do not redefine it here. `$improve-codebase-architecture` is the
-escalation target for doing the refactor, not the vocabulary source.
-
-Every field must cite evidence: file:line, command output, runtime artifact,
-reviewer link, or a named contract. If you cannot cite it, omit it. Do not
-guess.
-
-```md
-**Diagnose Surface Map A — observed**
-`observedInterface`: public Interface behavior that failed, with evidence
-`entrySeam`: first Seam crossed by the repro, with evidence
-`owningModule`: suspected owning Module if evidenced, otherwise unknown
-`depth`: deep | shallow | unclear, with reason when evidenced
-`callers`: direct callers or caller groups evidenced by the repro
-`persistenceContracts`: persisted records, schemas, or migrations evidenced by the repro
-`externalSurfaces`: API, MCP, dashboard, worker, or runtime contracts evidenced by the repro
-`shallowDebt`: shallow helper/service/manager/wrapper debt seen on the repro path, or none observed
-`noChangeSurfaces`: adjacent Interfaces that must not change, with reason
-`residualRisk`: what this map cannot prove yet
-```
-
-Map-as-theatre is forbidden. Do not enumerate the whole repo, speculate about
-surfaces that merely might be affected, restate the symptom as the map, or
-propose fixes inside the map. The rule is: evidenced or omitted.
+Do not proceed until you reproduce the bug.
 
 ## Phase 3 — Trace Root Cause
 
@@ -147,39 +88,22 @@ Fix at the source, not where the error merely appears.
 
 If the trace is unclear, add targeted instrumentation before the dangerous operation or state transition. Include the relevant value, cwd/environment/config when relevant, and a stack trace or caller context. Tag temporary logs with a unique `[DEBUG-...]` marker.
 
-If tracing requires bouncing through scattered helpers/services/managers, tests need internal mocks, or no clean Seam owns the behavior, record that as a Module-shape risk. After the immediate bug is understood, escalate to `$improve-codebase-architecture` rather than normalizing the shallow path.
+If tracing requires scattered helpers or replacing internal collaborators to
+reach the behavior, or no Module exposes the behavior through a clean Seam,
+record a module-shape risk using the vocabulary owned by `codebase-design`.
+After the immediate bug is understood, escalate to
+`improve-codebase-architecture` rather than normalizing the shallow path.
 
 ### Targeted GitNexus Check
 
-For repo-based bugs, use GitNexus when available only after source tracing has named a suspected owning Module/Interface/Seam. Retarget it to the active checkout, branch, or PR head before relying on graph evidence: run `gitnexus status`, and if stale run `gitnexus analyze` from that checkout.
+For repo-based bugs, use GitNexus when available only after source tracing has named a suspected owning module/interface/seam. Retarget it to the active checkout, branch, or PR head before relying on graph evidence:
 
-Use `gitnexus context <suspect>` and `gitnexus impact <suspect> --direction upstream` to challenge the trace for missed callers, affected processes, and shallow-helper domino paths. GitNexus may widen the regression surface or change the hypothesis; it does not replace reproduction, source reads, or the testable hypothesis.
-
-### Surface Map Checkpoint B — Causal Surface
-
-After root-cause tracing and any targeted graph challenge, before hypotheses or
-fixes, emit the second surface map. It updates Checkpoint A from the observed
-Interface to the causal Module and must show what changed.
-
-```md
-**Diagnose Surface Map B — causal**
-`observedInterface`: carried forward from Map A, updated only with new evidence
-`causalModule`: owning Module where the original trigger belongs
-`depth`: deep | shallow | unclear, with reason
-`crossedSeams`: Seams crossed from repro to root cause, including Map A `entrySeam` when still relevant
-`callers`: direct callers of the causal Module Interface, plus callers that cross a Seam
-`persistenceContracts`: persisted records, schemas, or migrations touched by the causal path
-`externalSurfaces`: API, MCP, dashboard, worker, or runtime contracts touched by the causal path
-`shallowDebt`: shallow helper/service/manager/wrapper debt on the causal path
-`noChangeSurfaces`: adjacent Interfaces that must be rechecked and must not change
-`deltaFromMapA`: new Modules, Seams, contracts, callers, or no-change surfaces discovered after tracing
-`residualRisk`: what the proposed proof will not cover, and why
+```bash
+gitnexus analyze --force --skip-agents-md "$(git rev-parse --show-toplevel)"
+gitnexus status
 ```
 
-Stop before fixing and use `$improve-codebase-architecture` when shallow debt
-sits on the causal path, or when no valid test Seam exists for the mapped
-Interface behavior. A valid test Seam exercises the real bug pattern without mocking the
-Module whose behavior is under test.
+Use `gitnexus context <suspect>` and `gitnexus impact <suspect> --direction upstream` to challenge the trace for missed callers, affected processes, and shallow-helper domino paths. GitNexus may widen the regression surface or change the hypothesis; it does not replace reproduction, source reads, or the testable hypothesis.
 
 ## Phase 4 — Pattern Analysis
 
@@ -229,15 +153,15 @@ Tool preference:
 
 ## Phase 7 — Fix + regression test
 
-Write the regression test **before the fix** — but only if there is a **correct Seam** for it.
+Write the regression test **before the fix** — but only if there is a **correct seam** for it.
 
-A correct Seam is one where the test exercises the **real bug pattern** as it occurs at the call site. If the only available Seam is too shallow (single-caller test when the bug needs multiple callers, unit test that can't replicate the chain that triggered the bug), a regression test there gives false confidence.
+A correct seam is one where the test exercises the **real bug pattern** as it occurs at the call site. If the only available seam is too shallow (single-caller test when the bug needs multiple callers, unit test that can't replicate the chain that triggered the bug), a regression test there gives false confidence.
 
-**If no correct Seam exists, that itself is the finding.** Note it. The codebase architecture is preventing the bug from being locked down. Use `$improve-codebase-architecture` before forcing a bad test.
+**If no correct seam exists, that itself is the finding.** Note it. The codebase architecture is preventing the bug from being locked down. Flag this for the next phase.
 
-If a correct Seam exists:
+If a correct seam exists:
 
-1. Turn the minimised repro into a failing test at that Seam.
+1. Turn the minimised repro into a failing test at that seam.
 2. Watch it fail.
 3. Apply one source-level fix.
 4. Watch it pass.
@@ -245,18 +169,17 @@ If a correct Seam exists:
 
 No "while here" refactors during the fix. Keep refactoring for the green state.
 
-If the fix does not work, stop and count attempts. After three failed fixes, treat the issue as an architecture/module-shape problem, not a debugging persistence problem. Use `$improve-codebase-architecture` before attempting another fix.
+If the fix does not work, stop and count attempts. After three failed fixes, treat the issue as an architecture/module-shape problem, not a debugging persistence problem. Use `/improve-codebase-architecture` before attempting another fix.
 
 ## Phase 8 — Cleanup + post-mortem
 
 Required before declaring done:
 
 - [ ] Original repro no longer reproduces (re-run the Phase 1 loop)
-- [ ] Regression test passes (or absence of a valid test Seam is documented)
-- [ ] Surface Map B is self-checked before handoff: every mapped surface is changed-with-evidence or no-change-with-reason, with `$production-code` remaining the final gate of record
+- [ ] Regression test passes (or absence of seam is documented)
 - [ ] Root cause is stated as the traced source, not the visible symptom
 - [ ] All `[DEBUG-...]` instrumentation removed (`grep` the prefix)
 - [ ] Throwaway prototypes deleted (or moved to a clearly-marked debug location)
 - [ ] The hypothesis that turned out correct is stated in the commit / PR message — so the next debugger learns
 
-**Then ask: what would have prevented this bug?** If the answer involves architectural change (no good test Seam, tangled callers, hidden coupling) hand off to `$improve-codebase-architecture` with the specifics. Make the recommendation **after** the fix is in, not before — you have more information now than when you started.
+**Then ask: what would have prevented this bug?** If the answer involves architectural change (no good test seam, tangled callers, hidden coupling) hand off to the `/improve-codebase-architecture` skill with the specifics. Make the recommendation **after** the fix is in, not before — you have more information now than when you started.

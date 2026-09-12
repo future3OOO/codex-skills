@@ -1,22 +1,22 @@
-# Mocking Is Banned
+# Boundary strategies under the canonical mock ban
 
-Every test crosses a real production seam. Do not mock, stub, fake, or
-fixture-substitute ANY collaborator — internal or boundary. A test that cannot
-drive the real seam is not written; the proof gap is surfaced as a finding
-instead: name the seam, why it cannot be driven, and what real proof would
-require.
+The canonical mock-ban statement lives in `AGENTS.md` and governs every claimed RED/GREEN or production proof. This reference does not restate or weaken it.
 
-What to do instead of mocking, by situation:
+Use the closest real production Interface available:
 
-- **An internal collaborator "needs" a mock** — the Module is shallow or the
-  Seam is wrong. Use `$codebase-design` for a targeted Interface/Seam decision
-  or `$improve-codebase-architecture` for broader deepening before forcing a
-  test.
-- **An external system boundary** — drive the real integration through
-  product-owned setup paths per the repo proof surfaces: staging session,
-  captured external-system evidence, live MCP/API probes.
-- **Time or randomness** — pass values through the public Interface as
-  explicit parameters; do not patch internals.
-- **None of these are possible in this pass** — report the untested branch
-  honestly and stop. An absent test is a visible gap; a fake test is a hidden
-  one.
+- **In-process behavior:** call the public Interface with real implementation code.
+- **Filesystem/local runtime:** use a temporary filesystem or real local runtime that executes the production contract.
+- **Owned remote service:** use the owned integration environment or a real service instance configured for tests.
+- **Third-party provider:** use its sandbox/test tenant or an owned end-to-end environment. Captured fixtures may support contract analysis but do not replace the live production Seam.
+- **Outgoing process boundary:** for assertions about what a Module emits to an external process, capture at that Module's own boundary; that capture is the real Seam, and the ban targets substituted collaborators inside the asserted contract. The provider's own behavior still needs the live Seam.
+- **Browser/device behavior:** use the authenticated staging flow or strongest real runtime harness available.
+
+When proving an application failure or adversarial input, drive the real reachable precondition through the production Seam.
+
+When proving a dependency or runtime failure, drive a real reachable condition that causes the production dependency or runtime to fail naturally. Do not replace an internal function merely to make it raise when the real Seam can produce that condition.
+
+The dependency's relevant semantics are part of the Seam. When correctness depends on transaction, filesystem, process, protocol, concurrency, scheduling, timing, or serialization behavior, exercise those semantics in the real runtime using the strongest deterministic harness available rather than reproducing an approximation.
+
+A programmed stand-in may isolate a diagnostic hypothesis. Label it diagnostic-only, delete it after use, and never count it as RED/GREEN, regression, or production verification.
+
+When no real Seam can be driven safely or deterministically, record the proof gap and use `codebase-design` or `improve-codebase-architecture`. The gap remains unresolved and blocks TDD completion; do not manufacture green evidence or invent a second production path for the test.

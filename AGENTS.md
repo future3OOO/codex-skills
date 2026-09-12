@@ -184,14 +184,14 @@ exception above). Run the installed bootstrap wrapper from the target
 checkout:
 
 ```bash
-SKILL_DIR="$HOME/.codex/plugins/cache/local-codex-plugins/repo-context-forge/0.1.0/skills/repo-context-forge"
+SKILL_DIR="$HOME/.local/share/repo-context-forge/current/skills/repo-context-forge"
 python3 "$SKILL_DIR/scripts/bootstrap.py" --repo "$PWD"
 ```
 
 For planned work before files have changed:
 
 ```bash
-SKILL_DIR="$HOME/.codex/plugins/cache/local-codex-plugins/repo-context-forge/0.1.0/skills/repo-context-forge"
+SKILL_DIR="$HOME/.local/share/repo-context-forge/current/skills/repo-context-forge"
 python3 "$SKILL_DIR/scripts/bootstrap.py" --repo "$PWD" --intent "<user request>"
 ```
 

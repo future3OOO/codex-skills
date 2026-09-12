@@ -1,0 +1,79 @@
+[
+ {
+  "id": "BM_CHECKPOINT_ATOMICITY",
+  "basis": "ASSUMP-1 and touched-Seam preservation",
+  "behavior": "a named checkpoint survives every inner write context across a multi-chunk insert/upsert and restores all data and DDL on rollback",
+  "seam": "Database.execute SAVEPOINT plus Table.insert_all/upsert_all/create/transform/insert_chunk",
+  "expected": "rollback restores the exact pre-operation rows and sqlite_master and commit finalizes once",
+  "redFailure": "CHECKPOINT_COMMITTED_BEFORE_FINALIZATION",
+  "status": "pending"
+ },
+ {
+  "id": "BM_SCRIPT_SCHEMA_ROLLBACK",
+  "basis": "ASSUMP-2 and exact trigger-schema guarantee",
+  "behavior": "checkpointed executescript keeps table, index and trigger DDL inside the active checkpoint",
+  "seam": "Database.executescript under an active SAVEPOINT",
+  "expected": "rollback removes script-created schema and leaves the checkpoint lifecycle valid",
+  "redFailure": "SCRIPT_DESTROYED_CHECKPOINT",
+  "status": "pending"
+ },
+ {
+  "id": "BM_FK_TYPE_TRANSFORM",
+  "basis": "PRES-2 and advisor finding ADV-PREFLIGHT-2",
+  "behavior": "safe CSV type tracking can transform a foreign-key table without committing away the checkpoint or violating foreign keys",
+  "seam": "insert_upsert_implementation TypeTracker to Table.transform with PRAGMA foreign_keys=on",
+  "expected": "success commits valid transformed schema; forced failure restores original schema and rows",
+  "redFailure": "TYPE_TRANSFORM_LOST_SAFE_CHECKPOINT",
+  "status": "pending"
+ },
+ {
+  "id": "BM_CHECKPOINT_LIFECYCLE",
+  "basis": "requested new Interface",
+  "behavior": "enablement, non-empty IDs, nesting, finalization, cleanup and named errors follow the requested lifecycle",
+  "seam": "Database checkpoint public Interface",
+  "expected": "all active/finalized/not-found transitions and descendants have deterministic named outcomes",
+  "redFailure": "NO_PREEXISTING_PUBLIC_INTERFACE_FOR_VALID_RED",
+  "status": "omitted",
+  "evidence": "The public methods do not exist; a pre-edit failure would be missing-API setup rather than product behavior. Real-SQLite GREEN tests are mandatory after the transaction Seam is implemented."
+ },
+ {
+  "id": "BM_INVARIANTS",
+  "basis": "requested persistence and evaluation Interface",
+  "behavior": "invariant CRUD persists in SQLite and validation reports exact SELECT/expression/aggregate/per-row failures without raising SQL errors",
+  "seam": "Database invariant public Interface against a reopened file database",
+  "expected": "valid and failures dictionaries match the contract for every expression form",
+  "redFailure": "NO_PREEXISTING_PUBLIC_INTERFACE_FOR_VALID_RED",
+  "status": "omitted",
+  "evidence": "No invariant Interface exists before this pass, so missing methods cannot be valid RED. Post-edit file-backed integration tests provide proof."
+ },
+ {
+  "id": "BM_SAFE_API_RESULTS",
+  "basis": "requested safe operations and ASSUMP-3/4",
+  "behavior": "safe bulk insert/upsert and CSV/JSON imports commit only after validation and return or raise exactly as specified",
+  "seam": "Database safe write/import public Interface",
+  "expected": "exact success/failure dictionaries and rollback-before-raise behavior",
+  "redFailure": "NO_PREEXISTING_PUBLIC_INTERFACE_FOR_VALID_RED",
+  "status": "omitted",
+  "evidence": "The additive Interface is absent, so a pre-edit test would only prove missing API. Real SQLite GREEN tests cover every result and source shape."
+ },
+ {
+  "id": "BM_CLI_SAFE_IMPORT",
+  "basis": "requested operator Interface and ASSUMP-5",
+  "behavior": "six management commands and safe insert/upsert/bulk expose required output and exit semantics, including UPDATE",
+  "seam": "Click cli through CliRunner and a real file database",
+  "expected": "management commands persist state, validation always exits zero, safe writes exit zero only on commit and failed UPDATE rolls back",
+  "redFailure": "NO_PREEXISTING_PUBLIC_INTERFACE_FOR_VALID_RED",
+  "status": "omitted",
+  "evidence": "The commands/options do not exist, so missing command registration is not behavior RED. Post-edit CLI integration tests and docs gates are mandatory."
+ },
+ {
+  "id": "BM_NON_SAFE_PRESERVATION",
+  "basis": "PRES-1, PRES-2 and PRES-3",
+  "behavior": "ordinary bulk batching, foreign-key transforms and existing binary format parsing remain unchanged without safe mode",
+  "seam": "existing CLI bulk, Table.transform and rows_from_file Interfaces",
+  "expected": "existing tests remain green with current observable behavior",
+  "redFailure": "NON_SAFE_BEHAVIOR_REGRESSED",
+  "status": "already-satisfied",
+  "evidence": "Pre-edit command `python -m pytest tests/test_cli_bulk.py::test_cli_bulk_batch_size tests/test_transform.py::test_transform_foreign_keys_persist tests/test_rows_from_file.py -q` passed 9 tests."
+ }
+]

@@ -10,23 +10,21 @@ When assessing a candidate for deepening, classify its dependencies. The categor
 
 Pure computation, in-memory state, no I/O. Always deepenable: merge the modules and test through the new interface directly. No adapter needed.
 
-### 2. Local-Substitutable
+### 2. Local Runtime Equivalent
 
-Dependencies that have local test stand-ins, such as PGLite for Postgres or an in-memory filesystem. Deepenable if the stand-in exists. The deepened module is tested with the stand-in running in the test suite. The seam is internal; no port at the module's external interface.
+Dependencies with a real local runtime that executes the same contract, such as PGLite for Postgres or a temporary filesystem. Deepen only when it exercises the production Interface. A programmed stand-in is diagnostic-only and cannot satisfy RED/GREEN or production verification.
 
 ### 3. Remote But Owned
 
-Your own services across a network boundary: microservices, internal APIs, queues, or similar owned surfaces. Define a **port** at the seam. The deep module owns the logic; the transport is injected as an **adapter**. Tests use an in-memory adapter. Production uses an HTTP, gRPC, or queue adapter.
-
-Recommendation shape: "Define a port at the seam, implement a production adapter and an in-memory adapter, so the logic sits in one deep module even though it is deployed across a network."
+Your own services across a network boundary. Define a **port** only when runtime variation already exists. Required behavior proof crosses the real owned-service Seam; a local protocol harness is diagnostic, not proof.
 
 ### 4. True External
 
-Third-party services you do not control. The deepened module takes the external dependency as an injected port; tests provide a mock adapter.
+Third-party services you do not control. Prefer the provider sandbox/test tenant, captured contract evidence, or an owned end-to-end environment. A programmed response stand-in is diagnostic-only.
 
 ## Seam Discipline
 
-- **One adapter means a hypothetical seam. Two adapters means a real one.** Do not introduce a port unless at least two adapters are justified, typically production plus test. A single-adapter seam is just indirection.
+- **One runtime adapter means a hypothetical seam. Two genuine runtime variants can justify a real one.** A test-only substitute does not count as a second adapter.
 - **Internal seams vs external seams.** A deep module can have internal seams private to its implementation, used by its own tests, as well as the external seam at its interface. Do not expose internal seams through the interface just because tests use them.
 
 ## Testing Strategy

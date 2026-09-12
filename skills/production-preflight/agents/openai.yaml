@@ -1,4 +1,4 @@
 interface:
   display_name: "Production Preflight"
   short_description: "Before-edit proof for production code"
-  default_prompt: "Use $production-preflight to produce a compact before-edit proof before risky tracked production changes."
+  default_prompt: "Use $production-preflight to produce the required before-edit proof before changing production code."

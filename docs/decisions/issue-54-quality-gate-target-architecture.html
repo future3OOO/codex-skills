@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Issue 54 quality-gate architecture map</title>
+    <script
+      src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.3.3/dist/index.global.js"
+      integrity="sha384-2ql948lIdLcGEE0/qxNiudyTjgauA3RDJERu5xW75kFCvSl5a9odyQYCb6tEjnmB"
+      crossorigin="anonymous"
+    ></script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/mermaid@11.16.1/dist/mermaid.min.js"
+      integrity="sha384-aBQXj4hK6Jm05i7aQAsUV3bLdSUrHX1BGYfMB0166TtWt/RRaw+h0Eelme9OCOvy"
+      crossorigin="anonymous"
+    ></script>
+    <script type="module">
+      const mermaidApi = window.mermaid;
+      mermaidApi.initialize({
+        startOnLoad: false,
+        theme: "neutral",
+        securityLevel: "strict",
+        flowchart: { curve: "basis", htmlLabels: false },
+      });
+      for (const [index, diagram] of [...document.querySelectorAll(".mermaid")].entries()) {
+        const { svg, bindFunctions } = await mermaidApi.render(
+          `issue54-diagram-${index + 1}`,
+          diagram.textContent,
+        );
+        diagram.innerHTML = svg;
+        diagram.dataset.processed = "true";
+        bindFunctions?.(diagram);
+      }
+      document.documentElement.dataset.mermaidReady = "true";
+    </script>
+  </head>
+  <body class="bg-stone-50 font-sans text-slate-900">
+    <div class="mx-auto grid max-w-[1500px] gap-7 px-5 py-7 lg:grid-cols-[250px_minmax(0,1fr)] lg:px-8">
+      <aside class="h-fit rounded-2xl border border-slate-200 bg-white p-5 lg:sticky lg:top-5">
+        <p class="text-xs font-semibold uppercase tracking-[0.18em] text-amber-700">Visual companion</p>
+        <h1 class="mt-2 text-xl font-bold">Issue 54 target architecture</h1>
+        <p class="mt-3 text-sm leading-6 text-slate-600">Non-normative. The adjacent Markdown decision controls every exact contract.</p>
+        <a class="mt-4 block rounded-lg bg-slate-950 px-4 py-3 text-sm font-semibold text-white" href="issue-54-quality-gate-target-architecture.md">Open normative decision</a>
+        <nav class="mt-5 space-y-1 text-sm" aria-label="Map sections">
+          <a class="block rounded-lg px-3 py-2 hover:bg-slate-100" href="#ownership">Ownership</a>
+          <a class="block rounded-lg px-3 py-2 hover:bg-slate-100" href="#interfaces">Interfaces</a>
+          <a class="block rounded-lg px-3 py-2 hover:bg-slate-100" href="#snapshot">Snapshot depth</a>
+          <a class="block rounded-lg px-3 py-2 hover:bg-slate-100" href="#redundancy">Redundancy depth</a>
+          <a class="block rounded-lg px-3 py-2 hover:bg-slate-100" href="#pipeline">Pipeline</a>
+          <a class="block rounded-lg px-3 py-2 hover:bg-slate-100" href="#lifecycle">Lifecycle</a>
+          <a class="block rounded-lg px-3 py-2 hover:bg-slate-100" href="#output">Output</a>
+          <a class="block rounded-lg px-3 py-2 hover:bg-slate-100" href="#forbidden">Forbidden edges</a>
+          <a class="block rounded-lg px-3 py-2 hover:bg-slate-100" href="#tests">Proof path</a>
+          <a class="block rounded-lg px-3 py-2 hover:bg-slate-100" href="#deletions">Old to survivor</a>
+          <a class="block rounded-lg px-3 py-2 hover:bg-slate-100" href="#slices">Convergence</a>
+        </nav>
+      </aside>
+
+      <main class="min-w-0 space-y-7">
+        <header class="rounded-2xl border border-slate-200 bg-white p-7 shadow-sm md:p-9">
+          <p class="text-sm font-semibold uppercase tracking-[0.18em] text-amber-700">Completed-state map</p>
+          <h2 class="mt-3 max-w-4xl text-3xl font-bold tracking-tight md:text-4xl">One captured evaluation, broad ownership discovery, structural deletion</h2>
+          <p class="mt-4 max-w-4xl text-lg leading-8 text-slate-600">The delivery plan still controls sequence. This map shows where complexity ends up after all three slices without prescribing private helper shapes.</p>
+          <div class="mt-7 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <div class="rounded-xl border border-slate-200 p-4"><div class="text-xs uppercase tracking-wide text-slate-500">Call boundary</div><div class="mt-2 font-semibold">Stable runner.check signature</div></div>
+            <div class="rounded-xl border border-slate-200 p-4"><div class="text-xs uppercase tracking-wide text-slate-500">Data boundary</div><div class="mt-2 font-semibold">Versioned result and disposition contracts</div></div>
+            <div class="rounded-xl border border-slate-200 p-4"><div class="text-xs uppercase tracking-wide text-slate-500">Rule independence</div><div class="mt-2 font-semibold">Exact and ownership paths trigger separately</div></div>
+            <div class="rounded-xl border border-slate-200 p-4"><div class="text-xs uppercase tracking-wide text-slate-500">Green rule</div><div class="mt-2 font-semibold">Rewire and delete superseded owner</div></div>
+          </div>
+        </header>
+
+        <section id="ownership" class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm md:p-8">
+          <div class="flex flex-wrap items-end justify-between gap-4">
+            <div><p class="text-sm font-semibold uppercase tracking-[0.16em] text-sky-700">Binding responsibility map</p><h2 class="mt-2 text-2xl font-bold">Call ownership</h2></div>
+            <a class="text-sm font-semibold text-sky-700" href="issue-54-quality-gate-target-architecture.md#final-ownership">Normative ownership table →</a>
+          </div>
+          <p class="mt-3 text-sm text-slate-600">Solid arrows mean caller to callee. Labels are values crossing the boundary.</p>
+          <div class="mt-5 overflow-x-auto rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <pre class="mermaid min-w-[1050px]">flowchart LR
+  Hook["Hook Adapter"] -->|arguments| Entry["Standalone entrypoint"]
+  Entry -->|argv| Cli["cli.py"]
+  Cli -->|six arguments| Runner["runner.py : runner.check"]
+  Runner -->|capture request| Context["context.py : evaluation owner"]
+  Context -->|base and candidate| GitScope["git_scope.py"]
+  Context -->|stored role and language| PathPolicy["path_policy.py"]
+  Context -->|captured evidence| Inputs["inputs.py"]
+  Runner -->|immutable evaluation| Checks["checks.py"]
+  Runner -->|immutable evaluation| Redundancy["redundancy.py"]
+  Redundancy -->|captured regions| Symbols["symbols.py"]
+  Checks -->|typed findings| FindingModel["findings.py"]
+  Redundancy -->|typed findings| FindingModel
+  Runner -->|typed report| FindingModel
+  Workflow["workflow_state"] -->|delegates test-like only| StateStore["state_store.py"]
+  StateStore -->|standalone predicate| PathPolicy
+
+  classDef owner fill:#dcfce7,stroke:#16a34a,stroke-width:2px;
+  classDef boundary fill:#dbeafe,stroke:#2563eb,stroke-width:2px;
+  classDef module fill:#f8fafc,stroke:#64748b;
+  class Runner boundary;
+  class Context,PathPolicy,Redundancy,FindingModel owner;
+  class Hook,Entry,Cli,GitScope,Inputs,Checks,Symbols,Workflow,StateStore module;</pre>
+          </div>
+        </section>
+
+        <section id="interfaces" class="grid gap-5 xl:grid-cols-3">
+          <article class="rounded-2xl border border-sky-200 bg-sky-50 p-6 shadow-sm">
+            <p class="text-xs font-semibold uppercase tracking-wide text-sky-700">Call Interface</p>
+            <h2 class="mt-2 text-xl font-bold text-sky-950">Signature stable</h2>
+            <p class="mt-3 text-sm leading-6 text-sky-900">The six-parameter call remains stable. Private evaluation types never cross it.</p>
+          </article>
+          <article class="rounded-2xl border border-violet-200 bg-violet-50 p-6 shadow-sm">
+            <p class="text-xs font-semibold uppercase tracking-wide text-violet-700">Result Interface</p>
+            <h2 class="mt-2 text-xl font-bold text-violet-950">Semantics versioned</h2>
+            <p class="mt-3 text-sm leading-6 text-violet-900">Structured evaluation, active findings, resolved telemetry, compatibility projection, and exit policy form a caller-visible data contract.</p>
+          </article>
+          <article class="rounded-2xl border border-amber-200 bg-amber-50 p-6 shadow-sm">
+            <p class="text-xs font-semibold uppercase tracking-wide text-amber-700">Disposition Interface</p>
+            <h2 class="mt-2 text-xl font-bold text-amber-950">Carrier chosen in issue 77</h2>
+            <p class="mt-3 text-sm leading-6 text-amber-900">Versioned evidence is external. Semantic disposition is separate from repair strategy; declaring a repair never changes state. Candidate-authored claims stay active until a parent-bound record outside the candidate tree validates them.</p>
+          </article>
+        </section>
+
+        <section id="snapshot" class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm md:p-8">
+          <div class="flex flex-wrap items-end justify-between gap-4">
+            <div><p class="text-sm font-semibold uppercase tracking-[0.16em] text-emerald-700">Illustrative private phases</p><h2 class="mt-2 text-2xl font-bold">Deep evaluation owner</h2></div>
+            <a class="text-sm font-semibold text-emerald-700" href="issue-54-quality-gate-target-architecture.md#base-and-candidate-contract">Normative capture contract →</a>
+          </div>
+          <p class="mt-3 text-sm leading-6 text-slate-600">These phases remain private. Their point is to show the hidden complexity behind one small evaluation boundary, not mandate helper names.</p>
+          <div class="mt-5 overflow-x-auto rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <pre class="mermaid min-w-[1080px]">flowchart LR
+  Request["Capture request"] --> Base["Resolve supplied base"]
+  Base --> Candidate["Capture coherent candidate"]
+  Candidate --> Drift["Detect capture drift"]
+  Drift --> Classify["Classify role, language, compatibility"]
+  Classify --> Hunks["Compute one base-to-candidate hunk set"]
+  Hunks --> Index["Record repository coverage"]
+  Index --> Evidence["Bind captured evidence"]
+  Evidence --> Gaps["Record capture gaps"]
+  Gaps --> Freeze["Freeze immutable evaluation"]
+
+  classDef private fill:#ecfdf5,stroke:#059669;
+  class Request,Base,Candidate,Drift,Classify,Hunks,Index,Evidence,Gaps,Freeze private;</pre>
+          </div>
+          <div class="mt-5 grid gap-4 md:grid-cols-3">
+            <div class="rounded-xl border border-slate-200 p-4"><div class="font-semibold">Stored once</div><p class="mt-2 text-sm text-slate-600">Role, language, human-authored status, source status, test-like compatibility, and exclusion reason.</p></div>
+            <div class="rounded-xl border border-slate-200 p-4"><div class="font-semibold">Compared once</div><p class="mt-2 text-sm text-slate-600">Captured texts, deletion state, hunk ranges, contiguous regions, growth, and repository coverage.</p></div>
+            <div class="rounded-xl border border-slate-200 p-4"><div class="font-semibold">Incomplete by rule</div><p class="mt-2 text-sm text-slate-600">Capture gaps are global evidence; each rule selects only the scopes it requires.</p></div>
+          </div>
+        </section>
+
+        <section id="redundancy" class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm md:p-8">
+          <div class="flex flex-wrap items-end justify-between gap-4">
+            <div><p class="text-sm font-semibold uppercase tracking-[0.16em] text-fuchsia-700">Illustrative private phases</p><h2 class="mt-2 text-2xl font-bold">Deep redundancy owner</h2></div>
+            <a class="text-sm font-semibold text-fuchsia-700" href="issue-54-quality-gate-target-architecture.md#one-owner-reduction-contract">Normative owner contract →</a>
+          </div>
+          <div class="mt-5 overflow-x-auto rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <pre class="mermaid min-w-[1120px]">flowchart LR
+  Snapshot["Immutable evaluation"] --> ExactRegions["Extract exact regions"]
+  ExactRegions --> ExactGroups["Group exact occurrences"]
+  ExactGroups --> Baseline["Match retained baseline"]
+  ExactGroups --> DuplicateFindings["Duplicate-family findings"]
+  Baseline --> DuplicateFindings
+
+  Snapshot --> Writers["Discover state and boundary writers"]
+  Snapshot --> Validators["Discover invariant validators"]
+  Snapshot --> Surfaces["Discover overlapping public and test Interfaces"]
+  Snapshot --> Lifecycle["Discover workflow and lifecycle coordinators"]
+  Snapshot --> Graph["Discover parallel caller and callee entry points"]
+  Snapshot --> Fixtures["Discover fixture, builder, and harness lifecycle"]
+  Snapshot --> Forwarding["Discover forwarding shape"]
+
+  Writers --> Candidate
+  Validators --> Candidate
+  Surfaces --> Candidate
+  Lifecycle --> Candidate
+  Graph --> Candidate
+  Fixtures --> Candidate
+  Forwarding --> Candidate
+  ExactGroups -.->|optional evidence only| Candidate["Broad mechanical candidate set"]
+
+  Candidate --> Disposition["Validate disposition evidence"]
+  Disposition --> Confirm["Confirm or retain candidate"]
+  Confirm --> Reachability["Check survivor reachability"]
+  Reachability --> Completeness["Derive rule completeness"]
+  Completeness --> Projection["Project lifecycle and pass condition"]
+
+  classDef exact fill:#dbeafe,stroke:#2563eb;
+  classDef broad fill:#fef3c7,stroke:#d97706;
+  classDef reduce fill:#fae8ff,stroke:#a21caf;
+  class ExactRegions,ExactGroups,Baseline,DuplicateFindings exact;
+  class Writers,Validators,Surfaces,Lifecycle,Graph,Fixtures,Forwarding,Candidate broad;
+  class Disposition,Confirm,Reachability,Completeness,Projection reduce;</pre>
+          </div>
+          <div class="mt-5 rounded-xl border border-rose-200 bg-rose-50 p-5 text-sm leading-6 text-rose-900"><strong>Critical boundary:</strong> issue 77 must generate structural ownership candidates independently of exact matches. No duplicate finding is required; its absence cannot suppress or downgrade owner discovery. Two owners may share no text and still compete for one transition, invariant, workflow phase, fixture lifecycle, or test responsibility.</div>
+        </section>
+
+        <section id="pipeline" class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm md:p-8">
+          <p class="text-sm font-semibold uppercase tracking-[0.16em] text-violet-700">Data flow</p>
+          <h2 class="mt-2 text-2xl font-bold">One fixed evaluation, two independent rule paths</h2>
+          <p class="mt-3 text-sm text-slate-600">Both rule families consume the same frozen evaluation in literal control flow. The dotted edge is optional evidence, never an entry gate. There is no plugin registry or scheduler.</p>
+          <div class="mt-5 overflow-x-auto rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <pre class="mermaid min-w-[1120px]">flowchart LR
+  Base["Caller-selected base"] --> Capture["Captured base and candidate"]
+  Capture --> Classified["Classified evidence"]
+  Classified --> Frozen["Immutable evaluation"]
+  Frozen --> Safety["Immediate safety"]
+  Safety --> Growth["Cumulative growth"]
+  Frozen --> Exact["Exact duplicate family"]
+  Frozen --> Owner["Owner-competition family"]
+  Exact -.->|optional evidence only| Owner
+  Safety --> Validate["Identity and completeness validation"]
+  Growth --> Validate
+  Exact --> Validate
+  Owner --> Validate
+  Validate --> Report["Typed report"]
+  Report --> Hook["Non-blocking active feedback"]
+  Report --> Calibration["Parent calibration"]</pre>
+          </div>
+        </section>
+
+        <section id="lifecycle" class="grid gap-5 xl:grid-cols-[1.1fr_.9fr]">
+          <article class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm md:p-8">
+            <p class="text-sm font-semibold uppercase tracking-[0.16em] text-orange-700">Responsibility lifecycle</p>
+            <h2 class="mt-2 text-2xl font-bold">Broad signal, strict state, structural green</h2>
+            <div class="mt-5 overflow-x-auto rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <pre class="mermaid min-w-[700px]">flowchart LR
+  Broad["Candidate : active"] -->|external same-responsibility validation| Conflict["Confirmed conflict : active"]
+  Broad -->|external temporary-coexistence validation| Conflict
+  Broad -->|external distinct authority plus complete scope| Resolved["Resolved : telemetry"]
+  Broad -->|unvalidated semantic claim| Broad
+  Conflict -->|temporary coexistence remains active| Conflict
+  Conflict -->|partial move or facade| Conflict
+  Conflict -->|deepen, replace, or consolidate plus rewire and delete| Resolved
+
+  classDef active fill:#fef3c7,stroke:#d97706,stroke-width:2px;
+  classDef resolved fill:#dcfce7,stroke:#16a34a,stroke-width:2px;
+  class Broad,Conflict active;
+  class Resolved resolved;</pre>
+            </div>
+          </article>
+          <article class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm md:p-8">
+            <p class="text-sm font-semibold uppercase tracking-[0.16em] text-orange-700">Exact lifecycle</p>
+            <h2 class="mt-2 text-2xl font-bold">Both regions to one survivor</h2>
+            <div class="mt-5 overflow-x-auto rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <pre class="mermaid min-w-[520px]">flowchart TD
+  AddedOne["Added region"] --> Pair["Exact occurrence group"]
+  AddedTwo["Added or retained-baseline region"] --> Pair
+  HunkOne["Hunk A"] -.->|never joined| HunkTwo["Hunk B"]
+  Pair -->|reuse or consolidate| Survivor["One implementation"]
+  Pair -->|both remain| Active["Active warning"]</pre>
+            </div>
+          </article>
+        </section>
+
+        <section id="output" class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm md:p-8">
+          <div class="flex flex-wrap items-end justify-between gap-4">
+            <div><p class="text-sm font-semibold uppercase tracking-[0.16em] text-cyan-700">Result projection</p><h2 class="mt-2 text-2xl font-bold">One typed report, distinct consumers</h2></div>
+            <a class="text-sm font-semibold text-cyan-700" href="issue-54-quality-gate-target-architecture.md#compatibility-projection">Normative projection table →</a>
+          </div>
+          <div class="mt-5 overflow-x-auto rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <pre class="mermaid min-w-[1000px]">flowchart LR
+  Safety["Safety error finding"] --> Errors["errors and failed blocker check"]
+  Active["Active quality finding"] --> Findings["findings and warnings"]
+  Incomplete["Rule-incomplete finding"] --> Findings
+  Resolved["Resolved owner evidence"] --> Telemetry["resolvedFindings only"]
+  Metrics["Growth metrics"] --> Evaluation["evaluation.growth"]
+
+  Errors --> Verdict["ok and exit"]
+  Findings --> Hook["PostToolUse feedback with exit zero"]
+  Findings --> Checks["non-blocking check status"]
+  Telemetry --> Calibration["calibration and audit"]
+  Evaluation --> Calibration</pre>
+          </div>
+          <div class="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <div class="rounded-xl border border-slate-200 p-4"><div class="font-semibold">Error</div><p class="mt-2 text-sm text-slate-600">Existing immediate blocker. Failed check and nonzero gate exit.</p></div>
+            <div class="rounded-xl border border-slate-200 p-4"><div class="font-semibold">Finding</div><p class="mt-2 text-sm text-slate-600">Active quality evidence. Visible warning, edit-time exit remains zero.</p></div>
+            <div class="rounded-xl border border-slate-200 p-4"><div class="font-semibold">Incomplete</div><p class="mt-2 text-sm text-slate-600">Visible non-clean status for only the affected rule scopes.</p></div>
+            <div class="rounded-xl border border-slate-200 p-4"><div class="font-semibold">Resolved</div><p class="mt-2 text-sm text-slate-600">Telemetry/calibration only. Never appears as active warning.</p></div>
+          </div>
+        </section>
+
+        <section id="forbidden" class="rounded-2xl border border-rose-200 bg-rose-50 p-6 shadow-sm md:p-8">
+          <div class="flex flex-wrap items-end justify-between gap-4">
+            <div><p class="text-sm font-semibold uppercase tracking-[0.16em] text-rose-700">Negative space</p><h2 class="mt-2 text-2xl font-bold text-rose-950">Edges that must not exist</h2></div>
+            <a class="text-sm font-semibold text-rose-700" href="issue-54-quality-gate-target-architecture.md#forbidden-dependencies-and-completion-audit">Normative forbidden list →</a>
+          </div>
+          <p class="mt-3 text-sm text-rose-900">Every dashed red arrow below is prohibited, not a runtime flow.</p>
+          <div class="mt-5 overflow-x-auto rounded-xl border border-rose-200 bg-white p-4">
+            <pre class="mermaid min-w-[980px]">flowchart LR
+  Workflow["workflow code"] -.->|FORBIDDEN| Snapshot["evaluation and findings"]
+  Gate["quality gate"] -.->|FORBIDDEN| Persistence["issue 49 ledger and persistence"]
+  Detectors["checks and redundancy"] -.->|FORBIDDEN| GitDisk["Git, filesystem, classifier, live external tools"]
+  Completion["issue 49"] -.->|FORBIDDEN| Digest["gate worktree digest"]
+  Runner["runner"] -.->|FORBIDDEN| Registry["detector registry or scheduler"]
+  Candidate["candidate-authored disposition"] -.->|FORBIDDEN| Semantic["trusted semantic resolution"]
+
+  linkStyle 0,1,2,3,4,5 stroke:#be123c,stroke-width:2px,stroke-dasharray:6 4;</pre>
+          </div>
+        </section>
+
+        <section id="tests" class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm md:p-8">
+          <div class="flex flex-wrap items-end justify-between gap-4">
+            <div><p class="text-sm font-semibold uppercase tracking-[0.16em] text-indigo-700">Real proof seam</p><h2 class="mt-2 text-2xl font-bold">One scenario harness, production Interface</h2></div>
+            <a class="text-sm font-semibold text-indigo-700" href="issue-54-quality-gate-target-architecture.md#test-and-calibration-ownership">Normative proof contract →</a>
+          </div>
+          <p class="mt-3 text-sm text-slate-600">The shared test-support filename and private helpers are illustrative. The one-owner and real-repository behavior are binding.</p>
+          <div class="mt-5 overflow-x-auto rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <pre class="mermaid min-w-[940px]">flowchart LR
+  Behavior["Behavior tests"] -->|scenario| Harness["One shared scenario owner"]
+  OwnerOnly["Owner-only, no exact match"] --> Harness
+  DuplicateOnly["Duplicate-only, distinct roles"] --> Harness
+  Both["Both rule families"] --> Harness
+  Negative["Neither family and legitimate authority"] --> Harness
+  Corpus["Pinned corpus manifests"] -->|identity and expectations| Harness
+  HookTest["Hook behavior test"] -->|real invocation| Hook["Production PostToolUse hook"]
+  Harness -->|materialize| Repo["Real temporary Git repository"]
+  Repo -->|six arguments| Check["runner.check"]
+  Check -->|typed result| Assertions["Public result assertions"]
+  Hook -->|visible warning and exit zero| HookAssertion["Hook output assertion"]</pre>
+          </div>
+          <div class="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <div class="rounded-xl border border-amber-200 bg-amber-50 p-4"><div class="font-semibold text-amber-950">Owner-only</div><p class="mt-2 text-sm text-amber-900">Unrelated text still yields candidates for shared writers, validators, or fixture lifecycle.</p></div>
+            <div class="rounded-xl border border-sky-200 bg-sky-50 p-4"><div class="font-semibold text-sky-950">Duplicate-only</div><p class="mt-2 text-sm text-sky-900">Copied implementation in genuinely different roles does not prove one responsibility.</p></div>
+            <div class="rounded-xl border border-fuchsia-200 bg-fuchsia-50 p-4"><div class="font-semibold text-fuchsia-950">Both families</div><p class="mt-2 text-sm text-fuchsia-900">Exact evidence may strengthen a separately generated ownership candidate.</p></div>
+            <div class="rounded-xl border border-emerald-200 bg-emerald-50 p-4"><div class="font-semibold text-emerald-950">Structural green</div><p class="mt-2 text-sm text-emerald-900">Rename, facade, and partial deepening stay active; rewiring plus deletion resolves.</p></div>
+          </div>
+        </section>
+
+        <section id="deletions" class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm md:p-8">
+          <div class="flex flex-wrap items-end justify-between gap-4">
+            <div><p class="text-sm font-semibold uppercase tracking-[0.16em] text-rose-700">Responsibility transfer</p><h2 class="mt-2 text-2xl font-bold">Old surface → surviving owner</h2></div>
+            <a class="text-sm font-semibold text-rose-700" href="issue-54-quality-gate-target-architecture.md#mandatory-old-to-survivor-consolidation">Normative deletion table →</a>
+          </div>
+          <div class="mt-5 overflow-x-auto">
+            <table class="w-full min-w-[760px] border-collapse text-left text-sm">
+              <thead><tr class="border-b border-slate-300 text-slate-500"><th class="px-3 py-3">Superseded responsibility</th><th class="px-3 py-3">Survivor</th><th class="px-3 py-3">Convergence</th></tr></thead>
+              <tbody class="divide-y divide-slate-200">
+                <tr><td class="px-3 py-3">GateContext, flattened diff and live rereads</td><td class="px-3 py-3 font-semibold">Canonical evaluation owner</td><td class="px-3 py-3">issue 75</td></tr>
+                <tr><td class="px-3 py-3">Detector-local role and language decisions</td><td class="px-3 py-3 font-semibold">Stored path classification</td><td class="px-3 py-3">issue 75</td></tr>
+                <tr><td class="px-3 py-3">Per-file and same-directory bloat proxies</td><td class="px-3 py-3 font-semibold">Cumulative growth owner</td><td class="px-3 py-3">issue 75</td></tr>
+                <tr><td class="px-3 py-3">Three-line windows and cross-hunk collapse</td><td class="px-3 py-3 font-semibold">Exact private phases</td><td class="px-3 py-3">issue 76</td></tr>
+                <tr><td class="px-3 py-3">Lexical reuse scores and silent owner caps</td><td class="px-3 py-3 font-semibold">Broad redundancy owner</td><td class="px-3 py-3">issue 77</td></tr>
+                <tr><td class="px-3 py-3">Parallel result models and runner lists</td><td class="px-3 py-3 font-semibold">One finding model and serializer</td><td class="px-3 py-3">all slices</td></tr>
+                <tr><td class="px-3 py-3">Duplicated test Git/run/assertion helpers</td><td class="px-3 py-3 font-semibold">One scenario-test owner</td><td class="px-3 py-3">owning slice</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="slices" class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm md:p-8">
+          <div class="flex flex-wrap items-end justify-between gap-4">
+            <div><p class="text-sm font-semibold uppercase tracking-[0.16em] text-slate-600">Non-authoritative view</p><h2 class="mt-2 text-2xl font-bold">Convergence, not planning</h2></div>
+            <a class="text-sm font-semibold text-slate-700" href="../plans/issue-54-quality-gate-delivery-2026-08-05.md">Open governing delivery plan →</a>
+          </div>
+          <div class="mt-5 overflow-x-auto rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <pre class="mermaid min-w-[920px]">flowchart LR
+  SliceOne["Issue 75 : canonical evaluation and visible growth evidence"] --> SliceTwo["Issue 76 : exact evidence deepens redundancy owner"]
+  SliceTwo --> Gate["Issue 76 merged and parent owner corpus pinned"]
+  Gate --> SliceThree["Issue 77 : broad ownership lifecycle deepens same owner"]
+  SliceThree --> Parent["Parent issue : human calibration and any later promotion decision"]
+  Separate["Issue 49 : review freshness and final-tree binding"] -.->|separate ownership| Parent</pre>
+          </div>
+        </section>
+
+        <footer class="rounded-2xl bg-slate-950 p-7 text-slate-200">
+          <div class="flex flex-wrap items-center justify-between gap-4">
+            <div><div class="font-semibold text-white">This visual never controls exact policy.</div><p class="mt-1 text-sm text-slate-400">Follow the linked Markdown anchors for rule IDs, schemas, predicates, corpus identities, and completion conditions.</p></div>
+            <a class="rounded-lg border border-slate-700 px-4 py-2 text-sm font-semibold hover:bg-slate-900" href="issue-54-quality-gate-target-architecture.md">Normative decision</a>
+          </div>
+        </footer>
+      </main>
+    </div>
+  </body>
+</html>

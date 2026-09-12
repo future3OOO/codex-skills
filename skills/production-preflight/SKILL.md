@@ -1,76 +1,48 @@
 ---
 name: production-preflight
-description: Produce a compact before-edit proof before risky tracked production changes. Use for review-comment fixes, open PR work, multi-file changes, behavior bugs, release/build/deploy changes, auth/data/filesystem/runtime/external boundaries, transaction-sensitive state, or governed execution plans.
+description: Produce the required before-edit proof for production code changes — reuse path, chosen approach, touchpoints, verify vs update surfaces, module shape, risks, Behavior Map, and honest openQuestions. Use before writing code on implementation, refactor, bug-fix, or review-comment passes.
 ---
 
 # Production Preflight
 
-Use this skill when tracked edits need explicit proof that the edit boundary, governing contract, implementation path, and verification are understood before code changes. It is a scoping gate, not a replacement for TDD or `production-code`.
+Use this skill before making tracked edits on preflight-required code turns.
 
-## When To Use
+## Core Doctrine
 
-Use for:
+- Prefer root-cause fixes over band-aids.
+- Follow the canonical review-comment doctrine in the repo's `AGENTS.md` (or `CLAUDE.md` if that is what the repo uses).
+- Treat review comments as evidence to verify against current code and the repo contract, not authority to obey blindly.
+- If you do not know, verify before editing.
+- For behavior bugs, require the reproduced symptom, traced root cause, and testable hypothesis before editing; if any are missing, use `/diagnose`.
+- No tracked edits before completed preflight.
+- If the preflight finds unresolved blockers, stop and surface them honestly in `openQuestions`.
+- If a tracked governing plan or review artifact exists for the current work and includes an execution checklist, anchor the preflight to that artifact instead of freehanding a new execution path.
 
-- review-comment remediation or already-open PR work
-- multi-file implementation, refactor, or bug-fix work
-- behavior changes where the obvious fix may be too local
-- release, build, packaging, deployment, or installer changes
-- auth, data, filesystem, runtime, connector, automation, or external API boundaries
-- stateful or transaction-sensitive logic: leases, claim tokens, compare-and-set/version fields, transition helpers, replay, recovery, finalize, queue or worker state
-- work governed by a tracked plan, review artifact, architecture map, or PR order
+## Governing Artifact Alignment
 
-## When To Skip
+When the current work is governed by a tracked plan or review artifact under `docs/plans/` or `docs/reviews/`:
 
-Skip isolated typo/docs edits, formatting-only changes, simple version bumps, generated output, and single-line test expectation cleanup unless the user asked for preflight or risk is present.
-
-If you cannot quickly name the safe edit boundary, use preflight.
-
-## Core Rules
-
-- Verify uncertain facts before editing.
-- Treat review comments as evidence, not automatic authority.
-- Prefer root-cause fixes and existing code paths.
-- For behavior bugs, require the reproduced symptom, traced root cause, and testable hypothesis before editing; if any are missing, run `$diagnose`.
-- Complete preflight before tracked edits, staging, commits, or resolving review threads.
-- If a blocker is required to edit safely, stop and put it in `risksAndQuestions` or `openQuestions`.
-- Do not write retrospective preflight.
-- If new facts invalidate the preflight, refresh the affected fields before continuing.
-
-## Existing PR Rule
-
-When editing an already-open PR:
-
-- treat the live PR head as authoritative
-- verify the checkout path being edited
-- record PR number, branch, checkout path, live PR head SHA when known, local `HEAD` SHA, and attached/detached state
-- realign stale, detached, or wrong-SHA checkouts before editing
-- do not commit from a stale detached review worktree
-
-## Governing Artifacts
-
-When a tracked plan or review artifact governs the work:
-
-- name that artifact in the preflight
-- stay inside its owner slice, PR order, and verification boundary
-- refresh the artifact or block if the requested change no longer fits it
+- name that artifact explicitly in the preflight
+- stay inside the owner slice defined by that artifact
+- use the artifact's PR order, scope, and verification as the starting execution boundary
+- if the requested change no longer fits the governing artifact, refresh the artifact or block in `openQuestions` before editing
 
 Do not use preflight to silently fork away from the governing execution document.
 
-## Repo Intelligence
+## Existing PR Checkout Rule
 
-When repo-index or impact tools are available and current, use them to verify flow assumptions for named symbols or cross-module changes. If an index is stale, refresh it before relying on it or fall back to direct source inspection. For indexed/shared surfaces, record GitNexus impact target, direction, risk, d=1 items, affected processes, and graph-derived no-change surfaces.
+When the turn edits code on an already-open PR:
 
-## Surface Rule
+- treat the live GitHub PR head as authoritative
+- verify the exact checkout path that will be edited, not some other review worktree
+- record the PR number, branch name, checkout path, live PR head SHA, local `HEAD` SHA, and whether the checkout is branch-attached or detached
+- if the checkout is stale, detached, or on the wrong SHA, fetch and realign it before the first tracked edit
+- do not treat routine realignment as a blocker; only block if the checkout cannot actually be realigned
+- do not commit from a stale detached review worktree
 
-Every preflight-worthy code change must name:
+## Affected Surface Rule
 
-- the real behavior or boundary being changed
-- adjacent consumers, callers, and no-change surfaces that could regress
-- the authoritative contract that must remain true
-- the invariants or observable conditions that prove the contract still holds
-- proof that checks the surrounding surface, not only the edited file
-
-Keep this proportional. Ordinary work should be short.
+Apply [Production Code’s Minimum Implementation Decision](../production-code/SKILL.md#minimum-implementation-decision) before edits. Record its affected guarantees, contracts, invariants and distinguishing operations in the preflight document and Behavior Map; preflight owns that initial record.
 
 ## Behavior Bug Root-Cause Gate
 
@@ -81,9 +53,12 @@ For behavior bugs, preflight proof must name:
 - testable hypothesis: why the proposed edit fixes the source
 - source-level fix: why the edit is not merely a symptom guard
 
-If any item is missing, run `$diagnose` before editing. If the trace crosses scattered shallow helpers/modules or no clean test seam exists, use `$improve-codebase-architecture` before forcing a bad test or broad patch.
+If any item is missing, use `/diagnose` before editing. If the trace crosses scattered shallow helpers/modules or no clean test seam exists, use `/improve-codebase-architecture` before forcing a bad test or broad patch.
 
 ## Module Shape Gate
+
+When the change proposes a new production Module, public Seam, or change to a
+public Interface, invoke `codebase-design` before completing this gate.
 
 Before production edits, name the module shape:
 
@@ -96,60 +71,195 @@ Before production edits, name the module shape:
 
 Prefer deepening an existing module. Apply Ousterhout's deep-module test: does this hide meaningful complexity behind a small, stable public interface, or create a shallow helper/wrapper split? A new module must earn its interface by hiding complexity, improving locality, or creating a real seam used by more than one caller, adapter, or test surface.
 
+Touched shallow helpers/modules are in-scope debt: absorb, delete, or record a concrete blocker in the preflight.
+
 Block if the public test surface cannot be named, or if a new module is proposed without a concrete reason existing modules cannot absorb the behavior.
 
-## Transaction Rule
+## Affected Transaction System Rule
 
-When the change touches claim tokens, leases, compare-and-set/version fields, transition helpers, replay/finalize/recovery semantics, queues, or worker state, re-walk the surrounding transaction system before edits.
+For transaction-sensitive work, load and apply the mandatory [canonical
+transaction doctrine](../production-code/references/transaction-doctrine.md).
+Preflight owns the before-edit map and must place any unnamed authoritative
+record, mutation boundary, interleaving, shared projection/recovery path,
+contract, invariant, or proof surface in blocking `openQuestions`.
 
-At minimum, name:
+## What To Produce
 
-- authoritative records mutated together
-- the mutation boundary where state must be revalidated
-- interleavings that can cross the boundary after prepare but before finalize
-- projection, replay, recovery, and no-op paths that share helpers or state fields
-- one combined workflow proof plus focused invariant checks
+Produce a short preflight with these exact sections:
 
-Block if these surfaces cannot be named.
+- `affectedSurface`
+- `authoritativeContract`
+- `invariants`
+- `proofPlan`
+- `reusePath`
+- `chosenApproach`
+- `rejectedAlternatives`
+- `touchpoints`
+- `verify`
+- `update`
+- `modularityPlan`
+- `riskChecks`
+- `openQuestions`
+- `behaviorMap`
 
-## TDD And Production-Code Alignment
+The first thirteen sections are concise text. `behaviorMap` is authoritative for the behavior obligations TDD must reconcile, not for choosing the architecture. A plan may reference the map but does not own another copy.
 
-- For behavior changes and bug fixes, `proof` should name the first failing behavior or regression test before production edits unless the user explicitly approved a TDD exception.
-- For behavior bugs, `proof` must also include the reproduced symptom, traced root cause, and testable hypothesis, or name `$diagnose` as the required next step.
-- Preflight does not satisfy RED/GREEN proof.
-- Use `production-code` during implementation and before finalizing to check minimal diff, reuse, boundary validation, cleanup, and verification.
+For ordinary local work, keep `affectedSurface`, `authoritativeContract`, `invariants`, and `proofPlan` short.
+For transaction-sensitive work, these sections must be explicit enough to govern the full surrounding surface.
 
-## Default Output
+## Section Rules
 
-Use this compact form for ordinary preflight-worthy work:
+### `affectedSurface`
 
-```md
-**Preflight**
-`scope`: ...
-`contract`: ...
-`approach`: ...
-`moduleShape`: ...
-`proof`: ...
-`touchpoints`: ...
-`risksAndQuestions`: none | ...
+- State the real changed boundary or behavior.
+- Name the adjacent consumers, callers, and no-change surfaces that must remain correct.
+- Do not reduce the surface to the edited file path.
+
+### `authoritativeContract`
+
+- State the rule that must remain true after the change.
+- If more than one rule matters, list the small set that actually governs the surface.
+- Do not hide the contract inside general prose about files or implementation shape.
+
+### `invariants`
+
+- List the observable conditions that prove the contract still holds.
+- Include adjacent no-change expectations, not just the direct branch behavior.
+- For transaction-sensitive work, include replay/recovery/projection and interleaving invariants when relevant.
+
+### `proofPlan`
+
+- Name the proof you will run for the affected surface.
+- Include one combined workflow proof when the work is stateful or control-loop sensitive.
+- Focused invariant checks may supplement the combined proof, not replace it.
+- For each production-writing pass, name the targeted correctness operation that also measures/asserts the chosen resource limit. Run it through ordinary `workflow.py verify`; its output names scale, fixed limit, observed value, and actual target identity. Reuse its selected receipt, not a new benchmark suite or cost-only map item.
+
+### `reusePath`
+
+- Identify the existing code path, utility, module, or pattern to extend.
+- If no safe reuse path exists, say that explicitly and explain why a new path is justified.
+- Do not claim reuse without naming the actual files or components.
+
+### `chosenApproach`
+
+- State the intended implementation in direct terms, including a meaningful resource limit, scale, and command **before measurement**. Compare only alternatives satisfying the same Interface; before a real mechanism reversal, deepen the governing design with the measured reason and reassess affected guarantees.
+- State each material implementation assumption and its evidence. An unresolved architecture-selection or contract question - one whose answer could change the chosen approach - moves to `openQuestions` and blocks recording until resolved. A settled choice whose behavioral consequence still needs falsification is not an open question: record it as a pending `behaviorMap` item and drive it through TDD.
+- Explain why it is the shortest correct path.
+- Keep the approach aligned with fail-closed behavior, boundary validation, and minimal diff size.
+- If a governing plan or review artifact exists, state how this pass fits its current owner slice and checklist progression.
+- Carry forward the governing design artifact's `PRES-n`/`ASSUMP-n` labels that constrain this pass, so the reconciled contract and later proof reference the same obligations.
+
+### `rejectedAlternatives`
+
+- List the realistic alternatives considered.
+- Reject them with technical reasons, not taste.
+- Prefer 1 to 3 rejected options, not a brainstorm dump.
+- Name every architecture family this pass's exploration or planning produced. A family rejected on a falsifiable prediction about existing behavior, tests, compatibility, or runtime semantics carries the resolving real-Seam measurement, or the rejection is unresolved and belongs in `openQuestions` — the canonical imaginary-risk ban in the repo's `AGENTS.md` governs; the `claude-advisor` skill owns the consult-time procedure.
+
+### `touchpoints`
+
+- Name the files, modules, tests, docs, scripts, and runtime surfaces likely to change.
+- Include cross-boundary surfaces when the change affects contracts, persistence, auth, queues, or external integrations.
+- If the change is intentionally narrow, say what you will not touch.
+- If a governing artifact exists, include the tracked plan or review doc when this pass will materially change its checklist or execution state.
+
+### `verify`
+
+- List coupled surfaces that must be checked but should not change if the current implementation is correct.
+- Include adjacent flows, invariants, and consumers that could regress even if untouched.
+- Prefer explicit tests, fixtures, or commands when known.
+- For all code work, include the no-change surfaces that would prove the change is not only locally correct.
+- For transaction-sensitive work, include close/closing, replay/recovery, projection-only, stale secondary execution, and helper-sharing no-change surfaces as applicable.
+
+### `update`
+
+- List coupled surfaces that must be updated in the same change to keep the system coherent.
+- Include tests, docs, schemas, decision records, and runtime references when the change affects them.
+- If a reviewer comment would require an update that conflicts with the contract, block and surface it in `openQuestions`.
+- If a governing plan or review artifact exists and this pass materially advances or reshapes execution, include that artifact here.
+- If helper semantics differ between real mutation and projection/recovery paths, either split the helper or constrain its usage in the same change.
+
+### `modularityPlan`
+
+- State how the change stays small and production-grade.
+- Include public interface, test surface, module shape, reuse path, rejected shallow path, and new-module justification when applicable.
+- Call out file-growth risk, duplicate-path risk, and whether extraction is needed.
+- Prefer extending an existing path over adding a new wrapper, helper, or abstraction.
+
+### `riskChecks`
+
+- Name the concrete failure modes to guard against, including violation of the declared resource bound. Do not relax that bound after a failure merely to pass; the same verification command must subsequently pass. Declaration adequacy remains review judgment, not universal automatic enforcement.
+- Cover at least the relevant subset of: data integrity, cleanup, retries, auth, race conditions, cross-surface regressions, compatibility, and observability.
+- If a risk cannot be evaluated yet, say so and move it to `openQuestions`.
+- For all code work, include adjacent-surface regression risk, not just the direct edited branch.
+- For transaction-sensitive work, include mutation-boundary drift, helper semantic drift, adjacent state races, and replay/finalize version drift.
+
+### `openQuestions`
+
+Use a three-way decision for every material unknown:
+
+1. **Resolve from evidence.** Inspect the packet, repository, runtime,
+   governing artifact, or verified source and record the answer.
+2. **Interactive architecture interview.** When the unknown can change Module
+   shape, public Interface, Seam placement, data contract, or irreversible
+   scope, invoke `/grilling` and ask one question at a time.
+3. **Block honestly.** If the fact cannot be resolved, the session is
+   non-interactive, or safe implementation depends on it, keep the named
+   question here and mark preflight blocked.
+
+Do not pause for ceremonial approval after evidence has resolved the decision.
+
+### `behaviorMap`
+
+Record a non-empty JSON array. Every item has these eight required fields:
+
+```json
+[
+  {
+    "id": "BM_ATOMICITY",
+    "kind": "preservation",
+    "basis": "touched-Seam preservation",
+    "behavior": "a caught inner failure remains atomic under the new transaction path",
+    "seam": "the public operation through that path",
+    "expected": "no partial inner write survives",
+    "redFailure": "PARTIAL_INNER_WRITE_SURVIVED",
+    "status": "pending"
+  }
+]
 ```
 
-Field rules:
+- IDs are stable uppercase identifiers used by RED/GREEN evidence.
+- `kind` is `contract` for the requested behavior and `preservation` for what the change must keep true. List contract items first. A map with any pending item carries at least one contract item; `basis` is prose and carries no authority.
+- `redFailure` names the product failure: a behavior-specific assertion marker or the product's own exception or diagnostic. A RED is valid only when the failure is that mapped product failure; failing earlier is evidence for no item. The first RED of a new Seam asserts the Seam's existence (`assert hasattr(db, "x"), MARKER`).
+- A contract item starts `pending`. A preservation item starts `pending`, `already-satisfied`, or `omitted`; `evidence` is required for `already-satisfied` and `omitted`, and forbidden for `pending`.
+- Every item is a concrete falsifier: an adversarial attack on one load-bearing public promise through its real production Seam. Derive attacks from what the design promises, not from a universal checklist: rollback/atomicity implies success, ordinary failure, supported interruption/cancellation, nested ownership, and every caller-reachable transaction-ending path; cleanup/resource ownership implies interruption and repeated or finalized lifecycle operations; persistence implies close/reopen and a second connection or process; parsers and matchers imply malformed boundaries plus the captured production corpus; shared mutable state implies every writer and material interleaving; lifecycle state machines imply repeated, out-of-order, nested, superseded, and terminal operations the Interface admits. If the Interface deliberately excludes an implication, narrow the promise explicitly instead of contradicting it.
+- Map every category the tdd skill's [Record the Behavior Map in Preflight](../tdd/SKILL.md) section lists; read it before writing the map.
+- Only runtime behavior is mappable: delivery line accounting, budget measurement, and other non-runtime bookkeeping never become items.
+- A pending behavioral finding is owned by giving an attack item a finding entry in `sourceRefs`; the recorder refuses a map that leaves one unowned. No preservation-only item is needed when existing focused regression evidence already owns the obligation — reference that evidence in an `already-satisfied` disposition instead.
+- Use TDD's one-item-per-independently-failing-outcome rule, including finding-owned attacks. Parameterized forms can share an operation; separate missing guarantees stay visible. Prose cannot widen the domain the retained attacks actually prove.
+- Proof gaps stay in `openQuestions`; they are not omissions.
 
-- `scope`: changed behavior plus adjacent no-change surfaces; do not reduce it to a file path.
-- `contract`: authoritative rule that must remain true.
-- `approach`: reuse path, chosen minimal implementation, and any realistic rejected alternative.
-- `moduleShape`: public interface, test surface, existing reuse path, rejected shallow path, and new-module justification when applicable.
-- `proof`: tests, commands, or checks for the changed behavior and adjacent no-change surfaces; for behavior bugs, include reproduced symptom, traced root cause, and testable hypothesis.
-- `touchpoints`: likely edit, verify, update, and no-touch surfaces, including protected runtime/cache/generated paths.
-- `risksAndQuestions`: concrete risks and blockers; write `none` only when no blocking fact is missing.
+## Execution Gate
 
-## Expanded Output
+- Preflight must happen before the first tracked edit on the governed pass.
+- Do not make tracked edits, stage files, or resolve review threads before preflight is complete.
+- Do not treat a retrospective preflight summary as valid compliance.
+- Do not pause for approval unless the user explicitly asked for approval or `openQuestions` contains a real blocker that prevents safe editing.
+- If new facts invalidate the preflight after editing has started, stop, refresh the affected sections, and then continue from the corrected preflight.
 
-Use the expanded form only for transaction-sensitive work, release/deploy/package changes, auth/data/filesystem/runtime boundaries, governed execution plans, or multi-PR work:
+## Recording
+
+In the governed workflow this preflight records only through
+`python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" record-preflight --repo "$PWD" --slug "<task>" --workflow-id "<active-workflowId>" --input "/path/to/preflight.json"`, which demands the full thirteen text sections plus `behaviorMap`
+as JSON (every text section non-empty, `openQuestions` exactly `none`) and refuses
+without mutating state. Write the document to a file and pass it with
+`--input`; response prose is not evidence.
+
+## Output Shape
+
+Use the exact JSON section names above. For a visible summary, use the compact text shape - one bold-labelled line per section, in order:
 
 ```md
-**Preflight**
 `affectedSurface`: ...
 `authoritativeContract`: ...
 `invariants`: ...
@@ -162,27 +272,8 @@ Use the expanded form only for transaction-sensitive work, release/deploy/packag
 `update`: ...
 `modularityPlan`: ...
 `riskChecks`: ...
-`openQuestions`: none | ...
+`openQuestions`: none
+`behaviorMap`: BM_... contract|preservation, pending | already-satisfied | omitted (with evidence)
 ```
 
-Keep each field concrete. No filler. If blocked, say so explicitly inside `openQuestions`.
-For `modularityPlan`, include public interface, test surface, module shape, reuse path, rejected shallow path, and new-module justification when applicable.
-
-## Review Feedback
-
-When the turn is driven by review feedback:
-
-- restate the actual issue in technical terms
-- verify whether the comment matches current `HEAD` and the repo contract
-- run both admission checks below before classifying; severity labels are not a work queue, and automated reviewers are reliable about what code *can* do and unreliable about whether it *does*
-- distinguish valid defect (mechanism verified AND occurrence demonstrated), false premise, no occurrence, wording mismatch with already-correct behavior, and genuine contract conflict
-- if the comment conflicts with repo instructions, canonical spec, or verified behavior, block in `openQuestions` instead of implementing to comment wording
-
-Admission checks, both unconditional and cheap:
-
-- **premise** — name the finding's assumption about runtime, config, or installed state and verify it against the live system with a command, not by reading code; a false premise is rejected with the measurement quoted and no code changes
-- **occurrence** — count the failing shape in captured data, logs, or reachable callers; zero occurrences means report line, not change
-
-Validating a finding is not validating a fix. Before shipping a change to a parser, matcher, predicate, or anything consuming external text or markup, run the NEW code over values already captured in the system and require zero regressions. A test written from the same assumption that produced the fix cannot detect its error; only the corpus can. Where a real seam cannot be driven locally — in-page browser JavaScript is the known case — say so and let the authenticated staging run be the proof rather than writing a fixture that passes either way.
-
-Give every finding a disposition with evidence: fixed, rejected-with-evidence, or reported-not-actioned, posted where the reviewer loop can see it. A rejection without a measurement is indistinguishable from one ignored.
+If blocked, say so explicitly and keep the block reason inside `openQuestions`.
