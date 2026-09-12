@@ -512,7 +512,7 @@ class WorkflowHookTests(HookHarness):
         self.assertEqual(state["nextAction"], "tdd")
 
     def test_shipped_hooks_do_not_intercept_bash_or_git(self) -> None:
-        settings = json.loads((ROOT / "config.toml").read_text(encoding="utf-8"))
+        settings = json.loads((ROOT / "hooks.json").read_text(encoding="utf-8"))
         pre_tool = settings["hooks"]["PreToolUse"]
         self.assertFalse(any(entry.get("matcher") == "Bash" for entry in pre_tool))
         self.assertFalse((ROOT / ".githooks").exists())
@@ -535,7 +535,7 @@ class WorkflowHookTests(HookHarness):
                     / resolve_repo_identity(self.repo).key / "workflow.sqlite3")
         self.assertTrue(database.is_file())
 
-        settings = json.loads((ROOT / "config.toml").read_text(encoding="utf-8"))
+        settings = json.loads((ROOT / "hooks.json").read_text(encoding="utf-8"))
         self.assertNotIn("PreCompact", settings["hooks"])
 
 class PerEditOverheadTests(HookHarness):
@@ -809,7 +809,7 @@ class WrapperPromptTests(HookHarness):
         self.git("remote", "add", "origin", "https://example.invalid/prompt-rig.git")
         return dict(self.env, PATH=f"{rig / 'bin'}{os.pathsep}{self.env['PATH']}",
                     HOME=str(rig / "home"), CODEX_HOME=str(rig / "claude"),
-                    CAPTURE_DIR=str(rig / "capture"))
+                    CAPTURE_DIR=str(rig / "capture"), ADVISOR_PROVIDER="claude")
 
     def run_advisor(self, env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run([str(ADVISOR_WRAPPER), "--cwd", str(self.repo), *args],
@@ -1104,7 +1104,7 @@ class WrapperPromptTests(HookHarness):
         args = (Path(env["CAPTURE_DIR"]) / "args-1").read_text(encoding="utf-8").split()
         created = args[args.index("--session-id") + 1]
         state_root = env.get("CODEX_WORKFLOW_STATE_ROOT") or f"{env['CODEX_HOME']}/state"
-        persisted = list((Path(state_root) / "_advisor-sessions").glob(f"*-reuse-created-{wid}.sid"))
+        persisted = list((Path(state_root) / "_advisor-sessions").glob(f"*-reuse-created-{wid}.claude.sid"))
         self.assertEqual([path.read_text(encoding="utf-8").strip() for path in persisted], [created], marker)
         second = self.run_advisor(env, *consult)
         self.assertEqual(second.returncode, 0, marker + ": " + second.stdout + second.stderr)
@@ -1261,7 +1261,8 @@ class TollDeletionTests(HookHarness):
                             "printf '%s\\n' '{\"schemaVersion\":1,\"findings\":[],\"verdict\":\"commit-ready\"}'\n", encoding="utf-8")
         provider.chmod(0o755)
         env = {**self.env, "PATH": f"{rig / 'bin'}:{os.environ['PATH']}", "HOME": str(rig / "home"),
-               "CODEX_HOME": str(rig / "claude"), "CAPTURE_DIR": str(rig / "capture")}
+               "CODEX_HOME": str(rig / "claude"), "CAPTURE_DIR": str(rig / "capture"),
+               "ADVISOR_PROVIDER": "claude"}
         consult = subprocess.run(
             [str(ADVISOR), "--slug", slug, "--phase", "final-review", "--cwd", str(self.repo),
              "--design-absent", "hook-suite rig", "--", "completion question"],
@@ -1626,7 +1627,7 @@ class RedFirstTests(HookHarness):
 
     def test_no_stop_hook_is_registered(self) -> None:
         marker = "STOP_HOOK_STILL_REGISTERED"
-        hooks = json.loads((ROOT / "config.toml").read_text(encoding="utf-8"))["hooks"]
+        hooks = json.loads((ROOT / "hooks.json").read_text(encoding="utf-8"))["hooks"]
         self.assertNotIn("Stop", hooks, marker)
         self.assertFalse((ROOT / "hooks" / "post-edit-blast-radius.py").exists(), marker)
 

@@ -1,436 +1,278 @@
 ---
 name: codex-advisor
-description: Consult the Codex advisor — a fresh read-only `codex exec` run by default — as a one-on-one challenger of Codex's work; a Claude provider (`claude -p`) is available via `--provider claude` and is required for `--write` or `--full-tools` delegated-worker modes. Mandatory after Repo Context Forge and packet-scoped GitNexus checks in production repo workflow; also use when architecture, migration, correctness, security, concurrency, idempotency, or non-obvious PR/worktree risk needs advisory review.
+description: Consult the Codex advisor at the workflow preflight and final-review checkpoints through the sole local wrapper.
 ---
 
-# Codex Advisor
+# Codex advisor
 
-Codex Advisor is a challenge Interface around Codex's work. Codex owns the
-decision, implementation, tests, and final report. The advisor supplies
-independent pressure against the evidence Codex provides. The Codex provider —
-a fresh read-only `codex exec` run — is the default; `--provider claude`
-selects the Claude CLI path when Claude tokens are available or when write
-modes are needed.
+Use `scripts/ask-codex-advisor.sh` as the sole production transport. Do not use
+the plugin forwarder, Agent tool, or a second wrapper as a fallback.
 
-Use the wrapper by default:
+Choose one short stable slug per production pass. Reuse it for both checkpoints;
+phase belongs in `--phase`, not in the slug.
+
+## Checkpoints
+
+### `preflight-advice`
+
+Run after Repo Context Forge, before production preflight and before edits,
+when the request raises a design or scope question; otherwise skip it.
+Supply the focused scope question; the workflow checkpoint supplies the
+pass-owned advisor projection, the recorded original request, workflow binding,
+and current-pass diff anchors. The advisor derives the load-bearing promises of
+the public Interface from the original request, enumerates the caller-reachable
+operations able to falsify each promise — interruption and cancellation,
+transaction control, lifecycle re-entry, shared-state writers, persistence —
+and makes any material promise without a planned real-Seam attack a finding.
+It challenges scope and design; it does not create the preflight artifact or
+approve implementation.
+
+Every phased consult carries a governing-design declaration: `--design-file`
+with the durable design artifact, or `--design-absent` with the specific
+reason none exists. The wrapper refuses a phased consult without exactly one
+of them, before any workflow lookup or provider cost. Do not manufacture a
+design document for a trivial pass — declare its absence; the declaration
+travels verbatim to the delegate (reasons over 2000 bytes are refused, never
+truncated), and for work proposing a new Module, public
+Seam, or an architecture-family choice, the phase prompt makes an absent
+design a top-ranked finding. The prompt frames the artifact as the decided
+design under falsification: the advisor may recommend a different
+architecture family, and the decision is settled by measurement, not by the
+consult.
+
+A design artifact carries: the chosen architecture and rationale; every
+architecture family exploration or planning produced, with the technical
+rejection reason for each rejected family; the verified exploration findings
+that constrain the design and how each was measured; and every unverified
+falsifiable prediction explicitly marked unresolved. The design is a falsifiable
+hypothesis, not an immutable authority: deepen it append-only in the same
+unpushed workflow and carry the current file to each consult — a changed
+declaration records as new workflow evidence while the ledger keeps every prior
+version. The wrapper sends the declaration and the complete design body as
+framed evidence, and the advisor never owns dispositions.
+
+The canonical imaginary-risk ban and the premise/occurrence checks in the
+repo's `CLAUDE.md` govern architecture-family decisions; this checkpoint adds
+procedure, not new doctrine. A family selection or rejection resting on a
+falsifiable prediction about existing behavior, tests, compatibility, or
+runtime semantics stays unresolved — whoever made the prediction: planning,
+advisor, or lead — until the smallest practical real-Seam measurement
+resolves it. A preflight finding of that shape is dispositioned `fixed` only
+with that measurement in its `evidence`, and each finding's disposition says
+whether it is behavioral or non-behavioral.
+
+### `final-review`
+
+Run after implementation, verification, and the required native delegate code review. This independent checkpoint challenges the candidate and supplied evidence rather than trusting the lead or delegate verdict. The wrapper sends the
+recorded original request once, the checkpoint's retained advisor projection,
+the current governing-design declaration (a deepened design records as new
+evidence), and one direct `passStartOid^{tree} -> activeCandidateTree` diff:
+test-classified hunks arrive inside their enclosing definition (git function
+context), production hunks keep ordinary context. The advisor answers in order: what the
+original request and public Interface promise; which production operations can
+falsify each load-bearing promise;
+which of those are unattacked through the real Seam in the supplied evidence;
+whether any finding disposition narrows or loses part of its immutable claim/domain, reconciling exact intake identity with executed commands, preservation, and reassessment state;
+and only then the changed Module shape, minimality, security boundary,
+candidate binding, and visible regression coverage. A promised load-bearing
+surface with no attack forbids `commit-ready` even when every declared map item
+is green; checkpoint readiness remains wrapper-owned. Judge the selected resource receipt in the existing consult question against its declared scale/limit and measured target, without assuming a generic receipt contains a candidate-tree ID. Known missing required material acceptance is a Spec finding, not prose beside empty findings; an omitted payload channel alone is not such a gap. Attribute repeated or self-introduced defects bluntly only when supplied evidence demonstrates them; prompt emission alone proves no model reasoning. The rubric binds both
+sides of the verdict: it demands every demonstrable additional material
+failure class batched in one envelope, a finding that names no measured or
+concretely reachable failure is not material, and a re-raise of a finding whose
+recorded rejection quotes a measurement is material only with a new
+contradicting measurement. It returns only this strict envelope:
+
+```json
+{"schemaVersion":1,"findings":[{"id":"SPEC-1","claim":"...","material":true,"kind":"behavioral"}],"verdict":"fix-before-commit"}
+```
+
+Findings carry exactly `id`, `claim`, `material`, and `kind` (`behavioral` or
+`nonbehavioral`). Final verdict is `commit-ready`, `fix-before-commit`, or
+`context-mismatch`; use `fix-before-commit` only with a material finding, and
+`commit-ready` only when context matches and none is material.
+`context-mismatch` is reserved for a candidate or projection identity mismatch
+(the supplied binding does not describe the diff); a lead rejection of a claim
+about the request's literal wording that quotes a real-Seam measurement receives
+a verdict, either a material re-raise carrying a new contradicting measurement
+or `commit-ready`.
+
+The wrapper records the exact UTF-8 response and its digest as immutable finding
+intake; it never dispositions. After reading the output, the lead validates
+every finding and appends a separate intake-referenced disposition for each
+material one; `material:false` notes need none. Completion
+derives from the context-matched intake's effective terminal dispositions, not
+from the raw verdict alone. A `context-mismatch` advances nothing and must be
+re-consulted. A final `rejected-with-evidence` remains pending for one response
+on the same workflow-bound session; omission or a same-ID nonmaterial response
+concedes it, while a material re-raise reopens the finding as pending: the lead dispositions it once more against the new measurement, and that second measured disposition stands. This is workflow state, not permission to run
+Git.
+
+## Invocation
+
+Run the wrapper in a dedicated/background chat pane so the calling agent can
+keep transport output separate. Capture stdout and stderr independently and
+wait for the process rather than polling with repeated sleeps.
 
 ```bash
-/home/prop_/.codex/skills/codex-advisor/scripts/ask-codex-advisor.sh \
-  --slug "<stable-task>" \
-  --cwd "$PWD" \
-  -- "Question: <one focused question>"
+"$HOME/.codex/skills/codex-advisor/scripts/ask-codex-advisor.sh" \
+  --slug "<task>" --phase preflight-advice \
+  --cwd "$PWD" --design-file "<design-artifact>" \
+  --budget 600 -- "<focused scope question>"
+
+"$HOME/.codex/skills/codex-advisor/scripts/ask-codex-advisor.sh" \
+  --slug "<task>" --phase final-review \
+  --cwd "$PWD" --design-file "<design-artifact>" \
+  --budget 600 -- "<focused completion question>"
 ```
 
-The wrapper streams the composed prompt to the advisor provider over stdin, so
-large diffs do not hit shell or OS argument-length limits.
+For a long question, drop the `--` argument and feed it on stdin:
+`< question.txt`.
 
-## Required Codex Execution
+### Providers
 
-Preserve the complete nested command result when invoking the wrapper through
-`functions.exec`. Never render only `result.output`; doing so discards a live
-`session_id` and the final `exit_code`:
+`--provider codex` is the default: a `codex exec` run on `gpt-6-astra` at
+`xhigh` reasoning, read-only sandbox. `CODEX_ADVISOR_MODEL` or `--codex-model`
+and `CODEX_ADVISOR_EFFORT` or `--codex-effort` override model and effort. The
+first consult persists the session; later consults on the same slug resume it
+with `codex exec resume`, so the final review keeps the preflight session's
+full history.
 
-In this host, `functions.exec` is the outer tool,
-`tools.exec_command`/`tools.write_stdin` are its nested operations, and
-`functions.wait` resumes an outer cell.
+`--provider claude` selects the `claude -p` transport through the claudex
+alias env (`ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`,
+`CLAUDE_CODE_SUBAGENT_MODEL`); it keeps the same checkpoint, evidence, and
+recording contract. Session files are per-provider: a codex session never
+resumes through Claude and vice versa.
 
-```javascript
-const result = await tools.exec_command({
-  cmd: "/home/prop_/.codex/skills/codex-advisor/scripts/ask-codex-advisor.sh --slug '<task>' --cwd '<worktree>' -- 'Question: <question>'",
-  workdir: "<worktree>",
-  yield_time_ms: 30000,
-  max_output_tokens: 6000,
-});
-text(JSON.stringify(result));
-```
+Substitute `--design-absent "<specific reason>"` when the pass genuinely has
+no design artifact. The operator-selected default budget is 600 words, and
+budgets above 1,200 are refused. Phased consults refuse `--packet`, `--base-ref`,
+and `--fresh`; the workflow checkpoint owns payload anchors and session mode.
 
-Apply the **live-handle invariant**: treat the call as running until the nested
-result contains `exit_code`. If `functions.exec` yields a cell ID, wait on that
-exact cell with `functions.wait`. If the nested result contains `session_id`
-without `exit_code`, continue that exact command session with
-`tools.write_stdin` and again render the complete result. Repeat as needed.
-Never retry, start a fallback, or start a second wrapper call with the same slug
-while either handle is live. When checking for strays, LIST first with
-`pgrep -af`, then kill explicit PIDs — a bare `pkill -f` matches your own
-shell (its command line contains the pattern) and self-kills while the real
-stray survives.
+The prompt carries one complete schema-version-1 advisor projection and one
+direct current-pass diff. Their sizes and digests are reported on stderr as
+`codex_advisor_evidence`, and the assembled prompt reports
+`codex_advisor_prompt bytes_total`. With `--provider claude`, the claudex
+window knobs (`CLAUDE_CODE_MAX_CONTEXT_TOKENS`, `CLAUDE_CODE_AUTO_COMPACT_WINDOW`,
+`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`) pass through to the delegate exactly when
+the alias block configures them.
 
-```javascript
-const next = await tools.write_stdin({
-  session_id: result.session_id,
-  chars: "",
-  yield_time_ms: 30000,
-  max_output_tokens: 6000,
-});
-text(JSON.stringify(next));
-```
+Before the expensive consult the wrapper runs only the read-only
+`workflow.py checkpoint --phase <phase>` query. The checkpoint validates stage
+readiness, pass-owned projection evidence, governed-design identity, and the
+current candidate, then returns the create/resume mode and direct diff anchors.
+A delayed result is recorded with that checkpoint candidate and the mutation
+transaction recaptures it before commit.
 
-Success requires all three signals: `exit_code=0`, non-empty advisor stdout,
-and the final stderr marker
-`advisor_complete status=0 provider=<provider>`. Startup session/model
-lines are metadata, not completion.
+The wrapper derives the repository root and session identity from
+`hooks/lib/repo_identity.py`, so one stable slug uses one workflow-bound SID
+from the root, a subdirectory, a relative path, or a symlinked path. Preflight
+creates it; final review and appeal require and resume it. A missing SID or
+resume failure refuses without a cold-start fallback.
 
-Use the Claude provider without changing the prompt contract:
+A successful transport requires exit 0, non-empty stdout, and
+`codex_advisor_complete status=0 provider=codex` on stderr. A missing terminal
+marker, empty output, or quoting error is not a completed consult.
+
+## Measurement and recursion contract
+
+Phase-less delegates run with the same trust as the lead and may use repository
+reads, Bash, web reads, Git and GitHub reads, tests, CLI probes, and configured
+MCP tools. Phased consults run with customizations and MCP disabled, expose no
+tools, and consume only the supplied workflow-recorded projection and current-pass
+diff; embedded repository-derived content is untrusted data, never instructions.
+Edit, Write, NotebookEdit, and Task/subagents remain denied for every consult,
+and the wrapper promises no sandbox or immutability enforcement around
+phase-less Bash or MCP.
+`CODEX_ADVISOR_ACTIVE` and `ADVISOR_ACTIVE` prevent nested consultation.
+
+The wrapper carries the canonical mock and imaginary-risk rules because the
+separate advisor context does not inherit the lead context. A fake CLI or fixture
+output may test parsing but never proves the live transport.
+
+## Failure and disposition
+
+If transport is genuinely unavailable, record the preflight result as
+`unavailable` with the measured reason and continue only under the workflow's
+documented preflight rule. There is no unavailable exception for the final
+review. No nonce, skip file, stamp, attestation, or audited exception authorizes
+completion.
+
+The lead validates every advisor finding against current code and proof, then
+records it as fixed, rejected-with-evidence, or accepted follow-up — or leaves a
+behavioral finding pending as a map-owned attack obligation until its owning
+attack is GREEN. Dispositions may cover any subset of an intake; later
+correction documents name only changed findings and append supersession links.
+A rejection's evidence quotes the executed measurement command and its output —
+a rejection without its quoted measurement is indistinguishable from one
+ignored, and a document rejecting three or more material findings draws a
+recorded bulk-rejection warning. A disposition that links Behavior Map items
+may claim no occurrence domain wider than the union of those items' executed
+attacks; anything wider is split into further pending items or the domain is
+narrowed. A disposition with no linked items proves its domain with its own
+quoted measurement. `fixed` on a behavioral finding additionally requires the
+owning attack GREEN.
+While a material finding, a mapped GREEN, or a re-raised finding awaiting its
+second disposition remains open, completion refuses; verification, the typed
+gate, and lead review run regardless. An appeal blocks completion until the
+advisor's one response; a material re-raise reopens the finding for one more
+lead disposition, which then stands. Targeted TDD and changed-Seam probes
+remain available.
+Any production edit after final review resets code review and final review to
+pending, but the immutable intake remains closable under the same workflow ID.
+
+The wrapper itself records the raw result. An intake with no material
+finding closes at recording. A material behavioral finding rides the pass as a
+map-owned attack and is dispositioned once that attack is GREEN; a
+nonbehavioral or measured-false finding is dispositioned whenever its
+measurement exists; findings block completion only:
 
 ```bash
-/home/prop_/.codex/skills/codex-advisor/scripts/ask-codex-advisor.sh \
-  --provider claude \
-  --slug "<stable-task>" \
-  --phase final-review \
-  --cwd "$PWD" \
-  --base-ref origin/main \
-  -- "Question: Does the wrapper-provided live diff satisfy the production contract?"
+python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" \
+  advisor-disposition --repo "$PWD" --slug "<task>" --workflow-id "<active-workflowId>" --stage preflight --findings addressed --input <document>
 ```
 
-`CODEX_ADVISOR_PROVIDER=claude` or `ADVISOR_PROVIDER=claude` selects the same
-path through the environment. The default provider is `codex`.
+Dispositions and `pause` are bound to the active workflow instance: a slug or
+workflowId that does not match is rejected without mutating state.
 
-The advisor provider does not load this skill file. Any rubric it must follow
-has to be included in the wrapper phase prompt or in the question sent through
-the wrapper.
-Changes to checkpoint rules here are inert unless the wrapper phase prompts are
-kept in sync.
-The wrapper phase prompts at `scripts/ask-codex-advisor.sh` are the
-operational source of truth for phase output shape and tool policy.
+Use `--findings addressed` with `--input <document>` when the consult produced
+findings. The strict path carries only the immutable intake evidence identity and
+dispositions; it never restates a finding:
 
-## Production Checkpoints
+```json
+{"context":{"workflowId":"<active-workflowId>","candidateTree":"<40-hex Git tree>","prHead":"<optional HEAD>"},"intakeEvidenceId":"<advisor intake evidence>","dispositions":[{"finding_id":"SPEC-1","status":"fixed","kind":"nonbehavioral","premise":{"claim":"...","command":"...","result":"..."},"occurrence":{"domain":"...","count":0,"complete":true,"command":"...","result":"..."},"materialConsequence":{"claim":"...","command":"...","result":"..."},"evidence":"verified correction"}]}
+```
 
-In production repo work that uses Repo Context Forge, consult the advisor twice:
+Every disposition carries `kind`, `premise`, `occurrence`, and `materialConsequence` at both stages.
+A behavioral finding rides the pass undispositioned: it directly owns Behavior
+Map attack items through finding `sourceRefs` (record-preflight refuses an
+unowned pending behavioral finding; tdd-map adds owners later), and `fixed`
+requires an owning attack GREEN through its recorded RED plus a zero-count
+complete-domain occurrence over the finding's recorded surface.
+`report-only` requires a false material consequence, and a behavioral one an
+owning attack the tdd producer proved (GREEN or recorded baseline); a command or
+evidence citing a temporary-directory path refuses. `report-only`, `rejected-with-evidence`, and `fixed` carry `evidence`; `accepted-follow-up` carries `reference`. The legacy
+findings-plus-dispositions form remains compatible for measured nonbehavioral
+results. A refusal mutates no state.
+Print the canonical disposition and governed-design shape table, generated from
+its installed validator declarations, with `python3 -I -c 'import sys; from pathlib import Path; sys.path.insert(0, str(Path.home() / ".codex")); from hooks.lib.workflow_documents import DOCUMENT_SHAPE_TABLE; print(DOCUMENT_SHAPE_TABLE)'`.
 
-1. **Before code**: after Repo Context Forge and packet-scoped GitNexus checks,
-   before `$production-preflight` and before edits.
-2. **After code**: after proof for non-trivial edits, before commit or push.
-
-### Before Code: Scope Challenge
-
-Ask whether the Repo Context Forge + GitNexus packet covers the PRD slice,
-correct Seams, and correct surface area before production preflight.
-
-Supply:
-
-- task contract and PRD slice outcomes
-- Repo Context Forge packet target surface, coverage plan, and skipped high-ranked targets
-- packet-scoped GitNexus findings: callers, callees, blast radius, contracts
-- intended Module, public Interface, hidden Implementation complexity
-- existing reuse path
-- new Seam justification, or why the existing Module should be deepened
-- touched shallow Module debt
-- `$tdd` hypothesis or first failing behavior test
-- test surface and named no-change surfaces
-- ordering, idempotency, data-loss, security, or regression risks
-- Codex's implementation hypothesis
-
-Command:
+For an unavailable consult, record the full
+slug- and instance-bound command; no disposition is needed and final review
+has no unavailable route:
 
 ```bash
-/home/prop_/.codex/skills/codex-advisor/scripts/ask-codex-advisor.sh \
-  --slug "<stable-task>" \
-  --phase preflight-advice \
-  --cwd "$PWD" \
-  -- "Question: Does the Repo Context Forge + GitNexus packet cover the PRD slice, correct Seams, and correct surface area before production preflight?"
+python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" \
+  advisor-result --repo "$PWD" --slug "<task>" --workflow-id "<active-workflowId>" \
+  --stage preflight --source codex-advisor \
+  --verdict unavailable --reason "<measured transport failure>"
 ```
 
-The advisor must load its per-checkpoint rubric (`/codebase-design` + `/tdd`
-before code; plus `/code-review` and `/code-quality` before commit) as
-read-only references, remind Codex how `$tdd` applies, and say whether a targeted
-Module/Interface/Seam decision is needed before editing. It must challenge
-whether the work deepens an existing Module, creates a real Seam, or risks
-shallow helper/service/manager/wrapper complexity.
-
-The Interface is the test surface. A new Seam needs a real reason; one Adapter
-is usually hypothetical, while two Adapters usually prove the Seam.
-
-### After Code: Diff Challenge
-
-Ask whether the live diff satisfies the PRD slice and production contract
-without extra behavior or no-change surface drift.
-
-Supply:
-
-- exact PRD, reviewer issue, or issue tracker item
-- branch, base, and head SHA
-- TDD proof: RED command/failure and GREEN command/pass
-- verification outcomes and any skipped or weak proof
-- `$code-review` Standards/Spec findings and their dispositions, when it ran
-- changed Module, public Interface, and hidden Implementation complexity
-- existing reuse path and touched shallow Module debt
-- named no-change surfaces
-- Codex's commit-readiness hypothesis
-
-Do not provide a prose diff summary as evidence. The wrapper attaches the live
-dirty diff, staged diff, or PR/base diff from `--cwd`; the advisor must critique
-that evidence directly.
-
-If the wrapper-provided diff does not match the requested PR, PRD, reviewer
-issue, branch, or head SHA, treat the advisor answer as a blocker and fix the
-call context before relying on it.
-
-Command:
+After validating final-review output, record the final disposition the same
+way:
 
 ```bash
-/home/prop_/.codex/skills/codex-advisor/scripts/ask-codex-advisor.sh \
-  --slug "<stable-task>" \
-  --phase final-review \
-  --cwd "$PWD" \
-  --base-ref origin/main \
-  --budget 700 \
-  -- "Question: Does the wrapper-provided live diff satisfy the PRD slice and production contract without extra behavior or no-change surface drift?"
+python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" \
+  advisor-disposition --repo "$PWD" --slug "<task>" --workflow-id "<active-workflowId>" \
+  --stage final --findings addressed --input <disposition.json>
 ```
-
-Expected challenge shape:
-
-- Verdict: commit-ready, fix-before-commit, or context-mismatch
-- PRD reconciliation: implemented, missing, extra, and unproven outcomes
-- Reviewer coverage: automated and human reviewer findings on the current head (roster: `docs/agents/reviewers.md` when present)
-- `TDD check`: whether a vertical red-green loop was shown
-- Module shape: public Interface, test surface, deep Module pressure, and any shallow unnecessary helper/service/manager/wrapper split
-- `Minimality/bloat`: unnecessary code, duplication, or broad refactor
-- `Regression risk`: no-change surfaces needing more proof
-- `Action`: one exact next Codex step
-
-Challenge focus:
-
-- exact PRD/reviewer issue resolved, not just adjacent cleanup
-- change belongs in the touched slice/worktree
-- proof is real behavior proof, not mock-heavy or fake-green coverage
-- no broad refactor, duplicate path, stale workaround, or speculative option
-- Module/Interface/Seam critique stayed targeted; recommend `$improve-codebase-architecture` as a follow-up only when the shape problem is genuinely out of this slice's scope
-
-Use a larger budget for precommit challenges when the advisor must reconcile a real
-PRD/reviewer issue against a live diff. Keep simpler advisor questions near the
-default budget. The wrapper controls the default; `--budget 700` is illustrative
-for real PRD/reviewer reconciliation, not a new default.
-
-On `context-mismatch`, fix `--cwd`, `--base-ref`, branch state, or the exact
-issue/PRD context and re-ask. Do not act on the prior answer.
-
-Precommit challenge passing does not complete PR/review work. When a PR has
-external or human reviewers, Codex must still pass the `AGENTS.md` PR Reviewer
-Completion Gate on the current head.
-
-## When To Ask The Advisor
-
-Ask the advisor:
-
-- after Repo Context Forge and packet-scoped GitNexus checks in production repo
-  work
-- before commit for a non-trivial diff that claims to resolve a PRD, reviewer,
-  or issue tracker item. Exception: fix-only commits whose every change
-  addresses a finding already confirmed in this pass's challenge, code-review,
-  or PR reviewer loop; state the skipped round in the final report
-- for architecture, migration, correctness, security, concurrency,
-  idempotency, data-loss, or non-obvious PR/worktree risk
-- when the user explicitly asks for the advisor, advisor mode, or a delegated
-  Claude worker
-- when Codex is stuck after two focused attempts
-
-Skip the advisor for mechanical edits, formatting, obvious single-file fixes,
-and questions the test suite answers directly, unless the user asks for it.
-
-## Prompt Contract
-
-Ask one focused question per call. Include:
-
-- `Role`: advisor, read-only, stdout only
-- `Question`: bounded and explicit
-- `Evidence`: packet, graph result, diff, error, file path, or excerpt
-- `Hypothesis`: what Codex currently believes
-- `Budget`: usually `<=300 words`; raise only for real review depth
-
-Good questions:
-
-```text
-Given this PRD slice, Repo Context Forge packet, GitNexus findings, and Module-shape hypothesis, what is the highest-risk missing surface before production preflight?
-Challenge the wrapper-provided live diff against PR #39 head <sha> and this PRD item. What is missing, extra, or under-proven?
-Hypothesis: retries are safe because writes are idempotent. Strongest counter-argument with file:line evidence?
-Options A vs B. Which fails first under the migration constraint?
-```
-
-Avoid broad prompts such as "what do you think?", whole-repo dumps, or
-instructions that ask the advisor to run Codex's workflow for it.
-
-## Providers
-
-`--provider codex` is the default: a fresh read-only `codex exec` advisor run
-with the wrapper-built prompt, live diff evidence, and phase rubric. It does
-not support `--write` or `--full-tools`; those modes remain Claude-only.
-
-`--provider claude` preserves the existing Claude CLI path, including session
-resume state, `--write`, and `--full-tools`. Use it when Claude tokens are
-available and the consult needs write-capable delegation or session resume.
-
-Provider environment:
-
-- `CODEX_ADVISOR_PROVIDER` or `ADVISOR_PROVIDER`: `codex` (default) or `claude`.
-- `CODEX_ADVISOR_MODEL=<model>` or `--codex-model <model>`: optional Codex
-  model override.
-- `ADVISOR_CLAUDE_MODEL` and `ADVISOR_CLAUDE_FALLBACK_MODEL`: optional Claude
-  provider overrides; both default to `claude-opus-5`.
-
-The Codex provider is not model-diverse from Codex implementation work, but it
-is a separate session with read-only constraints and raw wrapper evidence. The
-Claude provider adds model diversity when available; neither is stronger
-authority than the workflow's own evidence chain.
-
-## Modes
-
-Keep the advisor read-only unless the user explicitly authorizes file
-modification — write modes require `--provider claude`. Do not infer
-authorization from the task type, production workflow, worktree availability,
-or a request merely to consult or test the advisor. Use the
-wrapper for every authorized write mode.
-
-The wrapper's read-only tool policy is the source of truth:
-
-```bash
---allowed-tools "Read Grep Glob Bash(git diff:*) Bash(git status:*) Bash(git branch:*) Bash(git rev-parse:*) Bash(gh issue view:*) Bash(gh pr view:*) Bash(gh run view:*) Bash(rg:*) Bash(ls:*) Bash(sed:*) Bash(cat:*)"
---disallowed-tools "Edit Write NotebookEdit"
-```
-
-`--phase` is only valid in read-only advisor mode. Do not combine it with
-`--write` or `--full-tools`.
-
-- `preflight-advice`: before code, after Repo Context Forge + GitNexus
-- `final-review`: after proof, before commit or push
-
-When explicitly authorized, use `--write` only for a bounded edit. The prompt
-must name the task, target worktree, allowed tests, and whether commits or
-pushes are allowed. Default: no commit or push. Write mode permits `Edit`,
-`Write`, and `NotebookEdit`. For multiple changes, let Claude call `Edit` as
-often as the task requires. Do not add `MultiEdit` to tool rules unless it
-appears in the live `--tools default` inventory; an unknown name produces a
-warning.
-
-Write mode still blocks commits, pushes, destructive git operations, `rm`,
-`sudo`, package-download commands, and plan artifacts. Codex must inspect
-Claude's resulting diff before relying on it. Treat the wrapper as the exact
-tool-policy source of truth.
-
-The advisor may use `/tdd`, `/codebase-design`, `/code-review`, and
-`/code-quality` only as read-only rubric references — `codebase-design` owns
-the Module/Interface/Seam vocabulary. Do not ask it to invoke heavyweight repo
-execution skills, bootstrap scripts, or `/production-preflight` as a substitute
-workflow; the advisor should report missing preflight or Module-shape evidence
-instead, and may recommend `/improve-codebase-architecture` as a follow-up
-without invoking it.
-
-When explicitly authorized, use `--full-tools` only for delegated worker tasks
-in a dedicated git worktree:
-
-```bash
-/home/prop_/.codex/skills/codex-advisor/scripts/ask-codex-advisor.sh \
-  --slug "<stable-task>" \
-  --cwd "/path/to/delegated-worktree" \
-  --full-tools \
-  -- "Task: Implement <bounded task> in this worktree only. Do not commit or push unless explicitly allowed. Report changed files and verification."
-```
-
-Before using `--full-tools`, Codex must ensure:
-
-- the target worktree was intentionally created or selected for Claude
-- the base is clear: current main head, current PR head, or a named branch/SHA
-- the prompt says Claude owns only that worktree
-- the prompt states whether commits or pushes are allowed; default is no
-- Codex will inspect Claude's diff before integrating or reporting completion
-
-Do not use `--full-tools` for work Codex has not already scoped with the repo
-workflow, or for shared contracts, persistence, deploy/runtime, or risky
-external integrations unless the delegation surface is explicit and bounded.
-
-Use `--add-dir` only when Claude needs read-only context outside the target
-worktree.
-
-The Claude CLI has no `--cwd` flag. Use the wrapper's `--cwd`; without the
-wrapper, `cd` into the target worktree before running `claude -p`.
-
-The wrapper attaches staged and unstaged changes to every consultation. It
-infers a PR/upstream base diff only for `final-review`; pass
-`--base-ref` explicitly when another consultation needs committed branch
-changes as evidence. For a design-only question that must exclude branch
-history, omit `--base-ref`.
-
-Without the wrapper, keep Claude read-only, mirror the wrapper policy, and pipe
-the prompt over stdin. The tool-list flags are variadic, so a trailing
-positional prompt can be consumed as another tool rule:
-
-```bash
-printf %s 'Advisor mode. Do not create files. Stdout only. <=300 words. Question: ...' |
-  claude -p \
-    --model claude-opus-5 \
-    --fallback-model claude-opus-5 \
-    --output-format text \
-    --allowed-tools "Read Grep Glob Bash(git diff:*) Bash(git status:*) Bash(git branch:*) Bash(git rev-parse:*) Bash(gh issue view:*) Bash(gh pr view:*) Bash(gh run view:*) Bash(rg:*) Bash(ls:*) Bash(sed:*) Bash(cat:*)" \
-    --disallowed-tools "Edit Write NotebookEdit"
-```
-
-Never use `--bare`; it bypasses local auth and reports `Not logged in`. Avoid
-`--permission-mode plan`; it can create plan artifacts under `~/.claude/plans`.
-
-## Session Discipline
-
-Use one short stable slug per task, such as `cass` or `issue82`. Reuse it across
-preflight advice, follow-up questions, and final review. Both providers keep a
-per-slug session: the same advisor session resumes across rounds, so the final
-review sees the preflight consult's full history.
-
-Do not put phase words in the slug: `pre-edit`, `pre-commit`, `review`,
-`challenge`, `final`, or `preflight`. Phase belongs in `--phase`, not identity.
-
-Every wrapper call emits one stderr session line with raw slug, normalized slug,
-create/resume/fresh mode, session id prefix, phase, and warning state.
-Advisor stdout remains the advisor's answer only.
-
-For the production pair (preflight advice → final review), reusing the
-same slug/session is required so the challenge retains the original scope. A
-fresh fallback is allowed only after the prior wrapper invocation returned a
-terminal `exit_code` and its stored session later proves unreachable; replay
-the full original scope plus the current diff and label the round a fallback.
-If the prior handle lacks `exit_code` or its state is unknown, keep it pending
-and surface the block. Outside that pair, resume only when prior advice is
-load-bearing; start fresh when the task, repo, branch, or assumptions changed.
-
-Use `--fresh` only when the current task's stored advisor session is stale or
-intentionally reset. Session files are per-provider (`<cwd>-<slug>.<provider>.sid`);
-a codex session never resumes through Claude and vice versa.
-
-If the stored resume session no longer exists, the wrapper rotates that task's
-session ID and retries once as a fresh session. Do not treat that recoverable
-local-state condition as an advisor outage.
-
-Existing or previous split sessions are historical local state. Do not migrate,
-merge, rename, delete, or reconcile old `.sid` files.
-
-## Reporting
-
-Apply the Required Codex Execution and live-handle invariant above before
-classifying the advisor result.
-
-Final success requires provider status zero, non-empty advice, and the exact
-terminal line `advisor_complete status=0 provider=<provider>` on stderr.
-A missing, malformed, or non-terminal marker is incomplete, not success: do not
-accept the advice, advance the checkpoint, classify the consultation as
-unavailable, or start a fallback. Continue a live handle. After a terminal
-result, verify that the active wrapper implements the marker contract, correct
-any installed-version mismatch, and rerun the same slug once; if the marker is
-still invalid, surface a blocker. Provider non-zero status or the exact
-`error: <provider> advisor returned empty output` line is a terminal provider
-failure eligible for the caller's explicit unavailable policy. Warning-only
-stderr is not a provider failure when valid advice and the terminal marker are
-present.
-
-When the advisor is unavailable, say so
-in the final report; a degraded or skipped round is never silent.
-
-Report advisor output as evidence, not authority:
-
-- `Advisor said`: concise summary
-- `Codex judgment`: accepted, rejected, or needs verification
-- `Action`: exact next step or no change
-
-Do not follow advisor output blindly. Do not let any advisor replace Repo Context Forge,
-GitNexus, `$production-preflight`, `$production-code`, `$tdd`, or Codex's final
-verification. The advisor should report missing preflight or Module-shape
-evidence, not generate substitute preflight artifacts.
-
-Advisor write mode does not replace Repo Context Forge, GitNexus checks,
-`$production-code`, or Codex's final verification.
