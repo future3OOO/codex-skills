@@ -19,10 +19,10 @@ cp "$SRC/AGENTS.md" "$DEST/AGENTS.md"
 chmod +x "$DEST"/hooks/*.py
 
 # rsync excludes stop new copies only; remove matching artifacts already live.
-find "$DEST/skills" "$DEST/hooks" \
-  \( -type d \( -name tests -o -name __pycache__ \) -prune -exec rm -rf {} + \) \
-  -o -type f \( -name 'test_*.py' -o -name 'test-*.sh' -o -name '*.pyc' \) -delete \
-  2>/dev/null || true
+find "$DEST/skills" "$DEST/hooks" -type f \
+  \( -name 'test_*.py' -o -name 'test-*.sh' -o -name '*.pyc' \) -delete
+find "$DEST/skills" "$DEST/hooks" -type d \
+  \( -name tests -o -name __pycache__ \) -prune -exec rm -rf {} +
 
 # Merge our hook entries into the live hooks.json; entries the installer does
 # not own (gitnexus and any others) survive. Commands expand $HOME.
