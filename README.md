@@ -40,7 +40,11 @@ session, or run automation with `--dangerously-bypass-hook-trust`.
 
 ## Syncing with upstream (claude-skills)
 
-Upstream remote: `https://github.com/future3OOO/claude-skills` (`upstream`).
+Upstream remote: `https://github.com/future3OOO/claude-skills` (`claude`).
+The remote is named `claude`, not `upstream`, on purpose: Repo Context Forge's
+base detection tries `upstream/main` first, and this repo shares no history
+with claude-skills, so an `upstream` remote would resolve a ref that yields
+no merge base.
 Last synced upstream commit is recorded in `.upstream-sync`.
 
 ```bash
@@ -48,7 +52,7 @@ Last synced upstream commit is recorded in `.upstream-sync`.
 ./scripts/sync-to-upstream.sh <paths...>   # selected files -> upstream PR branch
 ```
 
-`sync-from-upstream.sh` fetches `upstream/main`, diffs it against
+`sync-from-upstream.sh` fetches `claude/main`, diffs it against
 `.upstream-sync`, runs each changed file through `scripts/estate_xform.py
 to-codex`, stages the results, and reports **diverged files** for manual
 merge. Any residual `claude`/`devin` hits the transform could not handle are

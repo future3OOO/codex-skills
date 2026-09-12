@@ -17,3 +17,4 @@ __pycache__/
 
 # Delivery artifacts, not estate content.
 *.zip
+.claude/

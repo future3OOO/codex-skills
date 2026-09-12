@@ -19,10 +19,10 @@ is_manual() {
   return 1
 }
 
-git fetch upstream
-last=$(cat .upstream-sync 2>/dev/null || git merge-base HEAD upstream/main)
-new=$(git rev-parse upstream/main)
-[[ "$last" == "$new" ]] && { echo "already at upstream/main ($new)"; exit 0; }
+git fetch claude
+last=$(cat .upstream-sync 2>/dev/null || git merge-base HEAD claude/main)
+new=$(git rev-parse claude/main)
+[[ "$last" == "$new" ]] && { echo "already at claude/main ($new)"; exit 0; }
 
 echo "syncing $last..$new"
 manual_hits=()
@@ -31,7 +31,7 @@ while IFS=$'\t' read -r status file extra; do
     M|A|T)
       if is_manual "$file"; then manual_hits+=("$file"); continue; fi
       dest=$(python3 -c "import sys; sys.path.insert(0,'scripts'); from estate_xform import xform_path; print(xform_path('$file','codex'))")
-      git show "upstream/main:$file" | python3 scripts/estate_xform.py to-codex "$file" > /tmp/x.$$
+      git show "claude/main:$file" | python3 scripts/estate_xform.py to-codex "$file" > /tmp/x.$$
       mkdir -p "$(dirname "$dest")"; mv /tmp/x.$$ "$dest"; echo "  ported  $file -> $dest"
       ;;
     D)
@@ -41,13 +41,13 @@ while IFS=$'\t' read -r status file extra; do
     R*)
       if is_manual "$extra"; then manual_hits+=("$extra"); continue; fi
       dest=$(python3 -c "import sys; sys.path.insert(0,'scripts'); from estate_xform import xform_path; print(xform_path('$extra','codex'))")
-      git show "upstream/main:$extra" | python3 scripts/estate_xform.py to-codex "$extra" > "$dest"
+      git show "claude/main:$extra" | python3 scripts/estate_xform.py to-codex "$extra" > "$dest"
       old=$(python3 -c "import sys; sys.path.insert(0,'scripts'); from estate_xform import xform_path; print(xform_path('$file','codex'))")
       [[ -e "$old" && "$old" != "$dest" ]] && rm "$old"
       echo "  renamed $file -> $extra (as $dest)"
       ;;
   esac
-done < <(git diff --name-status "$last" upstream/main)
+done < <(git diff --name-status "$last" claude/main)
 
 echo "$new" > .upstream-sync
 git add -A
@@ -55,6 +55,6 @@ echo; echo "=== staged ==="; git status --short
 if ((${#manual_hits[@]})); then
   echo; echo "!! diverged files changed upstream — manual merge required:"
   printf '   %s\n' "${manual_hits[@]}"
-  echo "   inspect: git diff $last upstream/main -- <file>"
+  echo "   inspect: git diff $last claude/main -- <file>"
 fi
 echo; echo "review the staged diff, then commit. Residual hits were printed to stderr."
