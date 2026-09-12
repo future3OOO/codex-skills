@@ -369,7 +369,9 @@ Never use `--bare`; it bypasses local auth and reports `Not logged in`. Avoid
 ## Session Discipline
 
 Use one short stable slug per task, such as `cass` or `issue82`. Reuse it across
-preflight advice, follow-up questions, and precommit challenge.
+preflight advice, follow-up questions, and final review. Both providers keep a
+per-slug session: the same advisor session resumes across rounds, so the final
+review sees the preflight consult's full history.
 
 Do not put phase words in the slug: `pre-edit`, `pre-commit`, `review`,
 `challenge`, `final`, or `preflight`. Phase belongs in `--phase`, not identity.
@@ -378,7 +380,7 @@ Every wrapper call emits one stderr session line with raw slug, normalized slug,
 create/resume/fresh mode, session id prefix, phase, and warning state.
 Advisor stdout remains the advisor's answer only.
 
-For the production pair (preflight advice → precommit challenge), reusing the
+For the production pair (preflight advice → final review), reusing the
 same slug/session is required so the challenge retains the original scope. A
 fresh fallback is allowed only after the prior wrapper invocation returned a
 terminal `exit_code` and its stored session later proves unreachable; replay
@@ -387,12 +389,13 @@ If the prior handle lacks `exit_code` or its state is unknown, keep it pending
 and surface the block. Outside that pair, resume only when prior advice is
 load-bearing; start fresh when the task, repo, branch, or assumptions changed.
 
-Use `--fresh` only when the current task's stored Claude session is stale or
-intentionally reset.
+Use `--fresh` only when the current task's stored advisor session is stale or
+intentionally reset. Session files are per-provider (`<cwd>-<slug>.<provider>.sid`);
+a codex session never resumes through Claude and vice versa.
 
-If Claude reports that a stored resume session no longer exists, the wrapper
-rotates that task's session ID and retries once as a fresh session. Do not treat
-that recoverable local-state condition as an Opus outage.
+If the stored resume session no longer exists, the wrapper rotates that task's
+session ID and retries once as a fresh session. Do not treat that recoverable
+local-state condition as an advisor outage.
 
 Existing or previous split sessions are historical local state. Do not migrate,
 merge, rename, delete, or reconcile old `.sid` files.

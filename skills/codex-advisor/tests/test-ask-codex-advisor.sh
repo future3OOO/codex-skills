@@ -53,6 +53,11 @@ set -euo pipefail
 } > "${CODEX_STUB_ARGV:?}"
 
 cat > "${CODEX_STUB_PROMPT:?}"
+if [[ "${CODEX_STUB_RESUME_FAIL:-0}" == "1" && " ${*} " == *" resume "* ]]; then
+  printf 'error: no session found\n' >&2
+  exit 9
+fi
+printf 'session id: %s\n' "${CODEX_STUB_SID:-00000000-0000-7000-8000-000000000001}" >&2
 printf 'CODEX_STUB_OUTPUT\n'
 STUB
 chmod +x "$stub_dir/codex"
@@ -150,10 +155,11 @@ run_advisor_with_stdin() {
 session_id_for_slug() {
   local slug="$1"
   local cwd_path="$2"
+  local provider="${3:-claude}"
   local cwd_key
   cwd_path="$(cd "$cwd_path" && pwd -P)"
   cwd_key="$(printf '%s' "$cwd_path" | cksum | cut -d ' ' -f1)"
-  cat "$CODEX_ADVISOR_STATE_DIR/${cwd_key}-${slug}.sid"
+  cat "$CODEX_ADVISOR_STATE_DIR/${cwd_key}-${slug}.${provider}.sid"
 }
 
 run_advisor --slug cass --cwd "$skill_dir" -- "Question: default provider"
@@ -168,7 +174,7 @@ assert_contains "$CODEX_STUB_ARGV" "model_reasoning_effort=xhigh"
 run_advisor --provider claude --slug cass --cwd "$skill_dir" -- "Question: first call"
 assert_contains "$stdout_file" "CLAUDE_STUB_OUTPUT"
 assert_not_contains "$stdout_file" "advisor_session"
-assert_contains "$CLAUDE_STUB_PROMPT" "Advisor mode. Do not create files. Do not edit files. Do not write plan artifacts. Stdout only."
+assert_contains "$CLAUDE_STUB_PROMPT" "Advisor mode. Do not create files. Do not edit files. Do not write plan artifacts. HARD CRITERIA:"
 assert_contains "$CLAUDE_STUB_PROMPT" "/tdd and /improve-codebase-architecture"
 assert_contains "$CLAUDE_STUB_PROMPT" "Do not invoke heavyweight repo execution skills"
 assert_contains "$CLAUDE_STUB_PROMPT" "Preflight remains Codex-owned"
@@ -256,10 +262,24 @@ assert_contains "$CODEX_STUB_ARGV" "--sandbox"
 assert_contains "$CODEX_STUB_ARGV" "read-only"
 assert_contains "$CODEX_STUB_ARGV" "-C"
 assert_contains "$CODEX_STUB_ARGV" "$git_tmp"
-assert_contains "$CODEX_STUB_ARGV" "--ephemeral"
 assert_contains "$CODEX_STUB_ARGV" "-"
+assert_contains "$stderr_file" "mode=create"
 assert_contains "$CODEX_STUB_PROMPT" "Checkpoint Interface: final-review"
 assert_contains "$CODEX_STUB_PROMPT" "Wrapper-provided live git/PR context and diff:"
+codex_sid="$(session_id_for_slug cass "$git_tmp" codex)"
+[[ "$codex_sid" == "00000000-0000-7000-8000-000000000001" ]] || fail "codex session id not stored from stderr banner"
+
+run_advisor --provider codex --slug cass --cwd "$git_tmp" --base-ref HEAD -- "Question: codex follow-up"
+assert_contains "$stdout_file" "CODEX_STUB_OUTPUT"
+assert_contains "$stderr_file" "mode=resume"
+assert_contains "$CODEX_STUB_ARGV" "resume"
+assert_contains "$CODEX_STUB_ARGV" "$codex_sid"
+
+export CODEX_STUB_RESUME_FAIL=1
+run_advisor --provider codex --slug cass --cwd "$git_tmp" --base-ref HEAD -- "Question: codex stale resume"
+assert_contains "$stdout_file" "CODEX_STUB_OUTPUT"
+assert_contains "$stderr_file" "advisor_session_recovery reason=stale-resume"
+unset CODEX_STUB_RESUME_FAIL
 [[ ! -s "$CLAUDE_STUB_ARGV" ]] || fail "codex provider invoked claude"
 
 CODEX_ADVISOR_PROVIDER=codex run_advisor --slug env-codex --cwd "$skill_dir" -- "Question: env provider"
@@ -300,7 +320,7 @@ other_sid="$(session_id_for_slug other-task "$skill_dir")"
 [[ "$other_sid" != "$first_sid" ]] || fail "different slugs reused the same session id"
 
 run_advisor --provider claude --slug "../foo" --cwd "$skill_dir" -- "Question: path-shaped slug"
-find "$CODEX_ADVISOR_STATE_DIR" -maxdepth 1 -name '*-.._foo.sid' | grep -q . || fail "path-shaped slug did not normalize inside the state directory"
+find "$CODEX_ADVISOR_STATE_DIR" -maxdepth 1 -name '*-.._foo.*.sid' | grep -q . || fail "path-shaped slug did not normalize inside the state directory"
 
 run_advisor --provider claude --slug cass --fresh --cwd "$skill_dir" -- "Question: fresh call"
 fresh_sid="$(session_id_for_slug cass "$skill_dir")"

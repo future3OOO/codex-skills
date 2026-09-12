@@ -60,7 +60,7 @@ resolve_task_session() {
   local resolved_normalized_slug="${raw_slug//[^A-Za-z0-9_.-]/_}"
   local resolved_cwd_key
   resolved_cwd_key="$(printf '%s' "$session_cwd" | cksum | cut -d ' ' -f1)"
-  local resolved_sid_file="$state_dir/${resolved_cwd_key}-${resolved_normalized_slug}.sid"
+  local resolved_sid_file="$state_dir/${resolved_cwd_key}-${resolved_normalized_slug}.${provider}.sid"
   local resolved_sid=""
   local resolved_mode=""
   local resolved_warning_state
@@ -284,11 +284,8 @@ if [[ "$provider" == "claude" ]]; then
   printf 'advisor_model model=%q\n' "$advisor_model" >&2
   printf 'advisor_fallback_model model=%q\n' "$advisor_fallback_model" >&2
 else
-  sid="$(new_session_id)"
-  normalized_slug="${slug//[^A-Za-z0-9_.-]/_}"
-  session_mode="ephemeral"
-  warning_state="$(phase_slug_warning "$normalized_slug")"
-  phase_display="${phase:-none}"
+  mkdir -p "$state_dir"
+  resolve_task_session "$slug" "$fresh" "$phase"
   printf 'advisor_session raw_slug=%q normalized_slug=%q mode=%s sid_prefix=%s phase=%s warnings=%s provider=codex\n' \
     "$slug" "$normalized_slug" "$session_mode" "${sid:0:8}" "$phase_display" "$warning_state" >&2
   printf 'advisor_model model=%q effort=%q\n' "$codex_model" "${codex_effort:-default}" >&2
@@ -433,14 +430,50 @@ fi
 advisor_output=""
 advisor_status=0
 if [[ "$provider" == "codex" ]]; then
-  codex_args=(exec --sandbox read-only -C "$session_cwd" --ephemeral --model "$codex_model")
+  if [[ "$session_mode" == "resume" ]]; then
+    codex_args=(exec resume "$sid" --model "$codex_model")
+  else
+    codex_args=(exec --sandbox read-only -C "$session_cwd" --model "$codex_model")
+  fi
   if [[ -n "$codex_effort" ]]; then
     codex_args+=(-c "model_reasoning_effort=$codex_effort")
   fi
+  codex_stderr_file="$(mktemp)"
   set +e
-  advisor_output="$(printf '%s' "$prompt" | codex "${codex_args[@]}" -)"
+  advisor_output="$(printf '%s' "$prompt" | codex "${codex_args[@]}" - 2>"$codex_stderr_file")"
   advisor_status=$?
   set -e
+  advisor_stderr="$(<"$codex_stderr_file")"
+  rm -f "$codex_stderr_file"
+  resumed_sid="$(printf '%s\n' "$advisor_stderr" | sed -n 's/^session id: //p' | tail -1)"
+  if [[ $advisor_status -eq 0 && -n "$resumed_sid" && "$resumed_sid" != "$sid" ]]; then
+    printf '%s\n' "$resumed_sid" > "$sid_file"
+    sid="$resumed_sid"
+  fi
+  if [[ $advisor_status -ne 0 && "$session_mode" == "resume" ]]; then
+    sid="$(new_session_id)"
+    printf '%s\n' "$sid" > "$sid_file"
+    printf 'advisor_session_recovery reason=stale-resume sid_prefix=%s\n' "${sid:0:8}" >&2
+    codex_args=(exec --sandbox read-only -C "$session_cwd" --model "$codex_model")
+    if [[ -n "$codex_effort" ]]; then
+      codex_args+=(-c "model_reasoning_effort=$codex_effort")
+    fi
+    codex_stderr_file="$(mktemp)"
+    set +e
+    advisor_output="$(printf '%s' "$prompt" | codex "${codex_args[@]}" - 2>"$codex_stderr_file")"
+    advisor_status=$?
+    set -e
+    advisor_stderr="$(<"$codex_stderr_file")"
+    rm -f "$codex_stderr_file"
+    resumed_sid="$(printf '%s\n' "$advisor_stderr" | sed -n 's/^session id: //p' | tail -1)"
+    if [[ $advisor_status -eq 0 && -n "$resumed_sid" ]]; then
+      printf '%s\n' "$resumed_sid" > "$sid_file"
+      sid="$resumed_sid"
+    fi
+  fi
+  if [[ -n "$advisor_stderr" ]]; then
+    printf '%s\n' "$advisor_stderr" >&2
+  fi
 else
   run_claude_advisor() {
     printf '%s' "$prompt" | claude -p \
