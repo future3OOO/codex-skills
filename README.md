@@ -52,6 +52,26 @@ and appends `[mcp_servers.gitnexus]` to `config.toml` when absent. Codex
 requires hook trust: approve the hooks once via `/hooks` in an interactive
 session, or run automation with `--dangerously-bypass-hook-trust`.
 
+### External tool updates
+
+`./install.sh` does not upgrade GitNexus, Repo Context Forge or SoulForge, and
+preserves existing MCP configuration. Update each tool at its own source:
+
+| Tool | Source checkout | Runtime |
+| --- | --- | --- |
+| GitNexus | `~/projects/GitNexus-dev` | `~/.local/share/gitnexus/current` |
+| Repo Context Forge | `~/projects/repo-context-forge` | `~/.local/share/repo-context-forge/current` |
+| SoulForge | `~/soulforge` | resolved `~/.local/bin/soulforge` |
+
+Fetch `origin/main`, require a clean local `main`, then fast-forward with
+`git merge --ff-only origin/main`. Build/install that exact SHA using the tool's
+existing procedure; preserve local changes instead of resetting them. Verify the
+installed executable/build matches the fetched SHA, not merely its version label.
+Keep GitNexus CLI and Codex/Claude MCP on the same `current` build, and RCF's
+plugin/workflow adapters on its `current` producer. Reconnect affected MCP clients
+at a safe boundary and verify a real tool call. Preserve active work; an old
+connection awaiting reload remains pending, not an updated runtime.
+
 ## Syncing with upstream (claude-skills)
 
 Upstream remote: `https://github.com/future3OOO/claude-skills` (`claude`).
