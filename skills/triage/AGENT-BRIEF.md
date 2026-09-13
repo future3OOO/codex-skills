@@ -1,46 +1,31 @@
-# Writing Issues and Agent Briefs
+# Issues and Agent Briefs
 
-Use the same compact contract for new issues and `ready-for-agent` briefs.
+Before drafting, inspect the existing implementation and callers; reproduce and
+trace bugs. Find the smallest change that meets the full objective without
+regressions, reusing existing code. If current behavior already meets
+the objective, record that no code change is needed.
 
-## Establish the smallest change before drafting
+## Contract
 
-1. **Target objective.** State the observable behavior after implementation in
-   one sentence: when a specific trigger occurs, what result should follow?
-   Describe the outcome, not an activity such as “add validation.”
-2. **Current behavior.** Inspect the existing implementation and its callers.
-   For a bug, reproduce the failure and trace its cause. Record the observed gap
-   from the objective, linking evidence instead of copying the investigation.
-3. **Smallest change.** Identify the existing owner and capability to reuse or
-   modify. Prefer the least code that fully meets the objective while preserving
-   affected behavior. If existing behavior already satisfies it, say no code
-   change is needed. Treat an unverified approach as a question, not a requirement.
-4. **Verification.** Name the public operation that demonstrates the objective
-   and the affected existing behavior that must remain unchanged. Reuse relevant
-   tests; add only uncovered cases. Fewer lines never justify a regression.
-
-Name current symbols or paths when they help locate the owner; they are evidence
-for the approach, not a fixed edit script. Exclude unrelated cleanup and
-mechanisms the objective does not require.
-
-## Compact contract
+Use this format for new issues and agent briefs:
 
 ```markdown
-**Target objective:** When [trigger], [observable result].
+**Target objective:** When [trigger], [observable result after implementation].
 
-**Current behavior:** [Observed gap and reproduction/evidence link.]
+**Current behavior:** [Observed gap; link to reproduction or evidence.]
 
-**Smallest change:** [Existing owner to reuse or modify, and why this suffices.]
+**Smallest change:** [Existing owner/capability to reuse or modify; why sufficient.]
 
 **Verification:**
-- [ ] [Operation demonstrating the target behavior.]
+- [ ] [Public operation demonstrates the target behavior.]
 - [ ] [Affected existing behavior remains unchanged.]
 ```
 
-Scale the checks to the actual behavior; the template is not a test-count quota.
-Add a blocker or scope boundary only when it changes the implementation decision.
-Do not repeat the objective as separate summary and desired-behavior sections or
-paste repository-wide engineering rules into each issue.
+Include the checks the behavior needs; reuse existing tests and add uncovered
+cases. Names and paths locate current owners, not a fixed edit script.
+Add blockers or scope boundaries only when they affect an implementation decision.
+Link investigation details; omit duplicate summaries and repository-wide rules.
 
-For `ready-for-agent`, post this contract under `## Agent Brief`, retaining the
-issue's category and the skill's required AI disclaimer. Resolve material
-unknowns before marking it ready; otherwise ask the specific missing question.
+For agent handoff, use `## Agent Brief` and retain the issue's category.
+Keep unverified approaches as questions; resolve material unknowns before
+`ready-for-agent`. The posting disclaimer is owned by [SKILL.md](SKILL.md).
