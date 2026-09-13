@@ -13,7 +13,7 @@ from hooks.lib.hook_input import read_hook_payload, working_directory  # noqa: E
 from hooks.lib.repo_identity import try_resolve_repo_identity  # noqa: E402
 from hooks.lib.workflow_state import summary  # noqa: E402
 
-DISCIPLINE = """Discipline re-arm: resume the active repo-production-workflow pass at its next unmet requirement, using retained contract, context and bound evidence. Load only missing or changed context. Production edits reopen verification and review; independent review remains required. The mock ban, demonstrated-risk and root-cause rules still apply. State records proof, never Git authorization; missing evidence is pending."""
+DISCIPLINE = """Discipline re-arm: each production pass runs Repo Context Forge, which records its packet-scoped graph result as workflow evidence, then diagnosis when applicable, advisor preflight, production preflight, real-seam TDD when required, production-code before implementation edits, implementation and verification, code-review delegate review when non-trivial, final Codex Advisor review, then workflow completion, followed by delivery when integration is intended. A production edit after review makes code review and final review pending again. The mock ban, demonstrated-risk rule, and root-cause-first rule remain hard. Compacted state is continuity context, never Git authorization or proof that an unrecorded step passed."""
 
 
 def main() -> int:

@@ -396,44 +396,6 @@ def _unittest_red(
     }, ""
 
 
-def attributed_result(surface: dict[str, object], receipt: dict[str, object], test_id: str,
-                      marker: str) -> tuple[str | None, dict[str, object] | None, str]:
-    """Attribute a retained verbose unittest report; ambiguity stays single-item."""
-    if surface.get("runner") != "unittest" or receipt.get("outputBytes", 16001) > 16000:
-        return None, None, "reuse needs a complete verbose unittest execution report"
-    output = ANSI_ESCAPE.sub("", str(receipt.get("outputTail", "")))
-    ran = list(UNITTEST_RAN.finditer(output))
-    records = re.findall(r"(?m)^(\S+) \(([^)]+)\) \.\.\. (ok|FAIL|ERROR|skipped .*|expected failure|unexpected success)$", output)
-    results = [(parent if parent.endswith('.' + name) else parent + '.' + name, outcome)
-               for name, parent, outcome in records]
-    selected = [outcome for identifier, outcome in results if identifier == test_id]
-    if (not ran or int(ran[-1].group(1)) != len(results) or len(selected) != 1
-            or len({identifier for identifier, _ in results}) != len(results)):
-        return None, None, "report does not unambiguously identify each executed test"
-    outcome = selected[0]
-    proof: dict[str, object] = {"runner": "unittest", "testId": test_id, "testsExecuted": 1}
-    if outcome == "ok":
-        footer = output[ran[-1].end():]
-        if not re.search(r"(?m)^(OK(?: \(.*\))?|FAILED \(.*\))$", footer):
-            return None, None, "runner did not complete its report"
-        return "passed", {**proof, "quality": "baseline-passed"}, ""
-    if outcome.startswith("skipped") or outcome == "expected failure":
-        return "skipped", None, "selected test did not execute a passing assertion"
-    checked, error = _unittest_red(output, marker)
-    if checked is None:
-        return None, None, error
-    for header, frames, rendering in _unittest_terminal_failures(output):
-        match = re.match(r"(?:FAIL|ERROR): (\S+) \(([^)]+)\)$", header)
-        if match is None:
-            continue
-        name, parent = match.groups()
-        identifier = parent if parent.endswith('.' + name) else parent + '.' + name
-        observed = next((line for line in rendering if marker in line), None)
-        if identifier == test_id and observed and not _unittest_unreached(header, frames):
-            return "failed", {**checked, **proof, "observedFailure": observed}, ""
-    return None, None, "the selected test did not fail with its mapped marker"
-
-
 def _unittest_unreached(header: str, frames: list[str]) -> str | None:
     """Why the block's test body never ran, when the report shows it: loader stand-in,
     a class/module fixture named in the header, or a fixture-named frame before any

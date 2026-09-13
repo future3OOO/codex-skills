@@ -6,46 +6,19 @@ Issue bodies own implementation scope; this record preserves decisions and their
 status. New decisions supersede earlier ones explicitly; observations and open
 acceptance gaps are not completed delivery.
 
-## 2026-09-13 — Issue 30 intake and acceptance boundary
+## 2026-09-14 — Revert issue 30 pending third-party review
 
-**Observed:** [#30](https://github.com/future3OOO/codex-skills/issues/30) intake
-on fresh `origin/main` `d3f0dcc` reproduced four public-CLI conditions with the
-existing isolated `AttackHarness`: a successful bound typed gate leaves
-verification pending; adding a pending claim on the identical candidate removes
-all four active verification/gate references; a settled GREEN recheck refuses
-despite retained RED; producer-baselined supersession refuses. Summary output
-also lacks the workflow ID. These are runtime diagnoses, not native lead
-acceptance or measured end-to-end savings.
+**Decision:** At the maintainer's explicit request, revert
+[PR #43](https://github.com/future3OOO/codex-skills/pull/43) in the repository
+and open a new, unmerged GitHub PR for the project's third-party reviewers.
+Agent review is not the requested independent review. This supersedes the
+prior delivery decision for [#30](https://github.com/future3OOO/codex-skills/issues/30).
 
-**Decision (supersedes the initial unresolved target question):** The maintainer
-specified this Codex Skills runtime itself as N/N+1, plus the actual lead using
-the explicitly loaded isolated candidate during implementation and review. No
-separate application target is needed. Preserve the complete consolidated
-contract, #29 correctness judgments and delivered #35/#37 behavior. Reuse the
-existing CLI, executor, ledger and test drivers; change their existing owners.
-Retain evidence on unchanged candidates while separately reopening obligations;
-reference executed receipts rather than copying facts or rerunning at handoff.
-
-**Observed:** The lead's same-state recovery read produced 29,891 bytes through
-unchanged N full status and 208 through candidate selected status, with identical
-selected identity values. The execution-selection projection ran once for N and
-zero times for that candidate read. These measurements establish this operation's
-savings, not end-to-end speed or model-token savings.
-
-**Status:** Implemented and independently reviewed in the isolated worktree.
-All 393 affected checks, lint and the typed gate pass. The same native reviewer
-retained both finding identities through correction of receipt outcomes and stale
-recovery output, including their skipped-test and compact-output extensions.
-The actual lead used one four-case execution per RED/GREEN batch and referenced
-it for three additional attributed observations without rerunning those tests.
-No native model-token or end-to-end speed saving is claimed.
-
-Delivery follows the owning #30 PR: final advisor, remote checks and reviewer
-completion precede merge; only merged owned paths may then be installed from
-updated main. This decision does not authorize installation ahead of those gates.
-Immutable observations and final delivery receipts are retained at
-`/home/prop_/.local/state/codex-proof/issue30/`, under workflow
-`c22378aad09e44c289ed7babe3235cda`. Tests and this record stay repository-only.
+**Status:** The mechanical revert restores the exact pre-PR tree before this
+record. The installed estate is deliberately unchanged, as instructed; no
+installation or backup restoration is part of this recovery. The replacement
+PR must remain unmerged pending the maintainer's review and authorization.
+Original implementation and evidence remain available from PR #43.
 
 ## 2026-09-13 — Same-item RED command correction
 
