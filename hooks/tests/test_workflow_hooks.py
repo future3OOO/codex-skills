@@ -2026,7 +2026,9 @@ class RedFirstTests(HookHarness):
             "    def test_value(self): self.assertEqual(app.a, 2, 'A_NOT_TWO')\n", encoding="utf-8")
         red = self.workflow("tdd", "--slug", slug, "--phase", "red", "--behavior-id", "BM_A",
                             "--", sys.executable, "-m", "unittest", "test_probe_a")
-        self.assertEqual(red.returncode, 0, red.stdout + red.stderr)
+        self.assertEqual(red.returncode, 2, red.stdout + red.stderr)
+        self.assertIn("candidate changed during reassessment", self.latest_run()["bindingError"])
+        self.assertFalse(self.latest_run()["valid"])
         self.assertEqual(self.latest_run().get("productionChanged"), ["app.py"], marker + ": " + json.dumps(self.latest_run())[:300])
         # A RED command that commits before returning.
         (self.repo / "test_probe_b.py").write_text(
@@ -2038,7 +2040,9 @@ class RedFirstTests(HookHarness):
             "    def test_value(self): self.assertEqual(app.b, 2, 'B_NOT_TWO')\n", encoding="utf-8")
         red = self.workflow("tdd", "--slug", slug, "--phase", "red", "--behavior-id", "BM_B",
                             "--", sys.executable, "-m", "unittest", "test_probe_b")
-        self.assertEqual(red.returncode, 0, red.stdout + red.stderr)
+        self.assertEqual(red.returncode, 2, red.stdout + red.stderr)
+        self.assertIn("candidate changed during reassessment", self.latest_run()["bindingError"])
+        self.assertFalse(self.latest_run()["valid"])
         run = self.latest_run()
         self.assertEqual(run.get("headOid"), start, marker + ": " + json.dumps(run)[:300])
         self.assertEqual(run.get("productionChanged"), [], marker)

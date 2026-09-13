@@ -39,6 +39,7 @@ from .workflow_state import (
     bound_state,
     commit_tdd,
     evidence_document,
+    execution_receipt,
     instance_id,
     safe_slug,
 )
@@ -61,6 +62,8 @@ def _tdd_parser() -> argparse.ArgumentParser:
     mode.add_argument("--phase", choices=("red", "green"))
     mode.add_argument("--not-required", metavar="REASON")
     parser.add_argument("--behavior-id")
+    parser.add_argument("--from-evidence", help="reuse an executed evidence-id:run-index")
+    parser.add_argument("--test-id", help="the exact unittest test attributed to this item")
     parser.add_argument("--behavior")
     parser.add_argument("--seam", default="")
     parser.add_argument("--expected-failure", default="")
@@ -366,7 +369,11 @@ def _run_tdd(values: list[str]) -> int:
     recorder_region = values if dash is None else values[:dash]
     runner_region = [] if dash is None else values[dash + 1 :]
     args = _tdd_parser().parse_args(recorder_region)
-    if args.phase in {"red", "green"} and not runner_region:
+    if args.from_evidence and (runner_region or not args.test_id):
+        raise ValueError("--from-evidence requires --test-id and takes no command")
+    if args.test_id and not args.from_evidence:
+        raise ValueError("--test-id belongs to --from-evidence")
+    if args.phase in {"red", "green"} and not runner_region and not args.from_evidence:
         raise ValueError(
             "a runner command is required after -- ; place recorder flags "
             "before the sentinel and the command after it"
@@ -375,12 +382,21 @@ def _run_tdd(values: list[str]) -> int:
 
     identity = resolve_repo_identity(args.repo)
     state, slug, workflow_id = _active_candidate(identity, args.slug)
+    receipt = None
+    receipt_tree = None
+    if args.from_evidence:
+        receipt, receipt_tree = execution_receipt(identity, state, args.from_evidence)
+        if "outputTail" not in receipt:
+            raise WorkflowError("test attribution requires the original execution report")
+        args.runner_command = shlex.split(str(receipt["command"]))
     items, current = current_map(identity, state)
     legacy = items is None or _legacy_green_candidate(current, workflow_id, args)
     if legacy and args.behavior_id is not None:
         raise WorkflowError(
             "imported legacy TDD uses --behavior/--seam, not --behavior-id"
         )
+    if legacy and receipt is not None:
+        raise WorkflowError("execution reuse requires a recorded Behavior Map")
     if not legacy and (args.behavior is not None or args.seam or args.expected_failure):
         raise WorkflowError(
             "mapped TDD uses --behavior-id; legacy --behavior/--seam flags cannot "
@@ -414,7 +430,7 @@ def _run_tdd(values: list[str]) -> int:
             raise ValueError("--behavior-id is required for mapped RED/GREEN")
         mapped = behavior_map.item(items, args.behavior_id)
         status = str(mapped["status"])
-        reassessment = mapped.get("revalidationRequired") is True
+        reassessment = mapped.get("revalidationRequired") is True or (phase == "green" and status == "green")
         if phase == "red" and status not in {"pending", "red"}:
             raise WorkflowError(
                 f"behavior {args.behavior_id} is {status}; add a new map item for a new defect"
@@ -467,6 +483,10 @@ def _run_tdd(values: list[str]) -> int:
     # Every already-RED item binds both repeated RED and GREEN to its own
     # producer command, even beside another item's open cycle.
     recorded_red = None if legacy else mapped.get("redCommand")
+    if not legacy and receipt is not None and status in {"red", "green"}:
+        test_id = (mapped.get("redProof") or {}).get("testId")
+        if test_id != args.test_id:
+            raise WorkflowError("reused GREEN/RED must name the item's recorded test identity")
     own_red = (
         not legacy and (status == "red" or (status == "green" and reassessment))
         and isinstance(recorded_red, str)
@@ -511,14 +531,18 @@ def _run_tdd(values: list[str]) -> int:
     # Measured before the command runs: the binding describes the tree the RED
     # was launched on, whatever the command rewrites or commits before returning.
     binding = _tree_binding(identity, state) if phase == "red" else {}
-    tree_before = tree_manifest(identity) if reassessment else None
-    if reassessment:
+    tree_before = receipt_tree if receipt is not None else tree_manifest(identity) if not legacy else None
+    if not legacy:
         binding["candidateTree"] = _active_candidate_tree(identity)
-    try:
-        raw, exit_code, timed_out = _run(command, identity, args.timeout, env=env)
-    except OSError as exc:
-        # Never started: retained under the shell's not-found status with the OS error.
-        raw, exit_code, timed_out = str(exc).encode(), 127, False
+    if receipt is not None:
+        raw = str(receipt["outputTail"]).encode()
+        exit_code, timed_out = int(receipt["exitCode"]), False
+    else:
+        try:
+            raw, exit_code, timed_out = _run(command, identity, args.timeout, env=env)
+        except OSError as exc:
+            # Never started: retained under the shell's not-found status with the OS error.
+            raw, exit_code, timed_out = str(exc).encode(), 127, False
     output = raw.decode("utf-8", errors="replace")
     prior_runs = (
         candidate.get("runs")
@@ -536,7 +560,13 @@ def _run_tdd(values: list[str]) -> int:
     red_ok = False
     baseline = False
     nonexecuting = False
-    if phase == "red" and not timed_out and exit_code != 0:
+    if receipt is not None:
+        outcome, proof, proof_error = tdd_surface.attributed_result(surface, receipt, args.test_id, expected)
+        red_ok = phase == "red" and outcome == "failed"
+        baseline = phase == "red" and status == "pending" and outcome == "passed"
+        exit_code = 0 if outcome == "passed" else int(receipt["exitCode"]) or 1
+        nonexecuting = outcome == "skipped"
+    elif phase == "red" and not timed_out and exit_code != 0:
         if legacy:
             red_ok = bool(expected) and expected in output
         else:
@@ -577,7 +607,10 @@ def _run_tdd(values: list[str]) -> int:
             fields["passProof" if phase == "green" else "redProof"] = proof
         elif proof_error:
             fields["passProofFailure" if phase == "green" else "redProofFailure"] = proof_error
-    run = _run_entry(raw, exit_code, timed_out, **fields)
+    run = _run_entry(raw, exit_code, timed_out, outputBytes=len(raw), **fields)
+    if receipt is not None:
+        run.pop("outputTail")
+        run.update(sourceReference=args.from_evidence, testId=args.test_id)
 
     document: JsonObject | None = None
     opens_cycle = False
@@ -639,7 +672,7 @@ def _run_tdd(values: list[str]) -> int:
             updated_item["redProof"] = {**proof, "productionChanged": changed} if changed else proof
             next_active = args.behavior_id
             reassessment_pending = None
-            action = "in-progress" if status == "red" else "reopen"
+            action = "reopen" if reassessment else "in-progress"
             opens_cycle = status != "red"
         elif phase == "green" and valid:
             updated_item["status"] = "green"
@@ -650,6 +683,8 @@ def _run_tdd(values: list[str]) -> int:
         else:
             # A refused attempt is evidence, not progress: annotated without a
             # transition (action None). A failed GREEN is a regression.
+            if phase == "green" and status == "green" and not nonexecuting:
+                updated_item["status"] = "red"
             next_active = args.behavior_id if status == "red" else None
             reassessment_pending = None
             action = "reopen" if phase == "green" else None
@@ -690,16 +725,19 @@ def _run_tdd(values: list[str]) -> int:
         _, evidence_id = commit_tdd(
             identity, slug, workflow_id, document, action,
             expected_evidence_id=evidence_id, opens_cycle=opens_cycle, tree_before=tree_before,
+            review_changed=opens_cycle,
         )
     if run.get("bindingError"):
         valid, baseline, proof_error = False, False, str(run["bindingError"])
 
-    _print_output(raw)
+    if receipt is None:
+        _print_output(raw)
     payload: JsonObject = {
         "summaryId": evidence_id,
         "phase": phase,
         "valid": valid,
         "exitCode": exit_code,
+        "runIndex": len(document.get("runs", [])) - 1 if document else None,
     }
     if not legacy:
         payload["behaviorId"] = args.behavior_id
@@ -969,17 +1007,18 @@ def _map_update(values: list[str]) -> int:
              if entry.get("status") in {"pending", "red"} and not entry.get("revalidationRequired")}
             for entries in (items, updated)
         )
-        if before == after:
+        review_changed = before != after or any(entry.get("status") == "superseded" for entry in dispositions)
+        if before == after and not review_changed:
             _, evidence_id = annotate_tdd_evidence(
                 identity, str(state["slug"]), str(state["workflowId"]), document,
                 expected_evidence_id=current_evidence_id,
             )
         else:
-            action = ("reopen" if unresolved and state.get("tdd") in {"passed", "not-required"}
-                      else "in-progress" if unresolved else "passed")
+            action = "in-progress" if unresolved else "passed"
             _, evidence_id = commit_tdd(
                 identity, str(state["slug"]), str(state["workflowId"]), document, action,
                 expected_evidence_id=current_evidence_id,
+                review_changed=review_changed,
             )
     _emit_json(
         {

@@ -179,7 +179,7 @@ def validate_items(
         unknown = sorted(set(raw) - REQUIRED_FIELDS - OPTIONAL_FIELDS)
         # Maps recorded before `kind` existed still load; their items carry no
         # contract authority. New items always declare a kind.
-        missing = sorted(REQUIRED_FIELDS - set(raw) - ({"kind"} if allow_runtime else set()))
+        missing = sorted(REQUIRED_FIELDS - set(raw) - ({"kind"} if allow_runtime else {"status"}))
         if missing:
             raise ValueError(
                 f"behaviorMap item {position} is missing fields: {', '.join(missing)}"
@@ -201,7 +201,7 @@ def validate_items(
             raise ValueError(
                 f"behavior {identifier} kind must be one of: {', '.join(sorted(KINDS))}"
             )
-        status = _text(raw.get("status"))
+        status = _text(raw.get("status", "pending" if not allow_runtime else None))
         if status not in statuses:
             raise ValueError(
                 f"behavior {identifier} status must be one of: {', '.join(sorted(statuses))}"
@@ -254,7 +254,7 @@ def validate_items(
         # Supersession keeps the proof kind it retired, so a post-edit pass
         # cannot be laundered into a GREEN through RED by being superseded.
         if "supersededFrom" in raw:
-            if not allow_runtime or raw.get("supersededFrom") not in PROOF_STATUSES:
+            if not allow_runtime or raw.get("supersededFrom") not in PROOF_STATUSES | {"already-satisfied"}:
                 raise ValueError(f"behavior {identifier} supersededFrom is recorded only by a tdd-map supersession")
             item["supersededFrom"] = raw["supersededFrom"]
         evidence = _text(raw.get("evidence"))
@@ -418,7 +418,7 @@ def apply_dispositions(
             raise ValueError(f"behavior {identifier} disposition must be one of: "
                              + ", ".join(sorted(EVIDENCED_STATUSES | {"pending"})))
         if status == "superseded":
-            if previous not in PROOF_STATUSES:
+            if previous not in PROOF_STATUSES and not (previous == "already-satisfied" and producer_proved(mapped)):
                 raise ValueError(f"behavior {identifier} is {previous}; only a GREEN item can be superseded")
             mapped["supersededBy"] = _required(raw, "supersededBy", identifier)
             mapped["supersededFrom"] = previous
