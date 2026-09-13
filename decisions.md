@@ -6,6 +6,20 @@ Issue bodies own implementation scope; this record preserves decisions and their
 status. New decisions supersede earlier ones explicitly; observations and open
 acceptance gaps are not completed delivery.
 
+## 2026-09-14 — Revert issue 30 pending third-party review
+
+**Decision:** At the maintainer's explicit request, revert
+[PR #43](https://github.com/future3OOO/codex-skills/pull/43) in the repository
+and open a new, unmerged GitHub PR for the project's third-party reviewers.
+Agent review is not the requested independent review. This supersedes the
+prior delivery decision for [#30](https://github.com/future3OOO/codex-skills/issues/30).
+
+**Status:** The mechanical revert restores the exact pre-PR tree before this
+record. The installed estate is deliberately unchanged, as instructed; no
+installation or backup restoration is part of this recovery. The replacement
+PR must remain unmerged pending the maintainer's review and authorization.
+Original implementation and evidence remain available from PR #43.
+
 ## 2026-09-13 — Same-item RED command correction
 
 **Decision:** [#35](https://github.com/future3OOO/codex-skills/issues/35) extends
