@@ -907,20 +907,49 @@ def _graph_candidate_ready(
 
 
 def _register_finding_intake(
-    state: JsonObject, intake_id: str, findings: list[JsonObject], stage: str, source: str,
-) -> None:
+    transaction: LedgerMutation, state: JsonObject, intake_id: str, intake: JsonObject,
+    intakes: dict[str, JsonObject],
+) -> str:
+    """Register new obligations while retaining identical pending identities."""
     finding_states = state.setdefault("findingStates", [])
     if not isinstance(finding_states, list):
         raise WorkflowError("recorded finding states are corrupt")
-    finding_states.extend({
-        "producer": source,
-        "stage": stage,
-        "intakeEvidenceId": intake_id,
-        "findingId": item["id"],
-        "material": item["material"],
-        "kind": item["kind"],
-        "status": "pending",
-    } for item in findings)
+    fields = ("id", "claim", "material", "kind")
+    pending: dict[tuple[object, ...], str] = {}
+    incoming_ids = {item["id"] for item in intake["findings"]}
+    for entry in finding_states:
+        if (not isinstance(entry, dict) or entry.get("findingId") not in incoming_ids
+                or entry.get("stage") != intake["stage"]
+                or entry.get("producer") != intake["producer"]
+                or entry.get("status") not in {"pending", "accepted-for-proof", "accepted-follow-up"}):
+            continue
+        reference = str(entry["intakeEvidenceId"])
+        if reference not in intakes:
+            previous = transaction.evidence(reference)
+            if not isinstance(previous, dict):
+                raise WorkflowError("recorded finding intake is corrupt")
+            intakes[reference] = previous
+        previous = intakes[reference]
+        if any(previous.get(field) != intake[field] for field in ("workflowId", "stage", "producer", "verdict")):
+            continue
+        for finding in previous["findings"]:
+            if finding["id"] == entry["findingId"]:
+                pending.setdefault(tuple(finding[field] for field in fields), reference)
+                break
+    references: list[str] = []
+    for item in intake["findings"]:
+        reference = pending.get(tuple(item[field] for field in fields))
+        if reference is None:
+            reference = intake_id
+            finding_states.append({
+                "producer": intake["producer"], "stage": intake["stage"],
+                "intakeEvidenceId": intake_id, "findingId": item["id"],
+                "material": item["material"], "kind": item["kind"], "status": "pending",
+            })
+        references.append(reference)
+    # The observation is always retained; callers keep using canonical lifecycle
+    # references. Mixed observations expose new work through their own intake.
+    return intake_id if intake_id in references or not references else references[0]
 
 
 def record_advisor_result(
@@ -947,6 +976,8 @@ def record_advisor_result(
         state = _bound_instance_state(transaction.state, slug, workflow_id)
         writes: list[EvidenceWrite] = []
         intake_write: EvidenceWrite | None = None
+        intake_reference: str | None = None
+        intakes: dict[str, JsonObject] = {}
         if intake is not None and any(intake.get(field) != expected for field, expected in (
             ("workflowId", state["workflowId"]), ("stage", stage),
             ("producer", source), ("verdict", verdict),
@@ -981,8 +1012,8 @@ def record_advisor_result(
                     str(state["workflowId"]), "finding-intake-preflight", intake,
                 )
                 writes.append(intake_write)
-                _register_finding_intake(
-                    state, intake_write.evidence_id, intake["findings"], stage, source,
+                intake_reference = _register_finding_intake(
+                    transaction, state, intake_write.evidence_id, intake, intakes,
                 )
             current = state.get("advisorPreflight")
             if intake is None and replayed_design and isinstance(current, dict) and all((
@@ -998,7 +1029,7 @@ def record_advisor_result(
                 "status": verdict,
                 "findings": "pending" if _stage_unresolved(state, stage, source) else "none",
                 "reason": recorded_reason,
-                **({"intakeEvidence": intake_write.evidence_id} if intake_write is not None else {}),
+                **({"intakeEvidence": intake_reference} if intake_write is not None else {}),
             }
             state["phase"] = "advisor-preflight"
         elif stage == "final":
@@ -1081,15 +1112,18 @@ def record_advisor_result(
                         }
                         intake_write = evidence_write(str(state["workflowId"]), "finding-intake-final", derived_intake)
                         writes.append(intake_write)
-                        _register_finding_intake(state, intake_write.evidence_id, new_findings, stage, source)
+                        intake_reference = _register_finding_intake(
+                            transaction, state, intake_write.evidence_id, derived_intake, intakes,
+                        )
                     if not isinstance(record, dict):
                         raise WorkflowError("final appeal review state is corrupt")
-                    original = transaction.evidence(str(rejected[0]["intakeEvidenceId"]))
+                    reference = str(rejected[0]["intakeEvidenceId"])
+                    original = intakes[reference] if reference in intakes else transaction.evidence(reference)
                     if not isinstance(original, dict): raise WorkflowError("final appeal intake is corrupt")
                     record.update({"source": source, "status": original["verdict"], "intakeEvidence": rejected[0]["intakeEvidenceId"],
                                    "appealEvidence": appeal_write.evidence_id, "appealVerdict": verdict})
                     if intake_write is not None:
-                        record["intakeEvidence"] = intake_write.evidence_id
+                        record["intakeEvidence"] = intake_reference
                     record["findings"] = "pending" if any(
                         isinstance(entry, dict) and entry.get("stage") == "final"
                         and entry.get("producer") == source and _finding_unresolved(entry)
@@ -1102,14 +1136,14 @@ def record_advisor_result(
                             str(state["workflowId"]), "finding-intake-final", intake,
                         )
                         writes.append(intake_write)
-                        _register_finding_intake(
-                            state, intake_write.evidence_id, intake["findings"], stage, source,
+                        intake_reference = _register_finding_intake(
+                            transaction, state, intake_write.evidence_id, intake, intakes,
                         )
                     state.pop("finalAppealConsumed", None)
                     state["finalReview"] = {
                         "source": source, "status": verdict,
                         "findings": "pending" if _stage_unresolved(state, stage, source) else "none",
-                        **({"intakeEvidence": intake_write.evidence_id} if intake_write is not None else {}),
+                        **({"intakeEvidence": intake_reference} if intake_write is not None else {}),
                     }
                 state.pop("finalReviewContextMismatchEvidence", None)
                 state["phase"] = "final-review"
@@ -1365,7 +1399,10 @@ def _apply_finding_dispositions(
         for entry in states
         if isinstance(entry, dict) and entry.get("intakeEvidenceId") == intake_id
     }
-    if set(intake_states) != set(findings):
+    # Advisor observations may include reused obligations owned by older intakes.
+    # Only the canonical registered pairing can receive a disposition.
+    if (not selected <= set(intake_states) or not set(intake_states) <= set(findings)
+            or producer == "code-review" and set(intake_states) != set(findings)):
         raise WorkflowError("recorded finding lifecycle does not match immutable intake")
     terminals: dict[str, JsonObject] = {}
     items = _map_items(transaction.evidence(state.get("tddEvidence")), terminals=terminals)

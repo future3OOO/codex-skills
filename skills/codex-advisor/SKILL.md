@@ -99,8 +99,13 @@ or `commit-ready`.
 
 The wrapper records the exact UTF-8 response and its digest as immutable finding
 intake; it never dispositions. After reading the output, the lead validates
-every finding and appends a separate intake-referenced disposition for each
-material one; `material:false` notes need none. Completion
+each outstanding finding and appends its intake-referenced disposition;
+`material:false` notes need none. Accepted identical retries retain pending
+finding identities, canonical intake references, map ownership and progress.
+Use the references in `findingStates` (or the checkpoint's `findingLedger`);
+new observations remain available through `history` and `evidence`. New or
+changed findings remain separate; settled findings and appeals keep their
+existing handling. Changed candidates still require fresh verification/review. Completion
 derives from the context-matched intake's effective terminal dispositions, not
 from the raw verdict alone. A `context-mismatch` advances nothing and must be
 re-consulted. A final `rejected-with-evidence` remains pending for one response
