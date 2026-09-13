@@ -6,6 +6,18 @@ Issue bodies own implementation scope; this record preserves decisions and their
 status. New decisions supersede earlier ones explicitly; observations and open
 acceptance gaps are not completed delivery.
 
+## 2026-09-13 — Native Codex delegation defaults
+
+**Decision:** [#32](https://github.com/future3OOO/codex-skills/issues/32) uses
+native `explorer` specialists and fresh `default` code-review delegates with
+normal native model selection. Preserve review, recording and continuation
+requirements; explicit router definitions and provider configuration stay outside
+this change.
+
+**Status:** Implemented on `fix/issue32-native-delegates`, based on the decision
+record branch. Live separate-worktree acceptance, review and scoped installation
+are required before delivery; the issue PR carries their measured results.
+
 ## 2026-09-13 — Implement in Codex first
 
 **Decision:** Complete the workflow improvements in codex-skills, then fold the
