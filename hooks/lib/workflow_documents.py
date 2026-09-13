@@ -490,17 +490,6 @@ def _finding_dispositions(value: object, allowed: set[str]) -> list[JsonObject]:
             raise ValueError(f"finding {identifier} has an invalid or duplicate disposition")
         if identifier in seen:
             raise ValueError(_disposition_error(status, f"finding {identifier} has a duplicate disposition"))
-        if "evidenceRefs" in item:
-            refs = item["evidenceRefs"]
-            extra = {"reference"} if status == "accepted-follow-up" else set()
-            if (set(item) != {"finding_id", "status", "reason", "evidenceRefs"} | extra
-                    or not _text(item.get("reason")) or not isinstance(refs, list) or not refs
-                    or not all(_text(ref) for ref in refs)
-                    or extra and not _text(item.get("reference"))):
-                raise ValueError("receipt disposition requires finding_id, status, reason and non-empty evidenceRefs")
-            seen.add(str(identifier))
-            typed.append(dict(item))
-            continue
         if kind not in {"behavioral", "nonbehavioral"}:
             raise ValueError(_disposition_error(status, f"finding {identifier} kind must be behavioral or nonbehavioral"))
         try:
@@ -545,16 +534,15 @@ def _finding_dispositions(value: object, allowed: set[str]) -> list[JsonObject]:
     return typed
 
 
-def _reviewer_finding_disposition(value: JsonObject) -> tuple[str, JsonObject | None, list[JsonObject]]:
-    if set(value) not in ({"context", "intakeEvidenceId", "dispositions"}, {"intakeEvidenceId", "dispositions"}):
+def _reviewer_finding_disposition(value: JsonObject) -> tuple[str, JsonObject, list[JsonObject]]:
+    if set(value) != {"context", "intakeEvidenceId", "dispositions"}:
         raise ValueError("disposition requires only context, intakeEvidenceId, and dispositions")
     intake_id = value.get("intakeEvidenceId")
     if not _text(intake_id):
         raise ValueError("disposition requires an intakeEvidenceId")
-    dispositions = _finding_dispositions(value.get("dispositions"), REVIEWER_DISPOSITIONS)
-    context = (None if "context" not in value and all("evidenceRefs" in item for item in dispositions)
-               else _disposition_context(value.get("context")))
-    return str(intake_id), context, dispositions
+    return str(intake_id), _disposition_context(value.get("context")), _finding_dispositions(
+        value.get("dispositions"), REVIEWER_DISPOSITIONS,
+    )
 
 
 def review_summary(
@@ -613,21 +601,19 @@ def advisor_disposition_document(
     stage: str,
 ) -> JsonObject:
     value = load_json(path, label="disposition")
-    compact = set(value) == {"intakeEvidenceId", "dispositions"}
-    context = None if compact else _disposition_context(value.get("context"))
+    context = _disposition_context(value.get("context"))
     allowed = ADVISOR_DISPOSITIONS
     common: JsonObject = {
         "schemaVersion": 1, "slug": slug, "workflowId": workflow_id,
         "stage": stage, "recordedAt": utc_timestamp(), "context": context,
     }
-    if compact or set(value) == {"context", "intakeEvidenceId", "dispositions"}:
+    if set(value) == {"context", "intakeEvidenceId", "dispositions"}:
         intake_id = value.get("intakeEvidenceId")
         if not _text(intake_id):
             raise ValueError("disposition requires an intakeEvidenceId")
-        dispositions = _finding_dispositions(value.get("dispositions"), allowed)
-        if compact and not all("evidenceRefs" in item for item in dispositions):
-            raise ValueError("context-free disposition requires executed evidenceRefs for every finding")
-        return {**common, "intakeEvidenceId": str(intake_id), "dispositions": dispositions}
+        return {**common, "intakeEvidenceId": str(intake_id), "dispositions": _finding_dispositions(
+            value.get("dispositions"), allowed,
+        )}
     if set(value) != {"context", "findings", "dispositions"}:
         raise ValueError("disposition document requires context, findings, and dispositions")
     findings, dispositions = value.get("findings"), value.get("dispositions")

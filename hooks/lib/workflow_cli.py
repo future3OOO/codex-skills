@@ -61,7 +61,6 @@ PRODUCER_OWNED = {
 
 def _repo(command: argparse.ArgumentParser) -> None:
     command.add_argument("--repo", "--cwd", dest="repo", default=".")
-    command.add_argument("--compact", action="store_true", help="return a compact mutation receipt")
 
 
 def _instance(command: argparse.ArgumentParser) -> None:
@@ -102,8 +101,6 @@ def parser() -> argparse.ArgumentParser:
     for name in ("status", "summary"):
         command = commands.add_parser(name)
         _repo(command)
-        if name == "status":
-            command.add_argument("--fields", help="comma-separated fields; default is full status")
 
     command = commands.add_parser(
         "paths",
@@ -171,8 +168,6 @@ def parser() -> argparse.ArgumentParser:
     command.add_argument("--slug", required=True)
     command.add_argument("--kind", choices=("generic", "quality-gate"), default="generic")
     command.add_argument("--base-ref")
-    command.add_argument("--replaces", help="failed generic evidence-id:zero-based-run-index")
-    command.add_argument("--reason")
     command.add_argument("--timeout", type=int, default=900)
     command.add_argument("runner_command", nargs=argparse.REMAINDER)
 
@@ -210,17 +205,11 @@ def _intent(args: argparse.Namespace) -> str:
 
 
 def _emit_mutation(
-    identity: RepoIdentity, operation: Callable[[str], dict[str, object]], *, compact: bool = False,
+    identity: RepoIdentity, operation: Callable[[str], dict[str, object]],
 ) -> None:
     """Bind full-state output before its mutation can commit."""
     candidate = _active_candidate_tree(identity)
-    state = operation(candidate)
-    fields = ({key for key in state if key.endswith("Evidence")} | {
-        "schemaVersion", "workflowId", "slug", "activeCandidateTree", "phase", "nextAction",
-        "advisorPreflight", "codeReview", "finalReview", "verification", "tdd",
-        "repoContextForge", "gitnexus", "bindingError", "qualityGateManifestId",
-    }) if compact else None
-    _emit_json(public_status(state, identity, fields=fields, candidate_tree=candidate, recovery=compact))
+    _emit_json(public_status({**operation(candidate), "activeCandidateTree": candidate}, identity))
 
 
 def _state(identity: RepoIdentity) -> dict[str, object]:
@@ -238,10 +227,6 @@ def _workflow_id(state: dict[str, object]) -> str:
 
 
 def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
-    if bool(args.replaces) != bool(args.reason and args.reason.strip()):
-        raise ValueError("--replaces and a non-empty --reason are required together")
-    if args.replaces and args.kind != "generic":
-        raise ValueError("only generic verification can replace a failed invocation")
     state = bound_state(identity, safe_slug(args.slug))
     slug = str(state["slug"])
     workflow_id = _workflow_id(state)
@@ -335,10 +320,8 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
 
     run = _run_entry(
         raw, exit_code, timed_out,
-        kind=args.kind, command=shlex.join(command), valid=valid, outputBytes=len(raw),
+        kind=args.kind, command=shlex.join(command), valid=valid,
     )
-    if args.replaces:
-        run.update(replaces=args.replaces, replacementReason=args.reason.strip())
     if args.kind == "quality-gate":
         run["baseRef"] = args.base_ref
         run["gate"] = gate
@@ -355,9 +338,6 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
         "kind": args.kind,
         "verification": state["verification"],
         "valid": recorded["valid"],
-        "runIndex": recorded["runIndex"],
-        "workflowId": workflow_id,
-        "treeManifestId": recorded.get("treeManifestId"),
     })
     if recorded["valid"] is not True:
         reason = recorded.get("bindingError") or "verification command failed"
@@ -392,12 +372,9 @@ def _dispatch(args: argparse.Namespace) -> int:
 
     identity = resolve_repo_identity(args.repo)
     if args.command == "begin":
-        state = begin(identity, args.slug, _intent(args))
-        fields = {"schemaVersion", "workflowId", "slug", "activeCandidateTree", "phase", "nextAction"} if args.compact else None
-        _emit_json(public_status(state, fields=fields))
+        _emit_json(public_status(begin(identity, args.slug, _intent(args))))
     elif args.command == "status":
-        fields = set(args.fields.split(",")) if args.fields else None
-        _emit_json(public_status(_state(identity), identity, fields=fields))
+        _emit_json(public_status(_state(identity), identity))
     elif args.command == "paths":
         directory = repo_state_dir(identity)
         out: dict[str, object] = {
@@ -433,7 +410,7 @@ def _dispatch(args: argparse.Namespace) -> int:
             slug=args.slug,
             workflow_id=args.workflow_id,
             expected_candidate_tree=candidate,
-        ), compact=args.compact)
+        ))
     elif args.command == "advisor-result":
         intake = None
         verdict = args.verdict
@@ -467,7 +444,7 @@ def _dispatch(args: argparse.Namespace) -> int:
                 expected_candidate_tree=expected or candidate,
             )
 
-        _emit_mutation(identity, record, compact=args.compact)
+        _emit_mutation(identity, record)
     elif args.command == "advisor-disposition":
         if args.findings == "addressed" and args.input is None:
             raise ValueError("an addressed disposition requires --input with the lead's disposition document")
@@ -487,19 +464,19 @@ def _dispatch(args: argparse.Namespace) -> int:
             args.findings,
             document=document,
             expected_candidate_tree=candidate,
-        ), compact=args.compact)
+        ))
     elif args.command == "pause":
         _emit_mutation(identity, lambda candidate: pause(
             identity, args.slug, args.workflow_id, args.reason,
             expected_candidate_tree=candidate,
-        ), compact=args.compact)
+        ))
     elif args.command == "checkpoint":
         _emit_json(checkpoint(identity, args.phase))
     elif args.command == "complete":
         _emit_mutation(identity, lambda candidate: complete(
             identity, slug=args.slug, workflow_id=args.workflow_id,
             expected_candidate_tree=candidate,
-        ), compact=args.compact)
+        ))
     elif args.command == "record-preflight":
         return _record_phase(args, identity, "preflight", "document", validated_document(args.input))
     elif args.command == "record-production-code":

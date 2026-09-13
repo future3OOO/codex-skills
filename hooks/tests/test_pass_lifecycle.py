@@ -1574,8 +1574,8 @@ class PassLifecycleTests(unittest.TestCase):
         self.assertEqual(quality.returncode, 0, quality.stdout + quality.stderr)
         self.assertEqual(json.loads(self.cli("status").stdout)["nextAction"], "code-review")
 
-    def test_edit_requires_fresh_verification_without_a_dummy_generic(self) -> None:
-        """A new tree drops prior receipts; a fresh typed gate needs no dummy generic."""
+    def test_edit_requires_fresh_generic_and_quality_gate_verification(self) -> None:
+        """A new tree cannot reuse either half of the previous verification cycle."""
         from hooks.lib.workflow_state import invalidate_after_edit
 
         wid = self.begin_slug("fresh-verification-cycle")
@@ -1607,13 +1607,18 @@ class PassLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(gate_only.returncode, 0, gate_only.stdout + gate_only.stderr)
         self.assertEqual(
-            json.loads(self.cli("status").stdout)["verification"], "passed",
-            "a fresh quality gate must not require a dummy generic command",
+            json.loads(self.cli("status").stdout)["verification"], "pending",
+            "a quality-gate-only rerun reused the prior generic verification",
         )
 
-        latest = json.loads(self.cli("status").stdout)["verificationLatestEvidence"]
-        runs = json.loads(self.cli("evidence", "--evidence-id", latest).stdout)["document"]["runs"]
-        self.assertEqual([run["kind"] for run in runs], ["quality-gate"])
+        generic = subprocess.run(
+            [sys.executable, str(WORKFLOW), "verify", "--repo", str(self.repo),
+             "--slug", "fresh-verification-cycle", "--", sys.executable, "-c", "pass"],
+            cwd=ROOT, env=self.env, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+        )
+        self.assertEqual(generic.returncode, 0, generic.stdout + generic.stderr)
+        self.assertEqual(json.loads(self.cli("status").stdout)["verification"], "passed")
 
     def test_legacy_passed_phases_without_evidence_cannot_complete(self) -> None:
         # A pass recorded under the pre-evidence regime: phases read passed but
@@ -3096,8 +3101,8 @@ annotate_tdd_evidence(resolve_repo_identity(sys.argv[1]), 'terminal-state', sys.
         self.assertIn("Discipline re-arm", rearmed.stdout)
         self.assertIn("slug=compact-recovery", rearmed.stdout)
         self.assertIn("repo-context-forge=passed", rearmed.stdout)
-        self.assertIn("advisor-preflight=pending", rearmed.stdout)
-        self.assertIn("final-review=None/pending/pending", rearmed.stdout)
+        self.assertIn("advisor preflight", rearmed.stdout)
+        self.assertIn("final review", rearmed.stdout)
 
     def test_completion_requires_a_ready_final_review_and_resolved_findings(self) -> None:
         wid = self.begin_slug("completion-contract")

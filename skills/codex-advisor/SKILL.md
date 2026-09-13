@@ -241,20 +241,7 @@ dispositions; it never restates a finding:
 {"context":{"workflowId":"<active-workflowId>","candidateTree":"<40-hex Git tree>","prHead":"<optional HEAD>"},"intakeEvidenceId":"<advisor intake evidence>","dispositions":[{"finding_id":"SPEC-1","status":"fixed","kind":"nonbehavioral","premise":{"claim":"...","command":"...","result":"..."},"occurrence":{"domain":"...","count":0,"complete":true,"command":"...","result":"..."},"materialConsequence":{"claim":"...","command":"...","result":"..."},"evidence":"verified correction"}]}
 ```
 
-For an existing executed measurement, prefer the receipt form:
-
-```json
-{"intakeEvidenceId":"<intake>","dispositions":[{"finding_id":"SPEC-1","status":"fixed","reason":"<finding-specific premise, observed occurrence/domain and consequence judgment>","evidenceRefs":["<evidenceId>:<runIndex>"]}]}
-```
-
-The recorder derives current context and immutable finding kind, validates owned
-execution/target references, and preserves the measured judgment without copying
-commands or results. Fixed behavioral findings still require their owning attack
-GREEN through RED; a successful unrelated command is not a semantic proof. Cite
-why the referenced operations cover the finding's supported domain. Rejections
-and report-only judgments still require the measured premise/consequence reasoning.
-No execution occurs merely to disposition. Historical full-format documents remain
-supported. For that legacy form, every disposition carries `kind`, `premise`, `occurrence`, and `materialConsequence` at both stages.
+Every disposition carries `kind`, `premise`, `occurrence`, and `materialConsequence` at both stages.
 A behavioral finding rides the pass undispositioned: it directly owns Behavior
 Map attack items through finding `sourceRefs` (record-preflight refuses an
 unowned pending behavioral finding; tdd-map adds owners later), and `fixed`
@@ -265,7 +252,7 @@ owning attack the tdd producer proved (GREEN or recorded baseline); a command or
 evidence citing a temporary-directory path refuses. `report-only`, `rejected-with-evidence`, and `fixed` carry `evidence`; `accepted-follow-up` carries `reference`. The legacy
 findings-plus-dispositions form remains compatible for measured nonbehavioral
 results. A refusal mutates no state.
-When legacy syntax help is needed, inspect the disposition and governed-design shape table, generated from
+Print the canonical disposition and governed-design shape table, generated from
 its installed validator declarations, with `python3 -I -c 'import sys; from pathlib import Path; sys.path.insert(0, str(Path.home() / ".codex")); from hooks.lib.workflow_documents import DOCUMENT_SHAPE_TABLE; print(DOCUMENT_SHAPE_TABLE)'`.
 
 For an unavailable consult, record the full

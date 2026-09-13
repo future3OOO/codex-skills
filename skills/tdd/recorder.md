@@ -30,11 +30,11 @@ python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" tdd-m
 JSON
 ```
 
-`sourceBehaviorId`, when given, names the GREEN whose consequence the update records. New items use the initial preflight schema (`status` defaults to pending); runtime proof and `revalidationRequired` are reserved. Dispositions follow [SKILL.md](SKILL.md). Missing replacement targets, cycles, impossible terminal replacements, and foreign finding references refuse the whole update atomically.
+`sourceBehaviorId`, when given, names the GREEN whose consequence the update records. New items use the initial preflight schema; runtime proof and `revalidationRequired` are reserved. Dispositions follow [SKILL.md](SKILL.md). Missing replacement targets, cycles, impossible terminal replacements, and foreign finding references refuse the whole update atomically.
 
 Reassess affected preservation with `{"id":"BM_KEEP","revalidate":true,"evidence":"Name the affected guarantee and change"}`. `revalidate` and `status` are mutually exclusive; repeated flagged requests are idempotent. Reopening settled preservation with `status:pending` sets the same flag. Settled preservation loses present settlement/baseline authority, while GREEN retains historical RED/GREEN fields. Governing omission retains the flag through reopening; finding closure still requires current owning proof.
 
-Flagged pending uses ordinary `tdd --phase red`: a passing pytest/unittest baseline clears reassessment without a cycle; a genuine failure opens RED, and GREEN later clears it. Settled or flagged GREEN reruns `tdd --phase green` against its **producer-recorded `redCommand`**, including direct operations, with the same normalized-surface rules. Success refreshes evidence without a new cycle or invalidating unrelated receipts. Failure, timeout, skipped-only/setup output, and candidate drift retain the run and unresolved flag for retry. Positively identified non-executing rechecks on the unchanged candidate also preserve unrelated receipts; genuine regressions and ambiguous failures invalidate downstream checks. Missing producer binding stays unresolved unless governing omission or a valid current GREEN replacement settles the obligation. Neither authored `proofCommand` nor prose supplies that binding. Do not fabricate RED or wrap an operation just to change parser classification.
+Flagged pending uses ordinary `tdd --phase red`: a passing pytest/unittest baseline clears reassessment without a cycle; a genuine failure opens RED, and GREEN later clears it. Flagged GREEN reruns `tdd --phase green` against its **producer-recorded `redCommand`**, including direct operations, with the same normalized-surface rules. Success refreshes evidence without a new cycle or invalidating unrelated receipts. Failure, timeout, skipped-only/setup output, and candidate drift retain the run and unresolved flag for retry. Positively identified non-executing rechecks on the unchanged candidate also preserve unrelated receipts; genuine regressions and ambiguous failures invalidate downstream checks. Missing producer binding stays unresolved unless governing omission or a valid current GREEN replacement settles the obligation. Neither authored `proofCommand` nor prose supplies that binding. Do not fabricate RED or wrap an operation just to change parser classification.
 
 Reassessment runs retain `candidateTree` sampled before execution and compare the candidate at commit, outside the child execution lock. Drift records `bindingError`, never accepted proof. RED's existing `productionChanged`, `passStartOid`, and `headOid` remain pass-relative; lateness is sticky and historical documents remain immutable.
 
@@ -45,20 +45,6 @@ Correct a RED contract's command with `{"id":"BM_ATTACK","status":"pending","evi
 Outside that explicit correction, map updates, refusals, baselines and rechecks beside A's open RED keep A's binding unless another RED genuinely opens a cycle. Repeated RED as well as GREEN must match the item's own recorded `redCommand` before execution. The admitted RED sweep remains available.
 
 Already fixed/report-only owners can obtain reassessment evidence without first possessing it. Strict behavioral `fixed` still needs current owning evidence and at least one genuine GREEN-through-RED; baseline alone never claims a repair. When reassessment invalidates an existing terminal proof claim, a measured rejection or report-only correction remains possible through the existing disposition command, retaining its history. It is not permission to relabel a still-supported terminal finding.
-
-Reuse an actual execution with `tdd --phase red|green --behavior-id <id>
---from-evidence <evidenceId>:<runIndex> --test-id <module.Class.test>`. The existing
-runner's complete verbose unittest report must unambiguously attribute that
-item's marker/outcome to its test; skipped, setup-failed, stale, foreign or
-truncated evidence supplies no proof. Other runners keep the single-item route.
-One executed report may support several items through separate references with
-zero additional child executions. Keep claims and assertions authored; no sibling
-pass proves another item. Use the returned `runIndex`; do not copy output back.
-
-Additive obligations retain applicable measurement receipts while missing proof
-and broader review remain pending. Regressions and source/governance changes
-retain their invalidation. Producer-baselined settled claims may be superseded;
-history and finding ownership remain, and the terminal replacement must be GREEN.
 
 ## No behavior change
 
