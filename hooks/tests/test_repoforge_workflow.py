@@ -1298,7 +1298,6 @@ class BootstrapHelpTests(unittest.TestCase):
         self.assertIn("--revalidate", run.stdout, marker)
 
 
-@unittest.skipUnless(CANONICAL_BOOTSTRAP.is_file(), "real Repo Context Forge source is unavailable")
 class IntakeSerialisationTests(unittest.TestCase):
     """One intake at a time: GitNexus rewrites its global registry without an
     atomic replace (future3OOO/GitNexus#25), so two producers running together
@@ -1315,6 +1314,7 @@ class IntakeSerialisationTests(unittest.TestCase):
         slots = self.slot_dir()
         slots.mkdir(parents=True, exist_ok=True)
         self._coordinator = open(slots / "suite-serialisation.lock", "a+")
+        self.addCleanup(self._coordinator.close)
         deadline = time.monotonic() + 300
         while True:
             try:
@@ -1325,12 +1325,11 @@ class IntakeSerialisationTests(unittest.TestCase):
                     self.fail("SUITE_COORDINATOR_WEDGED: serialisation lock never released")
                 time.sleep(0.25)
 
-    def tearDown(self) -> None:
-        self._coordinator.close()
-
     def intake_rig(self) -> tuple[Path, list[str], dict[str, str]]:
         """A private HOME is where the real lock path lands, so this attack
         drives that computation rather than a way around it."""
+        if not CANONICAL_BOOTSTRAP.is_file():
+            self.skipTest("real Repo Context Forge source is unavailable")
         tmp = Path(tempfile.mkdtemp(prefix="intake-lock-"))
         self.addCleanup(shutil.rmtree, tmp, True)
         repo = tmp / "repo"
@@ -1382,6 +1381,8 @@ class IntakeSerialisationTests(unittest.TestCase):
         process.communicate(timeout=5)
 
     def start_intake(self, repo: Path, home: Path, env_extra: dict[str, str | None] | None = None) -> subprocess.Popen:
+        if not CANONICAL_BOOTSTRAP.is_file():
+            self.skipTest("real Repo Context Forge source is unavailable")
         env = {**os.environ, "HOME": str(home), "PYTHONDONTWRITEBYTECODE": "1"}
         for name, value in (env_extra or {}).items():
             if value is None:
@@ -1770,6 +1771,83 @@ class IntakeSerialisationTests(unittest.TestCase):
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         return module
+
+    def test_higher_slots_count_during_competing_admissions(self) -> None:
+        import fcntl
+
+        marker = "HELD_HIGHER_SLOTS_IGNORED"
+        module = self.load_intake_module()
+        tmp = Path(tempfile.mkdtemp(prefix="intake-higher-slots-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        meminfo = tmp / "meminfo"
+        meminfo.write_text("MemAvailable: 9625600 kB\n")  # two permits
+        module._MEMINFO = meminfo
+        original_cap = os.environ.pop("RCF_INTAKE_MAX_PARALLEL", None)
+        acquired: list[int] = []
+        barrier = threading.Barrier(3)
+
+        def acquire() -> None:
+            barrier.wait(timeout=5)
+            acquired.append(module._acquire_intake_slot())
+
+        threads = [threading.Thread(target=acquire, daemon=True) for _ in range(2)]
+        with open(self.slot_dir() / "slot-2.lock", "a+") as high:
+            fcntl.flock(high, fcntl.LOCK_EX)
+            try:
+                for thread in threads:
+                    thread.start()
+                barrier.wait(timeout=5)
+                deadline = time.monotonic() + 10
+                while not acquired and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                time.sleep(0.6)  # cover multiple admission polls while the high slot stays held
+                self.assertEqual(len(acquired), 1, marker)
+                high.close()
+                for thread in threads:
+                    thread.join(timeout=5)
+                self.assertEqual(len(acquired), 2, marker + ": release failed to admit the waiter")
+            finally:
+                high.close()
+                for thread in threads:
+                    thread.join(timeout=5)
+                for fd in acquired:
+                    os.close(fd)
+                if original_cap is not None:
+                    os.environ["RCF_INTAKE_MAX_PARALLEL"] = original_cap
+
+    def test_coordinator_covers_registered_cleanups(self) -> None:
+        import fcntl
+
+        def check_cleanup() -> None:
+            with open(self.slot_dir() / "suite-serialisation.lock", "a+") as probe:
+                with self.assertRaises(BlockingIOError, msg="COORDINATOR_RELEASED_BEFORE_CLEANUP"):
+                    fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+        self.addCleanup(check_cleanup)
+
+    def test_cancelled_admission_waiter_allows_reentry(self) -> None:
+        import fcntl
+
+        marker = "ADMISSION_WAITER_DID_NOT_WAIT"
+        command = [sys.executable, "-c",
+                   "import os,runpy; ns=runpy.run_path(" + repr(str(BOOTSTRAP)) + "); "
+                   "fd=ns['_acquire_intake_slot'](); print('ADMITTED'); os.close(fd)"]
+        env = {**os.environ, "RCF_INTAKE_MAX_PARALLEL": "1"}
+        with open(self.slot_dir() / "admission.lock", "a+") as admission:
+            fcntl.flock(admission, fcntl.LOCK_EX)
+            child = subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            try:
+                with self.assertRaises(subprocess.TimeoutExpired, msg=marker):
+                    child.wait(timeout=0.3)
+                child.terminate()
+                child.wait(timeout=5)
+            finally:
+                if child.poll() is None:
+                    child.kill()
+                child.communicate(timeout=5)
+        later = subprocess.run(command, env=env, text=True, capture_output=True, timeout=90)
+        self.assertEqual(later.returncode, 0, marker + ": " + later.stderr)
+        self.assertIn("ADMITTED", later.stdout, marker)
 
     def test_permit_count_follows_available_memory(self) -> None:
         """The permit arithmetic itself: bounded below at 1, by the cap, and by

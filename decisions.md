@@ -23,6 +23,14 @@ remains owned by GitNexus #25, as documented in PR254.
 measured source and installed-entrypoint acceptance. Tests and this decision
 record remain repository-only; scoped installation changes only the adapter.
 
+PR36 review reproduced higher-index reservations being ignored after capacity
+shrink, early test-coordinator release, and memory tests skipped without the
+canonical producer. The Codex repair counts all held slots under a short
+admission lock, releases the coordinator after test cleanups, and guards only
+tests that require the missing producer. The stronger count-and-claim protocol
+requires updated participants: older Claude adapters in separate HOMEs need a
+later backport before sharing that guarantee. This pass updates only Codex.
+
 ## 2026-09-13 — Native Codex delegation defaults
 
 **Decision:** [#32](https://github.com/future3OOO/codex-skills/issues/32) uses

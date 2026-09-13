@@ -88,27 +88,44 @@ def _acquire_intake_slot() -> int:
 
     Slot files are never unlinked: removing one would hand later waiters a
     fresh inode and break exclusion, the same convention as the intake lock.
-    Each pass re-reads the permit count, so a shrinking host narrows
-    admission without stranding a waiter on a slot now out of range.
+    Each pass counts every held slot, including reservations above a newly
+    shrunken limit. Updated adapters serialize count-and-claim; older adapters
+    must be upgraded before mixed-version admissions share that guarantee.
     """
     slots = _real_home() / ".cache" / "repo-context-forge" / "intake-slots"
     slots.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
     noticed = False
-    while True:
-        for index in range(_intake_permits()):
-            fd = os.open(slots / f"slot-{index}.lock", os.O_WRONLY | os.O_CREAT, 0o600)
+    with open(slots / "admission.lock", "a+") as admission:
+        while True:
+            fcntl.flock(admission, fcntl.LOCK_EX)
             try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                os.close(fd)
-                continue
-            return fd
-        if not noticed and time.monotonic() - started > 5:
-            print("repo-context-forge: intake waiting on account producer capacity",
-                  file=sys.stderr)
-            noticed = True
-        time.sleep(INTAKE_POLL_SECONDS)
+                held = 0
+                for path in slots.glob("slot-*.lock"):
+                    fd = os.open(path, os.O_WRONLY)
+                    try:
+                        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    except BlockingIOError:
+                        held += 1
+                    finally:
+                        os.close(fd)
+                permits = _intake_permits()
+                if held < permits:
+                    for index in range(permits):
+                        fd = os.open(slots / f"slot-{index}.lock", os.O_WRONLY | os.O_CREAT, 0o600)
+                        try:
+                            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        except BlockingIOError:
+                            os.close(fd)
+                            continue
+                        return fd
+            finally:
+                fcntl.flock(admission, fcntl.LOCK_UN)
+            if not noticed and time.monotonic() - started > 5:
+                print("repo-context-forge: intake waiting on account producer capacity",
+                      file=sys.stderr)
+                noticed = True
+            time.sleep(INTAKE_POLL_SECONDS)
 
 
 def _extract_option(argv: list[str], name: str) -> str | None:
