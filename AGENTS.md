@@ -3,6 +3,13 @@
 These rules apply unless a repository `AGENTS.md` adds stricter project-specific
 instructions.
 
+## Codex Skills Decision Record
+
+For codex-skills project work, read the checkout's `decisions.md` at start or
+resume. Before handoff, record consequential decisions, reasons and delivery
+status there; mark superseded decisions and link the owning issue or PR. Keep
+observations distinct from decisions and completed work; no per-edit log.
+
 ## Think Before Coding
 
 - State assumptions before implementing.

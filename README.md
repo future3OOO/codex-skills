@@ -13,6 +13,8 @@ The project is the source of truth; the estate is an install artifact.
 ## Layout
 
 - `AGENTS.md` — global Codex rules (`~/.codex/AGENTS.md`).
+- `decisions.md` — tracked project decisions, reasons and delivery status;
+  read at start/resume and update before handoff. It is not installed globally.
 - `skills/` — custom skills, one directory per skill. Codex-only extras that
   do not exist upstream: `codex-advisor` (the codex-side advisor name),
   `frontend-design`, `setup-pre-commit`, `.system/` is excluded.
