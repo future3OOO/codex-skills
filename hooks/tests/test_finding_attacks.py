@@ -937,6 +937,224 @@ class MapCorrectionAttacks(AttackHarness):
             items = (document.get("document") or {}).get("behaviorMap")
         return {str(entry["id"]): entry for entry in items}
 
+    def wrong_occurrence(self, marker: str, *, finding: bool = False,
+                         neighbors: bool = False) -> tuple[str, str, list[str], list[str]]:
+        """Replay issue 35's captured input against the real recorder."""
+        slug = "red-correction"
+        refs = []
+        if finding:
+            wid = self.begin(slug)
+            intake = self.behavioral_intake(slug, wid, "stream estimator follows its HTTP call")
+            refs = [{"type": "finding", "evidenceId": intake, "id": "SPEC-1"}]
+        item = {**self.contract("ESTIMATE_OVERLAP", refs),
+                "behavior": "stream constructs estimator before its own HTTP call",
+                "seam": "order.txt streaming function", "expected": "estimator precedes streaming call"}
+        items = [item, self.EXTRA] if neighbors else [item]
+        if finding:
+            recorded = self.record_preflight(slug, wid, items)
+            self.assertEqual(recorded.returncode, 0, recorded.stdout + recorded.stderr)
+        else:
+            wid = self.open_pass(slug, items)
+        (self.repo / "order.txt").write_text(
+            "func other\nhttpClient.Do(other)\nfunc stream\n"
+            "httpClient.Do(stream)\nestimator := newEstimator()\n", encoding="utf-8")
+        common = "from pathlib import Path; text=Path('order.txt').read_text(); estimator=text.index('estimator :='); "
+        wrong = [sys.executable, "-c", common + "call=text.index('httpClient.Do'); assert estimator < call, 'ESTIMATE_OVERLAP'"]
+        correct = [sys.executable, "-c", common + "call=text.index('httpClient.Do', text.index('func stream')); assert estimator < call, 'ESTIMATE_OVERLAP'"]
+        red = self.mapped_tdd(slug, "red", wrong)
+        self.assertEqual(red.returncode, 0, marker + ": " + red.stdout + red.stderr)
+        return slug, wid, wrong, correct
+
+    def correct_red(self, slug: str) -> subprocess.CompletedProcess[str]:
+        return self.map_update(slug, dispositions=[{
+            "id": "BM_ATTACK", "status": "pending",
+            "evidence": "Select the streaming call; the ordering contract is unchanged."}])
+
+    def repair_order(self) -> None:
+        fixture = self.repo / "order.txt"
+        fixture.write_text(fixture.read_text().replace(
+            "httpClient.Do(stream)\nestimator := newEstimator()",
+            "estimator := newEstimator()\nhttpClient.Do(stream)"), encoding="utf-8")
+
+    def test_red_command_correction_completes_same_workflow(self) -> None:
+        marker = "RED_COMMAND_CORRECTION_FAILED"
+        slug, wid, wrong, correct = self.wrong_occurrence(marker)
+        correction = self.correct_red(slug)
+        self.assertEqual(correction.returncode, 0, marker + ": " + correction.stderr)
+        self.assertEqual(self.map_items()["BM_ATTACK"]["status"], "pending", marker)
+        document = self.ok("evidence", "--evidence-id", self.status()["tddEvidence"])["document"]
+        self.assertIsNone(document["activeBehaviorId"], marker)
+        for field in ("command", "surface", "runs"):
+            self.assertNotIn(field, document, marker)
+        refused = self.refused_unchanged(marker, lambda: self.cli("complete"))
+        self.assertIn("BM_ATTACK", refused.stderr, marker)
+        red = self.mapped_tdd(slug, "red", correct)
+        self.assertEqual(red.returncode, 0, marker + ": " + red.stderr)
+        self.repair_order()
+        wrong_result = subprocess.run(wrong, cwd=self.repo, text=True, capture_output=True)
+        self.assertEqual(wrong_result.returncode, 1, marker)
+        green = self.mapped_tdd(slug, "green", correct)
+        self.assertEqual(green.returncode, 0, marker + ": " + green.stderr)
+        self.assertEqual(list(self.map_items()), ["BM_ATTACK"], marker)
+        self.assertEqual(self.status()["workflowId"], wid, marker)
+        history = self.ok("history")["events"]
+        self.assertEqual(sum(e["kind"] == "begin" for e in history), 1, marker)
+        recovery = [e["kind"] for e in history if e["kind"].startswith("tdd-")]
+        self.assertEqual(recovery, ["tdd-reopen", "tdd-annotated", "tdd-reopen", "tdd-passed"], marker)
+        self.assertEqual(self.status()["tddCycleCount"], 2, marker)
+        self.assertEqual(self.map_items()["BM_ATTACK"]["status"], "green", marker)
+        # Supply normal completion inputs through the recorder, not a provider
+        # substitute. This tests completion semantics, not advisor reasoning.
+        record_context_forge(self.repo, self.tmp)
+        self.ok("verify", "--slug", slug, "--", *correct)
+        self.ok("verify", "--slug", slug, "--kind", "quality-gate", "--base-ref", "HEAD")
+        self.ok("record-review", "--slug", slug, "--workflow-id", wid,
+                "--resolved-model", "recorder-fixture", "--review-context-id", "correction-fixture",
+                "--input", str(self.json_file("review.json", {"findings": []})))
+        self.ok("advisor-result", "--slug", slug, "--workflow-id", wid,
+                "--stage", "final", "--source", "codex-advisor", "--input",
+                str(self.json_file("final.json", {"schemaVersion": 1, "findings": [], "verdict": "commit-ready"})))
+        completed = self.cli("complete")
+        self.assertEqual(completed.returncode, 0, marker + ": " + completed.stderr)
+        print(f"recovery target={WORKFLOW} scale=1 limits=correction:1,corrected_RED:1,corrected_GREEN:1 "
+              f"observed={recovery.count('tdd-annotated')},{recovery.count('tdd-reopen') - 1},"
+              f"{recovery.count('tdd-passed')} extra_workflows=0 duplicate_items=0 unrelated_proof_reruns=0")
+
+    def test_corrected_item_requires_genuine_matching_red(self) -> None:
+        marker = "CORRECTED_PROOF_RULES_BROKEN"
+        slug, _, wrong, correct = self.wrong_occurrence(marker)
+        self.refused_unchanged(marker, lambda: self.mapped_tdd(slug, "red", correct))
+        correction = self.correct_red(slug)
+        self.assertEqual(correction.returncode, 0, marker + ": " + correction.stderr)
+        self.refused_unchanged(marker, lambda: self.mapped_tdd(slug, "green", correct))
+        (self.repo / "test_setup.py").write_text(
+            "import unittest\nclass T(unittest.TestCase):\n"
+            "    def setUp(self): raise RuntimeError('ESTIMATE_OVERLAP')\n"
+            "    def test_order(self): self.assertTrue(True)\n", encoding="utf-8")
+        for command in ([sys.executable, "-c", "pass"],
+                        [sys.executable, "missing.py"],
+                        [sys.executable, "-c", "raise ImportError('ESTIMATE_OVERLAP')"],
+                        [sys.executable, "-m", "unittest", "test_setup"]):
+            with self.subTest(command=command):
+                refused = self.mapped_tdd(slug, "red", command)
+                self.assertEqual(refused.returncode, 2, marker + ": " + refused.stderr)
+                self.assertEqual(self.map_items()["BM_ATTACK"]["status"], "pending", marker)
+                self.assertNotIn("redCommand", self.map_items()["BM_ATTACK"], marker)
+        red = self.mapped_tdd(slug, "red", correct)
+        self.assertEqual(red.returncode, 0, marker + ": " + red.stderr)
+        self.refused_unchanged(marker, lambda: self.mapped_tdd(slug, "green", wrong))
+        self.repair_order()
+        green = self.mapped_tdd(slug, "green", correct)
+        self.assertEqual(green.returncode, 0, marker + ": " + green.stderr)
+        self.refused_unchanged(marker, lambda: self.correct_red(slug))
+
+    def test_corrected_red_cannot_be_withdrawn(self) -> None:
+        marker = "CORRECTED_RED_WITHDRAWN"
+        slug, _, _, _ = self.wrong_occurrence(marker)
+        original = self.map_items()["BM_ATTACK"]["redProof"]
+        correction = self.correct_red(slug)
+        self.assertEqual(correction.returncode, 0, marker + ": " + correction.stderr)
+        self.refused_unchanged(marker, lambda: self.map_update(slug, dispositions=[{
+            "id": "BM_ATTACK", "status": "withdrawn", "evidence": "Skip corrected proof"}]))
+        self.assertEqual(self.map_items()["BM_ATTACK"]["redProof"], original, marker)
+        self.assertNotIn("redCommand", self.map_items()["BM_ATTACK"], marker)
+        self.repair_order()
+        (self.repo / "test_order.py").write_text(
+            "import unittest\nfrom pathlib import Path\nclass T(unittest.TestCase):\n"
+            "    def test_order(self):\n"
+            "        text = Path('order.txt').read_text()\n"
+            "        self.assertLess(text.index('estimator :='), "
+            "text.index('httpClient.Do', text.index('func stream')), 'ESTIMATE_OVERLAP')\n",
+            encoding="utf-8")
+        baseline = self.mapped_tdd(slug, "red", [sys.executable, "-m", "unittest", "test_order"])
+        self.assertEqual(baseline.returncode, 0, marker + ": " + baseline.stderr)
+        self.assertEqual(self.map_items()["BM_ATTACK"]["status"], "already-satisfied", marker)
+        self.assertEqual(self.map_items()["BM_ATTACK"]["redProof"], original, marker)
+
+    def test_red_correction_preserves_other_open_and_proved_items(self) -> None:
+        marker = "CORRECTION_CHANGED_NEIGHBOR"
+        for proved in (False, True):
+            with self.subTest(proved=proved):
+                slug, _, _, correct = self.wrong_occurrence(marker, neighbors=True)
+                other = [sys.executable, "-c", "import app; assert app.value == 2, 'EXTRA_NEVER_ATTACKED'"]
+                (self.repo / "app.py").write_text("value = 1\n", encoding="utf-8")
+                self.ok("tdd", "--slug", slug, "--phase", "red", "--behavior-id", "BM_EXTRA", "--", *other)
+                if proved:
+                    (self.repo / "app.py").write_text("value = 2\n", encoding="utf-8")
+                    self.ok("tdd", "--slug", slug, "--phase", "green", "--behavior-id", "BM_EXTRA", "--", *other)
+                before, neighbor = self.status(), self.map_items()["BM_EXTRA"]
+                old = self.ok("evidence", "--evidence-id", before["tddEvidence"])["document"]
+                correction = self.correct_red(slug)
+                self.assertEqual(correction.returncode, 0, marker + ": " + correction.stderr)
+                after = self.status()
+                current = self.ok("evidence", "--evidence-id", after["tddEvidence"])["document"]
+                for key in ("kind", "command", "surface", "behaviorId", "activeBehaviorId", "runs"):
+                    self.assertEqual(current[key], old[key], marker)
+                for key in before.keys() - {"tddEvidence", "updatedAt", "nextAction", "mapSelections"}:
+                    self.assertEqual(after[key], before[key], marker + ": " + key)
+                self.assertEqual(after["mapSelections"],
+                                 {"BM_EXTRA": before["mapSelections"]["BM_EXTRA"]}, marker)
+                self.assertEqual(self.map_items()["BM_EXTRA"], neighbor, marker)
+                self.assertEqual(self.mapped_tdd(slug, "red", correct).returncode, 0, marker)
+                self.repair_order()
+                self.assertEqual(self.mapped_tdd(slug, "green", correct).returncode, 0, marker)
+                if not proved:
+                    (self.repo / "app.py").write_text("value = 2\n", encoding="utf-8")
+                    self.ok("tdd", "--slug", slug, "--phase", "green", "--behavior-id", "BM_EXTRA", "--", *other)
+
+    def test_red_correction_keeps_history_contract_and_finding_refs(self) -> None:
+        marker = "CORRECTION_LOST_HISTORY"
+        slug, wid, _, correct = self.wrong_occurrence(marker, finding=True)
+        before = self.status()
+        old_id = before["tddEvidence"]
+        historical = self.ok_text("evidence", "--evidence-id", old_id)
+        contract = self.map_items()["BM_ATTACK"]
+        correction = self.correct_red(slug)
+        self.assertEqual(correction.returncode, 0, marker + ": " + correction.stderr)
+        expected = {key: value for key, value in contract.items() if key != "redCommand"}
+        expected["status"] = "pending"
+        self.assertEqual(self.map_items()["BM_ATTACK"], expected, marker)
+        self.assertEqual(self.status()["findingStates"], before["findingStates"], marker)
+        self.assertEqual(self.mapped_tdd(slug, "red", correct).returncode, 0, marker)
+        self.repair_order()
+        self.assertEqual(self.mapped_tdd(slug, "green", correct).returncode, 0, marker)
+        final = self.map_items()["BM_ATTACK"]
+        for key in expected.keys() - {"status"}:
+            self.assertEqual(final[key], expected[key], marker)
+        self.assertEqual(self.ok_text("evidence", "--evidence-id", old_id), historical, marker)
+        self.assertEqual(self.status()["workflowId"], wid, marker)
+
+    def test_red_correction_is_atomic_against_invalid_input_and_inflight_run(self) -> None:
+        marker = "CORRECTION_ATOMICITY_BROKEN"
+        slug, wid, _, correct = self.wrong_occurrence(marker)
+        valid = {"id": "BM_ATTACK", "status": "pending", "evidence": "wrong occurrence"}
+        for dispositions in ([{**valid, "evidence": ""}], [valid, valid],
+                             [valid, {**valid, "id": "BM_MISSING"}],
+                             [{**valid, "revalidate": True}], [{**valid, "supersededBy": "BM_ATTACK"}],
+                             [{**valid, "sourceRefs": [{"type": "finding", "evidenceId": "foreign", "id": "SPEC-1"}]}]):
+            self.refused_unchanged(marker, lambda: self.map_update(slug, dispositions=dispositions))
+        correction = self.correct_red(slug)
+        self.assertEqual(correction.returncode, 0, marker + ": " + correction.stderr)
+        # During an old command's genuine RED rerun, a second CLI process
+        # corrects it. The first process must not overwrite the correction.
+        request = self.json_file("correction.json", {"reassessment": "correct scope", "dispositions": [valid]})
+        probe = self.repo / "inflight.py"
+        probe.write_text(
+            "import subprocess, sys\nfrom pathlib import Path\n"
+            "if Path('release').exists():\n"
+            f"    result = subprocess.run({[sys.executable, str(WORKFLOW), 'tdd-map', '--repo', str(self.repo), '--slug', slug, '--workflow-id', wid, '--input', str(request)]!r})\n"
+            "    if result.returncode: sys.exit(result.returncode)\n"
+            "raise AssertionError('ESTIMATE_OVERLAP')\n", encoding="utf-8")
+        inflight = [sys.executable, "inflight.py"]
+        self.assertEqual(self.mapped_tdd(slug, "red", inflight).returncode, 0, marker)
+        (self.repo / "release").touch()
+        stale = self.mapped_tdd(slug, "red", inflight)
+        self.assertEqual(stale.returncode, 2, marker + ": " + stale.stderr)
+        self.assertIn("TDD evidence changed during the run", stale.stderr, marker)
+        self.assertEqual(self.map_items()["BM_ATTACK"]["status"], "pending", marker)
+        self.assertNotIn("redCommand", self.map_items()["BM_ATTACK"], marker)
+        self.assertEqual(self.mapped_tdd(slug, "red", correct).returncode, 0, marker)
+
     def test_withdrawn_items_cannot_acquire_references_even_in_mixed_updates(self) -> None:
         from hooks.lib import behavior_map
 
