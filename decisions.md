@@ -82,10 +82,6 @@ proof of the defect; its failed attempt remains in history.
 review and final advisor review passed. The parent restart corrected its stale
 matcher: actual pending dispatch was denied and verified return review admitted.
 The actual external handoff retained verification; real edits still invalidate it.
-The captured 18-case native identity corpus has zero regressions. The independent
-reviewer confirmed both original live findings corrected; final advisor returned
-commit-ready. Current-head CI and remote reviewer completion remain pending.
-Private-estate refresh is authorized; shared installation and merge are not.
 This is separate from PR #45, merged at `dfb0159` with its own installation receipt.
 No PR #50 merge or shared installation has occurred.
 
@@ -159,6 +155,16 @@ worktree. Public CLI tests cover recovery through completion, proof refusals,
 history, neighboring cycles and stale-run rejection. The issue's delivery PR
 carries final verification, scoped installation and reviewer completion results;
 no Claude backport or other #30 work is included.
+
+## 2026-09-13 — Minimal triage contracts
+
+**Decision:** Every issue and agent brief produced by triage leads with the
+observable target objective and a code-grounded smallest sufficient change.
+Verification covers that objective and affected existing behavior. Replace the
+long brief template and repeated examples with one compact contract.
+
+**Status:** Documentation change on `docs/triage-minimum-change`; global
+installation is not part of this editing pass. The delivery PR owns review status.
 
 ## 2026-09-13 — Selected Claude PR254 capacity port
 
