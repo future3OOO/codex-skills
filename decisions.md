@@ -13,8 +13,8 @@ observable target objective and a code-grounded smallest sufficient change.
 Verification covers that objective and affected existing behavior. Replace the
 long brief template and repeated examples with one compact contract.
 
-**Status:** Documentation change on `docs/triage-minimum-change`; global
-installation is not part of this editing pass. The delivery PR owns review status.
+**Status:** [PR #40](https://github.com/future3OOO/codex-skills/pull/40),
+`docs/triage-minimum-change`. Global installation is not part of this editing pass.
 
 ## 2026-09-14 — Revert issue 30 pending third-party review
 
