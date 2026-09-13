@@ -25,6 +25,31 @@ history, neighboring cycles and stale-run rejection. The issue's delivery PR
 carries final verification, scoped installation and reviewer completion results;
 no Claude backport or other #30 work is included.
 
+## 2026-09-13 — Selected Claude PR254 capacity port
+
+**Decision:** Port only merged Claude PR254 (`b3e4648288b66d510beb8a29f0349817e9ec05da`):
+`skills/repo-context-forge/scripts/bootstrap.py` and its existing
+`hooks/tests/test_repoforge_workflow.py`, using `scripts/estate_xform.py to-codex`.
+Both Codex files matched the transformed upstream parent exactly. Keep
+`.upstream-sync` unchanged because this is a selected port, not a full sync.
+Preserve native Codex delegates, the runner and workflow evidence owners.
+
+The account-scoped capacity slots are shared by Claude and Codex on this host;
+per-HOME registry locks remain separate. The producer-death/indexer residual
+remains owned by GitNexus #25, as documented in PR254.
+
+**Status:** Ported on `port/claude-254-intake-capacity`; the delivery PR carries
+measured source and installed-entrypoint acceptance. Tests and this decision
+record remain repository-only; scoped installation changes only the adapter.
+
+PR36 review reproduced higher-index reservations being ignored after capacity
+shrink, early test-coordinator release, and memory tests skipped without the
+canonical producer. The Codex repair counts all held slots under a short
+admission lock, releases the coordinator after test cleanups, and guards only
+tests that require the missing producer. The stronger count-and-claim protocol
+requires updated participants: older Claude adapters in separate HOMEs need a
+later backport before sharing that guarantee. This pass updates only Codex.
+
 ## 2026-09-13 — Native Codex delegation defaults
 
 **Decision:** [#32](https://github.com/future3OOO/codex-skills/issues/32) uses
