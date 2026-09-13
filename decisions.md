@@ -6,6 +6,33 @@ Issue bodies own implementation scope; this record preserves decisions and their
 status. New decisions supersede earlier ones explicitly; observations and open
 acceptance gaps are not completed delivery.
 
+## 2026-09-14 — Triage requires whole-objective N/N+1 proof
+
+**Decision:** Extend [PR #40](https://github.com/future3OOO/codex-skills/pull/40)'s
+compact installed triage contract. Every brief requires real before/after
+operations covering the requested outcome, affected paths and preservation.
+Agent/workflow claims require actual agent execution; component tests cannot
+stand in for that outcome. The brief carries the lead's pre-delivery evidence
+condition, including quick overrides. No new runtime gate or test framework.
+
+Selected upstream triage guidance adds concept-based reuse discovery, keeps
+already implemented behavior out of the rejection knowledge base, and scopes
+PR briefs to gaps in the existing contribution. These live at the existing
+brief/rejection owners; upstream's longer template, invocation restrictions and
+automatic `wontfix` classification are not imported.
+
+**Observed:** Fresh native-agent drafting against the installed baseline already
+required lead-run evidence before shipping but allowed a verified commit and
+omitted explicit loaded-target/affected-domain comparisons. The same request
+against the revised skill produced those comparisons and refused delivery
+commit/push on CLI/CI results alone. This is one bounded agent-output comparison,
+not a guarantee that every future agent will comply or proof of #30's repair.
+
+**Status:** Rebased onto main `dfb0159`, preserving the merged PR45 changes
+and decision history. Triage instruction files match the reviewed pre-rebase
+PR40 head `daaa469` byte-for-byte.
+The PR carries the final review, delivery and scoped-installation status.
+
 ## 2026-09-13 — Minimal triage contracts
 
 **Decision:** Every issue and agent brief produced by triage leads with the
