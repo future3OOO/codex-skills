@@ -956,6 +956,11 @@ def _map_update(values: list[str]) -> int:
             items=items, status=status, kind="map",
         )), "behaviorMap": updated, "status": status, "reassessment": reassessment.strip(),
             "sourceBehaviorId": source, "updatedAt": utc_timestamp()}
+        active = document.get("activeBehaviorId")
+        if active is not None and behavior_map.item(updated, str(active))["status"] == "pending":
+            document.update(kind="map", activeBehaviorId=None)
+            for field in ("behaviorId", "behavior", "seam", "command", "surface", "runs"):
+                document.pop(field, None)
         # Flagged reassessment is not a new cycle or a reason to replay a
         # finished downstream chain. Actual new/settled obligations still move
         # the normal lifecycle; source edits retain their existing invalidation.

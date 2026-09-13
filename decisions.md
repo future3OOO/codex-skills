@@ -6,6 +6,25 @@ Issue bodies own implementation scope; this record preserves decisions and their
 status. New decisions supersede earlier ones explicitly; observations and open
 acceptance gaps are not completed delivery.
 
+## 2026-09-13 — Same-item RED command correction
+
+**Decision:** [#35](https://github.com/future3OOO/codex-skills/issues/35) extends
+the existing pending disposition for a RED contract item. Release its current
+proof and matching active-cycle binding in the existing annotation transaction;
+retain contract identity, finding references, immutable observations and other
+items. Corrected proof still uses ordinary RED/GREEN validation. No new command,
+schema, store or workflow reset is needed.
+
+The original issue and agent brief remain the recorded workflow contract. The
+maintainer authorized a focused code intake after Repo Context Forge mistook
+fixture names and document fields in that brief for required source symbols.
+
+**Status:** Implemented on `fix/issue35-red-command-correction` in a separate
+worktree. Public CLI tests cover recovery through completion, proof refusals,
+history, neighboring cycles and stale-run rejection. The issue's delivery PR
+carries final verification, scoped installation and reviewer completion results;
+no Claude backport or other #30 work is included.
+
 ## 2026-09-13 — Native Codex delegation defaults
 
 **Decision:** [#32](https://github.com/future3OOO/codex-skills/issues/32) uses

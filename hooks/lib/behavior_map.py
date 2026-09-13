@@ -237,7 +237,8 @@ def validate_items(
         if "redCommand" in raw or "redProof" in raw:
             if not allow_runtime or not isinstance(raw.get("redProof"), dict):
                 raise ValueError(f"behavior {identifier} redCommand and redProof are recorded only by tdd --phase red")
-            item["redCommand"] = _required(raw, "redCommand", identifier)
+            if "redCommand" in raw or (status != "pending" and "baselineProof" not in raw):
+                item["redCommand"] = _required(raw, "redCommand", identifier)
             item["redProof"] = raw["redProof"]
         # The producer records its baseline proof here and prose never may, so
         # an already-satisfied item carrying it is producer-backed in every
@@ -394,12 +395,17 @@ def apply_dispositions(
             raise ValueError(f"behavior {identifier} disposition {status} cannot carry supersededBy")
         previous = mapped.get("status")
         if revalidate or status == "pending":
+            if status == "pending" and mapped.get("kind") == "contract" and previous == "red":
+                mapped["status"] = "pending"
+                for field in ("redCommand", "proofCommand"):
+                    mapped.pop(field, None)
+                continue
             permitted = {"pending", "green", *DISPOSITION_STATUSES} if revalidate else DISPOSITION_STATUSES
             if revalidate and mapped.get("revalidationRequired") and previous == "red":
                 permitted = permitted | {"red"}
             if mapped.get("kind") != "preservation" or previous not in permitted:
                 raise ValueError(f"behavior {identifier} is a {mapped.get('kind')} item at {previous}; "
-                                 "only settled preservation can be reopened or preservation revalidated")
+                                 "only a RED contract or settled preservation can be reopened, or preservation revalidated")
             if revalidate and mapped.get("revalidationRequired"):
                 continue
             mapped["revalidationRequired"] = True
@@ -419,7 +425,7 @@ def apply_dispositions(
         elif status == "withdrawn":
             if mapped.get("kind") != "contract":
                 raise ValueError(_PRESERVATION_WITHDRAWN_REFUSED.format(identifier))
-            if previous != "pending":
+            if previous != "pending" or "redProof" in mapped:
                 raise ValueError(f"behavior {identifier} is {previous}; only a never-attacked "
                                  "pending contract item can be withdrawn")
             if any(ref.get("type") != "finding"
