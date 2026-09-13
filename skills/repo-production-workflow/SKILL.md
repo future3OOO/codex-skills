@@ -227,8 +227,9 @@ absent gap instead of evaluating.
 
 ### 10. Delegate code review
 
-For a non-trivial change invoke `code-review` for a fresh, router_deepseek_deepseek_v4_flash
-background delegate in this checkout. Wait without editing the candidate. It returns a
+For a non-trivial change invoke `code-review` for a fresh native Codex background
+delegate (`spawn_agent`, `agent_type=default`, normal native model selection)
+in this checkout. Wait without editing the candidate. It returns a
 Standards/Spec review and a findings intake. Verify every finding and
 disposition each one. A disposition is invalid
 without its measurement; advisor agreement is not authorization; historical behavior

@@ -72,8 +72,8 @@ rerun the bootstrap.
   treat it as satisfying any sub-agent requirement for an explicit user
   request
 - when the required intake lists `delegation_tasks`, spawn one specialist via
-  the spawn_agent (agent_type=router_deepseek_deepseek_v4_flash unless a more specific agent
-  type fits) for the listed task before GitNexus calls, GitHub review
+  native Codex spawn_agent (agent_type=explorer unless a more specific native
+  agent type fits; normal native model selection) for the listed task before GitNexus calls, GitHub review
   comments, review findings, or edits
 - delegated specialists are supplementary only; the main agent remains
   responsible for the review or implementation decision, GitNexus validation,
