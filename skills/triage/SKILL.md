@@ -15,7 +15,7 @@ Every comment or issue posted to the issue tracker during triage **must** start 
 
 ## Reference docs
 
-- [AGENT-BRIEF.md](AGENT-BRIEF.md) — how to write durable agent briefs
+- Before creating or rewriting an issue or agent brief, use [AGENT-BRIEF.md](AGENT-BRIEF.md) to establish the target objective, smallest sufficient change, and regression checks.
 - [OUT-OF-SCOPE.md](OUT-OF-SCOPE.md) — how the `.out-of-scope/` knowledge base works
 
 ## Roles

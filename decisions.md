@@ -6,6 +6,16 @@ Issue bodies own implementation scope; this record preserves decisions and their
 status. New decisions supersede earlier ones explicitly; observations and open
 acceptance gaps are not completed delivery.
 
+## 2026-09-13 — Minimal triage contracts
+
+**Decision:** Every issue and agent brief produced by triage leads with the
+observable target objective and a code-grounded smallest sufficient change.
+Verification covers that objective and affected existing behavior. Replace the
+long brief template and repeated examples with one compact contract.
+
+**Status:** Documentation change on `docs/triage-minimum-change`; global
+installation is not part of this editing pass. The delivery PR owns review status.
+
 ## 2026-09-14 — Revert issue 30 pending third-party review
 
 **Decision:** At the maintainer's explicit request, revert
