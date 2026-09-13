@@ -7,8 +7,6 @@ status. New decisions supersede earlier ones explicitly; observations and open
 acceptance gaps are not completed delivery.
 
 ## 2026-09-14 — Require preflight advice
-
-**Decision:** Require advisor advice before the initial production preflight. Supersedes the
 optional scope/design exception that allowed the [#29](https://github.com/future3OOO/codex-skills/issues/29)
 continuation to omit advice. The workflow and advisor instructions own this rule.
 
@@ -136,6 +134,33 @@ receipt reuse remains a preservation requirement of
 neither merge nor installation is authorized. This repair has not changed the
 installed estate; another agent owns its triage changes. This does not supersede
 the rollback/review decision above.
+
+## 2026-09-14 — Triage requires whole-objective N/N+1 proof
+
+**Decision:** Extend [PR #40](https://github.com/future3OOO/codex-skills/pull/40)'s
+compact installed triage contract. Every brief requires real before/after
+operations covering the requested outcome, affected paths and preservation.
+Agent/workflow claims require actual agent execution; component tests cannot
+stand in for that outcome. The brief carries the lead's pre-delivery evidence
+condition, including quick overrides. No new runtime gate or test framework.
+
+Selected guidance from the upstream `claude-skills` triage skill adds
+concept-based reuse discovery, keeps already implemented behavior out of the
+rejection knowledge base, and scopes PR briefs to gaps in the existing
+contribution. These live at the existing owners — `skills/triage/AGENT-BRIEF.md`
+for the brief contract and `skills/triage/OUT-OF-SCOPE.md` for the rejection
+record; upstream's longer template, invocation restrictions and automatic
+`wontfix` classification are not imported.
+
+**Observed:** Fresh native-agent drafting against the installed baseline already
+required lead-run evidence before shipping but allowed a verified commit and
+omitted explicit loaded-target/affected-domain comparisons. The same request
+against the revised skill produced those comparisons and refused delivery
+commit/push on CLI/CI results alone. This is one bounded agent-output comparison,
+not a guarantee that every future agent will comply or proof of #30's repair.
+
+**Status:** Rebased onto main `b9634fe`, preserving merged work and decision
+history. The PR carries the final review, delivery and scoped-installation status.
 
 ## 2026-09-13 — Same-item RED command correction
 
