@@ -20,6 +20,44 @@ installation or backup restoration is part of this recovery. The replacement
 PR must remain unmerged pending the maintainer's review and authorization.
 Original implementation and evidence remain available from PR #43.
 
+### PR #45 receipt-attribution repair
+
+**Decision:** Correct independently reproduced SPEC-1/2/3 at the existing
+unittest parser: require effective verbose mode, accept native docstring reports,
+and apply execution/marker checks to the selected terminal failure after report
+consistency checks. Accumulated counterfeit and description failures supersede
+the intervening row-search guards: consume native progress without skipping
+unrecognized text and reuse the existing terminal reader's framed block starts
+for attribution and failure counts. Leave genuinely ambiguous merged output to
+the existing direct execution route. The executor and receipt format stay unchanged.
+Direct whole-batch RED keeps its existing requirements.
+Measured flushed-output and class-fixture cases extend the same coverage.
+Later independent CLI reproductions establish two manifest-sampling exceptions
+and lost baseline-command recovery after supersession. These supersede the
+initial report's unconfirmed sampling assessment: use the existing refusal path
+and retain the baseline command in its existing producer proof, without retries
+or another store.
+The delivery skill now states explicit maintainer merge authorization separately
+from review completion, addressing the prior unauthorized merge.
+The later workflow correction keeps outcome and verification rules in
+`production-code`, applied independently by `code-review`. It removes the
+production-code instruction to commit/push directly. Code review is a prerequisite
+for the final advisor’s push/open readiness decision; the owner authorizes merge.
+Self-cleanup and later GitHub review cannot replace the code-review step.
+Candidate-loaded lead behavior and return review must validate these reusable
+instructions; demonstrations prompted by the maintainer alone do not establish
+that agents follow them.
+
+**Status:** Consolidated parser verification and return review remain in progress;
+earlier passing examples did not establish the attribution correction. The real
+N/N+1 direct-route comparison retains pending ambiguous claims and then completes
+their RED/GREEN with two additional executions on each runtime. Unambiguous native
+receipt reuse remains a preservation requirement of
+[PR #45](https://github.com/future3OOO/codex-skills/pull/45). Issue #30 remains open;
+neither merge nor installation is authorized. This repair has not changed the
+installed estate; another agent owns its triage changes. This does not supersede
+the rollback/review decision above.
+
 ## 2026-09-13 — Same-item RED command correction
 
 **Decision:** [#35](https://github.com/future3OOO/codex-skills/issues/35) extends

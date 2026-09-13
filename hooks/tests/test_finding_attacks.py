@@ -2406,6 +2406,8 @@ class WorkflowRecovery(AttackHarness):
         self.add_claim(slug, wid, "BM_BASELINE")
         self.ok("tdd", "--slug", slug, "--phase", "red", "--behavior-id", "BM_BASELINE",
                 "--", sys.executable, "-m", "unittest", "test_attack_probe")
+        before = self.status()
+        original = self.ok("evidence", "--evidence-id", before["tddEvidence"])["document"]
         for target in ("MISSING", "BM_BASELINE"):
             document = self.json_file("bad-replacement.json", {"reassessment": "Reject invalid chain", "dispositions": [
                 {"id": "BM_BASELINE", "status": "superseded", "supersededBy": target, "evidence": "Obsolete baseline"},
@@ -2421,6 +2423,45 @@ class WorkflowRecovery(AttackHarness):
         retired = next(item for item in evidence["behaviorMap"] if item["id"] == "BM_BASELINE")
         self.assertEqual(retired["supersededFrom"], "already-satisfied")
         self.assertIn("baselineProof", retired)
+        self.assertEqual(self.status()["mapSelections"].get("BM_BASELINE"),
+                         before["mapSelections"]["BM_BASELINE"], "BASELINE_SELECTION_LOST")
+        self.assertEqual(self.ok("evidence", "--evidence-id", before["tddEvidence"])["document"], original)
+
+    def test_manifest_sampling_errors_refuse_without_ledger_changes(self) -> None:
+        slug = "sampling-error"
+        wid = self.begin(slug)
+        intake = self.behavioral_intake(slug, wid, "app.value must be two")
+        self.assertEqual(self.record_preflight(slug, wid, self.owned_map(intake, marker="VALUE_WRONG")).returncode, 0)
+        self.drive_attack_green(slug, "VALUE_WRONG")
+        executed = self.cli("verify", "--slug", slug, "--", sys.executable, "-m", "unittest", "test_attack_probe")
+        self.assertEqual(executed.returncode, 0, executed.stderr)
+        run = json.loads(executed.stdout.splitlines()[-1])
+        self.ok("verify", "--slug", slug, "--kind", "quality-gate", "--base-ref", "HEAD")
+        item = self.owned_map("unused", marker="MISSING")[0]
+        item.update(id="BM_ADDITIONAL", sourceRefs=[])
+        addition = self.json_file("add.json", {"reassessment": "Additional obligation", "items": [item]})
+        disposition = self.json_file("fixed.json", {"intakeEvidenceId": intake, "dispositions": [{
+            "finding_id": "SPEC-1", "status": "fixed", "reason": "The owning assertion now passes",
+            "evidenceRefs": [run["evidenceId"] + ":" + str(run["runIndex"])],
+        }]})
+        commands = [
+            ["tdd-map", "--slug", slug, "--workflow-id", wid, "--input", str(addition)],
+            ["advisor-disposition", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
+             "--findings", "addressed", "--input", str(disposition)],
+        ]
+        history = self.ok("history")
+        index = self.repo / ".git" / "index"
+        saved = index.read_bytes()
+        for command in commands:
+            index.write_bytes(b"not a git index")
+            try:
+                refused = self.cli(*command)
+            finally:
+                index.write_bytes(saved)
+            self.assertEqual(self.ok("history"), history)
+            self.assertEqual(refused.returncode, 2, "SAMPLING_ERROR_ESCAPED" + refused.stderr)
+            self.assertIn("index file smaller than expected", refused.stderr)
+            self.assertNotIn("Traceback", refused.stderr)
 
     def test_typed_only_and_explicit_failed_command_replacement(self) -> None:
         marker = "VERIFICATION_CORRECTION_REFUSED"
@@ -2551,6 +2592,127 @@ class WorkflowRecovery(AttackHarness):
         self.assertEqual(receipt["nextAction"], "repo-context-forge", "STALE_RECOVERY_ADVERTISED_SUCCESS")
         self.assertEqual(receipt["verification"], "pending", "STALE_RECOVERY_ADVERTISED_SUCCESS")
         self.assertIn("quality-gate-tree-stale", receipt["bindingError"], "STALE_RECOVERY_ADVERTISED_SUCCESS")
+
+    def test_printed_unexecuted_test_never_supplies_receipt_proof(self) -> None:
+        cases = [(flags, flush, expected, "body") for flags, flush, expected in (([], False, 2), (["-q"], False, 2),
+                                       (["-v", "-q"], False, 2), (["--verbose", "--quiet"], False, 2),
+                                       (["-vq"], False, 2), (["-vfq"], False, 2),
+                                       (["-ktest_value"], False, 2), (["-qv"], False, 2),
+                                       (["-v"], False, 2), (["-v"], True, 2), (["-v"], True, 1))]
+        cases += [(["-v"], True, expected, shape) for expected in (1, 2) for shape in ("result", "header")]
+        cases += [(["-v"], True, 1, fixture) for fixture in
+                  ("setUp", "tearDown", "asyncSetUp", "asyncTearDown", "setUpClass", "tearDownClass",
+                   "setUpModule", "tearDownModule")]
+        cases.append((["-v"], False, 1, "summary"))
+        cases += [(["-v"], True, 1, shape) for shape in
+                  ("prefix-space", "prefix-text", "prefix-bare", "prefix-interrupted")]
+        for flags, flush, expected, shape in cases:
+            h = WorkflowRecovery(); h.setUp()
+            try:
+                slug = "printed-proof"
+                wid = h.open_pytest_pass(slug, "VALUE_UNCORRECTED")
+                h.add_claim(slug, wid, "BM_OTHER")
+                name = "test_other" if shape.startswith("prefix-") or shape in {"body", "result", "header", "summary"} else shape
+                test_id = f"test_actual.T.{name}"
+                printed = ("\n" if flush else "") + f"{name} ({test_id}) ... ok"
+                if shape in {"header", "prefix-bare"}:
+                    printed = printed.removesuffix(" ... ok")
+                elif shape == "summary":
+                    printed += "\nRan 2 tests in 0.000s\nOK"
+                if shape.startswith("prefix-"):
+                    printed += "\n " if shape == "prefix-space" else "\nprefix "
+                end = "" if shape.startswith("prefix-") else "\n"
+                printing = f"print({printed!r},end={end!r},flush={flush!r})\n"
+                in_body = shape in {"body", "summary"}
+                (h.repo / "test_actual.py").write_text(
+                    "import app,unittest\n"
+                    + ("" if in_body else printing)
+                    + ("print('='*70,flush=True)\n" if shape == "result" else "")
+                    + "class T(unittest.TestCase):\n"
+                    " def test_value(self):\n"
+                    + ("  " + printing if in_body else "")
+                    + ("  print('note',end='',flush=True)\n" if shape == "prefix-interrupted" else "")
+                    + f"  self.assertEqual(app.value,{expected},'VALUE_UNCORRECTED')\n"
+                    " def test_other(self): self.fail('SECOND_OPERATION_WRONG')\n")
+                run = h.mapped_tdd(slug, "red", [sys.executable, "-m", "unittest", *flags,
+                                                "test_actual.T.test_value"])
+                self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+                receipt = json.loads(run.stdout.splitlines()[-1])
+                reuse = h.cli("tdd", "--slug", slug, "--phase", "red", "--behavior-id", "BM_OTHER",
+                              "--from-evidence", receipt["summaryId"] + ":" + str(receipt["runIndex"]),
+                              "--test-id", test_id)
+                self.assertEqual(reuse.returncode, 2, "PRINTED_TEST_BECAME_PROOF" + reuse.stdout)
+                state = h.status()
+                items = h.ok("evidence", "--evidence-id", state["tddEvidence"])["document"]["behaviorMap"]
+                self.assertEqual(next(i["status"] for i in items if i["id"] == "BM_OTHER"),
+                                 "pending", "PRINTED_TEST_BECAME_PROOF")
+            finally:
+                h.tearDown()
+
+    def test_docstring_reports_reuse_red_and_green_without_execution(self) -> None:
+        slug = "docstring-proof"
+        wid = self.open_pytest_pass(slug, "SECOND_OPERATION_WRONG")
+        self.add_claim(slug, wid, "BM_SECOND")
+        counter = self.tmp / "executions"
+        self.env["PROBE_COUNTER"] = str(counter)
+        (self.repo / "test_actual.py").write_text(
+            "import app,os,unittest\nfrom pathlib import Path\n"
+            "p=Path(os.environ['PROBE_COUNTER']); p.write_text(p.read_text()+'x' if p.exists() else 'x')\n"
+            "class T(unittest.TestCase):\n def test_value(self):\n"
+            "  \"\"\"ERROR: Value (after correction)\n\n  Preserve this useful description.\"\"\"\n"
+            "  self.assertEqual(app.value,2,'SECOND_OPERATION_WRONG')\n"
+            " def test_other(self):\n  \"\"\"FAIL: Value (2.0)\"\"\"\n"
+            "  self.assertEqual(app.value,2,'SECOND_OPERATION_WRONG')\n")
+        for phase, value in (("red", 1), ("green", 2)):
+            (self.repo / "app.py").write_text(f"value = {value}\n")
+            run = self.mapped_tdd(slug, phase, [sys.executable, "-m", "unittest", "-v", "test_actual"])
+            self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+            receipt = json.loads(run.stdout.splitlines()[-1])
+            before = counter.read_text()
+            reused = self.cli("tdd", "--slug", slug, "--phase", phase, "--behavior-id", "BM_SECOND",
+                              "--from-evidence", receipt["summaryId"] + ":" + str(receipt["runIndex"]),
+                              "--test-id", "test_actual.T.test_value")
+            self.assertEqual(reused.returncode, 0, "DOCSTRING_REUSE_REFUSED" + reused.stderr)
+            self.assertEqual(counter.read_text(), before)
+        self.assertEqual(counter.read_text(), "xx")
+
+    def test_selected_assertion_reuses_beside_unrelated_setup_failure(self) -> None:
+        slug = "selected-proof"
+        wid = self.open_pytest_pass(slug, "SECOND_OPERATION_WRONG")
+        self.add_claim(slug, wid, "BM_SECOND")
+        self.add_claim(slug, wid, "BM_SETUP")
+        self.add_claim(slug, wid, "BM_CLASS")
+        counter = self.tmp / "executions"
+        self.env["PROBE_COUNTER"] = str(counter)
+        (self.repo / "test_actual.py").write_text(
+            "import app,os,unittest\nfrom pathlib import Path\n"
+            "p=Path(os.environ['PROBE_COUNTER']); p.write_text(p.read_text()+'x' if p.exists() else 'x')\n"
+            "class T(unittest.TestCase):\n"
+            " def test_value(self): self.assertEqual(app.value,2,'SECOND_OPERATION_WRONG')\n"
+            "class Broken(unittest.TestCase):\n"
+            " def setUp(self): raise RuntimeError('SECOND_OPERATION_WRONG')\n"
+            " def test_other(self): self.fail('SECOND_OPERATION_WRONG')\n"
+            "class BrokenClass(unittest.TestCase):\n"
+            " @classmethod\n def setUpClass(cls): raise RuntimeError('SECOND_OPERATION_WRONG')\n"
+            " def test_class(self): self.fail('SECOND_OPERATION_WRONG')\n")
+        for phase, value in (("red", 1), ("green", 2)):
+            (self.repo / "app.py").write_text(f"value = {value}\n")
+            run = self.mapped_tdd(slug, "red", [sys.executable, "-m", "unittest", "-v", "test_actual"])
+            self.assertEqual(run.returncode, 2, run.stdout + run.stderr)
+            self.assertIn("before the test body", run.stderr)
+            receipt = json.loads(run.stdout.splitlines()[-1])
+            reference = receipt["summaryId"] + ":" + str(receipt["runIndex"])
+            before = counter.read_text()
+            reused = self.cli("tdd", "--slug", slug, "--phase", phase, "--behavior-id", "BM_SECOND",
+                              "--from-evidence", reference, "--test-id", "test_actual.T.test_value")
+            self.assertEqual(reused.returncode, 0, "SIBLING_SETUP_BLOCKED_PROOF" + reused.stderr)
+            for item, test in (("BM_SETUP", "Broken.test_other"), ("BM_CLASS", "BrokenClass.setUpClass")):
+                refused = self.cli("tdd", "--slug", slug, "--phase", "red", "--behavior-id", item,
+                                   "--from-evidence", reference, "--test-id", "test_actual." + test)
+                self.assertEqual(refused.returncode, 2, refused.stdout)
+            self.assertEqual(counter.read_text(), before)
+        self.assertEqual(counter.read_text(), "xx")
+        self.assertIn("BM_SETUP", self.cli("complete").stderr)
 
     def test_one_execution_attributes_each_item_and_never_a_skip(self) -> None:
         marker = "ATTRIBUTED_PROOF_REFUSED"

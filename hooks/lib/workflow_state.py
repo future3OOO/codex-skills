@@ -564,7 +564,11 @@ def commit_tdd(
         verification = transaction.evidence(state.get("verificationLatestEvidence"))
         if isinstance(verification, dict) and verification.get("runs"):
             manifest_id = state.get("qualityGateManifestId") or verification["runs"][-1].get("treeManifestId")
-            if not manifest_id or transaction.manifest(manifest_id) != tree_manifest(identity):
+            try:
+                current_tree = tree_manifest(identity)
+            except RuntimeError as exc:
+                raise WorkflowError(f"verification binding could not be sampled: {exc}") from exc
+            if not manifest_id or transaction.manifest(manifest_id) != current_tree:
                 _reset_downstream(state)
         if review_changed:
             _reset_reviews(state)
@@ -806,7 +810,11 @@ def execution_receipt(identity: RepoIdentity, state: JsonObject, reference: str,
         raise WorkflowError("execution reference requires an owned evidence-id:run-index")
     run = document["runs"][int(index)]
     manifest = _stored_manifest(identity, run, "treeManifestId", transaction)
-    if (manifest is None or manifest != tree_manifest(identity) or run.get("bindingError")
+    try:
+        current_tree = tree_manifest(identity)
+    except RuntimeError as exc:
+        raise WorkflowError(f"execution reference could not be sampled: {exc}") from exc
+    if (manifest is None or manifest != current_tree or run.get("bindingError")
             or run.get("timedOut") or ("outputTail" not in run
                 and not (run.get("sourceReference") and run.get("testId")))):
         raise WorkflowError("execution reference is stale, unbound, incomplete or not an executed receipt")

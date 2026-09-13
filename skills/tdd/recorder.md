@@ -48,9 +48,15 @@ Already fixed/report-only owners can obtain reassessment evidence without first 
 
 Reuse an actual execution with `tdd --phase red|green --behavior-id <id>
 --from-evidence <evidenceId>:<runIndex> --test-id <module.Class.test>`. The existing
-runner's complete verbose unittest report must unambiguously attribute that
-item's marker/outcome to its test; skipped, setup-failed, stale, foreign or
-truncated evidence supplies no proof. Other runners keep the single-item route.
+producer command must enable effective verbose unittest output (a later quiet
+flag overrides verbose). Its complete report, including native docstring lines,
+must unambiguously attribute that item's marker/outcome to its test. A selected
+setup-failed or skipped test supplies no proof; an unrelated fixture failure does
+not invalidate a reached selected assertion. Stale, foreign or truncated evidence
+supplies no proof. The retained output merges runner and application text; an
+interrupted result or a description indistinguishable from test progress cannot
+identify an executed test reliably. Report that reuse gap and use the existing
+direct single-item route. Other runners keep that route.
 One executed report may support several items through separate references with
 zero additional child executions. Keep claims and assertions authored; no sibling
 pass proves another item. Use the returned `runIndex`; do not copy output back.

@@ -297,7 +297,7 @@ class MappedTddRepairTests(unittest.TestCase):
             2,
             "FORGED_UNITTEST_BLOCK_ADMITTED\n" + result.stdout + result.stderr,
         )
-        self.assertIn("report blocks", result.stderr)
+        self.assertEqual(self.mapped_item("BM_UNIT_FORGED")["status"], "pending")
 
     def test_unittest_expected_failures_preserve_genuine_red(self) -> None:
         marker = "EXPECTED_FAILURE_PRESERVATION"

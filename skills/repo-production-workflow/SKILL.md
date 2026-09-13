@@ -57,13 +57,12 @@ branch-cumulative throughout implementation.
 
 ### 2. Task contract and diagnosis
 
-State the changed behavior, authority, packet targets, skipped targets,
-no-change surfaces and review-budget fit. Apply [code-review's repair judgments](../code-review/SKILL.md#4-falsify-the-promises)
-as the lead before corrective expectations, edits and closure. Use `diagnose`
-for bugs/regressions/performance and the existing TDD/verification producers for
-actual N/N+1, affected-domain and preservation operations. Reuse the driver and
-applicable receipts; add only missing assertions. Do not leave correctness discovery
-entirely to return review.
+Derive verification from the user's intended production behavior using
+[Production Code's outcome verification](../production-code/SKILL.md#minimum-implementation-decision).
+The lead owns that investigation through implementation and repair; the independent
+reviewer challenges it. Use the packet to trace affected paths, state skipped and
+preserved surfaces, and establish review-budget fit. Apply `diagnose` to bugs,
+regressions and performance failures before choosing a correction.
 
 ### 3. Packet-scoped GitNexus
 
@@ -203,9 +202,10 @@ Terminal TDD proof opens verification directly; no implementation acknowledgemen
 
 ### 9. Verification
 
-After coherent repair and cleanup, reuse applicable executed RED/GREEN and
-preservation evidence. Run the still-uncovered affected checks, required
-lint/typecheck/build and typed gate, with graph reanalysis when required. CI's `contracts` job owns the full runner here and step 13 waits for it; other repositories run it locally unless their CI supplies that coverage. Verification records only through the unified CLI runner, which executes the command it records and derives status
+After coherent repair and cleanup, assess the intended outcome against the
+verification derived in step 2. Carry applicable observations forward; run missing
+or invalidated operations and required lint/typecheck/build and typed gate, with
+graph reanalysis when required. CI's `contracts` job owns the full runner here and step 13 waits for it; other repositories run it locally unless their CI supplies that coverage. Verification records only through the unified CLI runner, which executes the command it records and derives status
 per-command-latest — any distinct command whose latest run failed keeps
 verification pending until that same command reruns green, overlapping runs
 record in completion order without rerunning, and a run whose reviewable tree
@@ -232,7 +232,9 @@ unchanged source alone does not establish coverage for a broadened contract.
 
 ### 10. Delegate code review
 
-For initial non-trivial review invoke `code-review` for a fresh native Codex background
+Before final advisor review, obtain independent `code-review` of the original
+objective and current candidate. Lead self-cleanup and later GitHub review do not replace this
+step. For initial non-trivial review use a fresh native Codex background
 delegate (`spawn_agent`, `agent_type=default`, normal native model selection)
 in this checkout. Wait without editing the candidate. It returns a
 Standards/Spec review and a findings intake. Verify every finding and
@@ -295,17 +297,17 @@ that would leave a fixed finding without its owning attack refuses.
 
 ### 11. Final Codex Advisor review
 
-Before routine consult, reconcile known material sibling obligations and affected preservation through the existing correction blockers. In the existing final-consult question, quote only the selected resource receipt: evidence ID, command, scale, fixed limit, observed value, and the operation's actual target identity. Reuse returned evidence; read one document only if needed, not verification history. Known missing material acceptance belongs in a Spec finding.
+Before the consult, reconcile known material obligations using step 2's verification
+and the delegate's findings. Reference the applicable observations and unresolved
+acceptance gaps; load only missing evidence, not the verification history.
 
-The final Codex Advisor review judges the candidate, the delegate review, and
-the lead's dispositions. Invoke it against the live diff with wrapper
-phase `final-review`, the same slug, and the base ref. It re-derives the attack
-surface before checking declared evidence: what the recorded original request
-and public Interface promise, which operations can falsify each promise, which
-of those are unattacked through the real Seam, and whether any disposition
-narrowed its finding's domain — only then implementation detail and declared-map
-closure. A promised load-bearing surface with no attack forbids `commit-ready`
-even when every declared item is green. Address and disposition material findings. The
+The final Codex Advisor judges readiness to push/open the PR from the candidate,
+the delegate review, and the lead's dispositions. Invoke it against the live diff
+with wrapper phase `final-review` and the same slug; the checkpoint supplies the
+diff anchors. It applies
+[Production Code's outcome verification](../production-code/SKILL.md#minimum-implementation-decision)
+to the original objective before judging implementation and dispositions. Missing material
+acceptance evidence forbids `commit-ready`. Address and disposition material findings. The
 wrapper leaves final findings pending; the lead explicitly records `none` or
 `addressed` only after validating the output. After a production edit, satisfy current-candidate verification, continue review
 on the affected delta, and repeat final review. Reuse applicable evidence.
@@ -321,8 +323,12 @@ python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" \
 
 ### 13. Delivery and reviewer completion
 
-Commit, push, and open/update the PR when intended for integration. Run the PR Reviewer Completion Gate from `AGENTS.md` on the current head and
-merge the reviewed PR before global installation. For changed paths mapped into
+After the final advisor finds the candidate ready, commit, push, and open/update
+the PR when intended for integration. Run the PR
+Reviewer Completion Gate from `AGENTS.md` on the current head. Merge only with
+explicit maintainer authorization; passing checks and reviews do not authorize
+merge. When global installation is authorized, merge the reviewed PR first.
+For changed paths mapped into
 the live estate, follow the README backup/merge approach from updated main,
 install only owned paths, and record source commit/path set and installed checks. A reviewer-fix
 round begins a new production pass; pushing is not completion.
@@ -352,4 +358,7 @@ and evidence remain available. Resume the same pass. Summary reports the earned 
 
 ## Final response
 
-Report Behavior Map dispositions, behavior-specific RED/GREEN proof, map updates, verification, review findings and dispositions, both advisor outcomes, workflow completion, reviewer-loop state, and any explicitly unverified surface. Never describe state summaries as proof, authorization, or tamper-resistant evidence.
+Lead with the production behavior achieved, the real observations supporting it,
+and any unmet acceptance. Explain recurring work removed when efficiency is part
+of the objective. Reference applicable evidence and report independent review and
+delivery status; state records support this account, never substitute for it.

@@ -46,27 +46,17 @@ and Refused Bequest.
 
 ## 4. Falsify the promises
 
-Establish each expectation from the request, public Interface, callers, tests or
-applicable standard before calling observed behavior a defect. Historical behavior
-is evidence, not authority over an intentional change. Challenge the declared map:
-which materially wrong behavior would its actual assertions fail to detect?
-
-For repairs, judge original-attack success, affected-domain coverage and preservation
-separately. Require equivalent operations and contract-grounded assertions on actual
-N and N+1, with loaded target identities and relevant inputs/environment verified.
-Cover the input forms, lifecycle paths and interactions the mechanism affects;
-inspect returned values, persisted effects and cleanup. Reuse existing drivers and
-applicable receipts. Another executor or handoff alone never requires a rerun;
-changed bindings, unreliable evidence and missing coverage do. A passing example
-beside a failing affected path remains incomplete. Missing historical proof stays
-explicit; never undo/reapply a repair to manufacture RED.
+Apply [Production Code's outcome and verification rules](../production-code/SKILL.md#minimum-implementation-decision)
+independently to the original objective and current candidate. Challenge whether
+that objective is fulfilled, including materially wrong behavior the declared
+assertions would miss. Return findings for the final advisor through the existing
+workflow; this review does not decide delivery.
 
 On return review retain original finding identities/domains. Classify measured
 follow-ups as incomplete original repair, inherited missed defect, introduced
 regression or unresolved/unrelated concern. Attempt to falsify both expectation
 and diagnosis before reporting. Retain useful passing and failing operations with
-expected/observed results. Suite totals, helper-only assertions, substituted
-collaborators and a green map cannot replace these judgments.
+expected/observed results under those same verification rules.
 
 ## 5. Review both axes
 
