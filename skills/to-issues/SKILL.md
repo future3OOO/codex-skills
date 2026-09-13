@@ -7,11 +7,7 @@ description: Break a plan, spec, or PRD into independently-grabbable issues on t
 
 Break a plan into independently-grabbable issues using vertical slices (tracer bullets).
 
-Issue tracker and triage label vocabulary come from the target checkout. Read
-`docs/agents/issue-tracker.md`, `docs/agents/triage-labels.md`, and
-`docs/agents/domain.md` when present. If they are missing, inspect the current
-repo's Git remote and labels directly; do not assume this skills repo is the
-project tracker.
+The issue tracker and triage label vocabulary should have been provided to you — run `/setup-matt-pocock-skills` if not.
 
 ## Process
 
@@ -21,26 +17,18 @@ Work from whatever is already in the conversation context. If the user passes an
 
 ### 2. Explore the codebase (optional)
 
-If you have not already explored the codebase, do so to understand the current
-state of the code. Issue titles and descriptions should use the project's
-domain glossary vocabulary, and respect ADRs in the area you're touching.
-
-Look for opportunities to prefactor first: make the change easy, then make the
-easy change. If a small preparatory slice would deepen a Module, create a real
-Seam, or remove shallow pass-through work from the implementation path, put it
-before behavior slices.
+If you have not already explored the codebase, do so to understand the current state of the code. Issue titles and descriptions should use the project's domain glossary vocabulary, and respect ADRs in the area you're touching.
 
 ### 3. Draft vertical slices
 
 Break the plan into **tracer bullet** issues. Each issue is a thin vertical slice that cuts through ALL integration layers end-to-end, NOT a horizontal slice of one layer.
 
-Slices may be 'HITL' or 'AFK' (local markers, not upstream behavior). HITL slices require human interaction, such as an architectural decision or a design review. AFK slices can be implemented and merged without human interaction. Prefer AFK over HITL where possible.
+Slices may be 'HITL' or 'AFK'. HITL slices require human interaction, such as an architectural decision or a design review. AFK slices can be implemented and merged without human interaction. Prefer AFK over HITL where possible.
 
 <vertical-slice-rules>
 - Each slice delivers a narrow but COMPLETE path through every layer (schema, API, UI, tests)
 - A completed slice is demoable or verifiable on its own
-- Any prefactoring should be done first
-- Prefer a few meaningful tracer bullets over many thin administrative slices
+- Prefer many thin slices over few thick ones
 </vertical-slice-rules>
 
 ### 4. Quiz the user
@@ -63,7 +51,7 @@ Iterate until the user approves the breakdown.
 
 ### 5. Publish the issues to the issue tracker
 
-For each approved slice, publish a new issue to the issue tracker. Use the issue body template below. Apply `ready-for-agent` when a slice is fully specified and that label exists in the target repo; otherwise apply `needs-triage` so the issue enters the normal triage flow.
+For each approved slice, publish a new issue to the issue tracker. Use the issue body template below. Apply the `needs-triage` triage label so each issue enters the normal triage flow.
 
 Publish issues in dependency order (blockers first) so you can reference real issue identifiers in the "Blocked by" field.
 
@@ -74,12 +62,7 @@ A reference to the parent issue on the issue tracker (if the source was an exist
 
 ## What to build
 
-A concise description of this vertical slice. Describe the end-to-end behavior,
-not layer-by-layer implementation.
-
-Avoid specific file paths or code snippets — they go stale fast. Exception: if
-a prototype produced a snippet that encodes a decision more precisely than
-prose can, inline only the decision-rich part and say it came from a prototype.
+A concise description of this vertical slice. Describe the end-to-end behavior, not layer-by-layer implementation.
 
 ## Acceptance criteria
 

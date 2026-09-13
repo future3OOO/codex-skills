@@ -1,59 +1,72 @@
 ---
 name: execution-planning
-description: Create and maintain tracked execution plans and remediation maps for non-trivial workspace-app work. Use when Codex needs to plan multi-step implementation, PR ordering, branch strategy, recovery or consolidation, or review remediation in this repo. Save the governing artifact on disk under docs/plans or docs/reviews, define source of truth, scope, PR ownership and order, verification gates, and a checklist that implementation agents keep updated as work progresses.
+description: Create durable advisor-bound governing designs outside the Git checkout. Use when planning multi-PR implementation, branch strategy, recovery, or review remediation; the design owns scope, PR ownership and order, verification gates, preservation obligations, and load-bearing assumptions, and deepens append-only in the same unpushed workflow.
 ---
 
 # Execution Planning
 
 Use this skill for non-trivial planning in this repo.
 
-This skill does not replace [AGENTS.md](../../../AGENTS.md).
-It turns planning and remediation into tracked execution artifacts on disk.
+This skill does not replace the repo's `AGENTS.md` (or `CLAUDE.md`).
+It turns planning and remediation into durable governing designs under workflow state, outside the Git candidate.
 
 ## Mandatory Workflow Position
 
 For new non-trivial planning work, use this order:
 
-1. `$delivery-governance` when that global skill is available in the current Codex environment
-2. `$execution-planning`
+1. [repo-production-workflow](../repo-production-workflow/SKILL.md) to begin the workflow state
+2. [repo-context-forge](../repo-context-forge/SKILL.md) to establish repository context
+3. delivery-governance skill, when planning needs delivery-shape decisions
+4. execution-planning (this skill)
 
-If `$delivery-governance` is unavailable, start at `$execution-planning` and keep the governing artifact self-contained inside this repo.
+If delivery-governance does not apply, proceed from Repo Context Forge directly to execution-planning. After the design is written and validated, continue the same workflow pass through the remaining repo-production-workflow steps for the first implementation.
 
-If the work is already governed by [$repo-large-implementation](../repo-large-implementation/SKILL.md), use this skill as the tracked-artifact step inside that workflow.
+If the work is already governed by [repo-large-implementation](../repo-large-implementation/SKILL.md), use this skill as the durable-design step inside that workflow.
 
-For later implementation against an existing tracked artifact, do **not** tell the execution agent to invoke `$execution-planning` again. The execution workflow should be:
+For later implementation against an existing design, do **not** invoke execution-planning again. Execute each pass through [repo-production-workflow](../repo-production-workflow/SKILL.md), follow the governing design, and use the durable progress authorities defined below.
 
-1. [$repo-large-implementation](../repo-large-implementation/SKILL.md) when the execution pass is still non-trivial under that skill's scope; do not re-plan when the tracked artifact already exists
-2. [$production-preflight](../production-preflight/SKILL.md)
-3. [$production-code](../production-code/SKILL.md)
-4. `$github:gh-address-comments` when review-thread state matters and the GitHub plugin provides it
-
-If the execution pass is narrow enough that [$repo-large-implementation](../repo-large-implementation/SKILL.md) no longer applies, say so explicitly in the handoff instead of silently omitting it.
-
-If that plugin skill is unavailable, inspect review-thread state with the repo's GitHub tooling or `gh api graphql` directly instead of blocking on a machine-local path.
-
-The plan owns execution. The execution agent follows it and updates its checklist; it does not replace it.
+The design owns architecture, scope, and delivery order. Mutable execution status never goes into the advisor-bound design.
 
 ## Core Rule
 
-Do not leave the governing plan only in chat.
+Do not leave the governing design only in chat, and do not add it to the Git candidate by default.
 
-Before tracked implementation starts, save the governing Markdown artifact on disk and make it the execution source for later agents.
+Before implementation starts, save one Markdown design under the selected workflow state root. Use the canonical repository identity owner to place it at:
 
-## Artifact Selection
+`<workflow-state-root>/<repo-key>/designs/<workflowId>.md`
 
-Create exactly one primary artifact unless the work clearly needs both:
+The workflow's public status Interface supplies `<workflowId>`; callers do not derive or normalize another workflow identity. Resolve the design path through the installed workflow CLI — never compute the state root by hand:
 
-- `docs/plans/<slug>-YYYY-MM-DD.md`
-  - use for implementation plans, recovery programs, consolidation plans, PR programs, and delivery maps
-- `docs/reviews/<slug>-YYYY-MM-DD.md`
-  - use for remediation maps, review triage, audit notes, thread classification, and review-driven follow-up programs
+```bash
+python3 <estate>/skills/repo-production-workflow/scripts/workflow.py paths --repo "$PWD" --workflow-id <workflowId>
+```
 
-If both are needed:
+`paths` prints the resolved `designPath`, `repoStateDir`, and `stateRoot`. The prose description of that resolution (`CODEX_WORKFLOW_STATE_ROOT`, then `${CODEX_HOME:-$HOME/.codex}/state`) is context only; the state root is `state/` under the Codex home, never `~/.codex` itself.
 
-- create both
-- cross-link them
-- make it explicit which one governs implementation order
+## Governing Design Format
+
+Create exactly one advisor-bound governing design for the planned work. Before the first advisor consult, the design must contain:
+
+- the complete decided design and delivery map
+- every material preservation obligation and load-bearing assumption, stated in prose the Behavior Map can turn into concrete attacks
+- every unverified falsifiable prediction explicitly marked unresolved
+
+The wrapper records the design's declaration (its SHA-256, or a stated absence) as workflow evidence at each consult.
+
+## Semantic Ownership
+
+- The lead owns semantic completeness: every material preservation obligation and load-bearing assumption must be expressed.
+- The Preflight Advisor derives the load-bearing promises from the original request and challenges omissions and missing attacks.
+- Production preflight turns those obligations into Behavior Map falsifiers; findings own their attacks through finding `sourceRefs`.
+- The Final Advisor re-derives the attack surface from the original request and public Interface before checking declared evidence.
+
+The design is a falsifiable hypothesis, not an immutable authority. Deepen it append-only in the same unpushed workflow and carry the current file to each consult; a changed declaration records as new workflow evidence and never by itself requires another `begin`, another preflight consult, or a Repo Context Forge rerun.
+
+Create a tracked document under `docs/plans/` or `docs/reviews/` only when the user explicitly requests that document as a deliverable. A tracked deliverable is not the advisor-bound design and is never updated merely to reflect execution progress.
+
+## Existing Tracked Artifacts
+
+An existing tracked governing artifact that already controls in-flight work remains authoritative under its existing contract. Do not migrate, rename, or rewrite it merely to adopt the workflow-state design policy.
 
 ## Required Planning Workflow
 
@@ -68,9 +81,9 @@ Name:
 
 Use repo authorities explicitly when relevant:
 
-- [AGENTS.md](../../../AGENTS.md)
-- [docs/specs/appmanagedtask-implementation-spec.md](../../../docs/specs/appmanagedtask-implementation-spec.md)
-- [DECISIONS.md](../../../DECISIONS.md)
+- the repo's `AGENTS.md` or `CLAUDE.md`
+- the repo's canonical implementation spec under `docs/specs/`
+- the repo's `DECISIONS.md`
 - any pinned donor, production, or review evidence document
 
 ### 2. Define scope before structure
@@ -93,10 +106,10 @@ Name:
 - branch names
 - owner slice per PR
 - commit structure per PR
-- estimated net-line budget per PR (review-budget measurement rules live in the `$delivery-governance` skill)
+- estimated net-line budget per PR (review-budget measurement rules live in the delivery-governance skill)
 - scope breaker or regroup rule
 
-If the plan cannot answer “which PR owns this behavior,” it is not ready.
+If the design cannot answer “which PR owns this behavior,” it is not ready.
 
 If any PR slice is likely to run past the review-budget target (~500 net lines), record the reason and shrink it where practical. If any slice is likely to exceed the split threshold (1,000 net lines), split it before implementation or record explicit user approval for the exception.
 
@@ -123,7 +136,7 @@ List:
 
 ### 4a. Map the affected surface for all code work
 
-Every code-governing artifact must define the real affected surface, not just the local diff.
+Every code-governing design must define the real affected surface, not just the local diff.
 
 At minimum, name:
 
@@ -138,46 +151,22 @@ Keep this proportional for ordinary work.
 
 ### 4b. Map the affected transaction system when the work is transaction-sensitive
 
-When the work changes claim tokens, leases, compare-and-set/version fields, transition helpers, or replay/finalize/recovery semantics, the artifact must define:
+Load and apply the [canonical transaction doctrine](../production-code/references/transaction-doctrine.md).
+The design must expose its authoritative records, mutation boundary,
+interleavings, shared projection, replay, recovery, stale-secondary, and no-op paths, helper semantic splits,
+contract, invariants, and proof plan; planning does not redefine them.
 
-- authoritative records mutated together
-- the real mutation boundary or transaction entrypoint
-- adjacent interleavings that can cross that boundary after prepare but before finalize
-- projection, replay, recovery, and no-op paths that share helpers or state fields
-- helper semantic splits where one helper would otherwise serve two different contracts
-- `authoritativeContract` that states the rule or rules that must remain true
-- `invariants` that prove the contract across adjacent no-change paths
-- `proofPlan` that names the combined workflow proof and the focused invariant checks
+### 5. Initialize durable execution state
 
-Do not let the artifact stop at the cited review comment, the local edited file, or a surface map without an explicit contract and proof model.
+Begin repository-scoped workflow history for each PR slice or remediation pass. Use it for pass lifecycle evidence, blockers, and findings rather than rewriting the design. Use GitHub PR state for committed, pushed, review, and merge status when the work has a PR. Tasks may mirror immediate work inside one session but are not a handoff record.
 
-### 5. Add tracked execution state
-
-Every plan or remediation map must include an execution checklist that later agents can update.
-
-Use these status markers:
-
-- `[ ]` not started
-- `[~]` in progress
-- `[x]` complete
-- `[!]` blocked
-- `[-]` intentionally dropped or superseded
-
-Completed headings may be visually struck through if useful, but the checkbox state is the canonical status marker.
-
-If the work targets an existing PR branch, the checklist must also treat publish state as part of completion:
-
-- code changes are committed
-- commits are pushed to the PR branch
-- only then are review threads resolved as fixed
-
-Local uncommitted or unpushed changes do not count as completed remediation.
+For an existing PR branch, completion still requires committed and pushed changes before review threads are resolved as fixed. Local uncommitted or unpushed changes do not count as completed remediation.
 
 ### 6. Critique the draft before finalizing
 
-Challenge the plan before calling it ready.
+Challenge the design before calling it ready.
 
-Before finalizing the artifact, run a critique pass that checks at minimum:
+If sub-agents are appropriate for the task, spawn one critique agent (spawn_agent, agent_type=router_deepseek_deepseek_v4_flash) after the first full draft and before finalizing the design. The critique pass should check at minimum:
 
 - authority model and conflict handling
 - scope in / scope out clarity
@@ -186,11 +175,13 @@ Before finalizing the artifact, run a critique pass that checks at minimum:
 - verification completeness
 - whether the implementation prompt incorrectly tells the execution agent to re-plan
 
-Integrate real critique findings into the artifact before finalizing it.
+Integrate real critique findings into the design before validating and binding it.
+
+If delegation is not available or not authorized, do the same critique pass yourself before final validation.
 
 ## Minimum Readiness Rule
 
-Do not call the plan ready unless it names all of the following:
+Do not call the design ready unless it names all of the following:
 
 - objective
 - source of truth
@@ -203,6 +194,7 @@ Do not call the plan ready unless it names all of the following:
 - net-line budget per PR, with no unapproved slice above the split threshold
 - verification commands
 - regroup or consolidation rule
+- every material preservation obligation and load-bearing assumption in prose
 
 For all code work, also require:
 
@@ -214,65 +206,54 @@ For transaction-sensitive work, also require:
 - authoritative records
 - mutation boundary
 - adjacent interleavings
-- projection/recovery/no-op paths
+- projection paths
+- replay paths
+- recovery paths
+- stale-secondary paths
+- no-op paths
+- helper semantic splits
 - authoritativeContract
 - invariants
 - proofPlan
 - combined workflow proof
 
-## Update Discipline
+## Deepening And Progress Discipline
 
-When a tracked plan or remediation map governs execution, later implementation agents must keep it honest.
+Authority is divided deliberately:
 
-Update the artifact when execution state materially changes, including:
+- The governing design owns architecture, scope, PR ownership, and execution order, and deepens append-only in the same unpushed workflow; the ledger keeps every prior declaration.
+- Repository-scoped workflow history owns each pass's durable lifecycle, evidence, blockers, and findings.
+- GitHub PR state owns committed, pushed, review, and merge status for delivered slices.
+- The Task list is a session-local convenience, never durable authority.
 
-- checklist status
-- current active branch or PR
-- changed execution order
-- superseded items
-- decision links
-- remaining blockers
-
-Do not leave a stale governing document behind while implementation moves elsewhere.
+Correcting the design or its attack set never by itself requires a replacement design, a new workflow pass, another preflight consult, or a Repo Context Forge rerun; only changed production behavior invalidates the proof it can affect. Mutable execution status still never goes into the design.
 
 ## Required Handoff Prompt
 
-After saving the governing artifact, always provide a compact copy-paste prompt for the execution agent.
+After validating the governing design, provide a compact copy-paste prompt for the execution agent.
 
 Rules for that prompt:
 
-- point to the governing artifact on disk
-- say explicitly: do not create a new plan
-- say explicitly: do not re-plan this pass
-- when the work targets an existing PR, say explicitly: fetch the branch and realign the exact checkout to the live PR head before the first tracked edit
-- when the work targets an existing PR, say explicitly: commit changes, push the branch, and do not resolve review threads as fixed until the relevant commit is pushed
-- say explicitly: keep the PR near the review-budget target unless the user approved a concrete exception
-- say explicitly: re-walk the real affected surface before edits and again before calling the pass complete
-- when the artifact marks transaction-sensitive work, say explicitly: re-walk the full affected transaction system before edits and again before calling the pass complete
-- name only the execution skills:
-  - [$repo-large-implementation](../repo-large-implementation/SKILL.md) when the pass is non-trivial; use it as the governing wrapper, not as a prompt to re-plan
-  - [$production-preflight](../production-preflight/SKILL.md)
-  - [$production-code](../production-code/SKILL.md)
-  - `$github:gh-address-comments` when review state matters and the GitHub plugin provides it
-- keep the prompt compact; the governing artifact already holds the detailed plan
-- instruct the execution agent to keep the artifact checklist current
-- do not duplicate the entire plan into the prompt unless the artifact is unavailable
+- point to the design path under workflow state
+- say explicitly: do not create a new plan or re-plan this pass
+- say explicitly: deepen the design append-only when new obligations surface; use workflow history and GitHub PR state for durable progress, with Tasks only as session-local convenience
+- when the work targets an existing PR, require realignment of the exact checkout to the live PR head before edits, then commit and push before resolving review threads as fixed
+- keep the PR near the review-budget target unless the user approved a concrete exception
+- require [Production Code’s Minimum Implementation Decision](../production-code/SKILL.md#minimum-implementation-decision) before edits and completion, including its [transaction doctrine](../production-code/references/transaction-doctrine.md) when applicable
+- direct each execution pass through [repo-production-workflow](../repo-production-workflow/SKILL.md), which records this prompt verbatim as that pass's intent
+- keep the prompt compact; do not duplicate the design
 
 ## Output Shape
 
-Use one of the reference templates as the starting point:
+Use [references/plan-template.md](references/plan-template.md) as the governing-design starting point. Use [references/remediation-map-template.md](references/remediation-map-template.md) only for a tracked remediation document the user explicitly requested as a deliverable.
 
-- [references/plan-template.md](references/plan-template.md)
-- [references/remediation-map-template.md](references/remediation-map-template.md)
-
-Keep the final artifact lean. Do not fill sections with boilerplate.
+Keep the final design lean. Do not fill sections with boilerplate.
 
 ## Repo-Specific Rules
 
 - Use WSL-native paths and tools as authoritative for this repo.
-- Prefer tracked Markdown artifacts in the repo over chat-only plans.
-- Use `docs/plans/` and `docs/reviews/` consistently; do not invent new top-level planning folders.
-- Keep the artifact title and filename aligned.
+- Keep advisor-bound designs under workflow state, outside Git.
+- Do not create or update `docs/plans/` or `docs/reviews/` for ceremony; use them only for an explicitly requested deliverable.
 - If recovery or donor reconciliation is involved, record pinned SHAs and evidence paths explicitly.
 - If review comments drive the work, classify them as real, stale, no-change, or deferred instead of blindly converting comments into tasks.
 
@@ -280,9 +261,8 @@ Keep the final artifact lean. Do not fill sections with boilerplate.
 
 This skill is complete only when:
 
-- the governing artifact exists on disk
-- the artifact has the required structure
-- PR ownership and order are explicit
-- verification is explicit
-- the execution checklist exists
-- later agents could use the document without reconstructing the plan from chat
+- the governing design exists under the repository's workflow state directory
+- the design has the required structure
+- PR ownership, order, and verification are explicit
+- workflow history and, when applicable, GitHub PR state carry the durable execution facts
+- later agents could execute without reconstructing the design from chat or session-local Tasks

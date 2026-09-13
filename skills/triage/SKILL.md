@@ -7,10 +7,6 @@ description: Triage issues through a state machine driven by triage roles. Use w
 
 Move issues on the project issue tracker through a small state machine of triage roles.
 
-If the target repo treats external pull requests as request surfaces, triage
-covers them too: a PR is an issue with attached code. Resolve a bare `#42` to
-an issue or PR using the target checkout's tracker rules.
-
 Every comment or issue posted to the issue tracker during triage **must** start with this disclaimer:
 
 ```
@@ -39,19 +35,16 @@ Five **state** roles:
 
 Every triaged issue should carry exactly one category role and one state role. If state roles conflict, flag it and ask the maintainer before doing anything else.
 
-These are canonical role names — the actual label strings used in the issue
-tracker may differ. Read `docs/agents/triage-labels.md` when present and
-verify labels in the target checkout. Do not assume labels from this skills
-repo apply to another repo.
+These are canonical role names — the actual label strings used in the issue tracker may differ. The mapping should have been provided to you - run `/setup-matt-pocock-skills` if not.
 
 State transitions: an unlabeled issue normally goes to `needs-triage` first; from there it moves to `needs-info`, `ready-for-agent`, `ready-for-human`, or `wontfix`. `needs-info` returns to `needs-triage` once the reporter replies. The maintainer can override at any time — flag transitions that look unusual and ask before proceeding.
 
 ## Invocation
 
-The maintainer invokes `triage` or `$triage` and describes what they want in natural language. Interpret the request and act. Examples:
+The maintainer invokes `/triage` and describes what they want in natural language. Interpret the request and act. Examples:
 
 - "Show me anything that needs my attention"
-- "Let's look at #42" (issue or PR)
+- "Let's look at #42"
 - "Move #42 to ready-for-agent"
 - "What's ready for agents to pick up?"
 
@@ -63,48 +56,24 @@ Query the issue tracker and present three buckets, oldest first:
 2. **`needs-triage`** — evaluation in progress.
 3. **`needs-info` with reporter activity since the last triage notes** — needs re-evaluation.
 
-When PRs are in scope, include external PRs in these buckets and tag each line
-`[PR]` or `[issue]`. Discovery surfaces only external PRs if the target
-checkout's tracker rules (`docs/agents/issue-tracker.md`) define that
-distinction; an explicitly named PR is always triaged.
+Show counts and a one-line summary per issue. Let the maintainer pick.
 
-Show counts and a one-line summary per item. Let the maintainer pick.
+## Triage a specific issue
 
-## Triage a specific issue or PR
+1. **Gather context.** Read the full issue (body, comments, labels, reporter, dates). Parse any prior triage notes so you don't re-ask resolved questions. Explore the codebase using the project's domain glossary, respecting ADRs in the area. Read `.out-of-scope/*.md` and surface any prior rejection that resembles this issue.
 
-1. **Gather context.** Read the full issue or PR (body, comments, labels,
-   author, dates; for a PR, the diff too). Parse any prior triage notes so you
-   don't re-ask resolved questions. Explore the codebase using the project's
-   domain glossary, respecting ADRs in the area. Run two checks against the
-   codebase: (a) **redundancy** — search for an existing implementation of the
-   requested behavior by domain concept, not only the request wording; (b)
-   **prior rejection** — read `.out-of-scope/*.md` and surface any that
-   resembles this request.
+2. **Recommend.** Tell the maintainer your category and state recommendation with reasoning, plus a brief codebase summary relevant to the issue. Wait for direction.
 
-2. **Recommend.** Tell the maintainer your category and state recommendation
-   with reasoning, plus a brief codebase summary relevant to the request,
-   including whether it is already implemented. Wait for direction.
+3. **Reproduce (bugs only).** Before any grilling, attempt reproduction: read the reporter's steps, trace the relevant code, run tests or commands. Report what happened — successful repro with code path, failed repro, or insufficient detail (a strong `needs-info` signal). A confirmed repro makes a much stronger agent brief.
 
-3. **Verify the claim.** Before any grilling, check that the claim holds up.
-   For a bug, reproduce it from the reporter's steps. For a PR, confirm the
-   diff does what it claims by checking it out and running the relevant command
-   or test. Report confirmed, failed, or insufficient detail. Confirmed
-   verification makes a much stronger agent brief.
-
-4. **Grill (if needed).** If the request needs fleshing out, use `$grilling`
-   and `$domain-modeling` together: ask one question at a time, sharpen domain
-   terms, and update `CONTEXT.md` or ADRs inline as decisions land.
+4. **Grill (if needed).** If the issue needs fleshing out, run a `/grill-with-docs` session.
 
 5. **Apply the outcome:**
    - `ready-for-agent` — post an agent brief comment ([AGENT-BRIEF.md](AGENT-BRIEF.md)).
    - `ready-for-human` — same structure as an agent brief, but note why it can't be delegated (judgment calls, external access, design decisions, manual testing).
    - `needs-info` — post triage notes (template below).
-   - `wontfix` — close, with the comment depending on why:
-     - **Already implemented** — point to where it lives; do not write to
-       `.out-of-scope/`.
-     - **Rejected bug** — polite explanation, then close.
-     - **Rejected enhancement** — write to `.out-of-scope/`, link to it from a
-       comment, then close ([OUT-OF-SCOPE.md](OUT-OF-SCOPE.md)).
+   - `wontfix` (bug) — polite explanation, then close.
+   - `wontfix` (enhancement) — write to `.out-of-scope/`, link to it from a comment, then close ([OUT-OF-SCOPE.md](OUT-OF-SCOPE.md)).
    - `needs-triage` — apply the role. Optional comment if there's partial progress.
 
 ## Quick state override

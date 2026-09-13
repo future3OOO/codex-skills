@@ -11,6 +11,10 @@ __pycache__/
 
 # Local editor and agent state.
 .codex/
-.claude/
+.codex/
 .gitnexus/
 .soulforge/
+
+# Delivery artifacts, not estate content.
+*.zip
+.claude/

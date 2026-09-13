@@ -1,0 +1,81 @@
+name: gate suite
+
+# The offline suite must be enforced by the repository, not asserted in a
+# document. This first delivery slice owns the shared state primitives and
+# quality gate; later slices extend the contract suite as their interfaces land.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so the gate can diff against the PR base; a shallow
+          # checkout leaves the changed set empty and the gate self-passes.
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Configure git identity for harness repositories
+        run: |
+          git config --global user.email "ci@example.invalid"
+          git config --global user.name "Gate Suite"
+      - name: Scope the pull-request delta
+        id: scope
+        # A documentation-only delta takes the cheap lane below. The decision is
+        # a tested script, not workflow logic; missing comparison history reads
+        # as the production lane, never as an empty documentation-only delta.
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          lane="$(python3 .github/scripts/pr_scope.py . "${base:-${{ github.event.before }}}")"
+          echo "$lane" | tee -a "$GITHUB_OUTPUT"
+      - name: Documentation contract checks
+        if: steps.scope.outputs.lane == 'docs'
+        # The tests that assert on repository Markdown still run on the cheap
+        # lane; lint, the full runner, and the production delta gate do not.
+        env:
+          CODEX_HOME: ${{ runner.temp }}
+        run: |
+          pip install pytest==8.4.1
+          python3 -m unittest hooks.tests.test_review_summary.ReviewSummaryTests.test_shape_table_is_generated_and_referenced_by_author_skills
+          python3 -m pytest -q skills/production-code/scripts/test_code_quality_gate.py -k calibration_is_reproducible
+      # Anything but a decided documentation lane runs the production lane, so a
+      # missing or unexpected scope output can never skip the suite.
+      - name: Python lint (ruff E9,F)
+        if: steps.scope.outputs.lane != 'docs'
+        # Pinned and isolated so the linted rule set never moves without an
+        # operator choice.
+        run: |
+          pip install ruff==0.16.2
+          ruff check --isolated --select E9,F .
+      - name: Integrated package contracts
+        if: steps.scope.outputs.lane != 'docs'
+        # pytest is pinned here, next to its consumer: the suite exercises the
+        # public pytest RED-reach contract through the real runner and would
+        # silently skip those checks if the dependency vanished.
+        run: |
+          pip install pytest==8.4.1
+          bash hooks/tests/run.sh
+      - name: Package gate against the pull-request delta
+        if: steps.scope.outputs.lane != 'docs'
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          if [ -n "$base" ]; then
+            python3 skills/production-code/scripts/code_quality_gate.py check --repo . --base-ref "$base"
+          else
+            python3 skills/production-code/scripts/code_quality_gate.py check --repo . --base-ref "${{ github.event.before }}"
+          fi
+      - name: Export checkout for takeover verification
+        if: always()
+        run: tar --exclude=.git -czf /tmp/pr138-source.tgz .
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pr138-source-${{ github.sha }}
+          path: /tmp/pr138-source.tgz
+          retention-days: 1

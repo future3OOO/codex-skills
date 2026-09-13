@@ -1,6 +1,6 @@
 ---
 name: delivery-governance
-description: Plan and govern large implementations, commit structure, PR structure, stack depth, and consolidation to avoid rebase debt and preserve production code quality. Use whenever Codex is asked to create a plan for a non-trivial implementation, start a new project, scope a major feature or refactor, decide how to split work into commits or branches, or recover from drifted stacked branches and inherited CI failures.
+description: Govern large-implementation delivery — commit structure, PR structure, the review budget, stack depth, and consolidation to avoid rebase debt. Use when scoping a major feature or refactor, splitting work into commits/branches/PRs, or recovering drifted stacked branches.
 ---
 
 # Delivery Governance
@@ -34,7 +34,7 @@ Do not output a large implementation plan that lacks commit and PR structure.
    - Keep tests, docs, runbooks, and proof tools with the runtime change unless they are genuinely independent.
    - Do not split proof or docs into separate branches just to make the stack look neat.
 5. Apply production-quality workflow on every active branch.
-   - If the repo provides local workflow skills such as `$production-preflight` or `$production-code`, use them.
+   - Use the production-preflight and production-code skills when the work warrants them.
    - Otherwise produce an explicit preflight before tracked edits and run the repo's lint, typecheck, unit, integration, build, and quality gates before calling work green.
 
 ## Default Branch Plan For New Projects

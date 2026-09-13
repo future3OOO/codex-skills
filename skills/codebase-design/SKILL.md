@@ -15,7 +15,7 @@ Use these terms exactly. Do not substitute "component," "service," "API," or "bo
 
 **Interface** - everything a caller must know to use the module correctly: the type signature, but also invariants, ordering constraints, error modes, required configuration, and performance characteristics. Avoid: API, signature.
 
-**Implementation** - what is inside a module, its body of code. Distinct from **Adapter**: a thing can be a small adapter with a large implementation, such as a Postgres repository, or a large adapter with a small implementation, such as an in-memory fake. Reach for "adapter" when the seam is the topic; "implementation" otherwise.
+**Implementation** - what is inside a module, its body of code. Distinct from **Adapter**: a thing can be a small adapter with a large implementation, such as a Postgres repository, or a large adapter with a small implementation, such as a protocol-compatible local runtime. Reach for "adapter" when the seam is the topic; "implementation" otherwise.
 
 **Depth** - leverage at the interface: the amount of behavior a caller or test can exercise per unit of interface they have to learn. A module is **deep** when a large amount of behavior sits behind a small interface, and **shallow** when the interface is nearly as complex as the implementation.
 
@@ -60,10 +60,10 @@ When designing an interface, ask:
 
 ## Principles
 
-- **Depth is a property of the interface, not the implementation.** A deep module can be internally composed of small, mockable, swappable parts; they just are not part of the interface. A module can have **internal seams** private to its implementation and **external seams** at its interface.
+- **Depth is a property of the interface, not the implementation.** A deep module can be internally composed of small, swappable parts exercised through the real Interface; those parts are not additional public Interfaces. Test convenience never creates a second production Seam.
 - **The deletion test.** Imagine deleting the module. If complexity vanishes, it was a pass-through. If complexity reappears across callers, it was earning its keep.
 - **The interface is the test surface.** Callers and tests cross the same seam. If you want to test past the interface, the module is probably the wrong shape.
-- **One adapter means a hypothetical seam. Two adapters means a real one.** Do not introduce a seam unless something actually varies across it.
+- **One runtime adapter means a hypothetical seam. Two genuine runtime variants can justify a real one.** A test-only substitute does not count.
 
 ## Designing for Testability
 

@@ -1,14 +1,22 @@
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
-from .checks import duplicate_added_blocks, evaluate_bloat, scan_quality_escapes
-from .context import GateContext
-from .git_scope import collect_scope, read_file
-from .inputs import parse_gitnexus_context_json, parse_repo_context_packet
-from .path_policy import is_binary_path, is_production_source_path, is_temp_artifact
-from .reuse import detect_reuse_issues
+from .checks import changed_file_failures, evaluate_growth, scan_quality_escapes
+from .git_scope import collect_scope
+from .findings import Finding, RULE_GROWTH, RULE_INCOMPLETE, incompleteness_findings, promoted_errors
+from .redundancy import find_exact_duplicates, find_owner_competition
+from .snapshot import EvaluationSnapshot
+
+GATE_VERSION = "2026-08-10.1"
+
+# The immediate checks, each stated once: name, the error reported on a find,
+# sample cap, and which gap stream makes an otherwise-clean result unknown.
+_SIMPLE_CHECKS = (
+    ("no-merge-conflict-markers", "merge conflict markers found in {n} file(s)", 10, "capture"),
+    ("no-temp-artifacts", "temporary artifact paths detected in {n} changed file(s)", 10, "capture"),
+    ("no-quality-escapes", "quality escapes detected in {n} changed location(s)", 10, "attribution"),
+)
 
 
 def check(
@@ -17,49 +25,169 @@ def check(
     fail_on_warnings: bool,
     repo_context_packet: str = "",
     gitnexus_context_json: str = "",
+    staged_only: bool = False,
 ) -> dict[str, object]:
-    scope = collect_scope(repo, base_ref)
+    scope = collect_scope(repo, base_ref, staged_only=staged_only)
     errors: list[str] = list(scope["errors"])
+    snapshot = EvaluationSnapshot.from_scope(repo, scope, repo_context_packet, gitnexus_context_json)
+
+    conflicts, temps = changed_file_failures(snapshot)
+    found = {
+        "no-merge-conflict-markers": conflicts,
+        "no-temp-artifacts": temps,
+        "no-quality-escapes": scan_quality_escapes(snapshot),
+    }
+    growth_rule = evaluate_growth(snapshot)
+    duplicate_rules, duplicates = find_exact_duplicates(snapshot)
+    owner_rules, owner_candidates, owner_resolved = find_owner_competition(snapshot, duplicates)
+    duplicate_warnings = {rule.rule_id: _duplicate_warnings(rule) for rule in duplicate_rules}
+    findings: list[Finding] = [growth_rule, *duplicate_rules, *duplicates, *owner_rules, *owner_candidates]
+    findings.extend(incompleteness_findings(findings))
+
+    streams = snapshot.gap_streams()
+    # The escape scan cannot claim it saw the whole change when hunks are
+    # unattributed, capture failed, or a source file's counts were never
+    # measured (Git supplied no hunks to inspect); the path-reading rules
+    # depend on capture only. The exact-duplicate rules carry their own
+    # equivalent scopes, which redundancy.py owns.
+    gaps_for = {
+        "capture": streams["capture"],
+        "attribution": streams["attribution"] + streams["measurement"] + streams["capture"],
+    }
+
+    # One walk builds checks, warnings, and errors from the typed outcomes; the
+    # hard rules derive from the same outcome column. A rule that could not see
+    # its whole scope is unknown, never a pass; a violation it did see stays a
+    # violation; an active warning-only rule keeps its intrinsic pass visible.
+    checks: list[dict[str, object]] = []
     warnings: list[str] = []
-    changed_files: set[str] = set(scope["changed_files"])
-    gitnexus_boosts, gitnexus_warnings = parse_gitnexus_context_json(gitnexus_context_json)
-    warnings.extend(gitnexus_warnings)
-    ctx = GateContext.from_scope(repo, scope)
 
-    conflict_files, temp_files = _changed_file_failures(repo, changed_files)
-    quality_escapes = scan_quality_escapes(ctx)
-    duplicates = duplicate_added_blocks(ctx)
-    bloat_errors, bloat_warnings, bloat_details = evaluate_bloat(ctx)
-    reuse_findings, gitnexus_queries = detect_reuse_issues(
-        ctx,
-        parse_repo_context_packet(repo_context_packet),
-        gitnexus_boosts,
+    for name, template, cap, stream in _SIMPLE_CHECKS:
+        items = found[name]
+        gaps = gaps_for[stream]
+        if items:
+            errors.append(template.format(n=len(items)))
+            checks.append({"name": name, "sample": items[:cap], "passed": False, "status": "finding", **({"gaps": list(gaps)} if gaps else {})})
+        elif gaps:
+            checks.append({"name": name, "sample": [], "passed": None, "status": "incomplete", "gaps": list(gaps)})
+        else:
+            checks.append({"name": name, "sample": [], "passed": True, "status": "passed"})
+
+    def projected(rule: Finding) -> dict[str, object]:
+        out: dict[str, object] = {"passed": rule.passed, "status": rule.status}
+        if rule.status == "incomplete":
+            out["gaps"] = sorted(rule.gaps)
+        return out
+
+    net = growth_rule.evidence["humanAuthored"]["net"]
+    # The measured growth is reported whether or not the claim is also
+    # incomplete: incompleteness qualifies the number, it does not delete it.
+    growth_warning = f"{RULE_GROWTH}: human-authored net growth {net} exceeds the 500-line review budget" if net > 500 else ""
+    # One projection per exact rule ID, named by that ID: promotion, calibration,
+    # and consumers all address these rules exactly, never by family or prefix.
+    checks.extend(
+        {"name": rule.rule_id, "warnings": duplicate_warnings[rule.rule_id], **projected(rule)}
+        for rule in duplicate_rules
     )
-    reuse_errors = [finding for finding in reuse_findings if finding.severity == "error"]
-    reuse_warnings = [finding for finding in reuse_findings if finding.severity == "warning"]
+    owner_warnings = {rule.rule_id: _owner_warnings(rule.rule_id, owner_candidates) for rule in owner_rules}
+    checks.extend(
+        {"name": rule.rule_id, "warnings": owner_warnings[rule.rule_id], **projected(rule)}
+        for rule in owner_rules
+    )
+    checks.append({"name": "cumulative-growth", "warnings": [growth_warning] if growth_warning else [], **projected(growth_rule)})
 
-    errors.extend(_error_messages(conflict_files, temp_files, quality_escapes, duplicates, reuse_errors, bloat_errors))
-    warnings.extend(bloat_warnings)
-    warnings.extend(_reuse_warning_messages(reuse_warnings))
-    if fail_on_warnings and warnings:
-        errors.extend(f"warning promoted to failure: {warning}" for warning in warnings)
+    for finding in findings:
+        if finding.rule_id == RULE_INCOMPLETE:
+            warnings.extend(f"{RULE_INCOMPLETE} for {finding.evidence['affectedRuleId']}: {gap}" for gap in finding.evidence["gaps"])
+    if growth_warning:
+        warnings.append(growth_warning)
+    for rule in duplicate_rules:
+        warnings.extend(duplicate_warnings[rule.rule_id])
+    for rule in owner_rules:
+        warnings.extend(owner_warnings[rule.rule_id])
+    errors.extend(promoted_errors(findings, fail_on_warnings))
 
-    checks = _checks(conflict_files, temp_files, quality_escapes, duplicates, reuse_errors, reuse_warnings, bloat_errors, bloat_warnings)
+    outcome = {item["name"]: item["passed"] for item in checks}
+
+    def hard_rule(*names: str) -> dict[str, object]:
+        # Same lattice as a single check: a contributing failure is established
+        # and an unknown sibling cannot undo it, while an unknown contributing
+        # check still leaves an otherwise-passing rule unestablished.
+        results = [outcome[name] for name in names]
+        if any(result is False for result in results):
+            return {"status": "evaluated", "passed": False, "checks": list(names)}
+        if any(result is None for result in results):
+            return {"status": "incomplete", "passed": None, "checks": list(names)}
+        return {"status": "evaluated", "passed": True, "checks": list(names)}
+
+    evaluation_gaps: set[str] = set().union(*streams.values())
+    for finding in findings:
+        evaluation_gaps.update(finding.gaps)
     return {
+        "schemaVersion": 2,
+        "gateVersion": GATE_VERSION,
         "ok": not errors,
         "repo": str(repo),
         "changedScope": scope["changed_scope"],
-        "changedFilesCount": len(changed_files),
-        "changedFilesSample": sorted(changed_files)[:30],
-        "sourceFilesCount": len([path for path in changed_files if is_production_source_path(path)]),
+        "candidateSource": scope["candidate_source"],
+        "candidateTree": scope["candidate_tree"] or None,
+        "changedFilesCount": len(snapshot.entries),
+        "changedFilesSample": sorted(entry.path for entry in snapshot.entries)[:30],
+        "sourceFilesCount": len(snapshot.role_entries("production")),
+        "evaluation": {
+            "base": {"commit": snapshot.base_identity, "source": snapshot.base_source},
+            "candidate": {"identity": snapshot.candidate_identity, "tree": snapshot.candidate_tree or None},
+            "growth": growth_rule.evidence,
+            "complete": not evaluation_gaps,
+            "gaps": sorted(evaluation_gaps),
+        },
+        "findings": [finding.as_dict(snapshot.base_identity, snapshot.candidate_identity) for finding in findings],
+        "resolvedFindings": [finding.as_dict(snapshot.base_identity, snapshot.candidate_identity) for finding in owner_resolved],
         "checks": checks,
-        "hardRules": _hard_rules(checks),
+        "hardRules": {
+            # Hard rules derive from blocker policy only; every surviving
+            # duplication/owner rule is warning-only.
+            "noDuplication": {
+                "status": "not_evaluated",
+                "passed": None,
+                "checks": [],
+                "reason": "no blocker-eligible duplication rule remains; QG54 duplicate and owner rules are warning-only",
+            },
+            "cleanup": hard_rule("no-quality-escapes", "no-temp-artifacts"),
+            "noMergeConflictMarkers": hard_rule("no-merge-conflict-markers"),
+            "consequenceCoverage": {
+                "status": "not_evaluated",
+                "passed": None,
+                "checks": [],
+                "reason": "requires caller-supplied contract and GitNexus impact evidence",
+            },
+        },
         "errors": errors,
         "warnings": warnings,
-        "bloat": bloat_details,
-        "reuseFindings": [finding.as_dict() for finding in reuse_findings],
-        "gitnexusQueries": gitnexus_queries,
+        # Retained until its documented consumer migrates; its scorer is gone.
+        "gitnexusQueries": [],
     }
+
+
+def _duplicate_warnings(rule: Finding) -> list[str]:
+    """One warning per duplicate group, naming every region that carries it."""
+    return [
+        f"{rule.rule_id}: identical implementation in "
+        + ", ".join(f"{region['path']}:{region['displayLine']}" for region in group["regions"])
+        for group in rule.evidence["duplicates"]
+    ]
+
+
+def _owner_warnings(rule_id: str, candidates: list[Finding]) -> list[str]:
+    """One warning per active owner candidate, naming its evidence class and
+    every competing owner region."""
+    return [
+        " ".join(filter(None, (f"{rule_id}: {candidate.state}", candidate.region["evidenceClass"],
+                               candidate.evidence.get("responsibilityKey"),
+                               "competing owners", ", ".join(candidate.evidence["owners"]))))
+        for candidate in candidates
+        if candidate.rule_id == rule_id and candidate.state in ("candidate", "confirmed-unresolved")
+    ]
 
 
 def format_text(result: dict[str, object]) -> str:
@@ -73,7 +201,8 @@ def format_text(result: dict[str, object]) -> str:
         "Checks:",
     ]
     for check_item in result["checks"]:
-        lines.append(f"- {check_item['name']}: {'pass' if check_item['passed'] else 'fail'}")
+        outcome = "incomplete" if check_item["passed"] is None else "pass" if check_item["passed"] else "fail"
+        lines.append(f"- {check_item['name']}: {outcome}")
     lines.append("")
     lines.append("Errors:")
     lines.extend([f"- {error}" for error in result["errors"]] if result["errors"] else ["- none"])
@@ -81,83 +210,3 @@ def format_text(result: dict[str, object]) -> str:
     lines.append("Warnings:")
     lines.extend([f"- {warning}" for warning in result["warnings"]] if result["warnings"] else ["- none"])
     return "\n".join(lines)
-
-
-def _changed_file_failures(repo: Path, changed_files: set[str]) -> tuple[list[str], list[str]]:
-    conflict_files: list[str] = []
-    temp_files: list[str] = []
-    for rel_path in sorted(changed_files):
-        if is_temp_artifact(rel_path) and (repo / rel_path).exists():
-            temp_files.append(rel_path)
-        if not is_binary_path(rel_path) and (text := read_file(repo / rel_path)) and re.search(r"^<{7} |^={7}$|^>{7} ", text, re.M):
-            conflict_files.append(rel_path)
-    return conflict_files, temp_files
-
-
-def _error_messages(
-    conflict_files: list[str],
-    temp_files: list[str],
-    quality_escapes: list[str],
-    duplicates: list[dict[str, object]],
-    reuse_errors: list[object],
-    bloat_errors: list[str],
-) -> list[str]:
-    errors = []
-    if conflict_files:
-        errors.append(f"merge conflict markers found in {len(conflict_files)} file(s)")
-    if temp_files:
-        errors.append(f"temporary artifact paths detected in {len(temp_files)} changed file(s)")
-    if quality_escapes:
-        errors.append(f"quality escapes detected in {len(quality_escapes)} changed location(s)")
-    if duplicates:
-        errors.append(f"duplicate added code blocks detected: {len(duplicates)}")
-    if reuse_errors:
-        errors.append(f"new code appears to reimplement existing helpers or loops: {len(reuse_errors)}")
-    return errors + bloat_errors
-
-
-def _reuse_warning_messages(reuse_warnings: list[object]) -> list[str]:
-    return [
-        f"possible reusable existing path for {finding.new_file}:{finding.new_line} -> "
-        f"{finding.existing_file}:{finding.existing_line} {finding.existing_symbol} ({finding.reason})"
-        for finding in reuse_warnings
-    ]
-
-
-def _checks(
-    conflict_files: list[str],
-    temp_files: list[str],
-    quality_escapes: list[str],
-    duplicates: list[dict[str, object]],
-    reuse_errors: list[object],
-    reuse_warnings: list[object],
-    bloat_errors: list[str],
-    bloat_warnings: list[str],
-) -> list[dict[str, object]]:
-    return [
-        {"name": "no-merge-conflict-markers", "passed": not conflict_files, "sample": conflict_files[:10]},
-        {"name": "no-temp-artifacts", "passed": not temp_files, "sample": temp_files[:10]},
-        {"name": "no-quality-escapes", "passed": not quality_escapes, "sample": quality_escapes[:10]},
-        {"name": "no-duplicate-added-blocks", "passed": not duplicates, "sample": duplicates[:4]},
-        {
-            "name": "reuse-existing-helpers",
-            "passed": not reuse_errors,
-            "warnings": [finding.as_dict() for finding in reuse_warnings[:10]],
-            "sample": [finding.as_dict() for finding in reuse_errors[:10]],
-        },
-        {"name": "risk-calibrated-bloat", "passed": not bloat_errors, "warnings": bloat_warnings[:10]},
-    ]
-
-
-def _hard_rules(checks: list[dict[str, object]]) -> dict[str, dict[str, object]]:
-    passed = {item["name"]: bool(item["passed"]) for item in checks}
-    no_duplication = passed["no-duplicate-added-blocks"] and passed["reuse-existing-helpers"]
-    shortest_path = passed["risk-calibrated-bloat"] and no_duplication
-    return {
-        "codeVolume": {"passed": passed["risk-calibrated-bloat"], "checks": ["risk-calibrated-bloat"]},
-        "noDuplication": {"passed": no_duplication, "checks": ["no-duplicate-added-blocks", "reuse-existing-helpers"]},
-        "shortestPath": {"passed": shortest_path, "checks": ["risk-calibrated-bloat", "no-duplicate-added-blocks", "reuse-existing-helpers"]},
-        "cleanup": {"passed": passed["no-quality-escapes"] and passed["no-temp-artifacts"], "checks": ["no-quality-escapes", "no-temp-artifacts"]},
-        "anticipateConsequences": {"passed": passed["no-merge-conflict-markers"], "checks": ["no-merge-conflict-markers"]},
-        "simplicity": {"passed": shortest_path, "checks": ["risk-calibrated-bloat", "no-duplicate-added-blocks", "reuse-existing-helpers"]},
-    }

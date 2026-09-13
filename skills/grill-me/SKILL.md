@@ -1,11 +1,11 @@
 ---
 name: grill-me
-description: Compatibility alias for grilling. Use when users say "grill me" or want a plan/design stress-tested.
+description: Interview the user relentlessly about a plan or design until every branch of the decision tree is resolved.
+disable-model-invocation: true
 ---
 
-# Grill Me
+Interview me relentlessly about every aspect of this plan until we reach a shared understanding. Walk down each branch of the design tree, resolving dependencies between decisions one-by-one. For each question, provide your recommended answer.
 
-Use `$grilling`.
+Ask the questions one at a time.
 
-This alias exists for compatibility with older prompts. Do not duplicate the
-grilling workflow here; keep the canonical questioning loop in `$grilling`.
+If a question can be answered by exploring the codebase, explore the codebase instead.

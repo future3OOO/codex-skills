@@ -1,73 +1,75 @@
 ---
 name: code-quality
-description: Enforce production code quality before finalizing any code change. Use for implementation, refactors, bug fixes, and review tasks to prevent code bloat, duplicated logic, fake-green bypasses, and missing cleanup.
+description: Compact quality rubric: the seven principles for judging a change. Use when reviewing or challenging a diff, as an advisor or review rubric, or when another skill needs the quality-rule vocabulary; for implementing production changes use production-code.
 ---
 
-# Code Quality
+# Code Quality Rubric
 
-Apply these rules before returning work as complete.
+This skill owns the seven quality principles below. `production-code` extends
+them with execution procedure; it does not redefine them.
 
-## Non-negotiable Rules
+Judge the changed surface, not unrelated legacy debt. Cite the diff, contract,
+and concrete proof. The hard invariants remain owned by `AGENTS.md`.
 
-1. Keep code minimal.
-- Make the smallest correct change.
-- Remove dead code instead of hiding it.
-- Avoid one-off wrappers and premature abstractions.
+## Seven principles
 
-2. Eliminate duplication.
-- Reuse existing utilities when behavior is equivalent.
-- Consolidate repeated logic into one path only when it is truly shared.
+### 1. Minimal code
 
-3. Preserve direct data flow.
-- Remove unnecessary hops, transforms, and retries.
-- Keep I/O and control flow explicit and traceable.
+- Is this the smallest correct change?
+- Did it remove code it made obsolete?
+- Did it avoid one-off wrappers, pass-through modules, and speculative options?
 
-4. Ban fake-green shortcuts.
-- Do not suppress failures to make checks pass (`ignore`, blanket disables, swallowed exits).
-- Fix root causes instead of muting tools.
+### 2. No duplicated behavior
 
-5. Enforce cleanup discipline.
-- Clean temporary artifacts on startup, before new work, and after completion.
-- Treat orphaned files, leftover branches, and leaked state as failures.
+- Does equivalent behavior already have an owner to reuse or extend?
+- Is each behavior implemented once?
+- Is apparent consolidation genuinely shared rather than merely similar?
 
-6. Keep changes consequence-aware.
-- Trace downstream consumers when changing data shapes, limits, or contracts.
-- Update all affected paths in the same change.
-- For stateful or contract-sensitive edits, define the contract, map the adjacent perimeter, and prove at least one full-surface behavior.
+### 3. Direct data and control flow
 
-7. Keep implementation simple.
-- Prefer readable, direct code over verbose generated patterns.
-- Avoid redundant comments and obvious boilerplate.
-- Prefer one combined workflow proof plus a few sharp invariant checks over a large pile of tiny low-signal tests.
+- Are I/O, state transitions, and control flow explicit and traceable?
+- Did the change add avoidable hops, transforms, retries, or orchestration?
+- Are inputs validated once at their trust boundary?
 
-## Language Rules
+### 4. No fake-green escape
 
-### Python
-- Avoid `# type: ignore` unless unavoidable and explicitly justified.
-- Avoid broad exception swallowing (`except:`, `except Exception: pass`).
-- Keep type hints on public function boundaries.
-- Validate external inputs at trust boundaries.
+- Does every claimed proof satisfy the canonical mock ban?
+- Did the change suppress, swallow, disable, or bypass a real failure?
+- Are failures corrected at their source rather than muted?
 
-### TypeScript/JavaScript
-- Avoid `any`/unsafe casts as a shortcut.
-- Validate untrusted external data at boundaries before use.
-- Prefer explicit types and narrowing over assertion chains.
+### 5. Cleanup discipline
 
-## Execution Checklist
+- Are temporary artifacts, leaked state, obsolete branches, and
+  change-created dead code removed?
+- Is cleanup deterministic where the change creates external or temporary state?
+- If an Interface promises cleanup, rollback, or atomicity around caller-controlled work, is it proved for success, ordinary failure, and supported interruption/cancellation paths?
+- Are no placeholders, broad catch/pass paths, or blanket suppressions left?
 
-1. Inspect the delta and remove unnecessary additions.
-- `git diff --stat`
-- `git diff`
+### 6. Consequence coverage
 
-2. Scan for common quality escapes.
-- `rg -n "TODO|FIXME|type: ignore|eslint-disable|@ts-ignore|\\bAny\\b|except\\s*:\\s*$|except\\s+Exception\\s*:\\s*pass" <paths>`
+- Were callers, callees, adjacent consumers, no-change surfaces, and persisted
+  contracts traced where the change affects them?
+- For stateful edits, does proof cross the combined behavior surface?
+- Are required coupled updates included in the same change?
 
-3. Run relevant project gates (lint/typecheck/tests/build) for touched areas.
+### 7. Simple implementation
 
-4. For stateful or contract-sensitive changes, check that proof is not only local:
-- require at least one higher-signal workflow or surface proof
-- treat low-signal tests that only prove the edited branch shape as weak evidence
-- use focused invariant tests only as supplements
-5. Confirm cleanup and rollback are explicit for any risky operation.
+- Is the code readable and direct rather than ceremonial?
+- Are comments limited to non-obvious contracts and decisions?
+- Does proof use a high-signal workflow check plus sharp invariant checks?
+- Does the code use the authority that owns a semantic rule instead of reconstructing it from names, syntax, or regexes?
 
-6. Do not mark done until checks pass and no quality rule is violated.
+## Language checks
+
+For Python, retain useful public-boundary types, validate external input at the
+boundary, and report broad exception swallowing or unjustified type ignores.
+
+For TypeScript/JavaScript, narrow untrusted values, reject unsafe `any`, broad
+casts and suppressions, and make exhaustive state handling fail closed.
+
+## Review output
+
+For each finding report the principle and severity, location, violated contract
+or demonstrated consequence, smallest correction, and proof required. If there
+are no findings, name any evidence surface that was unavailable. Syntax-only
+checks do not prove consequence coverage.

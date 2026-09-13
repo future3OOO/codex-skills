@@ -1,13 +1,17 @@
-# Plan Template
+# Governing Design Template
 
-```md
+Copy the fenced design body to the repository's workflow-state `designs/` directory, not into the Git checkout. Resolve the path with `workflow.py paths --repo "$PWD" --workflow-id <id>` — do not compute the state root by hand. Remove unused optional sections.
+
+````md
 # <Title>
 
-## Status
+## Design Identity
 
-- current state:
-- governing artifact:
-- last updated:
+- workflow ID:
+- workflow slug:
+- design path: `<workflow-state-root>/<repo-key>/designs/<workflowId>.md`
+- created:
+- deepening rule: append-only corrections in the same unpushed workflow; the ledger keeps every prior declaration
 
 ## Objective
 
@@ -20,26 +24,53 @@
 - trusted base:
 - linked evidence:
 
+## Chosen Architecture
+
+- selected family:
+- rationale:
+- Module / Interface / Seam:
+
+## Explored Architecture Families
+
+| Family | Selected / Rejected | Technical Reason | Measurement |
+|---|---|---|---|
+| ... | ... | ... | ... |
+
+## Verified Constraints
+
+- finding:
+- measurement:
+- design consequence:
+
+## Preservation Obligations
+
+- <observable behavior that must remain true>
+
+## Load-Bearing Assumptions
+
+- <falsifiable load-bearing assumption and its real-Seam measurement>
+
 ## Affected Surface
 
-- changed boundary or behavior:
+- changed behavior:
 - adjacent consumers/callers:
 - no-change surfaces:
 
 ## Affected Transaction System
 
-Use only for transaction-sensitive work.
+Use only for transaction-sensitive work. Apply the installed `production-code/references/transaction-doctrine.md`; these fields record its result rather than redefining it.
 
 - authoritative records:
 - mutation boundary:
 - adjacent interleavings:
-- projection/recovery/no-op paths:
+- projection paths:
+- replay paths:
+- recovery paths:
+- stale-secondary paths:
+- no-op paths:
 - helper semantic splits:
 
 ## Contract And Proof Model
-
-Use for all non-trivial code work.
-For transaction-sensitive work, keep this section explicit.
 
 - authoritativeContract:
 - invariants:
@@ -69,7 +100,7 @@ For transaction-sensitive work, keep this section explicit.
 
 | PR | Branch | Base | Owner Slice | Commit Structure | Verification | Entry | Exit |
 |---|---|---|---|---|---|---|---|
-| A | `codex/...` | `main` | ... | ... | ... | ... | ... |
+| A | `...` | `main` | ... | ... | ... | ... | ... |
 
 ## Verification Plan
 
@@ -79,20 +110,15 @@ For transaction-sensitive work, keep this section explicit.
 - full gate:
 - post-merge checks:
 
-## Execution Checklist
+## Execution Order
 
-- [ ] planning artifact created
-- [ ] authority verified
-- [ ] PR-A
-- [ ] PR-B
-- [ ] PR-C
-- [ ] final classification complete
+1. ...
+2. ...
 
-## Linked Review Artifacts
+Pass lifecycle, evidence, blockers, and findings live in repository-scoped workflow history. Commit, push, review, and merge status live in GitHub PR state when applicable. Tasks are session-local convenience only, never durable authority.
+
+## Linked Evidence
 
 - ...
 
-## Change Log
-
-- YYYY-MM-DD: created plan
-```
+````

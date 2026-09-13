@@ -6,20 +6,57 @@ description: Enforce production-only implementation standards for this repo. Use
 # Production Code
 
 Apply this skill before writing any repository code or file content change, keep it active while implementing, and run its bundled gate before finalizing.
-Use `$production-preflight` first on before-edit turns that require explicit preflight.
+Use the production-preflight skill first on before-edit turns that require explicit preflight. `code-quality` owns the seven quality principles and wins on conflict; this skill extends them with implementation procedure.
 
-Before editing, use the standards below to choose the smallest production-safe implementation path. After editing, run the bundled generic gate from the target repo before finalizing:
+In a governed production workflow, invoke this skill after the RED or
+not-required TDD decision and before production, configuration, or runtime
+implementation edits; the test edit that establishes RED may precede it. Run
+the bundled gate over the pre-implementation tree as the clean baseline, then keep
+this doctrine active through implementation and final verification.
+
+Before editing, use the standards below to choose the smallest production-safe implementation path. Run the bundled non-mutating gate from the target repository before finalizing:
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 python3 "$HOME/.codex/skills/production-code/scripts/code_quality_gate.py" check --repo "$PWD"
 ```
 
-Use `--base-ref <ref>` for PR or branch work when a review base is known.
-When Repo Context Forge or GitNexus evidence is already available, pass it into the gate instead of forcing a new artifact:
+Use `--base-ref <ref>` when a review base is known; without it the gate
+measures the worktree against `HEAD` only and reports its cumulative-growth
+claim as incomplete. In a governed pass the PostToolUse gate hook supplies the
+base OID recorded at Repo Context Forge bootstrap automatically, so per-edit
+warnings already read branch-cumulative. Existing Repo Context Forge
+or GitNexus evidence can be supplied with `--repo-context-packet <path-or->`
+and `--gitnexus-context-json <path-or->`. A bare run supplies no graph
+evidence, so the `QG54-OWNER-COMPETITION-*` rules report incomplete there; in
+the governed workflow the typed verification run
+(`workflow.py verify --kind quality-gate`) attaches the pass's recorded
+snapshot-bound Repo Context Forge evidence automatically. Load
+[references/gate-policy.md](references/gate-policy.md) when interpreting the
+gate's JSON contract.
 
-```bash
-PYTHONDONTWRITEBYTECODE=1 python3 "$HOME/.codex/skills/production-code/scripts/code_quality_gate.py" check --repo "$PWD" --repo-context-packet <path-or-> --gitnexus-context-json <path-or->
-```
+## Minimum Implementation Decision
+
+Before choosing a repair or mechanism, complete the affected decision:
+
+- Derive requested and preserved guarantees from the original contract, base, and reachable callers/docs/tests independently of the map. Inspect supported input forms, interactions, known defects, and successful cases a new guard could exclude. Separate intentional contract changes from regressions; keep unrelated behavior outside the repair.
+- Simplify the shared decision rather than adding symptom guards. Ask what materially wrong behavior would pass the retained checks. Reuse the smallest real-Interface operations that distinguish it, observing required results, data, identity, state, and cleanup; add only uncovered outcomes.
+- Replay applicable retained failing and passing operations unchanged on the candidate. For a bug or suspected regression, use the same operation/assertions against identified old and candidate implementations. Reconcile the map with this evidence before returning for review.
+
+Use the request/map already in context; load missing evidence once at implementation entry and refresh only on material change. An edit-hook reminder cannot supply reasoning for already-generated edit arguments.
+
+Resolve ownership placement inside that decision:
+
+1. Prove whether the required behavior already exists. If a named Interface already provides it and real test-surface evidence verifies the requirement, make no production change.
+2. Choose the responsible owner. Consume production preflight's `moduleShape` decision. When the turn required no preflight, deepen the existing Module; proposing a new Module or Seam requires preflight first. Delete every surface the change supersedes.
+3. Inside that owner, reuse a capability whose Interface already owns the required semantics, invariant, or failure policy: standard library; native platform, runtime, datastore, or protocol; or an already-installed dependency. These are peers; choose by authority, not list order.
+4. Treat the changed Implementation as bloated. **Reduce it first.** Delete duplication and consolidate existing owners before adding code. Every change targets fewer lines; justify necessary growth against the actual requirement. Preserve production behaviour and useful assertions. Moving complexity or compressing formatting does not count.
+
+Implementation mechanism never chooses placement: a library or native capability does not justify a new Module or Seam. Every choice must preserve required behavior, boundary validation, security, accessibility, data-loss protection, cleanup, and affected-surface proof.
+
+The decision is complete only when one outcome is recorded:
+
+- Existing behavior: name its owning Interface and real test-surface evidence; plan no production change.
+- Change required: name the responsible owner, preflight's selected `moduleShape` when preflight ran, Interface and test surface, existing capability to reuse or why custom Implementation is required, minimum changed surface, and every superseded surface to delete.
 
 ## Core Standard
 
@@ -27,12 +64,10 @@ PYTHONDONTWRITEBYTECODE=1 python3 "$HOME/.codex/skills/production-code/scripts/c
 - Make the smallest correct change.
 - Delete lines that do not directly serve the requirement.
 - Remove dead code instead of hiding it behind flags or wrappers.
-- Extend an existing correct path before adding a new branch or abstraction.
-- Prefer deepening an existing Module over creating a new public Module.
-- Use Ousterhout-style Depth: a small, stable public Interface hiding meaningful Implementation complexity. File size is not the measure.
-- A new public Module or Seam must earn its Interface by hiding complexity, improving Locality, or supporting real variation across callers, Adapters, or test surfaces.
+- Apply [codebase-design](../codebase-design/SKILL.md) when judging Module depth and consolidation; file size is not the measure.
 - Do not add orchestration layers, control-plane hops, or indirection that the requirement does not need.
 - Prefer readable, direct code over verbose generated patterns.
+- Smallest change means the smallest final diff, not the smallest tool call: prepare coherent multi-hunk edits per file and batch independent edits in one message; consecutive single-line edits to one file are the smell this rule prevents.
 - If the current work is governed by a tracked plan or review artifact that includes an execution checklist, follow that artifact during implementation instead of drifting to an unwritten plan.
 
 ## Non-Negotiable Rules
@@ -46,14 +81,14 @@ PYTHONDONTWRITEBYTECODE=1 python3 "$HOME/.codex/skills/production-code/scripts/c
 - Keep private helpers behind the existing module interface unless preflight justifies a new public seam.
 - Preserve direct data flow.
 - Keep I/O and control flow explicit and traceable.
-- Never fake green.
+- Apply the canonical mock ban and fake-green rules in `~/.codex/AGENTS.md`; no local procedure creates an exception.
 - Never use `|| true`, swallow-and-continue flows, blanket catch/pass, or suppression that hides a real failure.
 - Never leave `TODO`, `FIXME`, `HACK`, placeholder stubs, dummy implementations, fake adapters, or temporary bypasses in shippable code.
 - Treat uncertainty as a stop-and-verify condition, not a reason to guess.
 - Treat review comments as evidence to verify against the code and contract, not authority to obey blindly.
-- Do not engineer for theoretical risks: a theoretical risk with no demonstrated failure is a report line, not a system. No guards, fallbacks, retries, or configuration for failures nobody has demonstrated.
+- Apply the canonical imaginary-risk ban in `~/.codex/AGENTS.md` before adding any guard, fallback, retry, configuration, abstraction, or code.
 - Stay on task: if the cumulative diff grows past roughly 3× what the task implies, stop and justify the overrun before continuing.
-- Tests in the changed surface must cross real production seams; never add mock, stub, fake-collaborator, or fixture-only tests (the `$tdd` skill owns the full rules).
+- For behavior proof invoke `tdd`; the canonical mock ban governs every claimed RED/GREEN result.
 
 ## Data, Types, and Boundaries
 
@@ -64,17 +99,9 @@ PYTHONDONTWRITEBYTECODE=1 python3 "$HOME/.codex/skills/production-code/scripts/c
 - Do not pass raw provider payloads deeper into the system.
 - Do not silently default required fields.
 
-## TypeScript Rules
+## Stack-Specific Rules
 
-- Keep strict TypeScript enabled.
-- Require `strict: true`, `noImplicitAny: true`, `noUncheckedIndexedAccess: true`, `exactOptionalPropertyTypes: true`, and `useUnknownInCatchVariables: true`.
-- Do not use `any`.
-- Do not use `// @ts-ignore`, `// @ts-expect-error`, or `eslint-disable` unless explicitly documented in `DECISIONS.md`.
-- Do not use broad `unknown as X` casts as a shortcut.
-- Do not use non-null assertions on external or persisted data.
-- Prefer explicit narrowing and exhaustiveness over assertion chains.
-- Use exhaustive `switch` statements for state machines and discriminated unions.
-- Make unreachable defaults fail closed.
+For TypeScript or JavaScript changes, load and apply [references/typescript.md](references/typescript.md). Do not load that reference for unrelated stacks.
 
 ## State Mutation Discipline
 
@@ -86,34 +113,9 @@ PYTHONDONTWRITEBYTECODE=1 python3 "$HOME/.codex/skills/production-code/scripts/c
 - Update `updated_at` on every successful transition.
 - Make failed transitions observable in logs and audit paths where appropriate.
 
-## Affected-Surface Rewalk Rule
+## Transaction-Sensitive Work
 
-For every code change:
-
-- re-walk the real affected surface before treating the fix as complete
-- do not model the issue as only the edited file or the named review comment
-- re-check adjacent consumers, callers, and no-change surfaces that could regress
-- require proof that the surrounding surface still behaves correctly
-
-Keep this proportional for ordinary work, but do not skip it.
-
-## Transaction-System Rewalk Rule
-
-When a change touches claim tokens, leases, compare-and-set/version fields, transition helpers, or replay/finalize/recovery semantics:
-
-- re-walk the full affected transaction system before treating the fix as complete
-- do not model the issue as only the local file or record named in the review comment
-- re-check adjacent interleavings that can cross the mutation boundary after prepare but before finalize
-- re-check projection, replay, recovery, and no-op paths that share helpers or state fields
-- do not reuse one helper for real mutation and projection/recovery semantics when their invariants differ
-- do not treat resolved review threads as proof
-
-Required proof for transaction-sensitive work:
-
-- one combined workflow proof over the affected surface
-- focused invariant checks for adjacent no-change surfaces
-- focused invariant checks should usually cross at least one adjacent dependency or state boundary unless the change is a genuinely pure helper
-- at least one proof that stale or secondary execution cannot reach the real external mutation boundary
+Load [references/transaction-doctrine.md](references/transaction-doctrine.md) for transaction-sensitive changes. Its canonical proof requirements are part of the Minimum Implementation Decision, not a separate repair or review stage.
 
 ## Retries, Cleanup, and Dependencies
 
@@ -122,18 +124,19 @@ Required proof for transaction-sensitive work:
 - Provide an explicit fail path or dead-letter path for retry loops.
 - Leave no orphaned temp state, leaked leases, or silent leftovers.
 - Keep startup, pre-task, and post-task cleanup deterministic.
-- Do not add a new package if the standard library or an existing package already solves the problem cleanly.
+- Treat a new dependency as a separate justified decision, never as reuse; do not add one when an existing capability satisfies the requirement cleanly.
 - Do not introduce a second package manager or second lockfile.
 
 ## Execution Checklist
 
-- Before writing code, including untracked files, scratch implementation files, generated source, or a new worktree, identify the existing path to extend, public Interface, test surface, minimum changed surface, and code that must be deleted or reused to avoid a second implementation.
+- Complete the Minimum Implementation Decision before writing code, including untracked files, scratch implementation files, generated source, or a new worktree.
 - Inspect the delta and remove unnecessary additions.
 - Scan for common quality escapes such as `TODO`, `FIXME`, `eslint-disable`, `@ts-ignore`, and broad catch/pass patterns.
 - Run the bundled production code quality gate.
 - If the gate reports errors or actionable warnings, go back to the code, remove the bloat or quality escape, and rerun the gate.
-- If the gate reports `reuse-existing-helpers`, inspect the candidate existing path first. Delete the new duplicate helper, loop, retry, parser, normalizer, formatter, resolver, validator, mapper, or adapter unless there is a concrete behavior difference that justifies one implementation per behavior.
-- For reuse warnings, use the emitted `gitnexusQueries` when GitNexus MCP is available, or inspect callers/callees with local search before deciding. The optimized gate suppresses weak speculative matches, so remaining reuse warnings should be treated as actionable until disproven.
+- If the gate reports a `QG54-OWNER-COMPETITION-*` warning, it has named both competing owners with their evidence class. Deepen, replace, or consolidate same-responsibility owners until one owner remains and delete the competing surface; a `candidate` or `confirmed-unresolved` state left behind is unfinished work, not a passing verdict. `resolved` telemetry requires a parent-bound disposition record and complete scope; same-responsibility repairs additionally require the one-owner predicate.
+- If the gate reports a `QG54-DUPLICATE-*` warning, it has named every region carrying that exact implementation. Keep one owner and delete the copies, or call the survivor. These rules are warning-only; a copy left behind is unfinished work, not a passing verdict.
+- For owner-competition warnings, inspect the named regions' callers/callees with GitNexus MCP or local search before deciding; distinct authorities, real adapters, and genuinely different lifecycles are the legitimate negative cases the disposition contract records.
 - Treat touched shallow modules as in-scope debt: absorb, delete, or record the blocker before finalizing.
 - Do not finish the turn while duplicate added code, reimplemented existing helpers, unnecessary growth, fake-green suppressions, broad catch/pass, temp artifacts, or cleanup failures remain in the changed production surface.
 - Treat the gate as changed-scope evidence, not as a substitute for the repo's own lint, typecheck, tests, build, and domain-specific quality gates.
@@ -149,31 +152,15 @@ Required proof for transaction-sensitive work:
   - commit the changes
   - push the branch
   - only then resolve review threads as fixed
-- For every code change, compare the final code and proof against the affected-surface map before calling the work clean.
-- If `$diagnose` produced Surface Map B, treat this as the final gate of record for reconciling every mapped surface: each surface is changed-with-evidence or no-change-with-reason, and residual risk is stated.
-- Compare the final diff against the preflight Module shape; delete or inline shallow wrappers/helpers and verify tests cross the public Interface.
-- For transaction-sensitive work, compare the final code and proof against the preflight transaction map before calling the work clean.
+- Reconcile closure through the Minimum Implementation Decision. Compare the final diff against the preflight module shape; delete or inline shallow wrappers/helpers and verify tests cross the public interface.
 - Run the repo's canonical install, lint, typecheck, unit, integration, build, and quality gates for touched areas before calling work complete.
 - Keep changed code paths at or above the repo coverage gate.
 - Add explicit tests for critical control loops even if coverage already passes.
-- For every code change, proof must cover the real affected surface rather than only the local branch or helper.
-- For transaction-sensitive work, add one combined workflow proof plus sharp invariant checks; local branch-only tests are not enough on their own.
-- Fix root causes, not symptoms.
+- For bugs and regressions, compare the implementation to the canonical root-cause-first gate and the `/diagnose` trace.
 - Do not mark work done while blockers, follow-ups, dead-letter gaps, retry gaps, or state-regression risks remain.
 - Do not present PR remediation as complete while the fix exists only locally or while review threads were resolved ahead of the pushed fix.
 - Closure notes must include: summary, commands run, key outcomes, test classes exercised, and blockers or follow-ups.
 
 ## Bundled Gate Policy
 
-The script is generic and risk-calibrated across JavaScript, TypeScript, Python, shell, and common source files.
-
-- Hard failures include merge conflict markers, temporary artifacts, duplicate added blocks, high-confidence reimplementation of existing helpers or loops, fake-green suppressions, empty or broad catch/pass patterns, unsafe `any`/cast shortcuts, TODO/FIXME/HACK in changed source, and high-confidence bloat.
-- Quality escape checks are path-aware: production source stays strict on `Any`/`any`, casts, suppressions, broad catch/pass, TODO/FIXME/HACK, and fake-green patterns; test source may use ordinary `Any` annotations for fakes but still fails fake-green suppressions, broad catch/pass, TODO/FIXME/HACK, and `|| true`.
-- Reuse detection is candidate-first and indexes only relevant tracked production source. It skips tests/fixtures/generated paths, suppresses likely moves/refactors, and treats generic names such as `handler`, `main`, and `run` as insufficient by themselves.
-- Reuse warnings must be actionable. Weak single-token, cross-domain, or action-only name overlaps are suppressed rather than reported as speculative work.
-- Duplicate and bloat reporting is de-noised: repeated rolling-window matches are grouped, and each bloated file reports the most specific growth error instead of overlapping generic errors.
-- Optional `--repo-context-packet <path|->` and `--gitnexus-context-json <path|->` inputs can raise confidence for already-identified affected files or caller-backed symbols. The gate still remains non-mutating and writes no reports, caches, or repository artifacts.
-- The gate includes benchmark-calibrated implementation budget tests. They hard-fail clear outliers and require explicit justification for future module, function, or total implementation growth above review-trigger thresholds.
-- Bloat checks apply to changed production source only. They warn before hard-failing moderate growth, hard-fail very large new files, and force already-large files to avoid further growth.
-- The gate emits six hard-rule results: `codeVolume`, `noDuplication`, `shortestPath`, `cleanup`, `anticipateConsequences`, and `simplicity`.
-- Legacy debt outside the changed scope should not block this gate; touched debt should be fixed unless it is clearly outside the requested change and safer to report as a blocker.
+Load [references/gate-policy.md](references/gate-policy.md) when running or interpreting the bundled gate. The gate is non-mutating.

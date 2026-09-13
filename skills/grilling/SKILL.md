@@ -14,3 +14,7 @@ Ask questions one at a time and wait for feedback on each question before contin
 If a question can be answered by exploring the codebase, explore the codebase instead.
 
 Do not enact the plan until the user confirms that shared understanding has been reached.
+
+When production preflight invokes this skill in embedded mode, the answer that
+resolves the final material unknown is that confirmation; do not ask for a
+second ceremonial approval.
