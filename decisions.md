@@ -109,3 +109,24 @@ not reconstruct the benchmark. The host's `codex-production-proof-workflow-prd.m
 benchmark repairs, changes/stops to arms, ledger rewriting, credential inspection,
 installation or Claude backporting. Creating this Codex decision record is a
 separate documentation request; it does not start #29/#30 implementation.
+
+## 2026-09-13 — Preserve historical calibration across the port
+
+**Observed:** PR #31's CI failed because a fresh Codex clone lacked the original
+Claude calibration commits. Fetching the history exposed a second failure: the
+vendor transform had changed P1's captured shell literal while retaining its
+original digest. Both failures also predate the decision-record changes.
+
+**Decision:** Fetch the original case-G commit into a calibration ref before both
+CI lanes; its ancestry includes every required corpus and classifier oracle.
+Restore the original literal and protect the calibration test through the existing
+manual-sync list. Preserve all pinned digests, result assertions and honest failures.
+The maintainer authorized this CI repair separately from #29/#30 implementation.
+
+**Status:** Repair under verification in PR #31. Remote `port/estate-parity` is
+published at `315278f`; remote `main` remains the old mirror at `e2e8a79`. Publishing
+the port branch did not integrate it into the default branch; PR #33 now owns that
+integration. Production checks also exposed five obsolete modules retained from the
+initial mirror, absent from upstream and unreferenced outside their own set. Remove
+them to restore the existing 2,825-line ceiling and eliminate the unused-import
+failure. No estate installation or benchmark-arm changes are part of this repair.

@@ -28,6 +28,18 @@ The project is the source of truth; the estate is an install artifact.
 - `docs/` — historical design docs.
 - Tests exist in the repo for CI; `install.sh` excludes them from the estate.
 
+## Test history
+
+The port has independent Git history. Calibration tests replay original Claude
+commits and retain their exact captured bytes and digests. CI fetches the pinned
+history before either lane; prepare a fresh local checkout the same way:
+
+```bash
+git fetch --no-tags https://github.com/future3OOO/claude-skills.git 08074c7e727d26ce62b0a3f80899de76e34818ef:refs/calibration/claude-skills
+```
+
+This adds the historical objects without changing the checked-out source.
+
 ## Install (project → estate)
 
 ```bash
@@ -71,6 +83,8 @@ Diverged files (manual merge — sync will not overwrite):
 - `skills/codex-advisor/` — codex's own advisor skill (upstream's
   `codex-advisor` is the same role under the other harness's name)
 - `skills/code-review/SKILL.md` — codex delegate frontmatter
+- `skills/production-code/scripts/test_code_quality_gate.py` — captured historical
+  calibration literals must retain their original spelling and pinned digests
 
 ## Hook event map (Codex)
 

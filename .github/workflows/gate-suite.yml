@@ -18,6 +18,10 @@ jobs:
           # checkout leaves the changed set empty and the gate self-passes.
           fetch-depth: 0
           persist-credentials: false
+      - name: Fetch pinned calibration history
+        # The vendor port has independent Git history. This original case-G
+        # commit also contains every earlier calibration and classifier oracle.
+        run: git fetch --no-tags https://github.com/future3OOO/claude-skills.git 08074c7e727d26ce62b0a3f80899de76e34818ef:refs/calibration/claude-skills
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
