@@ -1304,6 +1304,30 @@ class IntakeSerialisationTests(unittest.TestCase):
     atomic replace (future3OOO/GitNexus#25), so two producers running together
     can tear it and break every later intake."""
 
+    def setUp(self) -> None:
+        # Every test here drives the real account's slot directory, and the
+        # parallel runner deals each test its own shard: left unsynchronised,
+        # two cap-1 intakes starve each other on slot-0. A dedicated flock
+        # serialises the class across shards without touching the slots'
+        # inode convention.
+        import fcntl
+
+        slots = self.slot_dir()
+        slots.mkdir(parents=True, exist_ok=True)
+        self._coordinator = open(slots / "suite-serialisation.lock", "a+")
+        deadline = time.monotonic() + 300
+        while True:
+            try:
+                fcntl.flock(self._coordinator, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    self.fail("SUITE_COORDINATOR_WEDGED: serialisation lock never released")
+                time.sleep(0.25)
+
+    def tearDown(self) -> None:
+        self._coordinator.close()
+
     def intake_rig(self) -> tuple[Path, list[str], dict[str, str]]:
         """A private HOME is where the real lock path lands, so this attack
         drives that computation rather than a way around it."""
@@ -1321,7 +1345,7 @@ class IntakeSerialisationTests(unittest.TestCase):
     def test_a_held_lock_stops_a_second_intake_before_its_producer(self) -> None:
         import fcntl
 
-        marker = "INTAKE_RAN_WHILE_LOCK_HELD"
+        marker = "HELD_LOCK_NO_LONGER_BLOCKS"
         lock, command, env = self.intake_rig()
 
         with open(lock, "a+", encoding="utf-8") as holder:  # closing releases the flock
@@ -1329,9 +1353,10 @@ class IntakeSerialisationTests(unittest.TestCase):
             with self.assertRaises(subprocess.TimeoutExpired, msg=marker):
                 subprocess.run(command, env=env, text=True, capture_output=True, timeout=8, check=False)
 
-        # The same budget the held lock exhausted, and the producer's own exit
-        # code for this empty repository: both prove the intake got past the lock.
-        released = subprocess.run(command, env=env, text=True, capture_output=True, timeout=8, check=False)
+        # The held-lock budget proved blocking; the released run gets the
+        # wider foreign-contention budget, since it also waits on a real
+        # account slot once past the lock.
+        released = subprocess.run(command, env=env, text=True, capture_output=True, timeout=90, check=False)
         self.assertEqual(released.returncode, 1,
                          marker + ": released lock still blocked the intake: " + released.stderr[-300:])
 
@@ -1356,18 +1381,27 @@ class IntakeSerialisationTests(unittest.TestCase):
             return
         process.communicate(timeout=5)
 
-    def start_intake(self, repo: Path, home: Path) -> subprocess.Popen:
+    def start_intake(self, repo: Path, home: Path, env_extra: dict[str, str | None] | None = None) -> subprocess.Popen:
+        env = {**os.environ, "HOME": str(home), "PYTHONDONTWRITEBYTECODE": "1"}
+        for name, value in (env_extra or {}).items():
+            if value is None:
+                env.pop(name, None)
+            else:
+                env[name] = value
         process = subprocess.Popen(
             [sys.executable, str(BOOTSTRAP), "--repo", str(repo), "--mode", "repo",
              "--map-build", "never", "--gitnexus-mode", "auto"],
-            env={**os.environ, "HOME": str(home), "PYTHONDONTWRITEBYTECODE": "1"},
+            env=env,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, pipesize=4096, start_new_session=True,
         )
         self.addCleanup(self.stop_intake, process)
         return process
 
     def await_producer(self, process: subprocess.Popen) -> int:
-        deadline = time.monotonic() + 15
+        # A foreign intake on this account may legitimately hold the low
+        # slots for a whole producer lifetime; the deadline waits out a few
+        # of those rather than misreporting correct admission as a failure.
+        deadline = time.monotonic() + 90
         while time.monotonic() < deadline:
             children = self.producers(process)[0]
             if children:
@@ -1375,7 +1409,7 @@ class IntakeSerialisationTests(unittest.TestCase):
             if process.poll() is not None:
                 break
             time.sleep(0.05)
-        self.fail("real intake did not start its producer within 15s")
+        self.fail("real intake did not start its producer within 90s")
 
     @unittest.skipUnless(GITNEXUS, "the real GitNexus CLI is unavailable")
     def test_adapter_death_keeps_its_live_producer_locked(self) -> None:
@@ -1450,6 +1484,519 @@ class IntakeSerialisationTests(unittest.TestCase):
     @unittest.skipUnless(GITNEXUS, "the real GitNexus CLI is unavailable")
     def test_output_does_not_hold_the_producer_lock(self) -> None:
         self.assertTrue(self.intake_pair(), "OUTPUT_HELD_PRODUCER_LOCK")
+
+    def clone(self, parent: Path, name: str) -> Path:
+        repo = parent / name
+        subprocess.run(["git", "clone", "--quiet", "--no-hardlinks", str(ROOT), str(repo)],
+                       check=True, timeout=30)
+        return repo
+
+    def available_mb(self) -> int:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemAvailable:"):
+                return int(line.split()[1]) // 1024
+        return 0
+
+    def slot_dir(self) -> Path:
+        """The capacity directory's contract path: the real account home, which
+        a fixture HOME cannot relocate — the bound guards host memory, and host
+        memory does not isolate with $HOME."""
+        import pwd
+
+        return (
+            Path(pwd.getpwuid(os.getuid()).pw_dir)
+            / ".cache" / "repo-context-forge" / "intake-slots"
+        )
+
+    def held_paths(self, process: subprocess.Popen, directory: Path) -> list[str]:
+        """Paths under `directory` the process holds open right now, via /proc."""
+        held = []
+        try:
+            for fd in Path(f"/proc/{process.pid}/fd").iterdir():
+                try:
+                    target = os.readlink(fd)
+                except OSError:
+                    continue
+                if str(target).startswith(str(directory)):
+                    held.append(str(target))
+        except OSError:
+            pass
+        return held
+
+    def foreign_slot_holders(self, children: list[list[int]], *adapters: subprocess.Popen) -> set[int]:
+        """Pids outside these adapters' own trees holding a real slot lock.
+
+        The capacity files live in the account home, so an unrelated intake on
+        this host can legitimately shrink the permits a test sees; a cap-2
+        assertion may only relax when that contention is observed, not assumed.
+        Takes the caller's producer snapshot so the check adds no extra `ps`
+        gap between the census and any same-iteration fd inspection.
+        """
+        inodes = {path.stat().st_ino for path in self.slot_dir().glob("slot-*.lock")}
+        ours = {adapter.pid for adapter in adapters}
+        for prods in children:
+            ours.update(prods)
+        foreign = set()
+        try:
+            for line in Path("/proc/locks").read_text().splitlines():
+                fields = line.split()
+                # "N: FLOCK  ADVISORY  WRITE  <pid> <maj>:<min>:<ino> ..."
+                if len(fields) < 6 or fields[1] != "FLOCK":
+                    continue
+                try:
+                    pid, inode = int(fields[4]), int(fields[5].rsplit(":", 1)[-1])
+                except ValueError:
+                    continue
+                if inode in inodes and pid not in ours:
+                    foreign.add(pid)
+        except OSError:
+            pass
+        return foreign
+
+    @unittest.skipUnless(GITNEXUS, "the real GitNexus CLI is unavailable")
+    def test_isolated_home_intakes_respect_the_machine_bound(self) -> None:
+        """Three isolated-HOME intakes under a cap of two: a bound, not a mutex."""
+        marker = "CROSS_HOME_PRODUCER_BOUND_BROKEN"
+        if self.available_mb() < 9400:
+            self.skipTest("needs headroom for two real producers")
+        tmp = Path(tempfile.mkdtemp(prefix="intake-bound-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        cap = {"RCF_INTAKE_MAX_PARALLEL": "2"}
+        repos = [self.clone(tmp, f"repo-{name}") for name in "abc"]
+        homes = [tmp / f"home-{name}" for name in "abc"]
+        started = time.monotonic()
+        adapters = [self.start_intake(repo, home, cap) for repo, home in zip(repos, homes)]
+        peak, seen, done, foreign = 0, set(), False, set()
+        while time.monotonic() - started < 300:
+            children = self.producers(*adapters)
+            for prods in children:
+                seen.update(prods)
+            peak = max(peak, sum(map(len, children)))
+            foreign.update(self.foreign_slot_holders(children, *adapters))
+            if len(seen) == 3 and not any(children):
+                # All producers observed and gone; the adapters only remain
+                # to drain packet output through the narrow test pipes.
+                done = True
+                break
+            time.sleep(0.05)
+        finished = time.monotonic()
+        for adapter in adapters:
+            stdout, stderr = adapter.communicate(timeout=30)
+            self.assertEqual(adapter.returncode, 0, marker + ": " + stderr.decode()[-300:])
+        self.assertTrue(done, marker + ": producers outlived the 300s poll window")
+        self.assertLessEqual(peak, 2, marker + f": {peak} producers exceeded cap 2")
+        if peak < 2:
+            if foreign:
+                self.skipTest(marker + f": foreign intake held {sorted(foreign)}; permits were below cap")
+            self.fail(marker + f": only {peak} producers ran at once under cap 2")
+        for home in homes:
+            registry = json.loads((home / ".gitnexus/registry.json").read_text())
+            self.assertEqual(len(registry), 1, marker + ": per-home registry lost its intake")
+        observed = finished - started
+        print(f"INTAKE_RESOURCE target={ROOT} scale=3-full-repos limit=300s observed={observed:.3f}s peak={peak}")
+        self.assertLess(observed, 300, marker)
+
+    @unittest.skipUnless(GITNEXUS, "the real GitNexus CLI is unavailable")
+    def test_a_held_machine_slot_stops_a_new_intakes_producer(self) -> None:
+        """An externally held permit blocks a fresh-HOME intake before its producer."""
+        import fcntl
+
+        marker = "ADMITTED_WHILE_SLOTS_HELD"
+        slots = self.slot_dir()
+        slots.mkdir(parents=True, exist_ok=True)
+        tmp = Path(tempfile.mkdtemp(prefix="intake-admission-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        repo = self.clone(tmp, "repo")
+        with open(slots / "slot-0.lock", "a+") as held:
+            fcntl.flock(held, fcntl.LOCK_EX)
+            adapter = self.start_intake(repo, tmp / "home", {"RCF_INTAKE_MAX_PARALLEL": "1"})
+            deadline = time.monotonic() + 8
+            while time.monotonic() < deadline:
+                self.assertFalse(self.producers(adapter)[0],
+                                 marker + ": producer started while slot-0 was held")
+                self.assertIsNone(adapter.poll(), marker + ": adapter died instead of waiting")
+                time.sleep(0.05)
+        self.await_producer(adapter)
+        adapter.communicate(timeout=30)
+
+    @unittest.skipUnless(GITNEXUS, "the real GitNexus CLI is unavailable")
+    def test_adapter_death_keeps_its_live_producers_slot(self) -> None:
+        """An orphaned producer retains its capacity reservation until it dies."""
+        import signal
+
+        marker = "ORPHANED_PRODUCER_LOST_CAPACITY"
+        tmp = Path(tempfile.mkdtemp(prefix="intake-orphan-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        cap = {"RCF_INTAKE_MAX_PARALLEL": "1"}
+        home_a, home_b = tmp / "home-a", tmp / "home-b"
+        repo_a, repo_b = self.clone(tmp, "repo-a"), self.clone(tmp, "repo-b")
+        first = self.start_intake(repo_a, home_a, cap)
+        producer = self.await_producer(first)
+        # Freeze the real producer so parent death cannot race its natural
+        # completion, then kill only the adapter: the slot must stay held.
+        os.kill(producer, signal.SIGSTOP)
+        first.send_signal(signal.SIGKILL)
+        first.wait(timeout=5)
+        second = self.start_intake(repo_b, home_b, cap)
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline:
+            self.assertFalse(self.producers(second)[0],
+                             marker + ": second producer started while the orphan held the slot")
+            time.sleep(0.05)
+        os.killpg(first.pid, signal.SIGKILL)
+        self.await_producer(second)
+        second.communicate(timeout=60)
+
+    @unittest.skipUnless(GITNEXUS, "the real GitNexus CLI is unavailable")
+    def test_a_queued_same_home_waiter_holds_no_capacity(self) -> None:
+        """Capacity is taken only after the HOME lock is won: under cap 2 with
+        homes A,A,B, B runs beside A1 while A2 queues holding nothing."""
+        marker = "HOME_WAITER_HELD_CAPACITY"
+        if self.available_mb() < 9400:
+            self.skipTest("needs headroom for two real producers")
+        tmp = Path(tempfile.mkdtemp(prefix="intake-order-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        cap = {"RCF_INTAKE_MAX_PARALLEL": "2"}
+        home_a, home_b = tmp / "home-a", tmp / "home-b"
+        repo_a1 = self.clone(tmp, "repo-a1")
+        repo_a2 = self.clone(tmp, "repo-a2")
+        repo_b = self.clone(tmp, "repo-b")
+        started = time.monotonic()
+        first_a = self.start_intake(repo_a1, home_a, cap)
+        self.await_producer(first_a)
+        second_a = self.start_intake(repo_a2, home_a, cap)
+        third = self.start_intake(repo_b, home_b, cap)
+        peak, overlap_while_queued, seen, done, foreign = 0, False, set(), False, set()
+        while time.monotonic() - started < 300:
+            children = self.producers(first_a, second_a, third)
+            for prods in children:
+                seen.update(prods)
+            peak = max(peak, sum(map(len, children)))
+            self.assertFalse(children[0] and children[1],
+                             marker + ": same-home producers overlapped")
+            # While A1's producer lives, A1's adapter still holds the HOME
+            # lock, so a correctly queued A2 cannot have reached the slots:
+            # any slot fd it holds is proof of the wrong acquisition order.
+            # A held fd read races the producer census by a few ms — A1's
+            # producer may have exited and released the lock since — so only
+            # a hold that survives a fresh census counts.
+            if children[0] and not children[1]:
+                held = self.held_paths(second_a, self.slot_dir())
+                if held:
+                    recheck = self.producers(first_a, second_a, third)
+                    self.assertFalse(recheck[0] and not recheck[1],
+                                     marker + f": queued waiter holds {held}")
+            foreign.update(self.foreign_slot_holders(children, first_a, second_a, third))
+            if children[0] and children[2] and not children[1]:
+                overlap_while_queued = True
+            if len(seen) == 3 and not any(children):
+                # All producers observed and gone; the adapters only remain
+                # to drain packet output through the narrow test pipes.
+                done = True
+                break
+            time.sleep(0.05)
+        for adapter in (first_a, second_a, third):
+            stdout, stderr = adapter.communicate(timeout=30)
+            self.assertEqual(adapter.returncode, 0, marker + ": " + stderr.decode()[-300:])
+        self.assertTrue(done, marker + ": producers outlived the 300s poll window")
+        self.assertLessEqual(peak, 2, marker + f": {peak} producers exceeded cap 2")
+        if peak < 2 and foreign:
+            self.skipTest(marker + f": foreign intake held {sorted(foreign)}; permits were below cap")
+        self.assertTrue(overlap_while_queued,
+                        marker + ": B never ran while A2 queued on the HOME lock")
+        self.assertEqual(peak, 2, marker + f": {peak} producers ran at once under cap 2")
+
+    @unittest.skipUnless(GITNEXUS, "the real GitNexus CLI is unavailable")
+    def test_isolated_homes_may_run_producers_concurrently(self) -> None:
+        """The bound is not a mutex: under default permits with real headroom,
+        two isolated-HOME intakes overlap — the anti-serialisation contract."""
+        marker = "CROSS_HOME_OVERLAP_DENIED"
+        if self.available_mb() < 9400:
+            self.skipTest("needs headroom for two real producers")
+        tmp = Path(tempfile.mkdtemp(prefix="intake-overlap-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        no_cap = {"RCF_INTAKE_MAX_PARALLEL": None}
+        repos = [self.clone(tmp, f"repo-{name}") for name in "ab"]
+        homes = [tmp / f"home-{name}" for name in "ab"]
+        started = time.monotonic()
+        first = self.start_intake(repos[0], homes[0], no_cap)
+        self.await_producer(first)
+        second = self.start_intake(repos[1], homes[1], no_cap)
+        peak, windows, done, foreign = 0, {}, False, set()
+        while time.monotonic() - started < 300:
+            now = time.monotonic()
+            children = self.producers(first, second)
+            foreign.update(self.foreign_slot_holders(children, first, second))
+            for owner, prods in zip((first, second), children):
+                for pid in prods:
+                    windows.setdefault((owner.pid, pid), [now, now])[1] = now
+            peak = max(peak, sum(map(len, children)))
+            if len(windows) == 2 and not any(children):
+                # Both producers observed and gone; the adapters only remain
+                # to drain their packet output through the narrow test pipes.
+                done = True
+                break
+            time.sleep(0.05)
+        finished = time.monotonic()  # producer-window end, before adapter drain
+        for adapter in (first, second):
+            stdout, stderr = adapter.communicate(timeout=30)
+            self.assertEqual(adapter.returncode, 0, marker + ": " + stderr.decode()[-300:])
+        self.assertTrue(done, marker + ": producers outlived the 300s poll window")
+        self.assertLessEqual(peak, 2, marker + f": {peak} producers exceeded default permits")
+        if peak < 2:
+            if foreign:
+                self.skipTest(marker + f": foreign intake held {sorted(foreign)}; permits were below cap")
+            self.fail(marker + f": only {peak} producers ran under default permits")
+        # Measured producer lifetimes, not adapter wall-clock: the producers'
+        # [first-seen, last-seen] windows must overlap, and their union span
+        # must beat the serialized floor sum(lifetimes). A serialised run —
+        # cap 1 or a mutex — makes span ~= sum and fails this bound.
+        self.assertEqual(len(windows), 2, marker + f": producer windows {windows}")
+        (start_a, end_a), (start_b, end_b) = windows.values()
+        self.assertLess(max(start_a, start_b), min(end_a, end_b),
+                        marker + ": producer lifetimes never overlapped")
+        lifetimes = (end_a - start_a) + (end_b - start_b)
+        span = max(end_a, end_b) - min(start_a, start_b)
+        self.assertLess(span, 0.9 * lifetimes,
+                        marker + f": span {span:.1f}s ~= serialized {lifetimes:.1f}s")
+        observed = finished - started  # measured producer window, adapter drain excluded
+        print(f"INTAKE_RESOURCE target={ROOT} scale=2-full-repos limit=300s observed={observed:.3f}s peak={peak}")
+        self.assertLess(observed, 300, marker)
+
+    def load_intake_module(self):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("rcf_intake_bootstrap", BOOTSTRAP)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_permit_count_follows_available_memory(self) -> None:
+        """The permit arithmetic itself: bounded below at 1, by the cap, and by
+        (MemAvailable - reserve) / producer peak."""
+        marker = "PERMIT_FORMULA_WRONG"
+        module = self.load_intake_module()
+        self.assertTrue(hasattr(module, "_permits_for_available"), marker)
+        cases = [
+            (24000, None, 10),
+            (19380, None, 7),
+            (9400, None, 2),
+            (7700, None, 1),
+            (5000, None, 1),
+            (24000, 1, 1),
+            (50000, 3, 3),
+        ]
+        for available, cap, want in cases:
+            self.assertEqual(module._permits_for_available(available, cap), want,
+                             f"{marker}: avail={available} cap={cap}")
+        self.assertGreaterEqual(module._intake_permits(), 1, marker)
+
+    def test_unreadable_meminfo_fails_closed_to_one_permit(self) -> None:
+        """A lost meminfo source must narrow admission, never widen it: the
+        fallback is one permit even under an explicit higher cap. The seam is
+        the real file read — _MEMINFO is pointed at real missing and
+        MemAvailable-less files so the real OSError/StopIteration path runs."""
+        marker = "MEMINFO_FALLBACK_NOT_CLOSED"
+        module = self.load_intake_module()
+        tmp = Path(tempfile.mkdtemp(prefix="intake-meminfo-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        meminfo = tmp / "meminfo"
+        original_path, original_cap = module._MEMINFO, os.environ.get("RCF_INTAKE_MAX_PARALLEL")
+        try:
+            module._MEMINFO = meminfo
+            for cap in (None, "2"):
+                if cap is None:
+                    os.environ.pop("RCF_INTAKE_MAX_PARALLEL", None)
+                else:
+                    os.environ["RCF_INTAKE_MAX_PARALLEL"] = cap
+                self.assertEqual(module._intake_permits(), 1,
+                                 f"{marker}: missing meminfo with cap={cap}")
+            meminfo.write_text("MemTotal:       32768 kB\n", encoding="utf-8")
+            self.assertEqual(module._intake_permits(), 1,
+                             marker + ": meminfo without a MemAvailable line")
+        finally:
+            module._MEMINFO = original_path
+            if original_cap is None:
+                os.environ.pop("RCF_INTAKE_MAX_PARALLEL", None)
+            else:
+                os.environ["RCF_INTAKE_MAX_PARALLEL"] = original_cap
+
+    def test_a_shrinking_permit_count_narrows_admission(self) -> None:
+        """Every poll re-reads the live permit count: once MemAvailable shrinks
+        below the slots a waiter could otherwise take, those slots are out of
+        range; restoring headroom lets the same call proceed. The seam is the
+        real flock on real slot files plus a real meminfo file — held slots,
+        shrink, release, and re-entry all run against the production code in
+        this process."""
+        import fcntl
+
+        marker = "SHRUNK_CAPACITY_STILL_ADMITTED"
+        module = self.load_intake_module()
+        slots = self.slot_dir()
+        slots.mkdir(parents=True, exist_ok=True)
+        tmp = Path(tempfile.mkdtemp(prefix="intake-shrink-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        meminfo = tmp / "meminfo"
+
+        def available(mb: int) -> None:
+            meminfo.write_text(f"MemAvailable:    {mb * 1024} kB\n", encoding="utf-8")
+
+        original = module._MEMINFO
+        module._MEMINFO = meminfo
+        # An inherited caller cap would stay clamped over every meminfo
+        # reading; this test owns the whole range.
+        original_cap = os.environ.pop("RCF_INTAKE_MAX_PARALLEL", None)
+        acquired: list[int] = []
+        held: list = []
+        waiter: threading.Thread | None = None
+        try:
+            # Three permits, all in range and all held: the waiter blocks.
+            available(11500)
+            held = [open(slots / f"slot-{index}.lock", "a+") for index in range(3)]
+            for handle in held:
+                fcntl.flock(handle, fcntl.LOCK_EX)
+            waiter = threading.Thread(target=lambda: acquired.append(module._acquire_intake_slot()),
+                                      daemon=True)
+            waiter.start()
+            # The budget shrinks to one permit; slot-1 and slot-2 leave the
+            # range. Freeing out-of-range slot-1 must not unblock the waiter —
+            # only slot-0 counts now, and it is still held — while slot-2
+            # stays occupied through the transition. Let the waiter re-poll
+            # under the shrunk count first: a waiter still running a stale
+            # three-permit iteration could take the freed slot legitimately.
+            available(5000)
+            time.sleep(0.6)
+            held[1].close()
+            deadline = time.monotonic() + 1.5
+            while time.monotonic() < deadline:
+                self.assertFalse(acquired, marker + ": waiter took a slot outside the shrunk range")
+                time.sleep(0.05)
+            self.assertTrue(waiter.is_alive(), marker + ": waiter exited without a slot")
+            # Recovery: headroom returns, slot-1 is back in range and free.
+            available(24000)
+            waiter.join(timeout=10)
+            self.assertFalse(waiter.is_alive(), marker + ": waiter never resumed after headroom returned")
+            self.assertEqual(len(acquired), 1, marker)
+            target = Path(os.readlink(f"/proc/self/fd/{acquired[0]}"))
+            self.assertTrue(str(target).startswith(str(slots)), marker + f": held {target}")
+            inode = target.stat().st_ino
+            os.close(acquired[0])
+            # Re-entry: the same slot inode persists (never unlinked) and
+            # re-locks at once — a recreated file would carry a new inode.
+            self.assertTrue(target.exists(), marker + ": slot file was unlinked")
+            self.assertEqual(target.stat().st_ino, inode, marker + ": slot file was recreated")
+            with open(target, "a+") as again:
+                fcntl.flock(again, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            held[0].close()
+        finally:
+            module._MEMINFO = original
+            if original_cap is not None:
+                os.environ["RCF_INTAKE_MAX_PARALLEL"] = original_cap
+            for handle in held:
+                try:
+                    handle.close()
+                except OSError:
+                    pass
+            if waiter is not None:
+                waiter.join(timeout=5)
+            for fd in acquired:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+
+    @unittest.skipUnless(GITNEXUS, "the real GitNexus CLI is unavailable")
+    def test_killing_a_queued_waiter_releases_everything_it_held(self) -> None:
+        """A same-HOME waiter killed while queued on the HOME lock leaves no
+        residue: it never reached the slots, and its death frees the flock it
+        was blocked on without touching A1's producer or capacity."""
+        import fcntl
+        import signal
+
+        marker = "KILLED_WAITER_LEFT_RESIDUE"
+        tmp = Path(tempfile.mkdtemp(prefix="intake-cancel-queue-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        cap = {"RCF_INTAKE_MAX_PARALLEL": "1"}
+        home = tmp / "home"
+        repo_a1 = self.clone(tmp, "repo-a1")
+        repo_a2 = self.clone(tmp, "repo-a2")
+        first = self.start_intake(repo_a1, home, cap)
+        producer = self.await_producer(first)
+        os.kill(producer, signal.SIGSTOP)
+        queued = self.start_intake(repo_a2, home, cap)
+        time.sleep(2)  # reach the HOME-lock wait
+        self.assertIsNone(queued.poll(), marker + ": queued waiter died on its own")
+        self.assertFalse(self.held_paths(queued, self.slot_dir()),
+                         marker + ": queued waiter held a slot before dying")
+        queued.send_signal(signal.SIGKILL)
+        queued.wait(timeout=5)
+        # The capacity picture is unchanged: A1's producer still holds the only
+        # permit; nothing the dead waiter touched survives it.
+        with open(self.slot_dir() / "slot-0.lock", "a+") as probe:
+            with self.assertRaises(BlockingIOError, msg=marker):
+                fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        self.assertEqual(self.producers(first)[0], [producer],
+                         marker + ": first intake lost its producer")
+        os.killpg(first.pid, signal.SIGKILL)
+        first.wait(timeout=5)
+
+    @unittest.skipUnless(GITNEXUS, "the real GitNexus CLI is unavailable")
+    def test_producer_death_releases_its_slot_for_a_surviving_indexer(self) -> None:
+        """The reservation is adapter+producer scoped: the producer's own
+        children do not inherit the slot fd (the upstream spawn keeps
+        close_fds), so a killed producer frees capacity even while a frozen
+        indexer outlives it — the residue is the orphan's bounded remainder,
+        not a stranded permit."""
+        import fcntl
+        import signal
+
+        marker = "PRODUCER_DEATH_HELD_CAPACITY"
+        tmp = Path(tempfile.mkdtemp(prefix="intake-pdeath-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        home = tmp / "home"
+        repo = self.clone(tmp, "repo")
+        adapter = self.start_intake(repo, home, {"RCF_INTAKE_MAX_PARALLEL": "1"})
+        producer = self.await_producer(adapter)
+        indexer = None
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline and indexer is None:
+            listing = subprocess.run(["ps", "--ppid", str(producer), "-o", "pid=,args="],
+                                     text=True, capture_output=True, timeout=5).stdout
+            for row in listing.splitlines():
+                pid, _, args = row.strip().partition(" ")
+                if "gitnexus" in args:
+                    indexer = int(pid)
+                    break
+            if adapter.poll() is not None:
+                break
+            time.sleep(0.5)
+        if indexer is None:
+            os.killpg(adapter.pid, signal.SIGKILL)
+            adapter.wait(timeout=5)
+            self.skipTest("the real producer never spawned a GitNexus indexer")
+        os.kill(indexer, signal.SIGSTOP)
+        os.kill(producer, signal.SIGKILL)
+        # The dead producer's reservation is gone even though its frozen
+        # indexer still holds memory — capacity tracks the producer, and the
+        # orphan finishes its bounded work without blocking admission.
+        freed = False
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and not freed:
+            with open(self.slot_dir() / "slot-0.lock", "a+") as probe:
+                try:
+                    fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    freed = True
+                except BlockingIOError:
+                    time.sleep(0.1)
+        try:
+            os.kill(indexer, 0)
+            indexer_alive = True
+        except ProcessLookupError:
+            indexer_alive = False
+        self.assertTrue(indexer_alive, marker + ": indexer died before the measurement")
+        self.assertTrue(freed, marker + ": dead producer still held its slot")
+        os.killpg(adapter.pid, signal.SIGKILL)
+        adapter.wait(timeout=5)
 
 
 if __name__ == "__main__":

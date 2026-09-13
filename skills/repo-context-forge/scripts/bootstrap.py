@@ -7,11 +7,13 @@ import fcntl
 import filecmp
 import json
 import os
+import pwd
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -35,6 +37,78 @@ from hooks.lib.workflow_state import (  # noqa: E402
 SOURCE_ROOT = Path("/home/prop_/.local/share/repo-context-forge/current")
 BOOTSTRAP = SOURCE_ROOT / "scripts" / "codex_context_bootstrap.py"
 INTAKE_LOCK = Path.home() / ".cache" / "repo-context-forge" / "intake.lock"
+# Capacity is a second, real-account scope: the intake lock guards one HOME's
+# registry, but host RAM is what 25 isolated-HOME producers exhausted. The
+# slot directory hangs off the account's own home so a caller's $HOME
+# override cannot relocate the bound.
+INTAKE_PARALLEL_ENV = "RCF_INTAKE_MAX_PARALLEL"
+_MEMINFO = Path("/proc/meminfo")
+INTAKE_MEM_RESERVE_MB = 6000
+INTAKE_PRODUCER_PEAK_MB = 1700
+INTAKE_POLL_SECONDS = 0.25
+
+
+def _real_home() -> Path:
+    """The account's own home — never Path.home(), which a $HOME override
+    must not be able to steer."""
+    return Path(pwd.getpwuid(os.getuid()).pw_dir)
+
+
+def _permits_for_available(available_mb: int, cap: int | None) -> int:
+    bound = max(1, (available_mb - INTAKE_MEM_RESERVE_MB) // INTAKE_PRODUCER_PEAK_MB)
+    return min(cap, bound) if cap is not None and cap > 0 else bound
+
+
+def _intake_permits() -> int:
+    """Live producer capacity: the memory bound, clamped by an explicit cap.
+
+    MemAvailable counts reclaimable cache; the stricter sysconf AVPHYS
+    figure excludes it and would serialize intakes on a healthy host. An
+    unreadable source degrades to a single permit — conservative, never
+    unbounded.
+    """
+    try:
+        cap = int(os.environ.get(INTAKE_PARALLEL_ENV, "") or "0")
+    except ValueError:
+        cap = 0
+    cap = cap if cap > 0 else None
+    try:
+        available = next(
+            int(line.split()[1])
+            for line in _MEMINFO.read_text().splitlines()
+            if line.startswith("MemAvailable:")
+        ) // 1024
+    except (OSError, StopIteration):
+        return 1
+    return _permits_for_available(available, cap)
+
+
+def _acquire_intake_slot() -> int:
+    """A held flock fd on a free slot below the live permit count.
+
+    Slot files are never unlinked: removing one would hand later waiters a
+    fresh inode and break exclusion, the same convention as the intake lock.
+    Each pass re-reads the permit count, so a shrinking host narrows
+    admission without stranding a waiter on a slot now out of range.
+    """
+    slots = _real_home() / ".cache" / "repo-context-forge" / "intake-slots"
+    slots.mkdir(parents=True, exist_ok=True)
+    started = time.monotonic()
+    noticed = False
+    while True:
+        for index in range(_intake_permits()):
+            fd = os.open(slots / f"slot-{index}.lock", os.O_WRONLY | os.O_CREAT, 0o600)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                os.close(fd)
+                continue
+            return fd
+        if not noticed and time.monotonic() - started > 5:
+            print("repo-context-forge: intake waiting on account producer capacity",
+                  file=sys.stderr)
+            noticed = True
+        time.sleep(INTAKE_POLL_SECONDS)
 
 
 def _extract_option(argv: list[str], name: str) -> str | None:
@@ -146,21 +220,34 @@ def _record_pass_start(identity: RepoIdentity, slug: str, workflow_id: str, pack
 
 
 def _run_producer(args: list[str]) -> int:
-    """One producer at a time. GitNexus rewrites its global registry without an
-    atomic replace, so two analyses finishing together can tear it and every
-    later intake then fails. The lock covers the producer alone; packet assembly
-    and evidence recording stay concurrent. Upstream fix: future3OOO/GitNexus#25."""
+    """One producer at a time per HOME. GitNexus rewrites its global registry
+    without an atomic replace, so two analyses finishing together can tear it
+    and every later intake then fails. The lock covers the producer alone;
+    packet assembly and evidence recording stay concurrent. Upstream fix:
+    future3OOO/GitNexus#25.
+
+    The lock's HOME scope is the registry's own scope — a different HOME is a
+    different registry with nothing to tear — so it cannot also be the host's
+    memory bound. After winning the HOME lock, each producer claims one of
+    the account's capacity slots; the inherited fd keeps the reservation with
+    the producer even when this adapter dies, and taking the slot inside the
+    lock keeps a queued same-home waiter off the capacity tally.
+    """
     INTAKE_LOCK.parent.mkdir(parents=True, exist_ok=True)
     with open(INTAKE_LOCK, "a+", encoding="utf-8") as lock:
         # The producer retains the same lock if this adapter is terminated.
         fcntl.flock(lock, fcntl.LOCK_EX)
-        result = subprocess.run(
-            [sys.executable, str(BOOTSTRAP), *args],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            pass_fds=(lock.fileno(),),
-            check=False,
-        )
+        slot = _acquire_intake_slot()
+        try:
+            result = subprocess.run(
+                [sys.executable, str(BOOTSTRAP), *args],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                pass_fds=(lock.fileno(), slot),
+                check=False,
+            )
+        finally:
+            os.close(slot)
     sys.stdout.buffer.write(result.stdout)
     sys.stderr.buffer.write(result.stderr)
     return result.returncode
@@ -357,6 +444,7 @@ def main(argv: list[str]) -> int:
             "  --workflow-slug <slug>   record the packet on this active governed workflow\n"
             "  --revalidate             fast post-edit refresh: local mode, no SoulForge map rebuild;\n"
             "                           requires --workflow-slug\n"
+            "  env RCF_INTAKE_MAX_PARALLEL=<n>  cap concurrent producers below the memory-derived bound\n"
             "Every other option is passed to the producer; its help follows.\n"
         )
     revalidate = "--revalidate" in argv

@@ -6,6 +6,23 @@ Issue bodies own implementation scope; this record preserves decisions and their
 status. New decisions supersede earlier ones explicitly; observations and open
 acceptance gaps are not completed delivery.
 
+## 2026-09-13 — Selected Claude PR254 capacity port
+
+**Decision:** Port only merged Claude PR254 (`b3e4648288b66d510beb8a29f0349817e9ec05da`):
+`skills/repo-context-forge/scripts/bootstrap.py` and its existing
+`hooks/tests/test_repoforge_workflow.py`, using `scripts/estate_xform.py to-codex`.
+Both Codex files matched the transformed upstream parent exactly. Keep
+`.upstream-sync` unchanged because this is a selected port, not a full sync.
+Preserve native Codex delegates, the runner and workflow evidence owners.
+
+The account-scoped capacity slots are shared by Claude and Codex on this host;
+per-HOME registry locks remain separate. The producer-death/indexer residual
+remains owned by GitNexus #25, as documented in PR254.
+
+**Status:** Ported on `port/claude-254-intake-capacity`; the delivery PR carries
+measured source and installed-entrypoint acceptance. Tests and this decision
+record remain repository-only; scoped installation changes only the adapter.
+
 ## 2026-09-13 — Native Codex delegation defaults
 
 **Decision:** [#32](https://github.com/future3OOO/codex-skills/issues/32) uses
