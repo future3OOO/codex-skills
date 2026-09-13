@@ -192,6 +192,37 @@ class ConcurrentVerificationTests(HookHarness):
         self.assertEqual(self.recorded(), [GATE, ("generic", "a", True)], marker)
         self.assertEqual(self.executions("a"), 1, marker)
 
+    def test_replacement_cannot_erase_a_concurrent_rerun_or_another_failure(self) -> None:
+        slug = self.advance_to_verification()
+        failed = self.generic(slug, "a", exit_code=3)
+        first = json.loads(failed.stdout.splitlines()[-1])
+        reference = first["evidenceId"] + ":" + str(first["runIndex"])
+        other = self.generic(slug, "b", exit_code=4)
+        second = json.loads(other.stdout.splitlines()[-1])
+        other_reference = second["evidenceId"] + ":" + str(second["runIndex"])
+        run = "correction"
+        self.launched.append(run)
+        pending = self.verify(slug, "--replaces", reference, "--reason", "Correct invocation a",
+                              "--", sys.executable, str(self.blocking), str(self.markers), "c",
+                              env_extra={"S211_RUN": run, "S211_EXIT": "0"})
+        self.await_marker("started-correction", pending)
+        self.assertEqual(self.generic(slug, "a").returncode, 0)
+        stale = self.release(run, pending)
+        self.assertEqual(stale.returncode, 2, stale.stdout + stale.stderr)
+        self.assertIn("active failed generic", stale.stderr)
+        self.assertEqual(self.status()["verification"], "pending")
+        self.assertEqual(self.executions("c"), 1)
+        for suffix, exit_code in (("failed", "5"), ("passed", "0")):
+            run = "replacement-" + suffix
+            self.launched.append(run)
+            pending = self.verify(slug, "--replaces", other_reference, "--reason", "Correct invocation b",
+                                  "--", sys.executable, str(self.blocking), str(self.markers), "d",
+                                  env_extra={"S211_RUN": run, "S211_EXIT": exit_code})
+            result = self.release(run, pending)
+            self.assertEqual(result.returncode, 0 if exit_code == "0" else 2, result.stderr)
+            self.assertEqual(self.status()["verification"], "passed" if exit_code == "0" else "pending")
+        self.assertEqual(self.executions("d"), 2)
+
     def test_a_generic_completion_during_the_typed_gate_records_both(self) -> None:
         marker = "CONCURRENT_TYPED_COMPLETION_REFUSED"
         (self.repo / ".gitattributes").write_text("app.py filter=hold\n", encoding="utf-8")
