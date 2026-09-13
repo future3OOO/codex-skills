@@ -123,10 +123,12 @@ Restore the original literal and protect the calibration test through the existi
 manual-sync list. Preserve all pinned digests, result assertions and honest failures.
 The maintainer authorized this CI repair separately from #29/#30 implementation.
 
-**Status:** Repair under verification in PR #31. Remote `port/estate-parity` is
-published at `315278f`; remote `main` remains the old mirror at `e2e8a79`. Publishing
-the port branch did not integrate it into the default branch; PR #33 now owns that
-integration. Production checks also exposed five obsolete modules retained from the
-initial mirror, absent from upstream and unreferenced outside their own set. Remove
-them to restore the existing 2,825-line ceiling and eliminate the unused-import
-failure. No estate installation or benchmark-arm changes are part of this repair.
+**Status:** The maintainer explicitly requested merging PR #33 first; it is merged
+into `main` at `c969291`. PR #31 now targets `main` and carries this repair. All 90
+quality-gate tests pass after deleting five obsolete modules retained from the
+initial mirror, absent upstream and unreferenced outside their own set. The original
+2,825-line ceiling remains unchanged. The integrated runner also exposed an offline
+Claude-provider prune test invoking the new Codex default; explicitly select its
+intended provider and preserve its pointer assertions. Independent review and CI
+completion remain pending. No estate installation or benchmark-arm changes are
+part of this repair.

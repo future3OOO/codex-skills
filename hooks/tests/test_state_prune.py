@@ -657,7 +657,7 @@ class StatePruneTests(unittest.TestCase):
     def test_the_real_wrapper_pointer_reaches_prune_under_a_shared_root(self) -> None:
         """The wrapper's sid, written under the override root, is visible to prune.
 
-        The real wrapper runs offline (it dies at its alias-parse stage, after
+        The real Claude-provider wrapper runs offline (it dies at its alias-parse stage, after
         the pointer is written); nothing may land under the distinct
         CODEX_HOME fallback.
         """
@@ -667,7 +667,7 @@ class StatePruneTests(unittest.TestCase):
         subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
         fallback = self.tmp / "fallback-home"
         subprocess.run(
-            [str(wrapper), "--slug", "shared-root", "--cwd", str(repo), "--", "q"],
+            [str(wrapper), "--provider", "claude", "--slug", "shared-root", "--cwd", str(repo), "--", "q"],
             capture_output=True, text=True,
             env={**os.environ, "HOME": str(self.tmp / "home"),
                  "CODEX_HOME": str(fallback),
