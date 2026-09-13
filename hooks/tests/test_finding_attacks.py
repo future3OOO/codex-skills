@@ -234,6 +234,293 @@ class AttackHarness(unittest.TestCase):
         return dict(self.env, PYTHONPATH=str(self.tmp / "outside"))
 
 
+class PendingAdvisorRetries(AttackHarness):
+    # Captured issue #37 recorder inputs; no provider/model behavior is claimed.
+    CAPTURED = {"id": "SPEC-P2", "claim": "Diagnostic marker file is absent",
+                "material": True, "kind": "behavioral"}
+
+    def response(self, wid: str, findings: list[dict[str, object]], *, stage: str = "preflight",
+                 source: str = "codex-advisor", raw: str | None = None) -> subprocess.CompletedProcess[str]:
+        envelope = self.json_file("retry.json", {
+            "schemaVersion": 1, "findings": findings,
+            "verdict": "completed" if stage == "preflight" else
+                       "fix-before-commit" if any(f["material"] for f in findings) else "commit-ready",
+        })
+        if raw is not None:
+            envelope.write_text(raw, encoding="utf-8")
+        return self.cli("advisor-result", "--slug", "pending-retry", "--workflow-id", wid,
+                        "--stage", stage, "--source", source, "--input", str(envelope))
+
+    def accept(self, wid: str, findings: list[dict[str, object]], **kwargs) -> dict[str, object]:
+        result = self.response(wid, findings, **kwargs)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return json.loads(result.stdout)
+
+    def close_finding(self, wid: str, intake: str, finding: dict[str, object], *,
+                      stage: str = "preflight", status: str = "rejected-with-evidence") -> subprocess.CompletedProcess[str]:
+        measured = subprocess.run(["test", "-f", "app.py"], cwd=self.repo, env=self.env)
+        self.assertEqual(measured.returncode, 0)
+        document = self.json_file("close.json", {
+            "context": {"workflowId": wid, "candidateTree": self.status()["activeCandidateTree"]},
+            "intakeEvidenceId": intake,
+            "dispositions": [{"finding_id": finding["id"], "kind": finding["kind"], "status": status,
+                "premise": {"claim": "app.py is absent", "command": "test -f app.py", "result": "false"},
+                "occurrence": {"domain": "the app.py file", "count": 0, "complete": True,
+                               "command": "test -f app.py", "result": "exit 0; absent count 0"},
+                "materialConsequence": {"claim": "app.py is unavailable", "command": "test -f app.py",
+                                        "result": "false"},
+                "evidence": "test -f app.py exited 0"}],
+        })
+        return self.cli("advisor-disposition", "--slug", "pending-retry", "--workflow-id", wid,
+                        "--stage", stage, "--findings", "addressed", "--input", str(document))
+
+    def ready(self, wid: str) -> None:
+        record_context_forge(self.repo, self.tmp)
+        self.ok("verify", "--slug", "pending-retry", "--", "git", "diff", "--check")
+        self.ok("verify", "--slug", "pending-retry", "--kind", "quality-gate", "--base-ref", "HEAD")
+        self.ok("record-review", "--slug", "pending-retry", "--workflow-id", wid,
+                "--resolved-model", "recorder-input-not-model-review", "--review-context-id", "retry-fixture",
+                "--input", str(self.json_file("review.json", {"findings": []})))
+
+    def start_final(self) -> str:
+        wid = self.open_pytest_pass("pending-retry", "VALUE_NOT_TWO")
+        self.drive_attack_green("pending-retry", "VALUE_NOT_TWO")
+        self.ready(wid)
+        return wid
+
+    def test_preflight_retries_keep_one_reference(self) -> None:
+        marker = "DUPLICATE_PREFLIGHT_OBLIGATION"
+        wid = self.begin("pending-retry")
+        first = self.accept(wid, [self.CAPTURED])
+        original = first["advisorPreflight"]["intakeEvidence"]
+        owned = self.owned_map(original, marker="MARKER_ABSENT")
+        owned[0]["sourceRefs"][0]["id"] = self.CAPTURED["id"]
+        self.assertEqual(self.record_preflight("pending-retry", wid, owned).returncode, 0)
+        for _ in range(2):
+            replay = self.accept(wid, [self.CAPTURED])
+            self.assertEqual(replay["findingStates"], first["findingStates"], marker)
+            self.assertEqual(replay["advisorPreflight"]["intakeEvidence"], original, marker)
+        self.assertEqual(self.record_preflight("pending-retry", wid, owned).returncode, 0, marker)
+        closed = self.close_finding(wid, original, self.CAPTURED)
+        self.assertEqual(closed.returncode, 0, closed.stdout + closed.stderr)
+        self.assertEqual(self.status()["advisorPreflight"]["findings"], "addressed", marker)
+        print("target=workflow.py advisor-result scale=3 duplicate_retries=2 limit=0 "
+              "added_pending=0 added_references=0 extra_dispositions=0 extra_proof_executions=0")
+
+    def test_retry_preserves_green_progress_through_completion(self) -> None:
+        marker = "RETRY_LOST_PROGRESS"
+        wid = self.begin("pending-retry")
+        finding = {**self.CAPTURED, "id": "SPEC-1", "claim": "app.value is not 2"}
+        first = self.accept(wid, [finding])
+        original = first["advisorPreflight"]["intakeEvidence"]
+        self.assertEqual(self.record_preflight("pending-retry", wid,
+                         self.owned_map(original, marker="VALUE_NOT_TWO")).returncode, 0)
+        self.drive_attack_green("pending-retry", "VALUE_NOT_TWO")
+        before = self.status()
+        ledger = self.ok("checkpoint", "--phase", "final-review")["findingLedger"]
+        self.accept(wid, [finding])
+        after = self.status()
+        for key in ("findingStates", "preflightEvidence", "tddEvidence", "tddCycleCount"):
+            self.assertEqual(after[key], before[key], marker)
+        self.assertEqual(self.ok("checkpoint", "--phase", "final-review")["findingLedger"], ledger, marker)
+        closed = self.cli("advisor-disposition", "--slug", "pending-retry", "--workflow-id", wid,
+                          "--stage", "preflight", "--findings", "addressed", "--input",
+                          str(self.fixed_disposition(wid, original, dict(self.ZERO_DOMAIN))))
+        self.assertEqual(closed.returncode, 0, marker + closed.stdout + closed.stderr)
+        self.ready(wid)
+        self.accept(wid, [], stage="final")
+        self.ok("complete")
+
+    def test_refreshed_final_retry_closes_original_obligation(self) -> None:
+        marker = "DUPLICATE_FINAL_OBLIGATION"
+        wid = self.start_final()
+        finding = {**self.CAPTURED, "id": "SPEC-FINAL", "kind": "nonbehavioral"}
+        first = self.accept(wid, [finding], stage="final")
+        original = first["finalReview"]["intakeEvidence"]
+        self.refused_unchanged("REFUSAL_MUTATED_HISTORY", lambda: self.response(wid, [finding], stage="final"))
+        (self.repo / "issue253_marker.txt").write_text("present after correction\n")
+        self.refused_unchanged("REFUSAL_MUTATED_HISTORY", lambda: self.response(wid, [finding], stage="final"))
+        self.ready(wid)
+        refreshed = self.status()
+        replay = self.accept(wid, [finding], stage="final")
+        self.assertEqual(replay["findingStates"], first["findingStates"], marker)
+        self.assertEqual(replay["finalReview"]["intakeEvidence"], original, marker)
+        for key in ("activeCandidateTree", "verificationEvidence", "qualityGateEvidence", "codeReviewEvidence"):
+            self.assertEqual(replay[key], refreshed[key], marker)
+        self.assertNotEqual(replay["activeCandidateTree"], first["activeCandidateTree"], marker)
+        closed = self.close_finding(wid, original, finding, stage="final", status="fixed")
+        self.assertEqual(closed.returncode, 0, marker + closed.stdout + closed.stderr)
+        self.ok("complete")
+
+    def test_mixed_retry_uses_only_canonical_dispositions(self) -> None:
+        marker = "DUPLICATE_MIXED_OBLIGATION"
+        wid = self.begin("pending-retry")
+        a = {**self.CAPTURED, "kind": "nonbehavioral"}
+        b = {**a, "id": "NEW-B"}
+        first = self.accept(wid, [a])
+        original = first["advisorPreflight"]["intakeEvidence"]
+        mixed = self.accept(wid, [a, b])
+        current = mixed["advisorPreflight"]["intakeEvidence"]
+        self.assertEqual(len(mixed["findingStates"]), 2, marker)
+        self.assertEqual(mixed["findingStates"][0], first["findingStates"][0], marker)
+        self.refused_unchanged(marker, lambda: self.close_finding(wid, current, a))
+        closed = self.close_finding(wid, current, b)
+        self.assertEqual(closed.returncode, 0, marker + closed.stdout + closed.stderr)
+        self.assertEqual(self.status()["findingStates"][0]["status"], "pending", marker)
+        closed = self.close_finding(wid, original, a)
+        self.assertEqual(closed.returncode, 0, marker + closed.stdout + closed.stderr)
+        self.assertEqual(self.status()["advisorPreflight"]["findings"], "addressed", marker)
+
+    def test_changed_omitted_settled_and_foreign_findings(self) -> None:
+        marker = "DISTINCT_FINDING_SUPPRESSED"
+        wid = self.begin("pending-retry")
+        first = self.accept(wid, [self.CAPTURED])
+        variants = [{**self.CAPTURED, "claim": "different claim"},
+                    {**self.CAPTURED, "material": False}, {**self.CAPTURED, "kind": "nonbehavioral"}]
+        for count, finding in enumerate(variants, 2):
+            self.assertEqual(len(self.accept(wid, [finding])["findingStates"]), count, marker)
+        omitted = self.accept(wid, [])
+        self.assertEqual(len(omitted["findingStates"]), 4, marker)
+        self.assertEqual(omitted["advisorPreflight"]["findings"], "pending", marker)
+        original = first["advisorPreflight"]["intakeEvidence"]
+        self.assertEqual(self.close_finding(wid, original, self.CAPTURED).returncode, 0)
+        settled = self.status()["findingStates"][0]
+        replay = self.accept(wid, [self.CAPTURED], raw=json.dumps({"schemaVersion": 1,
+            "findings": [self.CAPTURED], "verdict": "completed"}, indent=2))
+        self.assertEqual(len(replay["findingStates"]), 5, marker)
+        self.assertEqual(replay["findingStates"][0], settled, marker)
+        self.refused_unchanged(marker, lambda: self.response("foreign-workflow", [self.CAPTURED]))
+        self.refused_unchanged(marker, lambda: self.response(wid, [self.CAPTURED], source="other-producer"))
+        other = self.ok("begin", "--slug", "pending-retry", "--intent", "new workflow")["workflowId"]
+        record_context_forge(self.repo, self.tmp)
+        independent = self.accept(other, [self.CAPTURED])
+        self.assertEqual(len(independent["findingStates"]), 1, marker)
+        self.assertNotEqual(independent["advisorPreflight"]["intakeEvidence"], original, marker)
+        reference = independent["advisorPreflight"]["intakeEvidence"]
+        owned = self.owned_map(reference, marker="VALUE_NOT_TWO")
+        owned[0]["sourceRefs"][0]["id"] = self.CAPTURED["id"]
+        self.assertEqual(self.record_preflight("pending-retry", other, owned).returncode, 0)
+        self.drive_attack_green("pending-retry", "VALUE_NOT_TWO")
+        self.ready(other)
+        across_stage = self.accept(other, [self.CAPTURED], stage="final")
+        self.assertEqual(len(across_stage["findingStates"]), 2, marker)
+        self.assertEqual({f["stage"] for f in across_stage["findingStates"]}, {"preflight", "final"}, marker)
+        final_wid = self.start_final()
+        note = {**self.CAPTURED, "material": False, "kind": "nonbehavioral"}
+        self.accept(final_wid, [note], stage="final")
+        (self.repo / "note.txt").write_text("new candidate\n")
+        self.ready(final_wid)
+        changed_verdict = self.accept(final_wid, [note, {**note, "id": "NEW", "material": True}], stage="final")
+        self.assertEqual(len(changed_verdict["findingStates"]), 3, marker)
+
+    def test_observations_retain_raw_bytes(self) -> None:
+        marker = "OBSERVATION_LOST"
+        wid = self.begin("pending-retry")
+        raws = [json.dumps({"schemaVersion": 1, "findings": [self.CAPTURED], "verdict": "completed"},
+                           indent=indent) for indent in (None, 2, 4)]
+        for raw in raws:
+            self.accept(wid, [self.CAPTURED], raw=raw)
+        history = self.ok("history")
+        documents = [self.ok("evidence", "--evidence-id", evidence_id)
+                     for event in history["events"] if event["kind"] == "advisor-preflight-result"
+                     for evidence_id in event["evidenceIds"]]
+        observations = [entry["document"] for entry in documents if entry["kind"] == "finding-intake-preflight"]
+        self.assertEqual(sorted(d["raw"] for d in observations), sorted(raws), marker)
+
+    def test_invalid_payload_refuses_atomically(self) -> None:
+        wid = self.begin("pending-retry")
+        self.accept(wid, [self.CAPTURED])
+        for raw in ('{"schemaVersion":1,"findings":[],"verdict":"commit-ready"}',
+                    '{"schemaVersion":1,"schemaVersion":1,"findings":[],"verdict":"completed"}',
+                    json.dumps({"schemaVersion": 1, "findings": [{**self.CAPTURED, "material": 1}],
+                                "verdict": "completed"})):
+            self.refused_unchanged("REFUSAL_MUTATED_HISTORY", lambda: self.response(wid, [], raw=raw))
+
+    def test_concurrent_retries_register_once(self) -> None:
+        from concurrent.futures import ThreadPoolExecutor
+        wid = self.begin("pending-retry")
+        envelope = self.json_file("concurrent.json", {"schemaVersion": 1,
+            "findings": [self.CAPTURED], "verdict": "completed"})
+        args = ("advisor-result", "--slug", "pending-retry", "--workflow-id", wid,
+                "--stage", "preflight", "--source", "codex-advisor", "--input", str(envelope))
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            results = list(pool.map(lambda _: self.cli(*args), range(3)))
+        for result in results:
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(len(self.status()["findingStates"]), 1, "CONCURRENT_DUPLICATE_OBLIGATION")
+
+    def test_lookup_reads_each_pending_intake_once(self) -> None:
+        import pstats
+        wid = self.begin("pending-retry")
+        findings = [{**self.CAPTURED, "id": f"P-{i}"} for i in range(3)]
+        settled = {**self.CAPTURED, "id": "SETTLED", "kind": "nonbehavioral"}
+        recorded = self.accept(wid, [settled])
+        self.assertEqual(self.close_finding(wid, recorded["advisorPreflight"]["intakeEvidence"], settled).returncode, 0)
+        self.accept(wid, findings)
+        for i in range(4):
+            self.accept(wid, [], raw=json.dumps({"schemaVersion": 1, "findings": [],
+                        "verdict": "completed"}, indent=i))
+        envelope = self.json_file("profile.json", {"schemaVersion": 1, "findings": findings,
+                                                   "verdict": "completed"})
+        profile = self.tmp / "retry.prof"
+        result = subprocess.run([sys.executable, "-m", "cProfile", "-o", str(profile), str(WORKFLOW),
+            "advisor-result", "--repo", str(self.repo), "--slug", "pending-retry", "--workflow-id", wid,
+            "--stage", "preflight", "--source", "codex-advisor", "--input", str(envelope),
+            "--design-declaration", str(self.design_absent)], cwd=ROOT, env=self.env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        stats = pstats.Stats(str(profile)).stats
+        reads = sum(counts[0] for key, entry in stats.items() if key[2] == "evidence"
+                    for caller, counts in entry[4].items() if caller[2] == "_register_finding_intake")
+        self.assertLessEqual(reads, 1, "UNBOUNDED_PENDING_LOOKUP")
+        self.assertFalse(any(key[2] == "history" for key in stats), "UNBOUNDED_PENDING_LOOKUP")
+        print(f"target=workflow.py advisor-result pending_findings=3 pending_intakes=1 history_retries=4 "
+              f"read_limit=1 observed_registration_reads={reads}")
+
+
+    def test_appeal_reads_original_intake_once(self) -> None:
+        self.assert_appeal_reads_once(shared=False)
+
+    def test_shared_appeal_reads_original_intake_once(self) -> None:
+        self.assert_appeal_reads_once(shared=True)
+
+    def assert_appeal_reads_once(self, *, shared: bool) -> None:
+        wid = self.start_final()
+        a = {**self.CAPTURED, "id": "A", "kind": "nonbehavioral"}
+        b = {**a, "id": "B", "material": not shared}
+        c = {**a, "id": "C"}
+        first = self.accept(wid, [a, b] if shared else [a], stage="final")
+        original = first["finalReview"]["intakeEvidence"]
+        self.assertEqual(self.close_finding(wid, original, a, stage="final").returncode, 0)
+        envelope = self.json_file("appeal.json", {"schemaVersion": 1, "findings": [a, b, c] if shared else [a, b],
+                                                 "verdict": "fix-before-commit"})
+        reads_file = self.tmp / "reads.json"
+        # Observe real calls without replacing the recorder or its collaborators.
+        tracer = (
+            "import atexit,json,runpy,sys; from pathlib import Path; reads=[]; "
+            "sys.setprofile(lambda f,e,a: reads.append(f.f_locals.get('evidence_id')) "
+            "if e=='call' and f.f_code.co_name=='evidence' else None); "
+            f"atexit.register(lambda: Path({str(reads_file)!r}).write_text(json.dumps(reads))); "
+            "sys.argv=sys.argv[1:]; runpy.run_path(sys.argv[0],run_name='__main__')"
+        )
+        result = subprocess.run([sys.executable, "-c", tracer, str(WORKFLOW), "advisor-result",
+            "--repo", str(self.repo), "--slug", "pending-retry", "--workflow-id", wid,
+            "--stage", "final", "--source", "codex-advisor", "--input", str(envelope),
+            "--design-declaration", str(self.design_absent)], cwd=ROOT, env=self.env,
+            capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        count = json.loads(reads_file.read_text()).count(original)
+        self.assertEqual(count, 1, "REFERENCED_INTAKE_READ_TWICE")
+        states = self.status()["findingStates"]
+        expected = [("A", "pending"), ("B", "pending")] + ([("C", "pending")] if shared else [])
+        self.assertEqual([(f["findingId"], f["status"]) for f in states], expected)
+        self.assertEqual(states[0]["intakeEvidenceId"], original)
+        self.assertEqual(states[0]["appealStatus"], "disagreement")
+        if shared:
+            self.assertEqual(states[1], first["findingStates"][1])
+            self.assertNotEqual(states[2]["intakeEvidenceId"], original)
+        print(f"target=workflow.py advisor-result final_appeal pending_findings={len(states)} original_intake_read_limit=1 observed={count}")
+
+
 class CheckpointIntent(AttackHarness):
     def test_checkpoint_exposes_the_recorded_verbatim_intent(self) -> None:
         marker = "CHECKPOINT_OMITS_RECORDED_INTENT"

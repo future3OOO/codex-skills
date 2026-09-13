@@ -98,9 +98,7 @@ a verdict, either a material re-raise carrying a new contradicting measurement
 or `commit-ready`.
 
 The wrapper records the exact UTF-8 response and its digest as immutable finding
-intake; it never dispositions. After reading the output, the lead validates
-every finding and appends a separate intake-referenced disposition for each
-material one; `material:false` notes need none. Completion
+intake; it never dispositions. Completion
 derives from the context-matched intake's effective terminal dispositions, not
 from the raw verdict alone. A `context-mismatch` advances nothing and must be
 re-consulted. A final `rejected-with-evidence` remains pending for one response

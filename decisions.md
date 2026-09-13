@@ -188,3 +188,25 @@ Claude-provider prune test invoking the new Codex default; explicitly select its
 intended provider and preserve its pointer assertions. Independent review and CI
 completion remain pending. No estate installation or benchmark-arm changes are
 part of this repair.
+
+## 2026-09-13 — Reuse identical pending advisor obligations
+
+**Decision:** [#37](https://github.com/future3OOO/codex-skills/issues/37) reconciles
+validated findings inside the existing recorder transaction, using current pending
+state and referenced intakes. Compare all four finding fields within the
+workflow/stage/producer/verdict context. Retain canonical lifecycle references,
+ownership and progress while recording each accepted observation. Mixed intakes
+register only new obligations; dispositions require a canonical registered pair.
+No schema, hash, CLI, approval or workflow-stage changes are needed.
+
+**Observed:** The captured preflight response produced pending counts 1, 2, 3
+through the public CLI on main, even when the three observations shared one
+evidence ID. Timestamp variation is not required for the defect.
+
+**Status:** Implemented on `fix/issue37-pending-findings` from fresh `origin/main`
+`04aa084`. Public CLI RED/GREEN covers repeated and concurrent retries, mixed
+findings, preserved ownership/progress, and refreshed-final completion. Both appeal-read regressions have CLI RED/GREEN proof. All eleven acceptance
+tests, the full integrated suite, lint and typed gate pass. Fresh native review
+and final Codex Advisor review have no findings; earlier measured findings are
+fixed. Scoped installation and PR delivery accompany this verified change; the
+linked issue/PR owns remote check and reviewer status.
