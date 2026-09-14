@@ -2221,6 +2221,7 @@ class PassLifecycleTests(unittest.TestCase):
         envelope.write_text('{"schemaVersion":1,"findings":[],"verdict":"context-mismatch"}', encoding="utf-8")
         mismatch = self.cli("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final", "--source", "codex-advisor", "--input", str(envelope))
         self.assertEqual(mismatch.returncode, 0, mismatch.stdout + mismatch.stderr)
+        (self.repo / "app.py").write_text("value = 2\n", encoding="utf-8")
         self.post_edit_hook(slug)
         return json.loads(mismatch.stdout), json.loads(self.cli("status").stdout)
 

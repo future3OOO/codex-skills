@@ -38,8 +38,8 @@ actual file edit before asserting invalidation.
 `c76f43b`, with verified hook/CLI/skill bindings and isolated native/workflow state.
 Routing and missing-SID checks have RED/GREEN proof; held-disposition continuation
 and corrected CI assertions pass. Dispatch preservation was baselined after the
-routing edit and is explicitly late. A test-driver setup failure was rejected as
-RED, corrected, and retained as invalid evidence.
+routing edit and is explicitly late. A test-driver setup error did not count as
+proof of the defect; its failed attempt remains in history.
 
 **Status:** Installed A/B proof, current verification, retained independent return
 review and final advisor review passed. The parent restart corrected its stale
