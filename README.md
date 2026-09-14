@@ -42,6 +42,8 @@ This adds the historical objects without changing the checked-out source.
 
 ## Install (project → estate)
 
+For a full project installation:
+
 ```bash
 ./install.sh
 ```
@@ -51,6 +53,26 @@ Backs up touched paths to `~/.codex-backups/<ts>/`, rsyncs `hooks/` and
 and appends `[mcp_servers.gitnexus]` to `config.toml` when absent. Codex
 requires hook trust: approve the hooks once via `/hooks` in an interactive
 session, or run automation with `--dangerously-bypass-hook-trust`.
+
+### Scoped updates
+
+When installation is authorized, merge first and use clean, updated `main`. Select only
+the reviewed files mapped into the estate; exclude tests and `decisions.md`.
+Inspect destination differences first; back up and merge unrelated local edits
+and managed config entries instead of overwriting them. For direct file copies,
+run from the checkout root (replace the example file list):
+
+```bash
+paths=(hooks/lib/workflow_state.py skills/repo-production-workflow/SKILL.md)
+estate="${CODEX_HOME:-$HOME/.codex}"
+backup="$HOME/.codex-backups/$(date +%Y%m%d-%H%M%S)"
+rsync -acR --backup --backup-dir="$backup" -- "${paths[@]}" "$estate/" &&
+  for path in "${paths[@]}"; do cmp -- "$path" "$estate/$path" || exit 1; done
+```
+
+Back up and remove only explicitly owned obsolete files. Record the source SHA,
+selected paths and backup location; run the relevant existing probe against the
+installed entrypoint. Leave other estate paths unchanged.
 
 ### External tool updates
 
