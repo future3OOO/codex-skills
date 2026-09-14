@@ -10,6 +10,16 @@ source, and behavior-changing repository work. `AGENTS.md` owns the hard
 invariants and GitNexus doctrine; [INVARIANT-OWNERSHIP.md](INVARIANT-OWNERSHIP.md)
 maps the remaining owners.
 
+## Baseline and candidate execution
+
+For behavior changes, before baseline measurements or production edits, establish
+unchanged N and candidate N+1 execution with isolated mutable state. Reuse project
+environments and build/install/refresh commands to run worktree changes in N+1;
+reload cached consumers. Setup is ready when both loaded implementations are
+verified and the same real production operation can run against each. Keep candidate
+bindings current and report unavailable comparisons under
+[Production Code's verification rules](../production-code/SKILL.md#minimum-implementation-decision).
+
 ## One stable workflow
 
 Choose one short slug for the whole pass and begin state before bootstrap:
@@ -79,8 +89,7 @@ preferably in a dedicated chat pane. It attaches the recorded graph evidence
 itself. Supply the contract, packet, intended proof, and no-change surfaces. Invoke `codebase-design` first
 when adding/changing a Module, public Interface, or Seam.
 
-The consult is optional: skip it when the request raises no design or scope
-question. The wrapper emits the completed answer, then records it; an intake
+The wrapper emits the completed answer, then records it; an intake
 with no material finding is closed at recording and needs no disposition.
 A material behavioral finding rides the pass as a map-owned attack and is
 dispositioned once that attack is GREEN; a nonbehavioral or measured-false

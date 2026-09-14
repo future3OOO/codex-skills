@@ -6,6 +6,43 @@ Issue bodies own implementation scope; this record preserves decisions and their
 status. New decisions supersede earlier ones explicitly; observations and open
 acceptance gaps are not completed delivery.
 
+## 2026-09-14 — Require preflight advice
+
+**Decision:** Require advisor advice before the initial production preflight. Supersedes the
+optional scope/design exception that allowed the [#29](https://github.com/future3OOO/codex-skills/issues/29)
+continuation to omit advice. The workflow and advisor instructions own this rule.
+
+**Status:** Proposed in [PR #51](https://github.com/future3OOO/codex-skills/pull/51);
+not merged or installed in the shared estate.
+
+**Private development estate:** The maintainer requires candidate skills/runtime
+to run from a private installation during development. Seed N and N+1 from one
+global snapshot, keeping N's installation fixed and their runtime state separate.
+Use Bubblewrap process bindings and a task-local refresh script for candidate
+installation. PR50 exposed stale parent hooks despite updated files; native
+restart under the private bindings and loaded-consumer verification are part of
+testing when consumers retain old code.
+README owns the installation guidance; shared delivery still requires authorization.
+
+**Comparison ownership:** Production Code owns real N/N+1 behavioral verification
+and conditional A/B cost comparison at equivalent work and correctness; TDD links
+to that rule. Reuse the same operations rather than adding another test stage.
+TDD uses the real N/N+1 operations as its proof and retains the probe where practical;
+additional checks must earn their place and cannot replace production acceptance.
+Keep the explicit N/N+1 and conditional A/B pointer in tests.md for local visibility.
+The recorder reference separates ordinary recording from recovery, retaining command
+binding and attribution limits while removing duplicated lifecycle and parser detail.
+Repository target resolution applies to pytest/unittest, not direct installed probes.
+Included in PR #51; wording review does not establish measured agent improvement.
+
+**Execution setup:** PR #51 requires verified baseline/candidate execution before
+measurements or production edits, reusing project environments and refresh commands.
+This generalizes private development to downstream projects; README owns only
+Codex-specific setup and links to Production Code's comparison rules.
+Independent instruction review and diff checks passed; PR51 skills and TDD references
+are installed and hash-verified privately. The interrupted experiment does not establish
+PR51 agent improvement.
+
 ## 2026-09-14 — Issue 29 candidate-estate continuation
 
 **Decision:** Continue [#29](https://github.com/future3OOO/codex-skills/issues/29)

@@ -1,8 +1,14 @@
 # Behavior Test Reference
 
-A strong test proves one **independently-failable observable outcome** through the public Interface or externally observable state governed by that Interface.
+A strong test is a real probe of one **independently-failable observable outcome** through the production Interface or externally observable state governed by that Interface. Use the CLI, application operation or public call that exercises the claimed behavior; a test runner or CI result alone establishes no coverage.
 
 A behavior test survives internal refactoring: if observable behavior is unchanged but the test breaks, the test is coupled to implementation. Several assertions are valid when they jointly prove one behavior; one assertion can still hide an over-broad behavior.
+
+Retain the real probe as the regression test where practical. Additional checks
+require distinct coverage or demonstrated cheaper feedback, with defect sensitivity
+and no narrowing of the contract; they do not replace production acceptance. Apply
+[Production Code's comparison rules](../production-code/SKILL.md#minimum-implementation-decision)
+for N/N+1 proof and conditional A/B measurements.
 
 ## What a slice must prove
 

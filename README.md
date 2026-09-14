@@ -28,6 +28,21 @@ The project is the source of truth; the estate is an install artifact.
 - `docs/` — historical design docs.
 - Tests exist in the repo for CI; `install.sh` excludes them from the estate.
 
+## Developing this estate
+
+Work in an isolated Git worktree. Seed N and N+1 from one global estate snapshot,
+preserving extra skills and dependencies. Keep N fixed; give each estate separate
+sessions, caches and workflow state. Use Bubblewrap (`bwrap`) to bind each copy at
+`~/.codex`, keep the global estate read-only, and retain normal tool access;
+`CODEX_HOME` alone misses home-relative entrypoints.
+
+Use a task-local refresh script to install worktree changes into N+1, preserving
+unrelated files and merging managed hooks. Exclude tests and `decisions.md`.
+Refresh during development; restart cached consumers within the private bindings
+and verify loaded skills, hooks, CLI and native state. Apply
+[Production Code's comparison rules](skills/production-code/SKILL.md#minimum-implementation-decision).
+Private testing does not authorize shared installation.
+
 ## Test history
 
 The port has independent Git history. Calibration tests replay original Claude
@@ -56,7 +71,7 @@ session, or run automation with `--dangerously-bypass-hook-trust`.
 
 ### Scoped updates
 
-When installation is authorized, merge first and use clean, updated `main`. Select only
+For authorized shared-estate installation, merge first and use clean, updated `main`. Select only
 the reviewed files mapped into the estate; exclude tests and `decisions.md`.
 Inspect destination differences first; back up and merge unrelated local edits
 and managed config entries instead of overwriting them. For direct file copies,

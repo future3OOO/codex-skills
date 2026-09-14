@@ -45,8 +45,8 @@ findings and inputs to explain the missed mechanism before editing again. The le
 must investigate materially wrong behavior the declared assertions would miss and
 assess the real results before initial or return review.
 
-For behavioral repairs, establish the intended correction, affected-domain coverage
-and preservation separately through actual N/N+1 Seam operations. Verify which
+For behavior changes, use equivalent real N/N+1 Seam operations to establish the
+intended behavior, affected-domain coverage and preservation separately. Verify which
 production implementation each operation loads, its inputs and environment; inspect
 results, persisted effects and cleanup. Exercise the affected forms and interactions,
 not just the reported example. Reuse applicable drivers and evidence; execute again
@@ -60,6 +60,10 @@ check. Injection proves sensitivity, not historical N. Correct or replace an
 insensitive check, retaining distinct useful coverage; preservation checks may
 correctly pass on both versions. Missing material acceptance remains unresolved,
 regardless of passing examples, suite totals, CI or recorder readiness.
+
+When efficiency is part of the objective, use those operations for an A/B comparison
+of relevant costs at equivalent work and correctness. Meeting a resource limit alone
+does not demonstrate improvement.
 
 For workflow changes, also observe the actual lead following the candidate
 instructions during real work and return review. Distinguish that observation from

@@ -2,7 +2,7 @@
 
 The canonical mock-ban statement lives in `AGENTS.md` and governs every claimed RED/GREEN or production proof. This reference does not restate or weaken it.
 
-Use the closest real production Interface available:
+Use the real production Interface that owns the claimed behavior:
 
 - **In-process behavior:** call the public Interface with real implementation code.
 - **Filesystem/local runtime:** use a temporary filesystem or real local runtime that executes the production contract.
@@ -10,6 +10,10 @@ Use the closest real production Interface available:
 - **Third-party provider:** use its sandbox/test tenant or an owned end-to-end environment. Captured fixtures may support contract analysis but do not replace the live production Seam.
 - **Outgoing process boundary:** for assertions about what a Module emits to an external process, capture at that Module's own boundary; that capture is the real Seam, and the ban targets substituted collaborators inside the asserted contract. The provider's own behavior still needs the live Seam.
 - **Browser/device behavior:** use the authenticated staging flow or strongest real runtime harness available.
+
+Reuse the workflow's [baseline and candidate execution setup](../repo-production-workflow/SKILL.md#baseline-and-candidate-execution).
+Claims about CLI routing, installed code or consumer reload require exercising
+those paths; calling an internal function cannot establish that they work.
 
 When proving an application failure or adversarial input, drive the real reachable precondition through the production Seam.
 
