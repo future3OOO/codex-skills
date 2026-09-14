@@ -10,6 +10,9 @@ Terminology, matching the sibling projects:
 
 The project is the source of truth; the estate is an install artifact.
 
+See [real N/N+1 probes and A/B comparisons](docs/real-probe-comparisons.md) for
+illustrated downstream and private-estate workflows. This guide is not installed.
+
 ## Layout
 
 - `AGENTS.md` — global Codex rules (`~/.codex/AGENTS.md`).

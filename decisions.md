@@ -6,6 +6,12 @@ Issue bodies own implementation scope; this record preserves decisions and their
 status. New decisions supersede earlier ones explicitly; observations and open
 acceptance gaps are not completed delivery.
 
+## 2026-09-14 — Repository-only comparison guide
+
+**Decision:** Keep the N/N+1 and A/B diagrams in `docs/real-probe-comparisons.md`,
+linked from README, outside the installed estate. Deliver separately from PR #51;
+the guide explains real probes without adding runtime or skill requirements.
+
 ## 2026-09-14 — Issue 29 candidate-estate continuation
 
 **Decision:** Continue [#29](https://github.com/future3OOO/codex-skills/issues/29)

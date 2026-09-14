@@ -7,9 +7,9 @@ verified loaded Implementations. N+1 is a version label, not a sample count.
 **N/N+1 establishes behavior. A/B compares its cost at equivalent work and
 correctness.** The same operations can supply both kinds of evidence.
 
-This guide illustrates the existing
+This repository-only guide illustrates the
 [comparison rules](../skills/production-code/SKILL.md#minimum-implementation-decision)
-and [execution setup](../skills/repo-production-workflow/SKILL.md#baseline-and-candidate-execution).
+and [Repo Production Workflow](../skills/repo-production-workflow/SKILL.md).
 It adds no workflow stage. Mermaid diagrams render on GitHub.
 
 ## Downstream projects using Repo Production Workflow
