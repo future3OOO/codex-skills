@@ -29,6 +29,7 @@ and conditional A/B cost comparison at equivalent work and correctness; TDD link
 to that rule. Reuse the same operations rather than adding another test stage.
 TDD uses the real N/N+1 operations as its proof and retains the probe where practical;
 additional checks must earn their place and cannot replace production acceptance.
+Keep the explicit N/N+1 and conditional A/B pointer in tests.md for local visibility.
 The recorder reference separates ordinary recording from recovery, retaining command
 binding and attribution limits while removing duplicated lifecycle and parser detail.
 Repository target resolution applies to pytest/unittest, not direct installed probes.

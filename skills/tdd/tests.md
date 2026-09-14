@@ -6,7 +6,9 @@ A behavior test survives internal refactoring: if observable behavior is unchang
 
 Retain the real probe as the regression test where practical. Additional checks
 require distinct coverage or demonstrated cheaper feedback, with defect sensitivity
-and no narrowing of the contract; they do not replace production acceptance.
+and no narrowing of the contract; they do not replace production acceptance. Apply
+[Production Code's comparison rules](../production-code/SKILL.md#minimum-implementation-decision)
+for N/N+1 proof and conditional A/B measurements.
 
 ## What a slice must prove
 
