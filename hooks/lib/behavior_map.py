@@ -22,8 +22,8 @@ OPTIONAL_FIELDS = frozenset({
     "redCommand", "redProof", "revalidationRequired",
 })
 IDENTIFIER = re.compile(r"^[A-Z][A-Z0-9_-]{1,63}$")
-# A baselined item keeps its passing command in `evidence` behind this stamp;
-# the tdd producer writes it and readers of executed selections parse it back.
+# The producer stamps a baseline's command in `evidence`; supersession moves it
+# into the existing baseline proof before replacing the authored explanation.
 BASELINE_STAMP = "baseline-passed: "
 
 
@@ -32,17 +32,14 @@ def executed_commands(entry: JsonObject) -> dict[str, str]:
 
     An authored document may carry `proofCommand` and `evidence`, so each is read
     only beside the producer's own mark for that phase: `baselineProof` for the
-    baseline command stamped into `evidence`, and a GREEN the producer recorded
+    baseline command (stamped evidence or retained proof), and a GREEN the producer recorded
     for `proofCommand`. `redCommand` the loader already refuses when authored.
     """
     evidence = entry.get("evidence")
-    baseline = (
-        str(evidence)[len(BASELINE_STAMP):].strip()
-        if isinstance(evidence, str)
-        and evidence.startswith(BASELINE_STAMP)
-        and isinstance(entry.get("baselineProof"), dict)
-        else ""
-    )
+    proof = entry.get("baselineProof")
+    baseline = proof.get("command") if isinstance(proof, dict) else None
+    if not baseline and isinstance(proof, dict) and isinstance(evidence, str) and evidence.startswith(BASELINE_STAMP):
+        baseline = evidence[len(BASELINE_STAMP):].strip()
     recorded = {
         "red": entry.get("redCommand"),
         "green": entry.get("proofCommand") if green_through_red(entry) else None,
@@ -179,7 +176,7 @@ def validate_items(
         unknown = sorted(set(raw) - REQUIRED_FIELDS - OPTIONAL_FIELDS)
         # Maps recorded before `kind` existed still load; their items carry no
         # contract authority. New items always declare a kind.
-        missing = sorted(REQUIRED_FIELDS - set(raw) - ({"kind"} if allow_runtime else set()))
+        missing = sorted(REQUIRED_FIELDS - set(raw) - ({"kind"} if allow_runtime else {"status"}))
         if missing:
             raise ValueError(
                 f"behaviorMap item {position} is missing fields: {', '.join(missing)}"
@@ -201,7 +198,7 @@ def validate_items(
             raise ValueError(
                 f"behavior {identifier} kind must be one of: {', '.join(sorted(KINDS))}"
             )
-        status = _text(raw.get("status"))
+        status = _text(raw.get("status", "pending" if not allow_runtime else None))
         if status not in statuses:
             raise ValueError(
                 f"behavior {identifier} status must be one of: {', '.join(sorted(statuses))}"
@@ -254,7 +251,7 @@ def validate_items(
         # Supersession keeps the proof kind it retired, so a post-edit pass
         # cannot be laundered into a GREEN through RED by being superseded.
         if "supersededFrom" in raw:
-            if not allow_runtime or raw.get("supersededFrom") not in PROOF_STATUSES:
+            if not allow_runtime or raw.get("supersededFrom") not in PROOF_STATUSES | {"already-satisfied"}:
                 raise ValueError(f"behavior {identifier} supersededFrom is recorded only by a tdd-map supersession")
             item["supersededFrom"] = raw["supersededFrom"]
         evidence = _text(raw.get("evidence"))
@@ -418,8 +415,10 @@ def apply_dispositions(
             raise ValueError(f"behavior {identifier} disposition must be one of: "
                              + ", ".join(sorted(EVIDENCED_STATUSES | {"pending"})))
         if status == "superseded":
-            if previous not in PROOF_STATUSES:
+            if previous not in PROOF_STATUSES and not (previous == "already-satisfied" and producer_proved(mapped)):
                 raise ValueError(f"behavior {identifier} is {previous}; only a GREEN item can be superseded")
+            if previous == "already-satisfied":
+                mapped["baselineProof"]["command"] = executed_commands(mapped).get("baseline")
             mapped["supersededBy"] = _required(raw, "supersededBy", identifier)
             mapped["supersededFrom"] = previous
         elif status == "withdrawn":

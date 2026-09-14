@@ -9,6 +9,7 @@ promise. The workflow ledger is continuity, not an attestation system.
 """
 from __future__ import annotations
 
+import argparse
 import re
 import shlex
 from collections.abc import Mapping, Sequence
@@ -345,7 +346,7 @@ def _pre_interface_refusal(diagnostic: str) -> str | None:
 
 
 def _unittest_red(
-    output: str, marker: str
+    output: str, marker: str, *, test_id: str | None = None
 ) -> tuple[dict[str, object] | None, str]:
     runs = list(UNITTEST_RAN.finditer(output))
     ran = runs[-1] if runs else None
@@ -362,10 +363,9 @@ def _unittest_red(
         count = re.fullmatch(r"(failures|errors)=(\d+)", field.strip())
         if count:
             summary_counts[count.group(1)] = int(count.group(2))
-    report_counts = (
-        len(re.findall(r"(?m)^FAIL: ", output)),
-        len(re.findall(r"(?m)^ERROR: ", output)),
-    )
+    failures = _unittest_terminal_failures(output)
+    report_counts = tuple(sum(header.startswith(kind) for _, header, _, _ in failures)
+                          for kind in ("FAIL: ", "ERROR: "))
     expected_counts = (
         summary_counts.get("failures", 0),
         summary_counts.get("errors", 0),
@@ -377,13 +377,24 @@ def _unittest_red(
         )
     if summary_counts.get("failures", 0) + summary_counts.get("errors", 0) < 1:
         return None, "unittest did not report a failed test"
-    failures = _unittest_terminal_failures(output)
-    unreached = next((reason for reason in (_unittest_unreached(*block[:2]) for block in failures) if reason), None)
+    if test_id is not None:
+        selected = []
+        for block in failures:
+            match = re.fullmatch(r"(?:FAIL|ERROR): (\S+) \(([^)]+)\)", block[1])
+            if match is not None:
+                name, parent = match.groups()
+                identifier = parent if parent.endswith('.' + name) else parent + '.' + name
+                if identifier == test_id:
+                    selected.append(block)
+        if len(selected) != 1:
+            return None, "the selected test has no unique terminal failure"
+        failures = selected
+    unreached = next((reason for reason in (_unittest_unreached(*block[1:3]) for block in failures) if reason), None)
     if unreached is not None:
         return None, "the operation failed before reaching the production Interface: " + unreached
-    found = next(((rendering[0], line) for _, _, rendering in failures for line in rendering if marker in line), None)
+    found = next(((rendering[0], line) for _, _, _, rendering in failures for line in rendering if marker in line), None)
     if found is None:
-        return None, _not_terminal("unittest", [rendering[0] for _, _, rendering in failures if rendering])
+        return None, _not_terminal("unittest", [rendering[0] for _, _, _, rendering in failures if rendering])
     head, observed = found
     refusal = _pre_interface_refusal(head)
     if refusal is not None:
@@ -394,6 +405,79 @@ def _unittest_red(
         "testsExecuted": int(ran.group(1)),
         "observedFailure": observed,
     }, ""
+
+
+def attributed_result(surface: dict[str, object], receipt: dict[str, object], test_id: str,
+                      marker: str) -> tuple[str | None, dict[str, object] | None, str]:
+    """Attribute a retained verbose unittest report; ambiguity stays single-item."""
+    if surface.get("runner") != "unittest" or receipt.get("outputBytes", 16001) > 16000:
+        return None, None, "reuse needs a complete verbose unittest execution report"
+    if test_id.rsplit(".", 1)[-1] in UNITTEST_FIXTURES:
+        return None, None, "a fixture cannot supply test-body proof"
+    command = shlex.split(str(receipt.get("command", "")))
+    runner, prefix = _recognise(command)
+    parser = argparse.ArgumentParser(add_help=False, exit_on_error=False)
+    parser.add_argument("-v", "--verbose", dest="verbosity", action="store_const", const=2)
+    parser.add_argument("-q", "--quiet", dest="verbosity", action="store_const", const=0)
+    for option in ("-f", "-c", "-b"):
+        parser.add_argument(option, action="store_true")
+    for option in UNITTEST_DISCOVER_VALUE_OPTIONS | {"--durations"}:
+        parser.add_argument(option)
+    try:
+        options, _ = parser.parse_known_args(command[len(prefix):])
+    except argparse.ArgumentError:
+        return None, None, "reuse could not establish unittest verbosity"
+    if runner != "unittest" or options.verbosity != 2:
+        return None, None, "reuse requires an effectively verbose unittest command"
+    output = ANSI_ESCAPE.sub("", str(receipt.get("outputTail", "")))
+    ran = list(UNITTEST_RAN.finditer(output))
+    report = output[:ran[-1].start()] if ran else ""
+    # Output has no producer labels. A row search is insufficient: every byte
+    # of progress must belong to a result or a separator, otherwise execute the
+    # item directly. Terminal tracebacks remain the existing validator's job.
+    terminal = _unittest_terminal_failures(output)
+    progress = report[:terminal[0][0]] if terminal else report
+    record_pattern = re.compile(
+        r"(?m)^(\S+) \(([^)]+)\)(?:\n([^\n]*))? \.\.\. "
+        r"(ok|FAIL|ERROR|skipped .*|expected failure|unexpected success)$"
+    )
+    records = record_pattern.findall(progress)
+    remainder = record_pattern.sub("", progress)
+    if any(line and not _rule(line, "=") and not _rule(line, "-") for line in remainder.splitlines()):
+        return None, None, "interleaved output prevents test attribution; use direct execution"
+    # A native identity inside a description admits another interpretation of
+    # the merged text. Ordinary prose, including parentheses, remains data.
+    if any(parent.endswith("." + name) for _, _, description, _ in records
+           for name, parent in re.findall(r"(\S+) \(([^)]+)\)", description)):
+        return None, None, "description and test progress cannot be distinguished; use direct execution"
+    failures = [f"{outcome}: {name} ({parent})" for name, parent, _, outcome in records
+                if outcome in {"FAIL", "ERROR"}]
+    if sorted(failures) != sorted(header for _, header, _, _ in terminal):
+        return None, None, "terminal failures disagree with test results"
+    summary = UNITTEST_FAILED.search(output[ran[-1].end():]) if ran else None
+    counts = dict(re.findall(r"(failures|errors)=(\d+)", summary[1])) if summary else {}
+    if any(sum(outcome == status for _, _, _, outcome in records) != int(counts.get(key, 0))
+           for key, status in (("failures", "FAIL"), ("errors", "ERROR"))):
+        return None, None, "summary disagrees with test results"
+    results = [(parent if parent.endswith('.' + name) else parent + '.' + name, outcome)
+               for name, parent, _, outcome in records]
+    selected = [outcome for identifier, outcome in results if identifier == test_id]
+    if (len(ran) != 1 or int(ran[-1].group(1)) != sum(name not in UNITTEST_FIXTURES for name, _, _, _ in records)
+            or len(selected) != 1 or len({identifier for identifier, _ in results}) != len(results)):
+        return None, None, "report does not unambiguously identify each executed test"
+    outcome = selected[0]
+    proof: dict[str, object] = {"runner": "unittest", "testId": test_id, "testsExecuted": 1}
+    if outcome == "ok":
+        footer = output[ran[-1].end():]
+        if not re.search(r"(?m)^(OK(?: \(.*\))?|FAILED \(.*\))$", footer):
+            return None, None, "runner did not complete its report"
+        return "passed", {**proof, "quality": "baseline-passed"}, ""
+    if outcome.startswith("skipped") or outcome == "expected failure":
+        return "skipped", None, "selected test did not execute a passing assertion"
+    checked, error = _unittest_red(output, marker, test_id=test_id)
+    if checked is None:
+        return None, None, error
+    return "failed", {**checked, **proof}, ""
 
 
 def _unittest_unreached(header: str, frames: list[str]) -> str | None:
@@ -410,18 +494,20 @@ def _unittest_unreached(header: str, frames: list[str]) -> str | None:
     return f"unittest failed in {fixture} before the test body" if fixture else None
 
 
-def _unittest_terminal_failures(output: str) -> list[tuple[str, list[str], list[str]]]:
-    """Per FAIL or ERROR block: its header, the frame functions of the terminal
+def _unittest_terminal_failures(output: str) -> list[tuple[int, str, list[str], list[str]]]:
+    """Per framed FAIL or ERROR block: its offset, header, frame functions of the terminal
     traceback unittest itself reported, and that traceback's rendering (exception
     line first). Earlier chained segments and captured output after Stdout:/Stderr:
     never count: the failure that ended the test governs."""
-    failures: list[tuple[str, list[str], list[str]]] = []
+    failures: list[tuple[int, str, list[str], list[str]]] = []
     reading = False
     previous = ""
-    for line in output.splitlines():
+    offset = 0
+    for raw_line in output.splitlines(keepends=True):
+        line = raw_line.rstrip("\r\n")
         stripped = line.strip()
-        if line.startswith(("FAIL: ", "ERROR: ")):
-            failures.append((line, [], []))
+        if _rule(previous, "=") and line.startswith(("FAIL: ", "ERROR: ")):
+            failures.append((offset, line, [], []))
             reading = True
         elif _rule(previous, "-") and line.startswith("Ran "):
             break  # the report's footer: anything after it is the process's own output
@@ -430,12 +516,13 @@ def _unittest_terminal_failures(output: str) -> list[tuple[str, list[str], list[
         elif stripped in {"Stdout:", "Stderr:"}:
             reading = False
         elif stripped == "Traceback (most recent call last):":
-            failures[-1] = (failures[-1][0], [], [])
+            failures[-1] = (*failures[-1][:2], [], [])
         elif line.startswith('  File "'):
-            failures[-1][1].append(line.rsplit(", in ", 1)[-1])
-        elif failures[-1][1] and (failures[-1][2] or (line and not line[0].isspace())):
-            failures[-1][2].append(stripped)
+            failures[-1][2].append(line.rsplit(", in ", 1)[-1])
+        elif failures[-1][2] and (failures[-1][3] or (line and not line[0].isspace())):
+            failures[-1][3].append(stripped)
         previous = line
+        offset += len(raw_line)
     return failures
 
 

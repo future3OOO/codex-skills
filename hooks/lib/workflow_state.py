@@ -485,6 +485,7 @@ def commit_tdd(
     expected_evidence_id: str | None = None,
     opens_cycle: bool = False,
     tree_before: dict[str, str] | None = None,
+    review_changed: bool = False,
 ) -> tuple[JsonObject, str | None]:
     """Commit a TDD transition and its logical evidence under one transaction.
 
@@ -519,7 +520,10 @@ def commit_tdd(
                     drift = f"candidate could not be sampled at commit: {exc}"
                 if drift:
                     run.update(valid=False, bindingError=drift)
-                    prior = transaction.evidence(expected_evidence_id)
+                    prior = transaction.evidence(expected_evidence_id) or {
+                        "workflowId": state["workflowId"],
+                        "behaviorMap": _map_items(transaction.evidence(state.get("preflightEvidence"))),
+                    }
                     summary_doc = {**prior, "runs": [*prior.get("runs", []), run],
                                    "updatedAt": utc_timestamp()}
                     action, opens_cycle = None, False
@@ -542,8 +546,13 @@ def commit_tdd(
                         terminals=terminals, pending=pending,
                     )
         writes: list[EvidenceWrite] = []
+        manifests: list[ManifestWrite] = []
         evidence_id: str | None = None
         if summary_doc is not None:
+            if tree_before is not None:
+                measured = manifest_write(str(state["workflowId"]), "tdd-tree", tree_before)
+                manifests.append(measured)
+                summary_doc["runs"][-1]["treeManifestId"] = measured.manifest_id
             write = evidence_write(str(state["workflowId"]), "tdd", summary_doc)
             writes.append(write)
             evidence_id = write.evidence_id
@@ -552,6 +561,17 @@ def commit_tdd(
             state.pop("paused", None)
         if opens_cycle:
             state["tddCycleCount"] = state.get("tddCycleCount", 0) + 1
+        verification = transaction.evidence(state.get("verificationLatestEvidence"))
+        if isinstance(verification, dict) and verification.get("runs"):
+            manifest_id = state.get("qualityGateManifestId") or verification["runs"][-1].get("treeManifestId")
+            try:
+                current_tree = tree_manifest(identity)
+            except RuntimeError as exc:
+                raise WorkflowError(f"verification binding could not be sampled: {exc}") from exc
+            if not manifest_id or transaction.manifest(manifest_id) != current_tree:
+                _reset_downstream(state)
+        if review_changed:
+            _reset_reviews(state)
         if action == "reopen":
             state["tdd"] = "in-progress"
             state["phase"] = "implementation"
@@ -559,9 +579,11 @@ def commit_tdd(
             _reset_downstream(state)
         elif action is not None:
             state["tdd"] = action
-            state["phase"] = "tdd"
+            state["phase"] = "implementation" if opens_cycle else "tdd"
+            if opens_cycle:
+                state["implementation"] = "in-progress"
         state["nextAction"] = _derive_next_action(state, summary_doc)
-        return _commit(transaction, state, f"tdd-{action or 'annotated'}", evidence=writes), evidence_id
+        return _commit(transaction, state, f"tdd-{action or 'annotated'}", evidence=writes, manifests=manifests), evidence_id
 
 
 def annotate_tdd_evidence(
@@ -645,6 +667,7 @@ def commit_review(
             else:
                 manifest = _apply_step(identity, state, "code-review", "passed", "none")
         else:
+            summary_doc = _resolve_disposition_receipts(identity, transaction, state, summary_doc)
             review_manifest, review_head = _validate_disposition_context(identity, state, summary_doc)
             summary_doc = _linked_disposition_document(state, summary_doc, "code-review", "code-review")
             write = evidence_write(str(state["workflowId"]), "code-review", summary_doc)
@@ -776,6 +799,28 @@ def _verification_key(run: JsonObject) -> str:
     return "quality-gate" if run.get("kind") == "quality-gate" else f"generic:{run.get('command')}"
 
 
+def execution_receipt(identity: RepoIdentity, state: JsonObject, reference: str,
+                      transaction: LedgerMutation | None = None) -> tuple[JsonObject, dict[str, str]]:
+    """Resolve an actual execution at its original target; references never execute."""
+    evidence_id, separator, index = reference.rpartition(":")
+    document = (transaction.evidence(evidence_id) if transaction is not None
+                else evidence_document(identity, evidence_id)) if separator else None
+    if (not isinstance(document, dict) or document.get("workflowId") != state["workflowId"]
+            or not index.isdecimal() or int(index) >= len(document.get("runs", []))):
+        raise WorkflowError("execution reference requires an owned evidence-id:run-index")
+    run = document["runs"][int(index)]
+    manifest = _stored_manifest(identity, run, "treeManifestId", transaction)
+    try:
+        current_tree = tree_manifest(identity)
+    except RuntimeError as exc:
+        raise WorkflowError(f"execution reference could not be sampled: {exc}") from exc
+    if (manifest is None or manifest != current_tree or run.get("bindingError")
+            or run.get("timedOut") or ("outputTail" not in run
+                and not (run.get("sourceReference") and run.get("testId")))):
+        raise WorkflowError("execution reference is stale, unbound, incomplete or not an executed receipt")
+    return run, manifest
+
+
 def commit_verification(
     identity: RepoIdentity,
     slug: str,
@@ -827,10 +872,41 @@ def commit_verification(
                 run["valid"] = False
                 run["bindingError"] = drift
         runs = [*prior_runs, run]
-        latest = {_verification_key(item): item.get("valid") is True for item in runs if isinstance(item, dict)}
-        status = "passed" if any(key.startswith("generic:") for key in latest) and all(latest.values()) else "pending"
-        _apply_step(identity, state, "verification", status)
         manifests: list[ManifestWrite] = []
+        run["runIndex"] = len(prior_runs)
+        if tree_before is not None:
+            measured = manifest_write(str(state["workflowId"]), "verification-tree", tree_before)
+            manifests.append(measured)
+            run["treeManifestId"] = measured.manifest_id
+        replacement = run.get("replaces")
+        if replacement is not None:
+            ref, separator, index_text = str(replacement).rpartition(":")
+            referenced = transaction.evidence(ref) if separator else None
+            if (not isinstance(referenced, dict) or referenced.get("workflowId") != state["workflowId"]
+                    or not index_text.isdecimal() or typed):
+                raise WorkflowError("replacement requires a current failed generic evidence-id:run-index")
+            source_runs = referenced.get("runs", [])
+            index = int(index_text)
+            if index >= len(source_runs) or source_runs != prior_runs[:len(source_runs)]:
+                raise WorkflowError("replacement evidence is stale or outside current verification history")
+            failed = source_runs[index]
+            key = _verification_key(failed)
+            latest_index = max(i for i, item in enumerate(prior_runs) if _verification_key(item) == key)
+            if (failed.get("kind") != "generic" or failed.get("valid") is True or index != latest_index
+                    or any(item.get("replacedKey") == key and item.get("valid") is True for item in prior_runs[index + 1:])):
+                raise WorkflowError("replacement no longer names its active failed generic invocation")
+            if (not failed.get("treeManifestId") or tree_before is None
+                    or transaction.manifest(failed["treeManifestId"]) != tree_before):
+                raise WorkflowError("replacement target does not match the failed invocation")
+            if run.get("valid") is True:
+                run["replacedKey"] = key
+        latest: dict[str, bool] = {}
+        for item in runs:
+            if item.get("valid") is True and isinstance(item.get("replacedKey"), str):
+                latest.pop(item["replacedKey"], None)
+            latest[_verification_key(item)] = item.get("valid") is True
+        status = "passed" if latest and all(latest.values()) else "pending"
+        _apply_step(identity, state, "verification", status)
         if typed and run["valid"] is True:
             manifest = manifest_write(str(state["workflowId"]), "quality-gate-tree", tree_before)
             manifests.append(manifest)
@@ -1377,6 +1453,37 @@ def _linked_disposition_document(
     return linked
 
 
+def _resolve_disposition_receipts(identity: RepoIdentity, transaction: LedgerMutation,
+                                  state: JsonObject, document: JsonObject) -> JsonObject:
+    if not any("evidenceRefs" in item for item in document.get("dispositions", [])):
+        return document
+    document = json.loads(json.dumps(document))
+    intake = transaction.evidence(document.get("intakeEvidenceId"))
+    if not isinstance(intake, dict) or intake.get("workflowId") != state["workflowId"]:
+        raise WorkflowError("receipt disposition requires an owned immutable intake")
+    findings = {item["id"]: item for item in intake.get("findings", [])}
+    receipts: dict[str, JsonObject] = {}
+    for item in document["dispositions"]:
+        if "evidenceRefs" not in item:
+            continue
+        finding = findings.get(item["finding_id"])
+        if finding is None:
+            raise WorkflowError("receipt disposition references a finding outside its intake")
+        item["kind"] = finding["kind"]
+        for reference in item["evidenceRefs"]:
+            if reference not in receipts:
+                receipts[reference], _ = execution_receipt(identity, state, reference, transaction)
+        if item["status"] == "fixed" and not any(
+            run.get("exitCode") == 0 and (run.get("valid") is True or (
+                isinstance(run.get("redProof"), dict) and run["redProof"].get("quality") == "baseline-passed"
+            )) for run in (receipts[ref] for ref in item["evidenceRefs"])
+        ):
+            raise WorkflowError("fixed requires a successful current executed receipt")
+    if document.get("context") is None:
+        document["context"] = {"workflowId": state["workflowId"], "candidateTree": _candidate_tree(identity)}
+    return document
+
+
 def _apply_finding_dispositions(
     transaction: LedgerMutation, state: JsonObject, intake_id: str,
     dispositions: list[JsonObject], stage: str, producer: str,
@@ -1522,6 +1629,7 @@ def advisor_disposition(
             raise WorkflowError("advisor disposition cannot create a result; record the consult first")
         writes: list[EvidenceWrite] = []
         if document is not None:
+            document = _resolve_disposition_receipts(identity, transaction, state, document)
             _validate_disposition_context(identity, state, document)
             if "intakeEvidenceId" in document:
                 document = _linked_disposition_document(state, document, stage, str(source))
@@ -1797,10 +1905,14 @@ def complete(
 
 def _reset_downstream(state: JsonObject) -> None:
     _clear_verification(state)
+    _reset_reviews(state)
+    state["nextAction"] = _derive_next_action(state)
+
+
+def _reset_reviews(state: JsonObject) -> None:
     state["codeReview"] = {"status": "pending", "findings": "pending"}
     state["finalReview"] = {"source": None, "status": "pending", "findings": "pending"}
     state.pop("finalReviewContextMismatchEvidence", None)
-    state["nextAction"] = _derive_next_action(state)
 
 
 def invalidate_after_edit(identity: RepoIdentity, path: str) -> JsonObject | None:
@@ -1860,7 +1972,9 @@ def ready_for_edit(identity: RepoIdentity, path: str) -> tuple[bool, list[str]]:
     return not missing, missing
 
 
-def public_status(state: JsonObject, identity: RepoIdentity | None = None) -> JsonObject:
+def public_status(state: JsonObject, identity: RepoIdentity | None = None, *,
+                  fields: set[str] | None = None, candidate_tree: str | None = None,
+                  recovery: bool = False) -> JsonObject:
     """The schemaVersion 1 status projection.
 
     A Repo Context Forge pass is only as good as its producer evidence, so a stored
@@ -1873,12 +1987,16 @@ def public_status(state: JsonObject, identity: RepoIdentity | None = None) -> Js
     phase, reporting that same readiness. It is never stored, never writable, and never
     a second readiness source.
     """
-    candidate = _active_candidate_tree(identity) if identity is not None else None
-    selections = _executed_selections(identity, state) if identity is not None else None
+    graph_needed = recovery or fields is None or bool(fields & {"repoContextForge", "gitnexus"})
+    candidate = candidate_tree
+    if identity is not None and (graph_needed or fields is None or "activeCandidateTree" in fields):
+        candidate = candidate or _active_candidate_tree(identity)
+    selections = (_executed_selections(identity, state)
+                  if identity is not None and (fields is None or "mapSelections" in fields) else None)
     graph_id = state.get("repoContextForgeEvidence")
     graph_document = (
         evidence_document(identity, graph_id)
-        if identity is not None and isinstance(graph_id, str)
+        if graph_needed and identity is not None and isinstance(graph_id, str)
         else None
     )
     ready = _evidence_ready(state, "repo-context-forge") and (
@@ -1888,7 +2006,7 @@ def public_status(state: JsonObject, identity: RepoIdentity | None = None) -> Js
         )
     )
     stored = state.get("repoContextForge")
-    return {
+    result = {
         **state,
         **({"activeCandidateTree": candidate} if candidate is not None else {}),
         # Only when the map has executed something: an empty projection would
@@ -1897,6 +2015,13 @@ def public_status(state: JsonObject, identity: RepoIdentity | None = None) -> Js
         "repoContextForge": stored if ready or stored != "passed" else "pending",
         "gitnexus": "passed" if ready else "pending",
     }
+    if recovery and identity is not None:
+        drift = _binding_drift(identity, state, "quality-gate") if state.get("qualityGateEvidence") else None
+        if drift:
+            result.update(verification="pending", bindingError=drift)
+        if not ready or drift:
+            result["nextAction"] = _derive_next_action(result)
+    return result if fields is None else {key: value for key, value in result.items() if key in fields}
 
 
 def _selection(command: str, root: object) -> JsonObject:
@@ -1968,19 +2093,26 @@ def summary(identity: RepoIdentity, limit: int = 1200) -> str:
     state = read_workflow(identity)
     if state is None:
         return "Workflow state unavailable; do not infer that any workflow step passed."
+    state = public_status(state, identity, recovery=True,
+                          fields=(set(state) | {"activeCandidateTree", "bindingError"}) - {"mapSelections"})
+    gate_drift = state.get("bindingError")
     advisor = state.get("advisorPreflight") if isinstance(state.get("advisorPreflight"), dict) else {}
     code_review = state.get("codeReview") if isinstance(state.get("codeReview"), dict) else {}
     final_review = state.get("finalReview") if isinstance(state.get("finalReview"), dict) else {}
     text = (
-        f"Active workflow: slug={state.get('slug')} phase={state.get('phase')} next={state.get('nextAction')}. "
+        f"Active workflow: slug={state.get('slug')} workflowId={state.get('workflowId')} "
+        f"candidate={state.get('activeCandidateTree')} phase={state.get('phase')} next={state.get('nextAction')}. "
+        + (f"Binding: {gate_drift}. " if gate_drift else "")
+        + " ".join(f"{field}={state[field]}" for field in (
+            "tddEvidence", "verificationLatestEvidence", "qualityGateManifestId") if state.get(field)) + ". "
         # Evidence-aware, not the raw status: a compacted session reads this line, and
         # a legacy pass that claims the phase without producer evidence is pending
         # everywhere else in the workflow.
-        f"Steps: repo-context-forge={'passed' if _evidence_ready(state, 'repo-context-forge') else 'pending'}, "
+        + f"Steps: repo-context-forge={state.get('repoContextForge')}, "
         f"advisor-preflight={advisor.get('status')}/{advisor.get('findings')}, preflight={state.get('preflight')}, tdd={state.get('tdd')}, "
         f"production-code={state.get('productionCode') or 'pending'}, "
         f"implementation={state.get('implementation')}, verification={state.get('verification')}, "
-        f"quality-gate={'passed' if state.get('qualityGateEvidence') else 'pending'}, "
+        f"quality-gate={'passed' if state.get('qualityGateEvidence') and not gate_drift else 'pending'}, "
         f"code-review={code_review.get('status')}/{code_review.get('findings')}, "
         f"final-review={final_review.get('source')}/{final_review.get('status')}/{final_review.get('findings')}. "
         + _earned_split(identity, state)
@@ -1992,4 +2124,5 @@ def summary(identity: RepoIdentity, limit: int = 1200) -> str:
         )
         + " Missing state is pending, never success."
     )
-    return text[:limit]
+    suffix = " … Details: workflow status --repo <checkout>; workflow evidence --repo <checkout> --evidence-id <id>."
+    return text if len(text) <= limit else text[:max(0, limit - len(suffix))].rsplit(" ", 1)[0] + suffix

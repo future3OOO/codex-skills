@@ -57,9 +57,12 @@ branch-cumulative throughout implementation.
 
 ### 2. Task contract and diagnosis
 
-State the changed behavior, authority, packet targets, skipped targets,
-no-change surfaces, and review-budget fit. Invoke `diagnose` for bugs,
-regressions, flaky failures, or performance problems before any fix.
+Derive verification from the user's intended production behavior using
+[Production Code's outcome verification](../production-code/SKILL.md#minimum-implementation-decision).
+The lead owns that investigation through implementation and repair; the independent
+reviewer challenges it. Use the packet to trace affected paths, state skipped and
+preserved surfaces, and establish review-budget fit. Apply `diagnose` to bugs,
+regressions and performance failures before choosing a correction.
 
 ### 3. Packet-scoped GitNexus
 
@@ -199,9 +202,10 @@ Terminal TDD proof opens verification directly; no implementation acknowledgemen
 
 ### 9. Verification
 
-Run locally the changed-behavior RED/GREEN, the affected suites, preservation and
-no-change checks, lint/typecheck/build, cleanup, the typed gate, and GitNexus
-reanalysis/detect-changes when required. CI's `contracts` job owns the full runner here and step 13 waits for it; other repositories run it locally unless their CI supplies that coverage. Verification records only through the unified CLI runner, which executes the command it records and derives status
+After coherent repair and cleanup, assess the intended outcome against the
+verification derived in step 2. Carry applicable observations forward; run missing
+or invalidated operations and required lint/typecheck/build and typed gate, with
+graph reanalysis when required. CI's `contracts` job owns the full runner here and step 13 waits for it; other repositories run it locally unless their CI supplies that coverage. Verification records only through the unified CLI runner, which executes the command it records and derives status
 per-command-latest — any distinct command whose latest run failed keeps
 verification pending until that same command reruns green, overlapping runs
 record in completion order without rerunning, and a run whose reviewable tree
@@ -215,19 +219,22 @@ python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" \
   verify --repo "$PWD" --slug "<task>" --kind quality-gate --base-ref "<base>"
 ```
 
-Use preflight's selected resource/correctness operation in the ordinary verification call. Reuse the returned evidence ID and operation output; a generic receipt does not retain a candidate-tree ID. Which commands suffice remains review judgment. Completion additionally requires the typed `quality-gate` run over the current reviewable tree.
+Typed verification needs no generic acknowledgement or dummy command. Correct a
+failed generic invocation with `verify --replaces <evidenceId>:<runIndex> --reason
+"<correction>" -- <command>`; only a valid current success retires that particular
+active failure. Other failures, stale/concurrent results and drift stay effective.
+Use preflight's selected resource/correctness operation in the ordinary verification call. Reuse the returned evidence ID and operation output; the returned manifest binds a generic receipt to its measured tree. Which commands suffice remains review judgment. Completion additionally requires the typed `quality-gate` run over the current reviewable tree.
 
-Before the typed run, rerun the Repo Context Forge bootstrap with the same slug
-so the recorded graph evidence is snapshot-bound to the edited candidate tree.
-The typed runner reads that recorded evidence and hands its gate-shaped context
-to the gate's `--gitnexus-context-json` input; the gate's own binding check
-adjudicates match, stale, or absent. Without the post-edit re-run — or after any
-further edit — the `QG54-OWNER-COMPETITION-*` rules honestly report the stale or
-absent gap instead of evaluating.
+The typed runner uses the recorded graph input; reuse it when its binding and
+scope match the candidate. Refresh Repo Context Forge after relevant edits or
+when evidence is absent/stale. The gate's binding check adjudicates applicability;
+unchanged source alone does not establish coverage for a broadened contract.
 
 ### 10. Delegate code review
 
-For a non-trivial change invoke `code-review` for a fresh native Codex background
+Before final advisor review, obtain independent `code-review` of the original
+objective and current candidate. Lead self-cleanup and later GitHub review do not replace this
+step. For initial non-trivial review use a fresh native Codex background
 delegate (`spawn_agent`, `agent_type=default`, normal native model selection)
 in this checkout. Wait without editing the candidate. It returns a
 Standards/Spec review and a findings intake. Verify every finding and
@@ -238,16 +245,30 @@ callers, tests, or another active authority. In this governed workflow `workflow
 workflow it stays optional. For a genuinely trivial change, record
 `set-phase --phase code-review --status not-required --findings none`.
 
+Retain its agent and intake IDs. For return review use native `followup_task` with
+the correction delta, original finding identities and changed/missing evidence.
+Do not reload unchanged skills or repeat execution solely for handoff. Keep the
+reviewer read-only and assign each needed operation once; the lead owns repairs,
+TDD/verification recording and dispositions. Use a fresh reviewer when context is
+unavailable or changed scope/architecture makes it unusable, naming that reason.
+Pushed-head findings still follow the new-pass rule; historical receipts retain
+their original identity. Every review must describe the current candidate.
+
 Before recording, match checkout/workflow/tree against dispatch and
-`workflow.py status`. Verify agent identity from `subagents/agent-<id>.meta.json`
-and its forked-skill marker under `~/.codex/projects`; match model and effort
-from harness receipts to the loaded `code-review` frontmatter. Missing or
-mismatched evidence blocks recording: report it. Record
-immutable intake first as `{"findings":[...]}` through the unified Interface. If it contains findings,
+`workflow.py status`. Retain actual native dispatch and return receipts: canonical
+agent ID, assigned ownership and model selection (including inherited default
+when no override was requested). Do not require another harness's metadata paths
+or fabricate a resolved model name. Missing or mismatched reviewer identity
+blocks recording; changed target requires return review. Record
+the delegate's actual JSON intake file first through the unified Interface. If it contains findings,
 capture the returned `summaryId`, then call
 the same command with `{"context":{"workflowId":"...","candidateTree":"...","prHead":"..."},"intakeEvidenceId":"<summaryId>","dispositions":[...]}`;
-each disposition carries `kind`, `premise`, `occurrence`, and
-`materialConsequence`. A document carrying both forms refuses. Print the
+reuse executed receipts with the concise disposition form in
+[codex-advisor](../codex-advisor/SKILL.md#failure-and-disposition). The lead supplies
+finding-specific premise, occurrence and consequence judgments in `reason`;
+producer-known facts come from references. Legacy structured measurements remain
+supported. A document carrying both intake and dispositions refuses. If legacy
+shape help is needed, inspect the
 canonical disposition shape table, generated from its installed validator
 declarations, with `python3 -I -c 'import sys; from pathlib import Path; sys.path.insert(0, str(Path.home() / ".codex")); from hooks.lib.workflow_documents import DOCUMENT_SHAPE_TABLE; print(DOCUMENT_SHAPE_TABLE)'`;
 the `codex-advisor` skill's disposition section owns the recorder's other
@@ -276,20 +297,20 @@ that would leave a fixed finding without its owning attack refuses.
 
 ### 11. Final Codex Advisor review
 
-Before routine consult, reconcile known material sibling obligations and affected preservation through the existing correction blockers. In the existing final-consult question, quote only the selected resource receipt: evidence ID, command, scale, fixed limit, observed value, and the operation's actual target identity. Reuse returned evidence; read one document only if needed, not verification history. Known missing material acceptance belongs in a Spec finding.
+Before the consult, reconcile known material obligations using step 2's verification
+and the delegate's findings. Reference the applicable observations and unresolved
+acceptance gaps; load only missing evidence, not the verification history.
 
-The final Codex Advisor review judges the candidate, the delegate review, and
-the lead's dispositions. Invoke it against the live diff with wrapper
-phase `final-review`, the same slug, and the base ref. It re-derives the attack
-surface before checking declared evidence: what the recorded original request
-and public Interface promise, which operations can falsify each promise, which
-of those are unattacked through the real Seam, and whether any disposition
-narrowed its finding's domain — only then implementation detail and declared-map
-closure. A promised load-bearing surface with no attack forbids `commit-ready`
-even when every declared item is green. Address and disposition material findings. The
+The final Codex Advisor judges readiness to push/open the PR from the candidate,
+the delegate review, and the lead's dispositions. Invoke it against the live diff
+with wrapper phase `final-review` and the same slug; the checkpoint supplies the
+diff anchors. It applies
+[Production Code's outcome verification](../production-code/SKILL.md#minimum-implementation-decision)
+to the original objective before judging implementation and dispositions. Missing material
+acceptance evidence forbids `commit-ready`. Address and disposition material findings. The
 wrapper leaves final findings pending; the lead explicitly records `none` or
-`addressed` only after validating the output. Any production edit repeats
-verification, code review where required, and final review.
+`addressed` only after validating the output. After a production edit, satisfy current-candidate verification, continue review
+on the affected delta, and repeat final review. Reuse applicable evidence.
 
 ### 12. Complete the workflow
 
@@ -302,10 +323,14 @@ python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" \
 
 ### 13. Delivery and reviewer completion
 
-Commit, push, and open/update the PR when intended for integration. For changed
-paths mapped into the live estate: **install, motherfucker.** Follow the README's
-scoped install contract and record the branch, commit, and path set. Then run the PR
-Reviewer Completion Gate from `AGENTS.md` on the current head. A reviewer-fix
+After the final advisor finds the candidate ready, commit, push, and open/update
+the PR when intended for integration. Run the PR
+Reviewer Completion Gate from `AGENTS.md` on the current head. Merge only with
+explicit maintainer authorization; passing checks and reviews do not authorize
+merge. When global installation is authorized, merge the reviewed PR first.
+For changed paths mapped into
+the live estate, follow the README backup/merge approach from updated main,
+install only owned paths, and record source commit/path set and installed checks. A reviewer-fix
 round begins a new production pass; pushing is not completion.
 
 When the completed work is intentionally not delivered as a PR — local-only
@@ -324,10 +349,16 @@ Missing or corrupt workflow state is pending, never success. Preflight advisor
 transport may be recorded `unavailable` only with the measured reason; final
 review has no unavailable exception. Ordinary documentation, scratch, and
 non-repository work keeps the lightweight exception; governance docs still
-reset downstream review readiness. There is no Stop hook; `workflow.py summary` reports the earned proof
+reset downstream review readiness. There is no Stop hook; `workflow.py summary --repo <checkout>` restores bounded identity, evidence and
+next action without a full-map reload. Use `status --fields <comma-separated-fields>`
+for missing facts and `--compact` on state-returning mutations; full default status
+and evidence remain available. Resume the same pass. Summary reports the earned proof
 (`Contract green=n/m`) and the next action on demand.
 [WORKFLOW-MAP.md](WORKFLOW-MAP.md) owns the hook roles. Unavailable blast-radius impact is reported as `unknown`.
 
 ## Final response
 
-Report Behavior Map dispositions, behavior-specific RED/GREEN proof, map updates, verification, review findings and dispositions, both advisor outcomes, workflow completion, reviewer-loop state, and any explicitly unverified surface. Never describe state summaries as proof, authorization, or tamper-resistant evidence.
+Lead with the production behavior achieved, the real observations supporting it,
+and any unmet acceptance. Explain recurring work removed when efficiency is part
+of the objective. Reference applicable evidence and report independent review and
+delivery status; state records support this account, never substitute for it.

@@ -5,18 +5,19 @@ description: Review a diff since a fixed point along independent Standards and S
 
 # Code review
 
-You are a fresh-context reviewer running in the lead's checkout. You own
-review, not implementation: read source and run tests or attacks, but never
+Initial review uses a fresh native context in the lead's checkout; return review
+continues that context when usable. You own review, not implementation: read source and run tests or attacks, but never
 edit candidate source, rewrite the contract, mutate the active workflow ledger,
 merge, or install. Run every mutating operation against temporary state (for
 this estate's recorder, a temporary `CODEX_WORKFLOW_STATE_ROOT`) and clean up.
 
 ## 1. Fix the review target
 
-In a governed pass read the contract and candidate identity (`intent`,
+In a governed pass obtain missing contract and candidate identity (`intent`,
 `workflowId`, `activeCandidateTree`, `baseOid`) from
 `python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" status --repo "$PWD"`
-and its recorded evidence; otherwise take them from the PR or request. Record
+and its recorded evidence; use `--fields` for only the missing facts. Otherwise
+take them from the PR or request. Record
 repository, branch, base and head SHAs, and dirty/staged state. Review the
 actual diff and current files, not a prose summary; if the target changes, the
 review is stale. Open your report with the checkout, workflow id, and tree
@@ -27,7 +28,10 @@ you reviewed.
 Inspect changed files, direct callers and callees, governing artifacts, and
 named no-change surfaces, using the Repo Context Forge packet and GitNexus
 evidence already recorded. Do not begin a workflow, run the Repo Context Forge
-bootstrap, or record anything: the lead's pass owns them.
+bootstrap, or record anything: the lead's pass owns them. On continuation, inspect
+the correction delta and affected preservation/interactions; reuse the unchanged
+contract, instructions and applicable evidence. Report when the prior context is
+no longer a usable basis.
 
 ## 3. Apply the owned rubrics
 
@@ -42,24 +46,17 @@ and Refused Bequest.
 
 ## 4. Falsify the promises
 
-Derive the requested changes from the contract and the existing guarantees the
-diff could alter: read the base beside the candidate with its callers,
-documentation, and tests, separating intentional changes from regressions;
-historical behavior is evidence, not authority over an intentionally changed
-contract. Challenge the map and supplied evidence against those obligations:
-what materially broken implementation would still pass these checks, and which
-specific wrong behavior would make the relied-on check fail? Run the smallest
-real-Interface attack that distinguishes each answer, observing the
-contract-relevant outcomes, identity, state preservation, and cleanup together;
-for a bug fix or suspected regression run the same operation and assertions
-against both versions, confirming each target. Replay applicable earlier review
-reproductions unchanged against the final candidate, and keep every useful
-operation, including a passing preservation attack or a disproven suspicion, as
-a runnable command with its expected versus observed effect. Cover the input
-forms and interactions the changed mechanism makes relevant. Passing suites, map
-status, lint, printed success, and tests that substitute a collaborator are not
-the verdict; dispute an expectation or present a defect only with measured
-evidence, after attempting to falsify your own diagnosis.
+Apply [Production Code's outcome and verification rules](../production-code/SKILL.md#minimum-implementation-decision)
+independently to the original objective and current candidate. Challenge whether
+that objective is fulfilled, including materially wrong behavior the declared
+assertions would miss. Return findings for the final advisor through the existing
+workflow; this review does not decide delivery.
+
+On return review retain original finding identities/domains. Classify measured
+follow-ups as incomplete original repair, inherited missed defect, introduced
+regression or unresolved/unrelated concern. Attempt to falsify both expectation
+and diagnosis before reporting. Retain useful passing and failing operations with
+expected/observed results under those same verification rules.
 
 ## 5. Review both axes
 
@@ -79,8 +76,11 @@ correction.
 
 ## 6. Return structured output
 
-Return a human-readable Standards/Spec review followed by immutable finding
-intake:
+Return the reviewed checkout/workflow/tree and a Standards/Spec report with the
+actual receipt references. Write the immutable intake directly as JSON for the
+lead's `--input`; do not make the lead transcribe findings. Continuations report
+original identities as corrected, still present or awaiting evidence, and intake
+only new findings. An empty return cannot close an earlier unresolved finding:
 
 ```json
 {"findings":[{"id":"SPEC-1","axis":"Spec","severity":"high","material":true,"kind":"behavioral","location":"path:line","claim":"...","evidence":"...","consequence":"...","smallest_action":"..."}]}

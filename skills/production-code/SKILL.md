@@ -36,11 +36,31 @@ gate's JSON contract.
 
 ## Minimum Implementation Decision
 
-Before choosing a repair or mechanism, complete the affected decision:
+The user's intended production behavior governs verification in implementation,
+repair and review. Derive expectations from that objective and its contract, then
+trace the affected production paths through callers, callees, supported inputs and
+state changes. Tests and historical behavior inform this investigation; neither
+defines the requested outcome. Investigate materially wrong behavior the declared
+assertions would miss before handing the repair to independent review.
 
-- Derive requested and preserved guarantees from the original contract, base, and reachable callers/docs/tests independently of the map. Inspect supported input forms, interactions, known defects, and successful cases a new guard could exclude. Separate intentional contract changes from regressions; keep unrelated behavior outside the repair.
-- Simplify the shared decision rather than adding symptom guards. Ask what materially wrong behavior would pass the retained checks. Reuse the smallest real-Interface operations that distinguish it, observing required results, data, identity, state, and cleanup; add only uncovered outcomes.
-- Replay applicable retained failing and passing operations unchanged on the candidate. For a bug or suspected regression, use the same operation/assertions against identified old and candidate implementations. Reconcile the map with this evidence before returning for review.
+For behavioral repairs, establish the intended correction, affected-domain coverage
+and preservation separately through actual N/N+1 Seam operations. Verify which
+production implementation each operation loads, its inputs and environment; inspect
+results, persisted effects and cleanup. Exercise the affected forms and interactions,
+not just the reported example. Reuse applicable drivers and evidence; execute again
+for changed behavior/bindings, unreliable evidence or missing coverage, not for a
+different reviewer or handoff. Disclose unavailable comparisons; never undo/reapply
+a repair to manufacture RED. Missing material acceptance remains unresolved,
+regardless of passing examples, suite totals, CI or recorder readiness.
+
+For workflow changes, also observe the actual lead following the candidate
+instructions during real work and return review. Distinguish that observation from
+scripted stand-ins and maintainer-directed demonstrations. Runtime tests establish
+capabilities; they do not establish that agents use them to achieve the objective.
+
+Simplify the responsible decision rather than adding symptom guards. Separate
+intentional contract changes from regressions and reconcile recorded obligations
+with observed outcomes; keep unrelated behavior outside the repair.
 
 Use the request/map already in context; load missing evidence once at implementation entry and refresh only on material change. An edit-hook reminder cannot supply reasoning for already-generated edit arguments.
 
@@ -148,12 +168,9 @@ Load [references/transaction-doctrine.md](references/transaction-doctrine.md) fo
   - changed execution order
   - remaining blockers or follow-ups
 - Do not create busywork edits for every tiny code change, but do not leave the governing artifact stale after a meaningful implementation pass either.
-- If the current work targets an existing PR branch, do not treat local changes as complete:
-  - commit the changes
-  - push the branch
-  - only then resolve review threads as fixed
+- Follow `repo-production-workflow` through code review and the final advisor’s readiness decision before pushing/opening the PR; resolve threads as fixed only after the fix is pushed.
 - Reconcile closure through the Minimum Implementation Decision. Compare the final diff against the preflight module shape; delete or inline shallow wrappers/helpers and verify tests cross the public interface.
-- Run the repo's canonical install, lint, typecheck, unit, integration, build, and quality gates for touched areas before calling work complete.
+- Run applicable required checks for touched areas; the workflow owns delivery and installation order.
 - Keep changed code paths at or above the repo coverage gate.
 - Add explicit tests for critical control loops even if coverage already passes.
 - For bugs and regressions, compare the implementation to the canonical root-cause-first gate and the `/diagnose` trace.
