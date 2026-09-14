@@ -15,8 +15,8 @@ phase belongs in `--phase`, not in the slug.
 
 ### `preflight-advice`
 
-Run on every production pass after investigating the affected behavior and design,
-before production preflight and edits.
+Run after investigating the affected behavior and design, before the initial
+production preflight.
 Supply the focused scope question; the workflow checkpoint supplies the
 pass-owned advisor projection, the recorded original request, workflow binding,
 and current-pass diff anchors. The advisor derives the load-bearing promises of

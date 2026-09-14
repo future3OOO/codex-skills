@@ -8,7 +8,7 @@ acceptance gaps are not completed delivery.
 
 ## 2026-09-14 — Require preflight advice
 
-**Decision:** Require advisor preflight on every production pass. Supersedes the
+**Decision:** Require advisor advice before the initial production preflight. Supersedes the
 optional scope/design exception that allowed the [#29](https://github.com/future3OOO/codex-skills/issues/29)
 continuation to omit advice. The workflow and advisor instructions own this rule.
 
