@@ -22,6 +22,11 @@ PR50 exposed stale parent hooks despite
 updated files; loaded-consumer verification and restart are part of testing.
 README owns the installation guidance; shared delivery still requires authorization.
 
+**Comparison ownership:** Production Code owns real N/N+1 behavioral verification
+and conditional A/B cost comparison at equivalent work and correctness; TDD links
+to that rule. Reuse the same operations rather than adding another test stage.
+Included in PR #51; wording review does not establish measured agent improvement.
+
 ## 2026-09-14 — Issue 29 candidate-estate continuation
 
 **Decision:** Continue [#29](https://github.com/future3OOO/codex-skills/issues/29)
