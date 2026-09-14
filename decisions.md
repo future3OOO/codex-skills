@@ -12,7 +12,14 @@ acceptance gaps are not completed delivery.
 optional scope/design exception that allowed the [#29](https://github.com/future3OOO/codex-skills/issues/29)
 continuation to omit advice. The workflow and advisor instructions own this rule.
 
-**Status:** Proposed on `docs/require-preflight-advisor`; not merged or installed.
+**Status:** Proposed in [PR #51](https://github.com/future3OOO/codex-skills/pull/51);
+not merged or installed.
+
+**Private development estate:** The maintainer requires candidate skills/runtime
+to run from a private installation during development, with separate state and
+the global estate retained as baseline. PR50 exposed stale parent hooks despite
+updated files; loaded-consumer verification and restart are part of testing.
+README owns the installation guidance; shared delivery still requires authorization.
 
 ## 2026-09-14 — Issue 29 candidate-estate continuation
 

@@ -28,6 +28,19 @@ The project is the source of truth; the estate is an install artifact.
 - `docs/` — historical design docs.
 - Tests exist in the repo for CI; `install.sh` excludes them from the estate.
 
+## Developing this estate
+
+Develop Codex skills and runtime in an isolated worktree with a private estate
+seeded from the global installation, retaining its extra skills and dependencies.
+Bind the private estate at `~/.codex`; `CODEX_HOME` alone misses home-relative
+entrypoints. Keep normal tool access and a read-only path to the global estate.
+
+Refresh the private installation as changes develop. Verify the loaded skills,
+hooks, CLI and native state; restart consumers retaining old code before claiming
+candidate behavior. Test real N/N+1 operations against the fixed global-estate
+baseline and installed candidate, with separate temporary test state. Reuse
+applicable proof. Private testing does not authorize shared installation.
+
 ## Test history
 
 The port has independent Git history. Calibration tests replay original Claude
@@ -56,7 +69,7 @@ session, or run automation with `--dangerously-bypass-hook-trust`.
 
 ### Scoped updates
 
-When installation is authorized, merge first and use clean, updated `main`. Select only
+For authorized shared-estate installation, merge first and use clean, updated `main`. Select only
 the reviewed files mapped into the estate; exclude tests and `decisions.md`.
 Inspect destination differences first; back up and merge unrelated local edits
 and managed config entries instead of overwriting them. For direct file copies,
