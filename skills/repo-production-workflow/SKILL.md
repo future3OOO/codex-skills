@@ -79,8 +79,7 @@ preferably in a dedicated chat pane. It attaches the recorded graph evidence
 itself. Supply the contract, packet, intended proof, and no-change surfaces. Invoke `codebase-design` first
 when adding/changing a Module, public Interface, or Seam.
 
-The consult is optional: skip it when the request raises no design or scope
-question. The wrapper emits the completed answer, then records it; an intake
+The wrapper emits the completed answer, then records it; an intake
 with no material finding is closed at recording and needs no disposition.
 A material behavioral finding rides the pass as a map-owned attack and is
 dispositioned once that attack is GREEN; a nonbehavioral or measured-false

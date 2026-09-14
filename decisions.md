@@ -6,6 +6,14 @@ Issue bodies own implementation scope; this record preserves decisions and their
 status. New decisions supersede earlier ones explicitly; observations and open
 acceptance gaps are not completed delivery.
 
+## 2026-09-14 — Require preflight advice
+
+**Decision:** Require advisor preflight on every production pass. Supersedes the
+optional scope/design exception that allowed the [#29](https://github.com/future3OOO/codex-skills/issues/29)
+continuation to omit advice. The workflow and advisor instructions own this rule.
+
+**Status:** Proposed on `docs/require-preflight-advisor`; not merged or installed.
+
 ## 2026-09-14 — Issue 29 candidate-estate continuation
 
 **Decision:** Continue [#29](https://github.com/future3OOO/codex-skills/issues/29)
