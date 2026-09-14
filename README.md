@@ -39,9 +39,11 @@ access and a read-only path to the global estate.
 
 Refresh N+1 as changes develop. Verify the loaded skills,
 hooks, CLI and native state; restart consumers retaining old code before claiming
-candidate behavior. Compare equivalent real operations, outcomes and costs on N
-and N+1, using separate test state and reusing applicable proof. Private testing
-does not authorize shared installation.
+candidate behavior. Use equivalent real N/N+1 operations to establish correction
+and preservation. The same operations support A/B efficiency comparisons: compare
+executions, handoffs, context use and latency for equivalent work and correctness.
+Use separate test state and reuse applicable proof. Private testing does not
+authorize shared installation.
 
 ## Test history
 
