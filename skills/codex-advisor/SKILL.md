@@ -15,8 +15,8 @@ phase belongs in `--phase`, not in the slug.
 
 ### `preflight-advice`
 
-Run on every production pass after Repo Context Forge, before production preflight
-and before edits.
+Run on every production pass after investigation and applicable design planning,
+before production preflight and edits.
 Supply the focused scope question; the workflow checkpoint supplies the
 pass-owned advisor projection, the recorded original request, workflow binding,
 and current-pass diff anchors. The advisor derives the load-bearing promises of
