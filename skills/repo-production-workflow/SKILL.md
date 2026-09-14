@@ -12,16 +12,12 @@ maps the remaining owners.
 
 ## Baseline and candidate execution
 
-At the start of a behavior-changing pass, establish baseline N and candidate N+1
-execution before the first baseline measurement or production edit. Reuse suitable
-project environments and commands; keep N unchanged and isolate mutable test state.
-Identify how worktree edits become executable in N+1. Use the existing build,
-install or refresh command where needed, and reload consumers that cache code or
-instructions as changes develop.
-
-Setup is ready when you have verified which implementation each environment loads
-and can run the same real production operation against both. Keep candidate bindings
-current and unavailable comparisons explicit under
+For behavior changes, before baseline measurements or production edits, establish
+unchanged N and candidate N+1 execution with isolated mutable state. Reuse project
+environments and build/install/refresh commands to run worktree changes in N+1;
+reload cached consumers. Setup is ready when both loaded implementations are
+verified and the same real production operation can run against each. Keep candidate
+bindings current and report unavailable comparisons under
 [Production Code's verification rules](../production-code/SKILL.md#minimum-implementation-decision).
 
 ## One stable workflow

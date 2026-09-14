@@ -30,27 +30,18 @@ The project is the source of truth; the estate is an install artifact.
 
 ## Developing this estate
 
-Develop Codex skills and runtime in an isolated worktree. Seed two private estates
-from one global snapshot: N keeps the unchanged installation; N+1 receives the
-candidate changes. Retain extra skills and dependencies; give each estate its own
-sessions, caches and workflow state. Use Bubblewrap (`bwrap`) to bind each estate
-at `~/.codex` in its agent's process namespace, with writable state at separate
-locations; `CODEX_HOME` alone misses home-relative entrypoints. Keep normal tool
-access and expose the global estate read-only.
+Work in an isolated Git worktree. Seed N and N+1 from one global estate snapshot,
+preserving extra skills and dependencies. Keep N fixed; give each estate separate
+sessions, caches and workflow state. Use Bubblewrap (`bwrap`) to bind each copy at
+`~/.codex`, keep the global estate read-only, and retain normal tool access;
+`CODEX_HOME` alone misses home-relative entrypoints.
 
-Provide a task-local refresh script that installs the lead's current worktree
-changes into N+1, preserves unrelated skills, merges managed hooks and verifies
-installed files. Exclude tests and `decisions.md`; leave N and the global estate
-unchanged. Run it as changes develop. If the native Codex process or another
-consumer retains cached instructions, hooks or code, restart it within the same
-private bindings; refreshing files alone is insufficient. Verify the loaded
-skills, hooks, CLI and native state before claiming candidate behavior.
-
-Use equivalent real N/N+1 operations to establish correction
-and preservation. The same operations support A/B efficiency comparisons: compare
-executions, handoffs, context use and latency for equivalent work and correctness.
-Use separate test state and reuse applicable proof. Private testing does not
-authorize shared installation.
+Use a task-local refresh script to install worktree changes into N+1, preserving
+unrelated files and merging managed hooks. Exclude tests and `decisions.md`.
+Refresh during development; restart cached consumers within the private bindings
+and verify loaded skills, hooks, CLI and native state. Apply
+[Production Code's comparison rules](skills/production-code/SKILL.md#minimum-implementation-decision).
+Private testing does not authorize shared installation.
 
 ## Test history
 

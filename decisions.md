@@ -29,15 +29,13 @@ and conditional A/B cost comparison at equivalent work and correctness; TDD link
 to that rule. Reuse the same operations rather than adding another test stage.
 Included in PR #51; wording review does not establish measured agent improvement.
 
-**Execution setup:** PR #51 places baseline/candidate setup at the start of the
-installed workflow, before measurements or production edits. Reuse each target
-project's environments and build/install/refresh commands, isolate mutable test
-state, and verify loaded implementations. Production Code retains comparison
-criteria; the project README retains Codex-specific estate instructions. This
-generalizes the private refresh loop without requiring Codex estates or new scripts
-for downstream projects. Independent instruction review and diff checks passed;
-the four PR51 skills are installed and hash-verified in the private estate. The
-interrupted downstream experiment does not establish PR51 agent improvement.
+**Execution setup:** PR #51 requires verified baseline/candidate execution before
+measurements or production edits, reusing project environments and refresh commands.
+This generalizes private development to downstream projects; README owns only
+Codex-specific setup and links to Production Code's comparison rules.
+Independent instruction review and diff checks passed; four PR51 skills are
+installed and hash-verified privately. The interrupted experiment does not establish
+PR51 agent improvement.
 
 ## 2026-09-14 — Issue 29 candidate-estate continuation
 
