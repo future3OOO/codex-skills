@@ -181,6 +181,8 @@ def _rides_the_map(entry: JsonObject) -> bool:
 def _require_predecessor(state: JsonObject, phase: str) -> None:
     if phase not in WORKFLOW_SEQUENCE:
         return
+    if phase == "code-review" and not _allows_next(state, "tdd"):
+        raise WorkflowIncomplete("code-review requires tdd")
     position = WORKFLOW_SEQUENCE.index(phase)
     if position and not _allows_next(state, WORKFLOW_SEQUENCE[position - 1]):
         raise WorkflowIncomplete(f"{phase} requires {WORKFLOW_SEQUENCE[position - 1]}")
@@ -374,7 +376,9 @@ def _apply_step(
             f"governance revalidation permits only context refresh, re-verification, and review; {phase} is closed"
         )
     state.pop("paused", None)
-    _require_predecessor(state, phase)
+    # Retain executed verification while attack obligations remain pending.
+    if phase != "verification":
+        _require_predecessor(state, phase)
     if phase == "implementation" and status == "passed" and state.get("tdd") not in {"passed", "not-required"}:
         raise WorkflowIncomplete("implementation passed requires tdd passed or not-required")
     manifest: ManifestWrite | None = None
@@ -677,7 +681,7 @@ def commit_review(
                 write.evidence_id,
             )
             status, findings = ("pending", "pending") if unresolved else ("passed", "addressed")
-            if _allows_next(state, "verification"):
+            if _allows_next(state, "tdd") and _allows_next(state, "verification"):
                 manifest = _apply_step(
                     identity, state, "code-review", status, findings, review_manifest, review_head,
                 )
@@ -1774,9 +1778,11 @@ def _context_steps(state: JsonObject) -> tuple[tuple[str, bool], ...]:
     return (("repo-context-forge", _evidence_ready(state, "repo-context-forge")),)
 
 
-def checkpoint(identity: RepoIdentity, phase: str) -> JsonObject:
+def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False) -> JsonObject:
     if phase not in CHECKPOINT_PHASES:
         raise ValueError(f"unsupported checkpoint phase: {phase}")
+    if reconsult and phase != "preflight-advice":
+        raise ValueError("--reconsult requires preflight-advice")
     state = _require(identity)
     workflow_id = instance_id(state)
     candidate = _active_candidate_tree(identity)
@@ -1790,7 +1796,7 @@ def checkpoint(identity: RepoIdentity, phase: str) -> JsonObject:
     requirements = (
         ("workflowId", workflow_id is not None),
         ("open-workflow", open_for_phase),
-        ("advisor-stage", state.get("nextAction") in stage_actions[phase]),
+        ("advisor-stage", reconsult or state.get("nextAction") in stage_actions[phase]),
         ("passStartOid", _is_commit_oid(identity, state.get("passStartOid"))),
         *(
             _context_steps(state)
@@ -1852,7 +1858,7 @@ def checkpoint(identity: RepoIdentity, phase: str) -> JsonObject:
         "workflowId": state.get("workflowId"),
         "intent": state.get("intent"),
         "nextAction": state.get("nextAction"),
-        "sessionMode": "create" if phase == "preflight-advice" else "resume",
+        "sessionMode": "create" if phase == "preflight-advice" and not reconsult else "resume",
         "passStartOid": state.get("passStartOid"),
         "activeCandidateTree": candidate,
         "advisorProjectionEvidence": evidence_id,
@@ -1925,6 +1931,8 @@ def invalidate_after_edit(identity: RepoIdentity, path: str) -> JsonObject | Non
             return None
         if reviewable and state.get("phase") == "complete" and not state.get("revalidation"):
             return state
+        if reviewable and _binding_drift(identity, state, "quality-gate", transaction) is None:
+            return state
         def material(value: JsonObject) -> str:
             return json.dumps({k: v for k, v in value.items() if k != "nextAction"},
                               sort_keys=True)
@@ -1951,6 +1959,16 @@ def invalidate_after_edit(identity: RepoIdentity, path: str) -> JsonObject | Non
                 state["nextAction"] = before_next
             return state
         return _commit(transaction, state, kind)
+
+
+def review_blockers(identity: RepoIdentity, state: JsonObject) -> list[str]:
+    """Lead prerequisites for dispatch, without recording or rerunning proof."""
+    missing = [phase for phase in WORKFLOW_SEQUENCE[:WORKFLOW_SEQUENCE.index("code-review")]
+               if not _allows_next(state, phase)]
+    if not missing:
+        if drift := _binding_drift(identity, state, "quality-gate"):
+            missing.append(drift)
+    return missing
 
 
 def ready_for_edit(identity: RepoIdentity, path: str) -> tuple[bool, list[str]]:

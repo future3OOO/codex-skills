@@ -36,12 +36,14 @@ gate's JSON contract.
 
 ## Minimum Implementation Decision
 
-The user's intended production behavior governs verification in implementation,
-repair and review. Derive expectations from that objective and its contract, then
-trace the affected production paths through callers, callees, supported inputs and
-state changes. Tests and historical behavior inform this investigation; neither
-defines the requested outcome. Investigate materially wrong behavior the declared
-assertions would miss before handing the repair to independent review.
+The user's intended production behavior governs implementation, repair and review.
+Establish contract authority before adopting a corrective assertion or edit. Trace
+supported inputs, callers, callees, lifecycle paths and shared-state interactions
+before choosing probes. Tests and historical behavior inform that investigation;
+neither defines the requested outcome. On a related follow-up, use the accumulated
+findings and inputs to explain the missed mechanism before editing again. The lead
+must investigate materially wrong behavior the declared assertions would miss and
+assess the real results before initial or return review.
 
 For behavioral repairs, establish the intended correction, affected-domain coverage
 and preservation separately through actual N/N+1 Seam operations. Verify which
@@ -50,7 +52,13 @@ results, persisted effects and cleanup. Exercise the affected forms and interact
 not just the reported example. Reuse applicable drivers and evidence; execute again
 for changed behavior/bindings, unreliable evidence or missing coverage, not for a
 different reviewer or handoff. Disclose unavailable comparisons; never undo/reapply
-a repair to manufacture RED. Missing material acceptance remains unresolved,
+a repair to manufacture RED. For new or changed regression checks and existing
+checks relied on for the repair, establish that the claimed defect makes the check
+fail. Reuse an applicable N failure; when sensitivity remains uncertain, introduce
+only that contract-breaking behavior in a disposable copy and run the retained
+check. Injection proves sensitivity, not historical N. Correct or replace an
+insensitive check, retaining distinct useful coverage; preservation checks may
+correctly pass on both versions. Missing material acceptance remains unresolved,
 regardless of passing examples, suite totals, CI or recorder readiness.
 
 For workflow changes, also observe the actual lead following the candidate

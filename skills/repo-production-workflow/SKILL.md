@@ -198,7 +198,10 @@ JSON
 # or, when the caller already has the document in a file: --input <path>
 ```
 
-Terminal TDD proof opens verification directly; no implementation acknowledgement is recorded. Metadata-only reassessment is not another downstream review chain.
+The runner retains executed verification while TDD obligations remain pending;
+those obligations still block reviewer dispatch and completion. No implementation
+acknowledgement is recorded. Metadata-only reassessment is not another downstream
+review chain.
 
 ### 9. Verification
 
@@ -232,11 +235,20 @@ unchanged source alone does not establish coverage for a broadened contract.
 
 ### 10. Delegate code review
 
+Do not spawn or task the reviewer until the lead has completed the investigation,
+repair, real outcome assessment and verification in steps 2–9. Missing lead proof
+is work for the lead, not an investigation to offload to the reviewer. This also
+applies before return review; preflight exploration is confined to before preflight.
+The existing tool hook blocks governed delegation while prerequisites or the
+verified tree are stale; readiness does not substitute for assessing real outcomes.
+
 Before final advisor review, obtain independent `code-review` of the original
 objective and current candidate. Lead self-cleanup and later GitHub review do not replace this
 step. For initial non-trivial review use a fresh native Codex background
-delegate (`spawn_agent`, `agent_type=default`, normal native model selection)
-in this checkout. Wait without editing the candidate. It returns a
+delegate (`spawn_agent`, `agent_type=default`, `fork_turns="none"`, normal native
+model selection) in this checkout. Supply the target, original contract, correction
+delta and applicable evidence handles; instruct it to apply `code-review`.
+Wait without editing the candidate. It returns a
 Standards/Spec review and a findings intake. Verify every finding and
 disposition each one. A disposition is invalid
 without its measurement; advisor agreement is not authorization; historical behavior

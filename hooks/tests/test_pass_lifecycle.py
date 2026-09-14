@@ -448,6 +448,19 @@ class PassLifecycleTests(unittest.TestCase):
             marker + json.dumps(checkpoint, sort_keys=True),
         )
 
+        self.advance_to_preflight("checkpoint-descriptor", wid)
+        self.assertIn("advisor-stage", self.checkpoint("preflight-advice")["missing"])
+        before = json.loads(self.cli("status").stdout)
+        approved = self.cli("checkpoint", "--phase", "preflight-advice", "--reconsult")
+        self.assertEqual(approved.returncode, 0, approved.stderr)
+        repeated = json.loads(approved.stdout)
+        self.assertTrue(repeated["ready"], "APPROVED_PREFLIGHT_RECONSULT_REFUSED: " + approved.stdout)
+        self.assertEqual(repeated["sessionMode"], "resume")
+        self.assertEqual(repeated["workflowId"], wid)
+        self.assertEqual(json.loads(self.cli("status").stdout), before)
+        self.assertFalse(self.checkpoint("final-review")["ready"])
+        self.assertEqual(self.cli("checkpoint", "--phase", "final-review", "--reconsult").returncode, 2)
+
     def test_checkpoint_refuses_a_projection_for_an_old_candidate(self) -> None:
         marker = "INVALID_PROJECTION_REACHED_ADVISOR"
         self.begin_slug("checkpoint-candidate-drift")
@@ -465,6 +478,9 @@ class PassLifecycleTests(unittest.TestCase):
             (False, None, True),
             marker + json.dumps(checkpoint, sort_keys=True),
         )
+        repeated = self.cli("checkpoint", "--phase", "preflight-advice", "--reconsult")
+        self.assertFalse(json.loads(repeated.stdout)["ready"])
+        self.assertIn("advisor projection does not describe the active candidate tree", json.loads(repeated.stdout)["missing"])
 
     def _packet_with_unindexed_entry(self, slug: str, kind: str) -> tuple[str, str]:
         identity = resolve_repo_identity(self.repo)
@@ -1501,14 +1517,28 @@ class PassLifecycleTests(unittest.TestCase):
     def test_verification_records_only_through_the_runner_per_command_latest(self) -> None:
         wid = self.begin_slug("evidence-verification")
         self.advance_to_preflight("evidence-verification", wid)
+        retained = self.verify_run(sys.executable, "-c", "print('VERIFICATION_RESULT_RETAINED')")
+        self.assertEqual(retained.returncode, 0, retained.stdout + retained.stderr)
+        pending = json.loads(self.cli("status").stdout)
+        self.assertEqual(pending["tdd"], "pending")
+        self.assertEqual(pending["nextAction"], "tdd")
+        self.assertIn("VERIFICATION_RESULT_RETAINED", self.evidence(pending["verificationLatestEvidence"])["runs"][0]["outputTail"])
+        before_review = self.history_events()
+        review = self.json_file("premature-review.json", {"findings": []})
+        refused_review = self.cli("record-review", "--slug", "evidence-verification", "--workflow-id", wid,
+                                  "--resolved-model", "test-model", "--review-context-id", "recorder-fixture",
+                                  "--input", str(review))
+        self.assertEqual(refused_review.returncode, 2, "TDD_PENDING_REVIEW_ADMITTED: " + refused_review.stdout)
+        self.assertEqual(self.history_events(), before_review)
         self.owner_phase("tdd", "not-required")
         self.record_real_gate(wid)
         self.run_cli(("set-phase", "--phase", "implementation", "--status", "passed"))
 
+        before_bare = json.loads(self.cli("status").stdout)
         bare = self.cli("set-phase", "--phase", "verification", "--status", "passed")
         self.assertEqual(bare.returncode, 2, "a bare verification claim was accepted: " + bare.stdout + bare.stderr)
         self.assertIn("workflow verify", bare.stderr, "the refusal did not name the runner")
-        self.assertEqual(json.loads(self.cli("status").stdout)["verification"], "pending")
+        self.assertEqual(json.loads(self.cli("status").stdout), before_bare)
 
         # Command A fails until the flag file exists — the same command text later passes.
         flag = self.repo / "flag"
@@ -1539,8 +1569,12 @@ class PassLifecycleTests(unittest.TestCase):
         evidence = self.evidence(state["verificationLatestEvidence"])
         self.assertEqual(evidence["workflowId"], wid)
         generic = [run for run in evidence["runs"] if run.get("kind") == "generic"]
-        self.assertEqual(len(generic), 3, "the runner did not persist every executed command")
-        self.assertEqual([run["exitCode"] for run in generic], [1, 0, 0])
+        self.assertEqual(len(generic), 4, "the runner did not persist every executed command")
+        self.assertEqual([run["exitCode"] for run in generic], [0, 1, 0, 0])
+        accepted_review = self.cli("record-review", "--slug", "evidence-verification", "--workflow-id", wid,
+                                   "--resolved-model", "test-model", "--review-context-id", "recorder-fixture",
+                                   "--input", str(review))
+        self.assertEqual(accepted_review.returncode, 0, accepted_review.stdout + accepted_review.stderr)
 
     def test_generic_verification_keeps_next_action_at_verification_until_quality_gate(self) -> None:
         wid = self.begin_slug("typed-verification-next-action")
@@ -1588,6 +1622,7 @@ class PassLifecycleTests(unittest.TestCase):
         ):
             self.assertIn(field, before)
 
+        (self.repo / "app.py").write_text("value = 2\n", encoding="utf-8")
         invalidate_after_edit(identity, "app.py")
         invalidated = json.loads(self.cli("status").stdout)
         self.assertEqual(invalidated["verification"], "pending")
@@ -1868,8 +1903,11 @@ class PassLifecycleTests(unittest.TestCase):
         self.assertEqual(begun.returncode, 0, begun.stdout + begun.stderr)
 
         out_of_order = self.verify_run(sys.executable, "-c", "pass")
-        self.assertEqual(out_of_order.returncode, 2, out_of_order.stdout + out_of_order.stderr)
-        self.assertIn("tdd", out_of_order.stderr)
+        self.assertEqual(out_of_order.returncode, 0, out_of_order.stdout + out_of_order.stderr)
+        state = json.loads(self.cli("status").stdout)
+        self.assertEqual(state["nextAction"], "repo-context-forge", "EARLY_VERIFICATION_CONTRACT_BROKEN")
+        self.assertEqual(self.evidence(state["verificationLatestEvidence"])["runs"][0]["exitCode"], 0)
+        self.assertEqual(self.cli("complete").returncode, 2)
 
         for phase, refusal in (
             ("repo-context-forge", "run the Repo Context Forge bootstrap"),
@@ -1940,8 +1978,11 @@ class PassLifecycleTests(unittest.TestCase):
         self.assertIn("tdd", premature.stderr)
 
         early_verify = self.verify_run(sys.executable, "-c", "pass")
-        self.assertEqual(early_verify.returncode, 2, early_verify.stdout + early_verify.stderr)
-        self.assertIn("tdd", early_verify.stderr)
+        self.assertEqual(early_verify.returncode, 0, early_verify.stdout + early_verify.stderr)
+        retained = json.loads(self.cli("status").stdout)
+        self.assertEqual(retained["tdd"], "in-progress", "EARLY_VERIFICATION_CONTRACT_BROKEN")
+        self.assertEqual(self.evidence(retained["verificationLatestEvidence"])["runs"][0]["exitCode"], 0)
+        self.assertEqual(self.cli("complete").returncode, 2)
 
         early_review = self.cli("set-phase", "--phase", "code-review", "--status", "not-required", "--findings", "none")
         self.assertEqual(early_review.returncode, 2, early_review.stdout + early_review.stderr)
@@ -1957,7 +1998,7 @@ class PassLifecycleTests(unittest.TestCase):
         state = json.loads(self.cli("status").stdout)
         self.assertEqual(state["codeReview"], {"status": "pending", "findings": "pending"})
         self.assertEqual(state["finalReview"], {"source": None, "status": "pending", "findings": "pending"})
-        self.assertEqual(state["verification"], "pending")
+        self.assertEqual(state["verification"], "passed")
 
     def test_preflight_advice_requires_a_measured_outage_or_disposed_findings(self) -> None:
         wid = self.begin_slug("advisor-preflight-contract")
@@ -2180,6 +2221,7 @@ class PassLifecycleTests(unittest.TestCase):
         envelope.write_text('{"schemaVersion":1,"findings":[],"verdict":"context-mismatch"}', encoding="utf-8")
         mismatch = self.cli("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final", "--source", "codex-advisor", "--input", str(envelope))
         self.assertEqual(mismatch.returncode, 0, mismatch.stdout + mismatch.stderr)
+        (self.repo / "app.py").write_text("value = 2\n", encoding="utf-8")
         self.post_edit_hook(slug)
         return json.loads(mismatch.stdout), json.loads(self.cli("status").stdout)
 

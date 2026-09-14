@@ -216,13 +216,27 @@ class ReviewSummaryTests(ReviewSummaryHarness):
         first_disposition_id = json.loads(classified.stdout)["summaryId"]
         self.assertEqual(json.loads(classified.stdout)["status"], "pending", marker)
 
+        update = self.tmp / "reopened-map.json"
+        update.write_text(json.dumps({"reassessment": "A separate application guarantee needs proof", "items": [{
+            "id": "BM_VALUE", "kind": "contract", "basis": "application contract",
+            "behavior": "app.value is two", "seam": "import app", "expected": "value equals two",
+            "redFailure": "VALUE_NOT_TWO", "status": "pending",
+        }]}), encoding="utf-8")
+        mapped = self.run_script(WORKFLOW, "tdd-map", "--slug", "review-summary", "--workflow-id", self.wid,
+                                 "--input", str(update))
+        self.assertEqual(mapped.returncode, 0, mapped.stdout + mapped.stderr)
+        verified = self.run_script(WORKFLOW, "verify", "--slug", "review-summary", "--kind", "quality-gate", "--base-ref", "HEAD")
+        self.assertEqual(verified.returncode, 0, verified.stdout + verified.stderr)
+        self.assertEqual(read_workflow(resolve_repo_identity(self.repo))["tdd"], "in-progress")
+
         closure = self.disposition_document(intake_id, "SPEC-1", "report-only")
         closure["dispositions"][0]["materialConsequence"]["result"] = "false"
         path.write_text(json.dumps(closure), encoding="utf-8")
         closed = self.record_review(path, "partial-closure")
         self.assertEqual(closed.returncode, 0, marker + closed.stdout + closed.stderr)
         closed_payload = json.loads(closed.stdout)
-        self.assertEqual(closed_payload["status"], "passed", marker)
+        self.assertEqual(closed_payload["status"], "pending", marker)
+        self.assertEqual(read_workflow(resolve_repo_identity(self.repo))["nextAction"], "tdd", marker)
         second_disposition_id = closed_payload["summaryId"]
 
         states = {
@@ -242,6 +256,26 @@ class ReviewSummaryTests(ReviewSummaryHarness):
             [first_disposition_id],
             marker,
         )
+        proof = self.repo / "test_value.py"
+        proof.write_text("import unittest\nimport app\nclass Value(unittest.TestCase):\n"
+                         "    def test_value(self):\n        self.assertEqual(app.value, 2, 'VALUE_NOT_TWO')\n",
+                         encoding="utf-8")
+        for phase in ("red", "green"):
+            if phase == "green":
+                (self.repo / "app.py").write_text("value = 2\n", encoding="utf-8")
+            result = subprocess.run(
+                [sys.executable, str(WORKFLOW), "tdd", "--repo", str(self.repo), "--slug", "review-summary",
+                 "--phase", phase, "--behavior-id", "BM_VALUE", "--", sys.executable, "-m", "unittest", "-v", "test_value"],
+                cwd=self.repo, env=self.env, text=True, capture_output=True, check=False,
+            )
+            self.assertEqual(result.returncode, 0, marker + result.stdout + result.stderr)
+        verified = self.run_script(WORKFLOW, "verify", "--slug", "review-summary", "--kind", "quality-gate", "--base-ref", "HEAD")
+        self.assertEqual(verified.returncode, 0, marker + verified.stdout + verified.stderr)
+        path.write_text(json.dumps({"findings": []}), encoding="utf-8")
+        ready = self.record_review(path, "ready-return")
+        self.assertEqual(ready.returncode, 0, marker + ready.stdout + ready.stderr)
+        self.assertEqual(json.loads(ready.stdout)["status"], "passed", marker)
+        self.assertEqual(read_workflow(resolve_repo_identity(self.repo))["findingStates"], list(states.values()), marker)
 
     def test_legacy_empty_document_is_a_no_finding_intake(self) -> None:
         path = self.tmp / "legacy-empty.json"

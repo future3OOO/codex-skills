@@ -150,6 +150,7 @@ def parser() -> argparse.ArgumentParser:
     command = commands.add_parser("checkpoint", help="query advisor readiness without mutation")
     _repo(command)
     command.add_argument("--phase", required=True)
+    command.add_argument("--reconsult", action="store_true", help="user-authorized repeat preflight consultation")
 
     command = commands.add_parser("complete", help="complete a ready workflow")
     _repo(command)
@@ -494,7 +495,7 @@ def _dispatch(args: argparse.Namespace) -> int:
             expected_candidate_tree=candidate,
         ), compact=args.compact)
     elif args.command == "checkpoint":
-        _emit_json(checkpoint(identity, args.phase))
+        _emit_json(checkpoint(identity, args.phase, reconsult=args.reconsult))
     elif args.command == "complete":
         _emit_mutation(identity, lambda candidate: complete(
             identity, slug=args.slug, workflow_id=args.workflow_id,

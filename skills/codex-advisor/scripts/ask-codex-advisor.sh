@@ -4,7 +4,7 @@ set -euo pipefail
 umask 077
 
 usage() {
-  printf 'Usage: %s --slug <name> [--provider codex|claude] [--phase preflight-advice|final-review] [--cwd path] [--design-file file | --design-absent reason] [--budget words] [--codex-model model] [--codex-effort effort] [--fresh] -- "question"\n' "$0" >&2
+  printf 'Usage: %s --slug <name> [--provider codex|claude] [--phase preflight-advice|final-review] [--reconsult] [--cwd path] [--design-file file | --design-absent reason] [--budget words] [--codex-model model] [--codex-effort effort] [--fresh] -- "question"\n' "$0" >&2
   printf '  Phased consults derive payload, candidate anchors, and create/resume mode from workflow checkpoint; phase-less consults carry only the question.\n' >&2
   printf '  Default budget: 600 words; values above 1200 are refused.\n' >&2
   printf '  Trust: phase-less consults match the lead; phased consults are isolated and evidence-only.\n' >&2
@@ -17,6 +17,7 @@ if [[ -n "${CODEX_ADVISOR_ACTIVE:-}${ADVISOR_ACTIVE:-}" ]]; then
 fi
 
 slug=""; phase=""; cwd="$PWD"; base_ref=""; packet_file=""; design_file=""; design_absent=""; budget=600; fresh=0; question=""
+reconsult_args=()
 provider="${CODEX_ADVISOR_PROVIDER:-${ADVISOR_PROVIDER:-codex}}"
 codex_model="${CODEX_ADVISOR_MODEL:-gpt-6-astra}"
 codex_effort="${CODEX_ADVISOR_EFFORT:-xhigh}"
@@ -34,6 +35,7 @@ while [[ $# -gt 0 ]]; do
     --design-absent) design_absent="${2:?missing --design-absent value}"; shift 2 ;;
     --budget) budget="${2:?missing --budget value}"; shift 2 ;;
     --fresh) fresh=1; shift ;;
+    --reconsult) reconsult_args=(--reconsult); shift ;;
     --) shift; question="$*"; break ;;
     -h|--help) usage ;;
     *) printf 'error: unknown argument: %s\n' "$1" >&2; usage ;;
@@ -47,6 +49,10 @@ if [[ ! "$budget" =~ ^[1-9][0-9]{0,3}$ ]] || (( budget > 1200 )); then
 fi
 [[ -d "$cwd" ]] || { printf 'error: --cwd is not a directory: %s\n' "$cwd" >&2; exit 2; }
 case "$phase" in ""|preflight-advice|final-review) ;; *) printf 'error: unsupported phase: %s\n' "$phase" >&2; exit 2 ;; esac
+if [[ ${#reconsult_args[@]} -gt 0 && "$phase" != preflight-advice ]]; then
+  printf 'error: --reconsult requires preflight-advice\n' >&2
+  exit 2
+fi
 case "$provider" in codex|claude) ;; *) printf 'error: unsupported provider: %s\n' "$provider" >&2; exit 2 ;; esac
 if [[ -n "$phase" && "$fresh" -eq 1 ]]; then
   printf 'error: phased consults do not accept --fresh; checkpoint stage owns create or resume mode\n' >&2
@@ -159,7 +165,7 @@ if [[ -n "$phase" ]]; then
   exec 9>"$state_dir/${repo_key}-${normalized_slug}.lock"
   flock -x 9
   checkpoint_file="$transport_dir/checkpoint.json"
-  if ! python3 "$workflow_cli" checkpoint --repo "$repo_root" --phase "$phase" >"$checkpoint_file" 2>"$transport_dir/checkpoint-error"; then
+  if ! python3 "$workflow_cli" checkpoint --repo "$repo_root" --phase "$phase" "${reconsult_args[@]}" >"$checkpoint_file" 2>"$transport_dir/checkpoint-error"; then
     checkpoint_error=$(cat "$transport_dir/checkpoint-error")
     if [[ "$checkpoint_error" == *"no active workflow"* ]]; then
       printf 'error: %s requires an active workflow; begin the pass before consulting\n' "$phase" >&2
@@ -217,7 +223,7 @@ PY
     printf 'error: %s checkpoint is not ready; missing: %s\n' "$phase" "$checkpoint_missing" >&2
     exit 2
   fi
-  expected_mode=create; [[ "$phase" == final-review ]] && expected_mode=resume
+  expected_mode=create; [[ "$phase" == final-review || ${#reconsult_args[@]} -gt 0 ]] && expected_mode=resume
   if [[ "$session_mode" != "$expected_mode" ]]; then
     printf 'error: checkpoint returned session mode %s for %s\n' "$session_mode" "$phase" >&2
     exit 2
@@ -245,6 +251,10 @@ PY
 fi
 
 sid_file="$state_dir/${repo_key}-${normalized_slug}${active_wid:+-$active_wid}.${provider}.sid"
+if [[ ${#reconsult_args[@]} -gt 0 && ! -s "$sid_file" ]]; then
+  printf 'error: --reconsult requires an existing advisor session; no session id is available\n' >&2
+  exit 2
+fi
 new_session_id() { if [[ -r /proc/sys/kernel/random/uuid ]]; then cat /proc/sys/kernel/random/uuid; else python3 -c 'import uuid; print(uuid.uuid4())'; fi; }
 write_sid() {
   local value="$1"

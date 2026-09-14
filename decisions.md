@@ -6,6 +6,52 @@ Issue bodies own implementation scope; this record preserves decisions and their
 status. New decisions supersede earlier ones explicitly; observations and open
 acceptance gaps are not completed delivery.
 
+## 2026-09-14 — Issue 29 candidate-estate continuation
+
+**Decision:** Continue [#29](https://github.com/future3OOO/codex-skills/issues/29)
+on [PR #50](https://github.com/future3OOO/codex-skills/pull/50), reusing the
+[disposition audit](https://github.com/future3OOO/codex-skills/pull/50#issuecomment-5659789835)
+and applicable proof. The maintainer's rejection supersedes the earlier broad
+readiness claim; a completed ledger or advisor verdict is not acceptance.
+Keep implementation and proof with the lead, independent review fresh initially
+and reusable on return, and dispatch enforcement at the existing hook. Preserve
+executed verification and dispositions while unfinished proof still blocks review
+and completion. Do not restore obsolete early-verification refusals.
+
+**Decision:** Repair the reproduced routing failures at the hook: retain session
+associations outside Git and filter unrelated repositories before reading their
+ledgers. Refuse explicit reconsult without an existing SID at the wrapper's
+session-selection owner. Add the observed flattened native tool names to the
+existing matcher: the shipped matcher missed real native calls. Keep ordinary final-review session creation. Extend
+existing tests for held-disposition continuation; no additional recorder repair
+was needed. Preserve the previous lead's worktree and uncommitted record.
+
+**Decision:** At the existing invalidation transaction, preserve accepted proof
+when its recorded tree still matches disk. The actual external review handoff
+was misread as a shell edit and cleared valid receipts. Reuse the existing tree
+binding comparison; broader shell parsing remains with #42. A captured-command
+A/B through the installed hook now retains proof while real content, mode and
+deletion changes still invalidate it. The existing lifecycle test now makes an
+actual file edit before asserting invalidation.
+
+**Observed:** This continuation runs in the private candidate estate based on
+`c76f43b`, with verified hook/CLI/skill bindings and isolated native/workflow state.
+Routing and missing-SID checks have RED/GREEN proof; held-disposition continuation
+and corrected CI assertions pass. Dispatch preservation was baselined after the
+routing edit and is explicitly late. A test-driver setup error did not count as
+proof of the defect; its failed attempt remains in history.
+
+**Status:** Installed A/B proof, current verification, retained independent return
+review and final advisor review passed. The parent restart corrected its stale
+matcher: actual pending dispatch was denied and verified return review admitted.
+The actual external handoff retained verification; real edits still invalidate it.
+The captured 18-case native identity corpus has zero regressions. The independent
+reviewer confirmed both original live findings corrected; final advisor returned
+commit-ready. Current-head CI and remote reviewer completion remain pending.
+Private-estate refresh is authorized; shared installation and merge are not.
+This is separate from PR #45, merged at `dfb0159` with its own installation receipt.
+No PR #50 merge or shared installation has occurred.
+
 ## 2026-09-14 — Revert issue 30 pending third-party review
 
 **Decision:** At the maintainer's explicit request, revert

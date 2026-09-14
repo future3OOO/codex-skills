@@ -39,6 +39,16 @@ class RepoIdentity:
     def as_dict(self) -> dict[str, str]:
         return {"root": str(self.root), "key": self.key}
 
+    def common_git_directory(self) -> str:
+        """The shared Git repository, distinct from this worktree's state key."""
+        result = subprocess.run(
+            ["git", "-C", str(self.root), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            text=True, capture_output=True, check=False,
+        )
+        if result.returncode:
+            raise RepoIdentityError(result.stderr.strip())
+        return result.stdout.strip()
+
 
 def _probe(path: str | os.PathLike[str]) -> str:
     candidate = Path(path).expanduser()

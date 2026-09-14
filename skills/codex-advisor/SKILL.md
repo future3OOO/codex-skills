@@ -27,6 +27,11 @@ and makes any material promise without a planned real-Seam attack a finding.
 It challenges scope and design; it does not create the preflight artifact or
 approve implementation.
 
+Repeat preflight advice only when the user requests or approves it. Pass
+`--reconsult` for that authorized repeat: it reuses the advisor session and
+overrides only stage selection, preserving the open-pass and current-context
+checks. A repair or pending finding alone does not authorize another consult.
+
 Every phased consult carries a governing-design declaration: `--design-file`
 with the durable design artifact, or `--design-absent` with the specific
 reason none exists. The wrapper refuses a phased consult without exactly one

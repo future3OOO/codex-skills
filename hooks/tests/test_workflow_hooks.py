@@ -243,6 +243,80 @@ class HookHarness(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 class WorkflowHookTests(HookHarness):
+    def test_associated_dispatch_outside_git_requires_lead_proof(self) -> None:
+        self.assertEqual(self.state("begin", "--slug", "outside").returncode, 0)
+        self.post_edit("app.py")
+        before = self.state("history").stdout
+        for tool in ("collaborationspawn_agent", "collaborationfollowup_task", "send_message"):
+            with self.subTest(tool=tool):
+                result = subprocess.run(
+                    [sys.executable, str(INTAKE)], cwd=self.tmp, env=self.env, text=True,
+                    input=json.dumps({"tool_name": tool, "cwd": str(self.tmp),
+                                      "session_id": SESSION, "tool_input": {"agent_type": "default"}}),
+                    capture_output=True, check=False,
+                )
+                decision = json.loads(result.stdout or "{}").get("hookSpecificOutput", {})
+                self.assertEqual(decision.get("permissionDecision"), "deny", "OUTSIDE_GIT_REVIEW_ADMITTED")
+        self.assertEqual(self.state("history").stdout, before)
+
+    def test_unrelated_corrupt_association_does_not_block_dispatch(self) -> None:
+        self.assertEqual(self.state("begin", "--slug", "unrelated").returncode, 0)
+        self.post_edit("app.py")
+        unrelated = self.second_repo("unrelated")
+        identity = resolve_repo_identity(self.repo)
+        (self.tmp / "state" / identity.key / "workflow.sqlite3").write_bytes(b"corrupt disposable ledger")
+        for cwd, denied in ((unrelated, False), (self.repo, True)):
+            with self.subTest(cwd=cwd):
+                result = subprocess.run(
+                    [sys.executable, str(INTAKE)], cwd=cwd, env=self.env, text=True,
+                    input=json.dumps({"tool_name": "collaborationspawn_agent", "cwd": str(cwd),
+                                      "session_id": SESSION, "tool_input": {"agent_type": "default"}}),
+                    capture_output=True, check=False,
+                )
+                decision = json.loads(result.stdout or "{}").get("hookSpecificOutput", {})
+                self.assertEqual(decision.get("permissionDecision") == "deny", denied, "UNRELATED_LEDGER_BLOCKED")
+
+    def test_delegation_waits_for_current_lead_proof(self) -> None:
+        def dispatch(tool: str = "collaborationspawn_agent", role: str = "default", cwd: Path | None = None) -> dict:
+            result = subprocess.run(
+                [sys.executable, str(INTAKE)], cwd=self.repo, env=self.env, text=True,
+                input=json.dumps({"tool_name": tool, "cwd": str(cwd or self.repo),
+                                  "session_id": SESSION, "tool_input": {"agent_type": role}}),
+                capture_output=True, check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return json.loads(result.stdout or "{}").get("hookSpecificOutput", {})
+
+        self.assertNotIn("permissionDecision", dispatch())
+        self.assertNotIn("permissionDecision", dispatch(cwd=self.tmp))
+        self.assertEqual(self.state("begin", "--slug", "delegation").returncode, 0)
+        before = json.loads(self.state("history").stdout)
+        self.assertEqual(dispatch().get("permissionDecision"), "deny", "PREMATURE_REVIEW_DELEGATION_ADMITTED")
+        self.assertNotIn("permissionDecision", dispatch(role="explorer"))
+        with self.subTest(preflight_continuation=True):
+            self.assertEqual(dispatch("collaborationfollowup_task").get("permissionDecision"), "deny", "PREMATURE_REVIEW_CONTINUATION_ADMITTED")
+        self.assertEqual(json.loads(self.state("history").stdout), before)
+
+        self.complete_workflow("delegation", resume=True, finish=False)
+        before = json.loads(self.state("history").stdout)
+        for tool in ("spawn_agent", "collaborationfollowup_task", "send_input", "send_message", "resume_agent"):
+            with self.subTest(tool=tool):
+                self.assertNotIn("permissionDecision", dispatch(tool))
+        self.assertEqual(json.loads(self.state("history").stdout), before)
+
+        (self.repo / "app.py").write_text("value = 2\n", encoding="utf-8")
+        self.assertEqual(dispatch().get("permissionDecision"), "deny")
+        self.post_edit("app.py")
+        unrelated = self.second_repo("unrelated")
+        with self.subTest(unrelated_project=True):
+            self.assertNotIn("permissionDecision", dispatch(cwd=unrelated), "UNRELATED_PROJECT_BLOCKED")
+        other = self.tmp / "other"
+        self.git("worktree", "add", "-q", "-b", "other", str(other))
+        for tool in ("spawn_agent", "collaborationfollowup_task", "send_input", "send_message", "resume_agent"):
+            with self.subTest(return_tool=tool):
+                self.assertEqual(dispatch(tool, cwd=other).get("permissionDecision"), "deny")
+        self.assertEqual(dispatch(role="explorer").get("permissionDecision"), "deny")
+
     def test_the_edit_gate_advises_missing_steps_instead_of_denying(self) -> None:
         marker = "GATE_STILL_DENIES_MISSING_STEPS"
 
@@ -1090,6 +1164,18 @@ class WrapperPromptTests(HookHarness):
         self.assertIn("--session-id", args, marker)
         self.assertNotIn("--resume", args, marker)
         self.assertEqual(json.loads(self.state("status").stdout)["finalReview"]["status"], "commit-ready", marker)
+
+    def test_reconsult_requires_an_existing_session_before_provider_dispatch(self) -> None:
+        marker = "RECONSULT_CREATED_SESSION"
+        env = self.wrapper_rig()
+        self.assertEqual(self.state("begin", "--slug", "repeat-missing").returncode, 0)
+        record_context_forge(self.repo, self.tmp)
+        rig = Path(env["CAPTURE_DIR"]).parent
+        result = self.run_advisor(env, "--slug", "repeat-missing", "--phase", "preflight-advice",
+                                  "--reconsult", "--design-file", str(rig / "design.md"), "--", "repeat advice")
+        self.assertEqual(result.returncode, 2, marker + result.stdout + result.stderr)
+        self.assertIn("existing advisor session", result.stderr, marker)
+        self.assertEqual(list(Path(env["CAPTURE_DIR"]).iterdir()), [], marker)
 
 
     def test_a_created_final_review_session_is_persisted_and_resumed(self) -> None:
