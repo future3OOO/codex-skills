@@ -1931,6 +1931,8 @@ def invalidate_after_edit(identity: RepoIdentity, path: str) -> JsonObject | Non
             return None
         if reviewable and state.get("phase") == "complete" and not state.get("revalidation"):
             return state
+        if reviewable and _binding_drift(identity, state, "quality-gate", transaction) is None:
+            return state
         def material(value: JsonObject) -> str:
             return json.dumps({k: v for k, v in value.items() if k != "nextAction"},
                               sort_keys=True)

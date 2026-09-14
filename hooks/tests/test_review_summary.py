@@ -256,6 +256,26 @@ class ReviewSummaryTests(ReviewSummaryHarness):
             [first_disposition_id],
             marker,
         )
+        proof = self.repo / "test_value.py"
+        proof.write_text("import unittest\nimport app\nclass Value(unittest.TestCase):\n"
+                         "    def test_value(self):\n        self.assertEqual(app.value, 2, 'VALUE_NOT_TWO')\n",
+                         encoding="utf-8")
+        for phase in ("red", "green"):
+            if phase == "green":
+                (self.repo / "app.py").write_text("value = 2\n", encoding="utf-8")
+            result = subprocess.run(
+                [sys.executable, str(WORKFLOW), "tdd", "--repo", str(self.repo), "--slug", "review-summary",
+                 "--phase", phase, "--behavior-id", "BM_VALUE", "--", sys.executable, "-m", "unittest", "-v", "test_value"],
+                cwd=self.repo, env=self.env, text=True, capture_output=True, check=False,
+            )
+            self.assertEqual(result.returncode, 0, marker + result.stdout + result.stderr)
+        verified = self.run_script(WORKFLOW, "verify", "--slug", "review-summary", "--kind", "quality-gate", "--base-ref", "HEAD")
+        self.assertEqual(verified.returncode, 0, marker + verified.stdout + verified.stderr)
+        path.write_text(json.dumps({"findings": []}), encoding="utf-8")
+        ready = self.record_review(path, "ready-return")
+        self.assertEqual(ready.returncode, 0, marker + ready.stdout + ready.stderr)
+        self.assertEqual(json.loads(ready.stdout)["status"], "passed", marker)
+        self.assertEqual(read_workflow(resolve_repo_identity(self.repo))["findingStates"], list(states.values()), marker)
 
     def test_legacy_empty_document_is_a_no_finding_intake(self) -> None:
         path = self.tmp / "legacy-empty.json"

@@ -6,55 +6,51 @@ Issue bodies own implementation scope; this record preserves decisions and their
 status. New decisions supersede earlier ones explicitly; observations and open
 acceptance gaps are not completed delivery.
 
-## 2026-09-14 — Issue 29 lead proof and evidence reuse
+## 2026-09-14 — Issue 29 candidate-estate continuation
 
-**Decision:** The maintainer superseded [#29](https://github.com/future3OOO/codex-skills/issues/29)'s
-instruction-only boundary and requires lower workflow overhead. Keep repairs
-with the lead, investigation at `production-code`, interaction review at
-`code-review`, and premature dispatch prevention at the existing tool hook.
-Read existing native thread roles; add no agent registry. Retain executed
-verification through the existing producer while TDD remains pending; pending
-obligations still block dispatch and completion. This supersedes sensitivity-only
-scope, the discarded review-intake bypass and the insufficient print-on-refusal
-repair. Repeat preflight advice only on user request/approval, reusing its session.
-The maintainer declined execution-planning and authorized this reconsult.
+**Decision:** Continue [#29](https://github.com/future3OOO/codex-skills/issues/29)
+on [PR #50](https://github.com/future3OOO/codex-skills/pull/50), reusing the
+[disposition audit](https://github.com/future3OOO/codex-skills/pull/50#issuecomment-5659789835)
+and applicable proof. The maintainer's rejection supersedes the earlier broad
+readiness claim; a completed ledger or advisor verdict is not acceptance.
+Keep implementation and proof with the lead, independent review fresh initially
+and reusable on return, and dispatch enforcement at the existing hook. Preserve
+executed verification and dispositions while unfinished proof still blocks review
+and completion. Do not restore obsolete early-verification refusals.
 
-**Observed:** Actual host N missed its flattened tool name; N+1 used the candidate
-denial and created no child. This was an instructed attempt with automatic
-enforcement. Six real hook operations distinguish the retained explorer/reviewer
-by name, path and ID; 18 checks across all three native children and foreign-parent
-inputs have zero regressions. Current binding is Codex 0.154.0's default
-`state_5.sqlite`; alternative stores remain unproved. The extended existing
-verification lifecycle test retains all four command results; the existing
-closed-output check passes. Superseded experiments remain historical evidence.
-Lead follow-up reproduced premature clean review recording after early verification;
-the existing prerequisite now refuses it atomically and admits it after TDD.
-Independent review then identified the related disposition path. Public CLI
-N/N+1 proves dispositions and their history remain retained while TDD is pending;
-ready-review disposition behavior is preserved (two checks, 2.653 seconds).
+**Decision:** Repair the reproduced routing failures at the hook: retain session
+associations outside Git and filter unrelated repositories before reading their
+ledgers. Refuse explicit reconsult without an existing SID at the wrapper's
+session-selection owner. Add the observed flattened native tool names to the
+existing matcher: the shipped matcher missed real native calls. Keep ordinary final-review session creation. Extend
+existing tests for held-disposition continuation; no additional recorder repair
+was needed. Preserve the previous lead's worktree and uncommitted record.
 
-**Efficiency:** Role-aware hook operations took 43–74 ms, added to delegation
-because the original matcher did not run there. The first premature reviewer
-turn's retained log records 102.489 seconds and nine model responses. Preventing
-that dispatch removes premature child work; this is not an equal-work full-flow
-savings measurement. Advisor context and applicable reviewer proof were reused.
+**Decision:** At the existing invalidation transaction, preserve accepted proof
+when its recorded tree still matches disk. The actual external review handoff
+was misread as a shell edit and cleared valid receipts. Reuse the existing tree
+binding comparison; broader shell parsing remains with #42. A captured-command
+A/B through the installed hook now retains proof while real content, mode and
+deletion changes still invalidate it. The existing lifecycle test now makes an
+actual file edit before asserting invalidation.
 
-**Reconciliation:** The lead failed to record proof as it was established and
-proposed an improper alternate final consultation; neither failure is attributed
-to the reviewer. Existing recovery retained preservation evidence, recorded the
-late reconsult baseline, and withdrew the never-attacked native/sensitivity
-placeholders without withdrawing original acceptance. Current measured findings
-and the existing independent review were recorded without another reviewer call.
-The historical intake-bypass GREEN is abandoned evidence, not current proof.
-Some earlier repaired branches were dispositioned as current measured rejections;
-final advice judged that terminology imprecise but found no lost guarantee.
+**Observed:** This continuation runs in the private candidate estate based on
+`c76f43b`, with verified hook/CLI/skill bindings and isolated native/workflow state.
+Routing and missing-SID checks have RED/GREEN proof; held-disposition continuation
+and corrected CI assertions pass. Dispatch preservation was baselined after the
+routing edit and is explicitly late. A test-driver setup failure was rejected as
+RED, corrected, and retained as invalid evidence.
 
-**Status:** The workflow-bound final Codex Advisor returned `commit-ready` with
-no material findings. Bounded correction, preservation, native conduct and
-efficiency evidence were accepted; no universal future-agent guarantee or
-whole-workflow speedup is claimed. PR delivery follows this assessment; no merge
-or installation is authorized. PR #45 merged at `dfb0159`; its receipt records
-12 installed owned paths matching source, superseding earlier pending statuses.
+**Status:** Installed A/B proof, current verification, retained independent return
+review and final advisor review passed. The parent restart corrected its stale
+matcher: actual pending dispatch was denied and verified return review admitted.
+The actual external handoff retained verification; real edits still invalidate it.
+The captured 18-case native identity corpus has zero regressions. The independent
+reviewer confirmed both original live findings corrected; final advisor returned
+commit-ready. Current-head CI and remote reviewer completion remain pending.
+Private-estate refresh is authorized; shared installation and merge are not.
+This is separate from PR #45, merged at `dfb0159` with its own installation receipt.
+No PR #50 merge or shared installation has occurred.
 
 ## 2026-09-14 — Revert issue 30 pending third-party review
 

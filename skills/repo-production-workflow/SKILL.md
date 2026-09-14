@@ -245,8 +245,10 @@ verified tree are stale; readiness does not substitute for assessing real outcom
 Before final advisor review, obtain independent `code-review` of the original
 objective and current candidate. Lead self-cleanup and later GitHub review do not replace this
 step. For initial non-trivial review use a fresh native Codex background
-delegate (`spawn_agent`, `agent_type=default`, normal native model selection)
-in this checkout. Wait without editing the candidate. It returns a
+delegate (`spawn_agent`, `agent_type=default`, `fork_turns="none"`, normal native
+model selection) in this checkout. Supply the target, original contract, correction
+delta and applicable evidence handles; instruct it to apply `code-review`.
+Wait without editing the candidate. It returns a
 Standards/Spec review and a findings intake. Verify every finding and
 disposition each one. A disposition is invalid
 without its measurement; advisor agreement is not authorization; historical behavior

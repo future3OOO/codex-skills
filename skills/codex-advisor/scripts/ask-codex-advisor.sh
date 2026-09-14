@@ -251,6 +251,10 @@ PY
 fi
 
 sid_file="$state_dir/${repo_key}-${normalized_slug}${active_wid:+-$active_wid}.${provider}.sid"
+if [[ ${#reconsult_args[@]} -gt 0 && ! -s "$sid_file" ]]; then
+  printf 'error: --reconsult requires an existing advisor session; no session id is available\n' >&2
+  exit 2
+fi
 new_session_id() { if [[ -r /proc/sys/kernel/random/uuid ]]; then cat /proc/sys/kernel/random/uuid; else python3 -c 'import uuid; print(uuid.uuid4())'; fi; }
 write_sid() {
   local value="$1"

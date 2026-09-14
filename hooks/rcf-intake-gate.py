@@ -44,17 +44,12 @@ def main() -> int:
             session = session_key(payload)
             identities = session_associations(session) if session else []
             current = try_resolve_repo_identity(working_directory(payload))
-            if current is None:
-                return 0
-            if current not in identities:
+            if current is not None and current not in identities:
                 identities.append(current)
             common_directory: str | None = None
             explorer_continuation: bool | None = None
             for identity in identities:
-                state = read_workflow(identity)
-                if state is None or state.get("phase") == "complete" and not state.get("revalidation"):
-                    continue
-                if identity != current:
+                if current is not None and identity != current:
                     if common_directory is None:
                         common_directory = current.common_git_directory()
                     try:
@@ -62,6 +57,9 @@ def main() -> int:
                             continue
                     except RepoIdentityError:
                         continue
+                state = read_workflow(identity)
+                if state is None or state.get("phase") == "complete" and not state.get("revalidation"):
+                    continue
                 inputs = payload.get("tool_input")
                 if not state.get("preflightEvidence"):
                     if tool_name in {"Agent", "spawn_agent"}:

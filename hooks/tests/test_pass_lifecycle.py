@@ -1622,6 +1622,7 @@ class PassLifecycleTests(unittest.TestCase):
         ):
             self.assertIn(field, before)
 
+        (self.repo / "app.py").write_text("value = 2\n", encoding="utf-8")
         invalidate_after_edit(identity, "app.py")
         invalidated = json.loads(self.cli("status").stdout)
         self.assertEqual(invalidated["verification"], "pending")
@@ -1902,8 +1903,11 @@ class PassLifecycleTests(unittest.TestCase):
         self.assertEqual(begun.returncode, 0, begun.stdout + begun.stderr)
 
         out_of_order = self.verify_run(sys.executable, "-c", "pass")
-        self.assertEqual(out_of_order.returncode, 2, out_of_order.stdout + out_of_order.stderr)
-        self.assertIn("tdd", out_of_order.stderr)
+        self.assertEqual(out_of_order.returncode, 0, out_of_order.stdout + out_of_order.stderr)
+        state = json.loads(self.cli("status").stdout)
+        self.assertEqual(state["nextAction"], "repo-context-forge", "EARLY_VERIFICATION_CONTRACT_BROKEN")
+        self.assertEqual(self.evidence(state["verificationLatestEvidence"])["runs"][0]["exitCode"], 0)
+        self.assertEqual(self.cli("complete").returncode, 2)
 
         for phase, refusal in (
             ("repo-context-forge", "run the Repo Context Forge bootstrap"),
@@ -1974,8 +1978,11 @@ class PassLifecycleTests(unittest.TestCase):
         self.assertIn("tdd", premature.stderr)
 
         early_verify = self.verify_run(sys.executable, "-c", "pass")
-        self.assertEqual(early_verify.returncode, 2, early_verify.stdout + early_verify.stderr)
-        self.assertIn("tdd", early_verify.stderr)
+        self.assertEqual(early_verify.returncode, 0, early_verify.stdout + early_verify.stderr)
+        retained = json.loads(self.cli("status").stdout)
+        self.assertEqual(retained["tdd"], "in-progress", "EARLY_VERIFICATION_CONTRACT_BROKEN")
+        self.assertEqual(self.evidence(retained["verificationLatestEvidence"])["runs"][0]["exitCode"], 0)
+        self.assertEqual(self.cli("complete").returncode, 2)
 
         early_review = self.cli("set-phase", "--phase", "code-review", "--status", "not-required", "--findings", "none")
         self.assertEqual(early_review.returncode, 2, early_review.stdout + early_review.stderr)
@@ -1991,7 +1998,7 @@ class PassLifecycleTests(unittest.TestCase):
         state = json.loads(self.cli("status").stdout)
         self.assertEqual(state["codeReview"], {"status": "pending", "findings": "pending"})
         self.assertEqual(state["finalReview"], {"source": None, "status": "pending", "findings": "pending"})
-        self.assertEqual(state["verification"], "pending")
+        self.assertEqual(state["verification"], "passed")
 
     def test_preflight_advice_requires_a_measured_outage_or_disposed_findings(self) -> None:
         wid = self.begin_slug("advisor-preflight-contract")
