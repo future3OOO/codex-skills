@@ -161,6 +161,15 @@ not a guarantee that every future agent will comply or proof of #30's repair.
 
 **Status:** Rebased onto main `b9634fe`, preserving merged work and decision
 history. The PR carries the final review, delivery and scoped-installation status.
+At the maintainer's explicit request, installed only the three changed triage
+files from PR40 head `35c2cc8` before merge. Each installed file matched that
+source exactly; all other triage files were unchanged. Prior files and the
+source/path/hash receipt are in
+`~/.codex-backups/20260914-004922-pr40-triage-slice/`. The 09-19 estate
+refresh from the merged PR #69 head restored pre-PR40 triage files, so the
+installed estate no longer carries this contract; merged-head reinstallation
+is required for it to be live. This installation did not establish reviewer
+completion or authorize merging PR40.
 
 ## 2026-09-13 — Same-item RED command correction
 
