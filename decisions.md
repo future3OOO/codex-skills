@@ -32,6 +32,12 @@ not a guarantee that every future agent will comply or proof of #30's repair.
 and decision history. Triage instruction files match the reviewed pre-rebase
 PR40 head `daaa469` byte-for-byte.
 The PR carries the final review, delivery and scoped-installation status.
+At the maintainer’s explicit request, installed only the three changed triage
+files from PR40 head `35c2cc8` before merge. Each installed file matches that
+source exactly; all other triage files are unchanged. Prior files and the
+source/path/hash receipt are in
+`~/.codex-backups/20260914-004922-pr40-triage-slice/`. This installation
+does not establish reviewer completion or authorize merging PR40.
 
 ## 2026-09-13 — Minimal triage contracts
 
