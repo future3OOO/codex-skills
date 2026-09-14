@@ -13,7 +13,7 @@ optional scope/design exception that allowed the [#29](https://github.com/future
 continuation to omit advice. The workflow and advisor instructions own this rule.
 
 **Status:** Proposed in [PR #51](https://github.com/future3OOO/codex-skills/pull/51);
-not merged or installed.
+not merged or installed in the shared estate.
 
 **Private development estate:** The maintainer requires candidate skills/runtime
 to run from a private installation during development. Seed N and N+1 from one
@@ -28,6 +28,16 @@ README owns the installation guidance; shared delivery still requires authorizat
 and conditional A/B cost comparison at equivalent work and correctness; TDD links
 to that rule. Reuse the same operations rather than adding another test stage.
 Included in PR #51; wording review does not establish measured agent improvement.
+
+**Execution setup:** PR #51 places baseline/candidate setup at the start of the
+installed workflow, before measurements or production edits. Reuse each target
+project's environments and build/install/refresh commands, isolate mutable test
+state, and verify loaded implementations. Production Code retains comparison
+criteria; the project README retains Codex-specific estate instructions. This
+generalizes the private refresh loop without requiring Codex estates or new scripts
+for downstream projects. Independent instruction review and diff checks passed;
+the four PR51 skills are installed and hash-verified in the private estate. The
+interrupted downstream experiment does not establish PR51 agent improvement.
 
 ## 2026-09-14 — Issue 29 candidate-estate continuation
 
