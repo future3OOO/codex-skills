@@ -30,16 +30,18 @@ The project is the source of truth; the estate is an install artifact.
 
 ## Developing this estate
 
-Develop Codex skills and runtime in an isolated worktree with a private estate
-seeded from the global installation, retaining its extra skills and dependencies.
-Bind the private estate at `~/.codex`; `CODEX_HOME` alone misses home-relative
-entrypoints. Keep normal tool access and a read-only path to the global estate.
+Develop Codex skills and runtime in an isolated worktree. Seed two private estates
+from one global snapshot: N keeps the unchanged installation; N+1 receives the
+candidate changes. Retain extra skills and dependencies; give each estate its own
+sessions, caches and workflow state. Bind each at `~/.codex` in its own process
+environment; `CODEX_HOME` alone misses home-relative entrypoints. Keep normal tool
+access and a read-only path to the global estate.
 
-Refresh the private installation as changes develop. Verify the loaded skills,
+Refresh N+1 as changes develop. Verify the loaded skills,
 hooks, CLI and native state; restart consumers retaining old code before claiming
-candidate behavior. Test real N/N+1 operations against the fixed global-estate
-baseline and installed candidate, with separate temporary test state. Reuse
-applicable proof. Private testing does not authorize shared installation.
+candidate behavior. Compare equivalent real operations, outcomes and costs on N
+and N+1, using separate test state and reusing applicable proof. Private testing
+does not authorize shared installation.
 
 ## Test history
 
