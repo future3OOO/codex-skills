@@ -18,8 +18,10 @@ not merged or installed.
 **Private development estate:** The maintainer requires candidate skills/runtime
 to run from a private installation during development. Seed N and N+1 from one
 global snapshot, keeping N's installation fixed and their runtime state separate.
-PR50 exposed stale parent hooks despite
-updated files; loaded-consumer verification and restart are part of testing.
+Use Bubblewrap process bindings and a task-local refresh script for candidate
+installation. PR50 exposed stale parent hooks despite updated files; native
+restart under the private bindings and loaded-consumer verification are part of
+testing when consumers retain old code.
 README owns the installation guidance; shared delivery still requires authorization.
 
 **Comparison ownership:** Production Code owns real N/N+1 behavioral verification
