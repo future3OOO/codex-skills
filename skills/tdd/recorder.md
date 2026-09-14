@@ -24,7 +24,7 @@ Other commands can open RED with a nonzero exit carrying the declared failure;
 reach remains unresolved until review establishes the mapped promise. Identifiable
 startup, collection, setup, zero-test, import and syntax failures supply no proof.
 
-Proof targets must resolve inside the repository; redirecting them to external
+Pytest/unittest test targets must resolve inside the repository; redirecting them to external
 executed source does not establish that binding. A passing pytest/unittest RED
 baselines the item. A passing non-runner operation cannot baseline a pending item;
 it can reach GREEN only through its own RED. Runs, including refusals, are retained.

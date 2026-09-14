@@ -31,6 +31,7 @@ TDD's references prefer retaining real probes, require the runtime paths a claim
 depends on, and reuse comparison observations without a duplicate test path.
 The recorder reference separates ordinary recording from recovery, retaining command
 binding and attribution limits while removing duplicated lifecycle and parser detail.
+Repository target resolution applies to pytest/unittest, not direct installed probes.
 Included in PR #51; wording review does not establish measured agent improvement.
 
 **Execution setup:** PR #51 requires verified baseline/candidate execution before
