@@ -166,7 +166,7 @@ For an existing PR branch, completion still requires committed and pushed change
 
 Challenge the design before calling it ready.
 
-If sub-agents are appropriate for the task, spawn one critique agent (spawn_agent, agent_type=router_deepseek_deepseek_v4_flash) after the first full draft and before finalizing the design. The critique pass should check at minimum:
+If using delegated design critique, reuse an authorized Explore agent before finalizing the design. The critique should check:
 
 - authority model and conflict handling
 - scope in / scope out clarity

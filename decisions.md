@@ -6,6 +6,14 @@ Issue bodies own implementation scope; this record preserves decisions and their
 status. New decisions supersede earlier ones explicitly; observations and open
 acceptance gaps are not completed delivery.
 
+## 2026-09-15 — Reuse authorized design critique
+
+**Decision:** Replace execution-planning’s provider-specific new-agent request with
+conditional reuse of an authorized Explore agent. Preserve the critique criteria
+and self-critique fallback; design critique does not require independent delegation.
+The reported blocked dispatch motivates this wording correction. Runtime dispatch
+and code-review gates are unchanged. Deliver in a separate documentation PR.
+
 ## 2026-09-14 — Require preflight advice
 
 **Decision:** Require advisor advice before the initial production preflight. Supersedes the
