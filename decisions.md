@@ -27,14 +27,18 @@ README owns the installation guidance; shared delivery still requires authorizat
 **Comparison ownership:** Production Code owns real N/N+1 behavioral verification
 and conditional A/B cost comparison at equivalent work and correctness; TDD links
 to that rule. Reuse the same operations rather than adding another test stage.
+TDD's references prefer retaining real probes, require the runtime paths a claim
+depends on, and reuse comparison observations without a duplicate test path.
+The recorder reference separates ordinary recording from recovery, retaining command
+binding and attribution limits while removing duplicated lifecycle and parser detail.
 Included in PR #51; wording review does not establish measured agent improvement.
 
 **Execution setup:** PR #51 requires verified baseline/candidate execution before
 measurements or production edits, reusing project environments and refresh commands.
 This generalizes private development to downstream projects; README owns only
 Codex-specific setup and links to Production Code's comparison rules.
-Independent instruction review and diff checks passed; four PR51 skills are
-installed and hash-verified privately. The interrupted experiment does not establish
+Independent instruction review and diff checks passed; PR51 skills and TDD references
+are installed and hash-verified privately. The interrupted experiment does not establish
 PR51 agent improvement.
 
 ## 2026-09-14 — Issue 29 candidate-estate continuation

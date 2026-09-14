@@ -1,6 +1,10 @@
 # Governed TDD Recorder
 
-Use this reference only when governed workflow continuity is active. The recorded preflight owns the initial Behavior Map; the recorder binds real RED/GREEN executions and reassessments to its stable IDs. It is evidence, not authorization.
+Use this reference when governed workflow continuity is active. Preflight owns the
+initial Behavior Map; the recorder binds real executions to its IDs. Recorded
+RED/GREEN alone does not establish coverage, preservation or efficiency: apply
+[Production Code's verification rules](../production-code/SKILL.md#minimum-implementation-decision).
+State records proof, never authorizes delivery.
 
 ## RED and GREEN
 
@@ -13,15 +17,44 @@ python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" tdd \
   -- <targeted-command>
 ```
 
-The map owns the behavior, Seam, expected outcome, and behavior-specific `redFailure` - an assertion marker or the product's own exception or diagnostic. For directly invoked pytest and unittest, RED is valid only when collection/loading/setup reaches at least one executed test and the marker is carried by that test's own failure exception (`redProof.quality` `assertion-reached`, the line kept in `observedFailure`). Printed output is never the failure: captured output is excluded, and a pytest run whose FAILURES section carries more header-shaped lines than failed tests is unattributable and refuses, naming both counts. For any other command, a non-zero exit whose output carries the marker opens the RED with `redProof.reach` `unresolved` (`quality` `failure-observed`); review establishes that the observed failure is the mapped promise. Identifiable pre-Interface failures refuse either way, with the reason retained in the run's `redProofFailure`: a command that could not start, the interpreter's missing-target report, a loader failure, a collection/setup error, a zero-test run, or an import or syntax exception as the final diagnostic or the marker-carrying line. Every mapped run is retained, refused or not; a refused attempt binds the item to nothing, and a later differing command is admitted until a valid RED opens the cycle.
+The map supplies the behavior, Seam, expected outcome and `redFailure` marker or
+product diagnostic. Direct pytest/unittest RED requires an executed test whose
+own failure carries that diagnostic; printed or captured output is insufficient.
+Other commands can open RED with a nonzero exit carrying the declared failure;
+reach remains unresolved until review establishes the mapped promise. Identifiable
+startup, collection, setup, zero-test, import and syntax failures supply no proof.
 
-A valid RED records its item red and opens its cycle whatever the map's other items are doing; the edit hook names any contract item still without its RED instead of refusing. Mapped proof surfaces must resolve inside the repository: unittest selectors, discover start directories, and pytest targets that do not resolve under the repository root refuse at cycle-open. That promise is target-name resolution, not executed-source attestation — the ledger is continuity, and deliberately routing executed test source from outside the repository through an in-repo re-export, `load_tests`, or conftest delegation is fabricated proof in the audited deception class. A passing runner RED baselines the item; a non-runner operation exiting 0 on a pending item is refused, because it can be GREEN only through the item's own recorded RED, recorded as the operation succeeding (`passProof.quality` `operation-succeeded`) and never as assertion execution. GREEN must rerun the same normalized test surface, not merely the same spelling. For directly invoked stdlib unittest or pytest, fail-fast and verbosity aliases may differ; selectors, target, config, runner, behavior ID, and Seam remain load-bearing. Unknown runners remain exact-command bound.
+Proof targets must resolve inside the repository; redirecting them to external
+executed source does not establish that binding. A passing pytest/unittest RED
+baselines the item. A passing non-runner operation cannot baseline a pending item;
+it can reach GREEN only through its own RED. Runs, including refusals, are retained.
+A refused RED binds nothing; correct the command and retry.
 
-The recorder counts valid cycle-opening REDs only as a coarse granularity smell. Cycle count is never a coverage target.
+Repeated RED and GREEN must match the item's recorded command surface. For pytest
+and unittest, verbosity/fail-fast aliases may differ; selectors, configuration,
+runner, behavior ID and Seam must match. Other runners remain exact-command bound.
+Map updates and rechecks do not replace another item's open RED binding; another
+valid RED can open a cycle. [SKILL.md](SKILL.md) owns lifecycle and completion rules.
+
+## Reuse executed proof
+
+Use `tdd --phase red|green --behavior-id <id>
+--from-evidence <evidenceId>:<runIndex> --test-id <module.Class.test>` for an existing
+execution with effective verbose unittest output. A later quiet flag overrides
+verbose. The complete report must unambiguously attribute the selected test's
+marker/outcome, including native docstring lines. Use the returned `runIndex`;
+do not copy output back. One report can support several items through separate
+references without another execution; a sibling pass alone proves no other item.
+
+Keep relevant A/B cost observations with the executions. Handoff or a different
+record format does not justify replaying applicable proof or creating another test
+path. If reuse is unsupported, retain the observations and report the recording
+gap; see [recovery](#recovery-and-reassessment) when accepted proof is still needed.
 
 ## Map updates
 
-`tdd-map` changes existing obligations or adds uncovered outcomes. A no-op writes nothing. Pass the document on stdin:
+Add uncovered outcomes or change obligations with `tdd-map`; no-ops write nothing.
+Pass the document on stdin:
 
 ```bash
 python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" tdd-map \
@@ -30,45 +63,61 @@ python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" tdd-m
 JSON
 ```
 
-`sourceBehaviorId`, when given, names the GREEN whose consequence the update records. New items use the initial preflight schema (`status` defaults to pending); runtime proof and `revalidationRequired` are reserved. Dispositions follow [SKILL.md](SKILL.md). Missing replacement targets, cycles, impossible terminal replacements, and foreign finding references refuse the whole update atomically.
+Optional `sourceBehaviorId` names the GREEN whose consequence is being recorded. New items
+use preflight's schema, defaulting to pending; runtime proof fields and
+`revalidationRequired` are producer-owned. Dispositions follow [SKILL.md](SKILL.md).
+Invalid replacements, cycles or foreign finding references refuse the whole update.
 
-Reassess affected preservation with `{"id":"BM_KEEP","revalidate":true,"evidence":"Name the affected guarantee and change"}`. `revalidate` and `status` are mutually exclusive; repeated flagged requests are idempotent. Reopening settled preservation with `status:pending` sets the same flag. Settled preservation loses present settlement/baseline authority, while GREEN retains historical RED/GREEN fields. Governing omission retains the flag through reopening; finding closure still requires current owning proof.
+Add finding ownership without execution using
+`{"id":"BM_KEEP","sourceRefs":[{"type":"finding","evidenceId":"<intake>","id":"SPEC-1"}]}`.
+References union by full identity, including historical intakes in this workflow;
+withdrawn items cannot acquire ownership. References cannot remove or reassign it.
+Reference-only updates preserve cycles and downstream receipts. Additive obligations
+retain applicable proof while unmet obligations keep completion pending.
 
-Flagged pending uses ordinary `tdd --phase red`: a passing pytest/unittest baseline clears reassessment without a cycle; a genuine failure opens RED, and GREEN later clears it. Settled or flagged GREEN reruns `tdd --phase green` against its **producer-recorded `redCommand`**, including direct operations, with the same normalized-surface rules. Success refreshes evidence without a new cycle or invalidating unrelated receipts. Failure, timeout, skipped-only/setup output, and candidate drift retain the run and unresolved flag for retry. Positively identified non-executing rechecks on the unchanged candidate also preserve unrelated receipts; genuine regressions and ambiguous failures invalidate downstream checks. Missing producer binding stays unresolved unless governing omission or a valid current GREEN replacement settles the obligation. Neither authored `proofCommand` nor prose supplies that binding. Do not fabricate RED or wrap an operation just to change parser classification.
+## Recovery and reassessment
 
-Reassessment runs retain `candidateTree` sampled before execution and compare the candidate at commit, outside the child execution lock. Drift records `bindingError`, never accepted proof. RED's existing `productionChanged`, `passStartOid`, and `headOid` remain pass-relative; lateness is sticky and historical documents remain immutable.
+For refused proof, inspect the retained failure reason before retrying. Ambiguous
+runner reports cannot establish attribution. Selected setup-failed/skipped tests,
+stale or foreign receipts, and truncated or interrupted reports supply no reusable
+proof. An unrelated fixture failure does not invalidate a reached selected
+assertion. When reuse cannot establish required attribution, use the existing
+direct single-item route; other runners use that route too. Do not wrap a probe
+just to change parser classification or manufacture a RED.
 
-Add ownership without another execution: `{"id":"BM_KEEP","sourceRefs":[{"type":"finding","evidenceId":"<actual intake>","id":"SPEC-1"}]}`. References union in order by full identity, including historical intakes in the same workflow; withdrawn items cannot acquire new references. They cannot remove/reassign ownership. Reference-only updates preserve lifecycle, verification, review, cycle count, and active command/surface/runs; repeated unions write nothing. Mixed updates commit atomically, transitioning only for actual obligations.
+Reassess preservation with
+`{"id":"BM_KEEP","revalidate":true,"evidence":"Affected guarantee and change"}`.
+`revalidate` and `status` are mutually exclusive; `status:pending` also flags settled
+preservation. Repeated flags are idempotent. Flagged pending uses ordinary RED:
+a passing pytest/unittest baseline clears reassessment; a failure opens a cycle.
+Settled or flagged GREEN reruns GREEN with its producer-recorded `redCommand`,
+including direct operations. Success refreshes proof without another cycle or
+invalidating unrelated receipts. Authored `proofCommand` or prose cannot replace
+missing producer binding.
 
-Correct a RED contract's command with `{"id":"BM_ATTACK","status":"pending","evidence":"Wrong occurrence selected."}`. This clears its command and active-cycle binding, preserving the contract, finding references, historical RED, other items and receipts. Resume [ordinary proof](#red-and-green); pending blocks completion and prior RED still forbids withdrawal.
+Failures, timeouts, non-executing checks and candidate drift leave reassessment
+unresolved. Identified non-executing checks on unchanged code preserve unrelated
+receipts; regressions and ambiguous failures invalidate downstream checks, as do
+source/governance edits. Historical proof remains; omission retains the flag and
+requires governing evidence. Missing binding needs valid omission or a currently
+GREEN replacement, never an invented execution.
 
-Outside that explicit correction, map updates, refusals, baselines and rechecks beside A's open RED keep A's binding unless another RED genuinely opens a cycle. Repeated RED as well as GREEN must match the item's own recorded `redCommand` before execution. The admitted RED sweep remains available.
+Correct a RED contract's command with
+`{"id":"BM_ATTACK","status":"pending","evidence":"Wrong occurrence selected."}`.
+This releases its command and active cycle while preserving the contract, finding
+ownership, history and other receipts. Resume ordinary proof; the item remains
+pending and its historical RED still forbids withdrawal.
 
-Already fixed/report-only owners can obtain reassessment evidence without first possessing it. Strict behavioral `fixed` still needs current owning evidence and at least one genuine GREEN-through-RED; baseline alone never claims a repair. When reassessment invalidates an existing terminal proof claim, a measured rejection or report-only correction remains possible through the existing disposition command, retaining its history. It is not permission to relabel a still-supported terminal finding.
-
-Reuse an actual execution with `tdd --phase red|green --behavior-id <id>
---from-evidence <evidenceId>:<runIndex> --test-id <module.Class.test>`. The existing
-producer command must enable effective verbose unittest output (a later quiet
-flag overrides verbose). Its complete report, including native docstring lines,
-must unambiguously attribute that item's marker/outcome to its test. A selected
-setup-failed or skipped test supplies no proof; an unrelated fixture failure does
-not invalidate a reached selected assertion. Stale, foreign or truncated evidence
-supplies no proof. The retained output merges runner and application text; an
-interrupted result or a description indistinguishable from test progress cannot
-identify an executed test reliably. Report that reuse gap and use the existing
-direct single-item route. Other runners keep that route.
-One executed report may support several items through separate references with
-zero additional child executions. Keep claims and assertions authored; no sibling
-pass proves another item. Use the returned `runIndex`; do not copy output back.
-
-Additive obligations retain applicable measurement receipts while missing proof
-and broader review remain pending. Regressions and source/governance changes
-retain their invalidation. Producer-baselined settled claims may be superseded;
-history and finding ownership remain, and the terminal replacement must be GREEN.
+Fixed/report-only findings can obtain reassessment evidence. If it invalidates a
+terminal claim, record a measured rejection or report-only correction through the
+existing disposition command, retaining history. Do not relabel a supported
+terminal finding. Behavioral `fixed` requires current owning proof with genuine
+GREEN-through-RED; a passing baseline alone never proves a repair.
 
 ## No behavior change
 
-Use `--not-required` only when every map item is already satisfied or omitted by governing evidence:
+Use `--not-required` only when every map item is already satisfied or omitted by
+governing evidence:
 
 ```bash
 python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" tdd \
@@ -76,6 +125,4 @@ python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" tdd \
   --not-required "<specific reason no production behavior edit is required>"
 ```
 
-Proof gaps and pending items forbid this path. The CLI separately refuses to replace existing valid RED/GREEN evidence.
-
-Before completion, report the applicable map IDs and evidence: RED, GREEN, already satisfied, omitted, proof gaps, map updates, broader regression proof, and refactoring performed while GREEN.
+Pending items and proof gaps forbid this path; it cannot replace valid RED/GREEN.
