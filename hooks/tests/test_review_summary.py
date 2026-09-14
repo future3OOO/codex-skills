@@ -216,13 +216,27 @@ class ReviewSummaryTests(ReviewSummaryHarness):
         first_disposition_id = json.loads(classified.stdout)["summaryId"]
         self.assertEqual(json.loads(classified.stdout)["status"], "pending", marker)
 
+        update = self.tmp / "reopened-map.json"
+        update.write_text(json.dumps({"reassessment": "A separate application guarantee needs proof", "items": [{
+            "id": "BM_VALUE", "kind": "contract", "basis": "application contract",
+            "behavior": "app.value is two", "seam": "import app", "expected": "value equals two",
+            "redFailure": "VALUE_NOT_TWO", "status": "pending",
+        }]}), encoding="utf-8")
+        mapped = self.run_script(WORKFLOW, "tdd-map", "--slug", "review-summary", "--workflow-id", self.wid,
+                                 "--input", str(update))
+        self.assertEqual(mapped.returncode, 0, mapped.stdout + mapped.stderr)
+        verified = self.run_script(WORKFLOW, "verify", "--slug", "review-summary", "--kind", "quality-gate", "--base-ref", "HEAD")
+        self.assertEqual(verified.returncode, 0, verified.stdout + verified.stderr)
+        self.assertEqual(read_workflow(resolve_repo_identity(self.repo))["tdd"], "in-progress")
+
         closure = self.disposition_document(intake_id, "SPEC-1", "report-only")
         closure["dispositions"][0]["materialConsequence"]["result"] = "false"
         path.write_text(json.dumps(closure), encoding="utf-8")
         closed = self.record_review(path, "partial-closure")
         self.assertEqual(closed.returncode, 0, marker + closed.stdout + closed.stderr)
         closed_payload = json.loads(closed.stdout)
-        self.assertEqual(closed_payload["status"], "passed", marker)
+        self.assertEqual(closed_payload["status"], "pending", marker)
+        self.assertEqual(read_workflow(resolve_repo_identity(self.repo))["nextAction"], "tdd", marker)
         second_disposition_id = closed_payload["summaryId"]
 
         states = {

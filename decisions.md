@@ -6,6 +6,56 @@ Issue bodies own implementation scope; this record preserves decisions and their
 status. New decisions supersede earlier ones explicitly; observations and open
 acceptance gaps are not completed delivery.
 
+## 2026-09-14 — Issue 29 lead proof and evidence reuse
+
+**Decision:** The maintainer superseded [#29](https://github.com/future3OOO/codex-skills/issues/29)'s
+instruction-only boundary and requires lower workflow overhead. Keep repairs
+with the lead, investigation at `production-code`, interaction review at
+`code-review`, and premature dispatch prevention at the existing tool hook.
+Read existing native thread roles; add no agent registry. Retain executed
+verification through the existing producer while TDD remains pending; pending
+obligations still block dispatch and completion. This supersedes sensitivity-only
+scope, the discarded review-intake bypass and the insufficient print-on-refusal
+repair. Repeat preflight advice only on user request/approval, reusing its session.
+The maintainer declined execution-planning and authorized this reconsult.
+
+**Observed:** Actual host N missed its flattened tool name; N+1 used the candidate
+denial and created no child. This was an instructed attempt with automatic
+enforcement. Six real hook operations distinguish the retained explorer/reviewer
+by name, path and ID; 18 checks across all three native children and foreign-parent
+inputs have zero regressions. Current binding is Codex 0.154.0's default
+`state_5.sqlite`; alternative stores remain unproved. The extended existing
+verification lifecycle test retains all four command results; the existing
+closed-output check passes. Superseded experiments remain historical evidence.
+Lead follow-up reproduced premature clean review recording after early verification;
+the existing prerequisite now refuses it atomically and admits it after TDD.
+Independent review then identified the related disposition path. Public CLI
+N/N+1 proves dispositions and their history remain retained while TDD is pending;
+ready-review disposition behavior is preserved (two checks, 2.653 seconds).
+
+**Efficiency:** Role-aware hook operations took 43–74 ms, added to delegation
+because the original matcher did not run there. The first premature reviewer
+turn's retained log records 102.489 seconds and nine model responses. Preventing
+that dispatch removes premature child work; this is not an equal-work full-flow
+savings measurement. Advisor context and applicable reviewer proof were reused.
+
+**Reconciliation:** The lead failed to record proof as it was established and
+proposed an improper alternate final consultation; neither failure is attributed
+to the reviewer. Existing recovery retained preservation evidence, recorded the
+late reconsult baseline, and withdrew the never-attacked native/sensitivity
+placeholders without withdrawing original acceptance. Current measured findings
+and the existing independent review were recorded without another reviewer call.
+The historical intake-bypass GREEN is abandoned evidence, not current proof.
+Some earlier repaired branches were dispositioned as current measured rejections;
+final advice judged that terminology imprecise but found no lost guarantee.
+
+**Status:** The workflow-bound final Codex Advisor returned `commit-ready` with
+no material findings. Bounded correction, preservation, native conduct and
+efficiency evidence were accepted; no universal future-agent guarantee or
+whole-workflow speedup is claimed. PR delivery follows this assessment; no merge
+or installation is authorized. PR #45 merged at `dfb0159`; its receipt records
+12 installed owned paths matching source, superseding earlier pending statuses.
+
 ## 2026-09-14 — Revert issue 30 pending third-party review
 
 **Decision:** At the maintainer's explicit request, revert

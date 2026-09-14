@@ -198,7 +198,10 @@ JSON
 # or, when the caller already has the document in a file: --input <path>
 ```
 
-Terminal TDD proof opens verification directly; no implementation acknowledgement is recorded. Metadata-only reassessment is not another downstream review chain.
+The runner retains executed verification while TDD obligations remain pending;
+those obligations still block reviewer dispatch and completion. No implementation
+acknowledgement is recorded. Metadata-only reassessment is not another downstream
+review chain.
 
 ### 9. Verification
 
@@ -231,6 +234,13 @@ when evidence is absent/stale. The gate's binding check adjudicates applicabilit
 unchanged source alone does not establish coverage for a broadened contract.
 
 ### 10. Delegate code review
+
+Do not spawn or task the reviewer until the lead has completed the investigation,
+repair, real outcome assessment and verification in steps 2–9. Missing lead proof
+is work for the lead, not an investigation to offload to the reviewer. This also
+applies before return review; preflight exploration is confined to before preflight.
+The existing tool hook blocks governed delegation while prerequisites or the
+verified tree are stale; readiness does not substitute for assessing real outcomes.
 
 Before final advisor review, obtain independent `code-review` of the original
 objective and current candidate. Lead self-cleanup and later GitHub review do not replace this

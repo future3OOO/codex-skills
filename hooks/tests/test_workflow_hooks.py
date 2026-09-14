@@ -243,6 +243,47 @@ class HookHarness(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 class WorkflowHookTests(HookHarness):
+    def test_delegation_waits_for_current_lead_proof(self) -> None:
+        def dispatch(tool: str = "collaborationspawn_agent", role: str = "default", cwd: Path | None = None) -> dict:
+            result = subprocess.run(
+                [sys.executable, str(INTAKE)], cwd=self.repo, env=self.env, text=True,
+                input=json.dumps({"tool_name": tool, "cwd": str(cwd or self.repo),
+                                  "session_id": SESSION, "tool_input": {"agent_type": role}}),
+                capture_output=True, check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return json.loads(result.stdout or "{}").get("hookSpecificOutput", {})
+
+        self.assertNotIn("permissionDecision", dispatch())
+        self.assertNotIn("permissionDecision", dispatch(cwd=self.tmp))
+        self.assertEqual(self.state("begin", "--slug", "delegation").returncode, 0)
+        before = json.loads(self.state("history").stdout)
+        self.assertEqual(dispatch().get("permissionDecision"), "deny", "PREMATURE_REVIEW_DELEGATION_ADMITTED")
+        self.assertNotIn("permissionDecision", dispatch(role="explorer"))
+        with self.subTest(preflight_continuation=True):
+            self.assertEqual(dispatch("collaborationfollowup_task").get("permissionDecision"), "deny", "PREMATURE_REVIEW_CONTINUATION_ADMITTED")
+        self.assertEqual(json.loads(self.state("history").stdout), before)
+
+        self.complete_workflow("delegation", resume=True, finish=False)
+        before = json.loads(self.state("history").stdout)
+        for tool in ("spawn_agent", "collaborationfollowup_task", "send_input", "send_message", "resume_agent"):
+            with self.subTest(tool=tool):
+                self.assertNotIn("permissionDecision", dispatch(tool))
+        self.assertEqual(json.loads(self.state("history").stdout), before)
+
+        (self.repo / "app.py").write_text("value = 2\n", encoding="utf-8")
+        self.assertEqual(dispatch().get("permissionDecision"), "deny")
+        self.post_edit("app.py")
+        unrelated = self.second_repo("unrelated")
+        with self.subTest(unrelated_project=True):
+            self.assertNotIn("permissionDecision", dispatch(cwd=unrelated), "UNRELATED_PROJECT_BLOCKED")
+        other = self.tmp / "other"
+        self.git("worktree", "add", "-q", "-b", "other", str(other))
+        for tool in ("spawn_agent", "collaborationfollowup_task", "send_input", "send_message", "resume_agent"):
+            with self.subTest(return_tool=tool):
+                self.assertEqual(dispatch(tool, cwd=other).get("permissionDecision"), "deny")
+        self.assertEqual(dispatch(role="explorer").get("permissionDecision"), "deny")
+
     def test_the_edit_gate_advises_missing_steps_instead_of_denying(self) -> None:
         marker = "GATE_STILL_DENIES_MISSING_STEPS"
 

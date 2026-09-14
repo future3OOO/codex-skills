@@ -25,9 +25,10 @@ you reviewed.
 
 ## 2. Read the affected surface
 
-Inspect changed files, direct callers and callees, governing artifacts, and
-named no-change surfaces, using the Repo Context Forge packet and GitNexus
-evidence already recorded. Do not begin a workflow, run the Repo Context Forge
+Trace the affected Seam through related modules, callers, callees, other writers
+of shared state and competing implementations. Inspect governing artifacts and
+named no-change surfaces using the recorded Repo Context Forge packet, GitNexus
+evidence and source. Do not begin a workflow, run the Repo Context Forge
 bootstrap, or record anything: the lead's pass owns them. On continuation, inspect
 the correction delta and affected preservation/interactions; reuse the unchanged
 contract, instructions and applicable evidence. Report when the prior context is
@@ -49,7 +50,8 @@ and Refused Bequest.
 Apply [Production Code's outcome and verification rules](../production-code/SKILL.md#minimum-implementation-decision)
 independently to the original objective and current candidate. Challenge whether
 that objective is fulfilled, including materially wrong behavior the declared
-assertions would miss. Return findings for the final advisor through the existing
+assertions would miss. Judge correction of the original failure, affected-domain
+coverage and preservation separately. Return findings for the final advisor through the existing
 workflow; this review does not decide delivery.
 
 On return review retain original finding identities/domains. Classify measured
@@ -70,7 +72,7 @@ Run **Standards** and **Spec** independently:
   implementation, acceptance criteria without proof, and Interface claims
   contradicted by caveats or implementation limits.
 
-Every finding states severity, whether it is material, the reproducing
+Every finding cites its governing requirement and states severity, whether it is material, the reproducing
 command, expected versus observed effect, consequence, and the smallest
 correction.
 
