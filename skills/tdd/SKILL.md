@@ -13,7 +13,7 @@ A RED is valid only when the failure is the mapped product failure - the declare
 
 An **attack vector test (ACT)** is the production test: drive the real production Interface, state the expected result, and compare it with the observed one; for a bug, reproduce and trace it before editing. Reuse an existing check when it reaches the behavior; justify additional checks under [tests.md](tests.md). A runner-backed ACT (directly invoked pytest or unittest) lets the recorder establish reach from the runner's own report of the executed test's failure. A non-runner ACT - the product's CLI, a script, an end-to-end operation - opens its item's RED when it fails carrying the declared failure, and the recorder records its reach as unresolved: review establishes that the observed failure is the mapped promise. Matching output alone never establishes behavior. Either verdict is a bounded reading of the output - evidence the lead verifies, not an attestation, because the ledger is continuity. Do not manufacture a second test path or rewrite a real production failure into a marker assertion.
 
-Apply [Production Code's N/N+1 verification rules](../production-code/SKILL.md#minimum-implementation-decision) to these operations.
+Use the real N/N+1 operations required by [Production Code](../production-code/SKILL.md#minimum-implementation-decision) as the TDD proof itself. Choose execution by the claimed production behavior, not recorder support; do not create a second test path to satisfy recording.
 
 The canonical mock ban in `~/.codex/AGENTS.md` applies without exception. This skill never creates a test-only proof path.
 

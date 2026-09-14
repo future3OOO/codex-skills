@@ -4,11 +4,9 @@ A strong test is a real probe of one **independently-failable observable outcome
 
 A behavior test survives internal refactoring: if observable behavior is unchanged but the test breaks, the test is coupled to implementation. Several assertions are valid when they jointly prove one behavior; one assertion can still hide an over-broad behavior.
 
-Prefer retaining the real probe as the regression test. Add a smaller
-check only for distinct coverage or demonstrated cheaper feedback; establish its
-defect sensitivity without narrowing the probe's contract. Apply
-[Production Code's comparison rules](../production-code/SKILL.md#minimum-implementation-decision)
-for N/N+1 proof and A/B measurements.
+Retain the real probe as the regression test where practical. Additional checks
+require distinct coverage or demonstrated cheaper feedback, with defect sensitivity
+and no narrowing of the contract; they do not replace production acceptance.
 
 ## What a slice must prove
 

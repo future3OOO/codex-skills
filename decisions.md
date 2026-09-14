@@ -27,8 +27,8 @@ README owns the installation guidance; shared delivery still requires authorizat
 **Comparison ownership:** Production Code owns real N/N+1 behavioral verification
 and conditional A/B cost comparison at equivalent work and correctness; TDD links
 to that rule. Reuse the same operations rather than adding another test stage.
-TDD's references prefer retaining real probes, require the runtime paths a claim
-depends on, and reuse comparison observations without a duplicate test path.
+TDD uses the real N/N+1 operations as its proof and retains the probe where practical;
+additional checks must earn their place and cannot replace production acceptance.
 The recorder reference separates ordinary recording from recovery, retaining command
 binding and attribution limits while removing duplicated lifecycle and parser detail.
 Repository target resolution applies to pytest/unittest, not direct installed probes.
