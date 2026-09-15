@@ -357,9 +357,12 @@ the non-runner command).
 `tdd_workflow._run_tdd` refuses a RED whose observation another item's RED already
 recorded (an explained assertion anywhere; an unexplained one at the same site)
 and refuses a pending contract item's passing RED-phase run once any production
-path changed in the pass; preservation keeps its candidate-observation routes
-(executed late baseline, prose settlement, flagged revalidation), all labelled
-late, and `tdd-map` refuses `revalidate` on a never-settled pending item. `summary` names items whose
+path changed in the pass; preservation keeps its executed candidate-observation
+routes (late baseline, flagged revalidation), labelled late, while a prose
+`already-satisfied` preservation item is unresolved until an executed run records
+its baseline (`--not-required` and `complete` name it); `tdd-map` refuses
+`revalidate` on a never-settled pending item; a reopened item's retained RED is
+history, not ownership, so another item's identical initial probe is admitted. `summary` names items whose
 REDs rendered the same failure at different sites. Root `conftest.py` is test-like
 for the shared path classifier. Skill text (tdd, recorder, tests, preflight,
 production-code, workflow step 6, code-review) carries the one-entrypoint-absence
@@ -418,3 +421,17 @@ the claude-advisor precommit wrapper instead of the codex-advisor wrapper, so
 reviewer-claim and final-advisor behavior are not established; Done-when #5
 remains open until a rerun with the leaked branch pruned and the codex-advisor
 wrapper pinned. No shared-estate installation or merge.
+
+Final advisor review (PR #56, intake evidence-14755bfb884c4d3151a6a65753eda291)
+returned five material findings. Fixed with owning attacks: SPEC-5 (reopened
+history claimed ownership) and the prose-settlement half of SPEC-3. Rejected with
+measurement: SPEC-1 (the CLI pair and the SPEC-11 pair are structurally
+indistinguishable renderings with opposite correct outcomes, so the recorder
+cannot refuse one without the other; the label and the skill's one-entrypoint
+rule own it), SPEC-2 (no owner attributes a changed production path to a
+behavior; refusing every changed path is fail-closed and admits nothing, and the
+corpus shows zero false refusals), the candidate-pass half of SPEC-3 (a
+preservation item's executed candidate observation is the evidence preservation
+means; it is labelled late, not hidden). SPEC-4 (the replay's post-recorder
+criterion) is deferred by the maintainer on the issue; the retired extra
+`claude-advisor` skill was the replay's misroute, not the candidate.

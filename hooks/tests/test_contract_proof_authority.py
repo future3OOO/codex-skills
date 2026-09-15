@@ -817,5 +817,48 @@ class ContractProofAuthorityTests(unittest.TestCase):
         self.assertEqual(baseline.returncode, 0, baseline.stdout + baseline.stderr)
         self.assertIn("Late RED: BM_KEEP", self.h.cli("summary").stdout, marker + ": " + self.h.cli("summary").stdout)
 
+    def test_a_reopened_items_retained_red_is_not_ownership(self) -> None:
+        # Final review SPEC-5: reopening an item to pending keeps its RED history
+        # as evidence; another item's initial probe at the same failure is its own.
+        marker = "REOPENED_HISTORY_CLAIMED_OWNERSHIP"
+        slug, workflow_id = self.h.begin_to_preflight([
+            contract("BM_INTERFACE", red_failure="SAFE_IMPORT_INTERFACE_MISSING"),
+            contract("BM_ROLLBACK", red_failure="EXACT_ROLLBACK_BROKEN"),
+        ])
+        self.shared_helper_probe()
+        first = self.tdd_pytest(slug, "red", "BM_INTERFACE", "test_shared_site.py::test_interface_exists")
+        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+        reopened = self.h.update_map(slug, workflow_id, {"reassessment": "contract corrected", "dispositions": [
+            {"id": "BM_INTERFACE", "status": "pending", "evidence": "the promised Interface changed"}]})
+        self.assertEqual(reopened.returncode, 0, reopened.stdout + reopened.stderr)
+        self.assertEqual(self.item_status("BM_INTERFACE"), "pending", marker)
+        self.assertIn("redProof", self.item("BM_INTERFACE"), marker + ": history must be retained")
+        admitted = self.tdd_pytest(slug, "red", "BM_ROLLBACK", "test_shared_site.py::test_rollback_restores_state")
+        self.assertEqual(admitted.returncode, 0, marker + ": " + admitted.stdout + admitted.stderr)
+        self.assertEqual(self.item_status("BM_ROLLBACK"), "red", marker)
+        self.assertNotIn("BM_INTERFACE", self.h.cli("summary").stdout.split("Shared RED observation")[-1], marker)
+
+    def test_a_prose_settled_preservation_item_keeps_the_map_unresolved(self) -> None:
+        # Final review SPEC-3: already-satisfied is a producer status; a prose
+        # settlement with no executed proof closes nothing on any route.
+        marker = "PROSE_SETTLEMENT_CLOSED_PRESERVATION"
+        prose = {**preservation("BM_KEEP", red_failure="VALUE_WAS_NOT_ONE"),
+                 "status": "already-satisfied", "evidence": "passes by inspection"}
+        slug, workflow_id = self.h.begin_to_preflight([prose])
+        self.assertIn("Prose settlement (unresolved until an executed baseline): BM_KEEP", self.h.cli("summary").stdout, marker)
+        not_required = self.h.cli("tdd", "--slug", slug, "--not-required", "nothing changed")
+        self.assertEqual(not_required.returncode, 2, marker + ": " + not_required.stdout + not_required.stderr)
+        self.assertIn("BM_KEEP", not_required.stderr, marker)
+        with self.assertRaises(WorkflowIncomplete, msg=marker) as refusal:
+            complete(self.identity)
+        self.assertIn("BM_KEEP", str(refusal.exception), marker)
+        revalidated = self.h.update_map(slug, workflow_id, {"reassessment": "executed proof owed", "dispositions": [
+            {"id": "BM_KEEP", "revalidate": True, "evidence": "prose is not an observation"}]})
+        self.assertEqual(revalidated.returncode, 0, revalidated.stdout + revalidated.stderr)
+        baseline = self.h.tdd(slug, "red", "BM_KEEP", "import app; assert app.value == 1, 'VALUE_WAS_NOT_ONE'")
+        self.assertEqual(baseline.returncode, 0, marker + ": " + baseline.stdout + baseline.stderr)
+        self.assertIsInstance(self.item("BM_KEEP").get("baselineProof"), dict, marker)
+        self.assertNotIn("BM_KEEP", behavior_map.unresolved(self.item_document()["behaviorMap"]), marker)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

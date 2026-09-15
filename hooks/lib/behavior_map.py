@@ -454,6 +454,12 @@ def _observation(proof: object) -> tuple[tuple[str, ...], str] | None:
     return tuple(str(line) for line in proof["observation"]), str(proof.get("site") or "")
 
 
+def _bound_observation(entry: JsonObject) -> tuple[tuple[str, ...], str] | None:
+    """The observation of an item's current RED. A reopened item keeps its RED
+    history as evidence, not as ownership: with no bound command it keys nothing."""
+    return _observation(entry.get("redProof")) if entry.get("redCommand") else None
+
+
 def _explained(observation: tuple[str, ...]) -> bool:
     """pytest `where`/`and` lines name the predicate and its values: the rendering
     itself is the observation, wherever it sits."""
@@ -480,7 +486,7 @@ def inherited_red(items: list[JsonObject], behavior_id: str, proof: JsonObject) 
         return None
     marker = str(item(items, behavior_id).get("redFailure", ""))
     for entry in items:
-        recorded = _observation(entry.get("redProof")) if entry.get("id") != behavior_id else None
+        recorded = _bound_observation(entry) if entry.get("id") != behavior_id else None
         if recorded is None:
             continue
         # One output can carry both authored markers; neither is an observation.
@@ -498,7 +504,7 @@ def shared_observations(items: list[JsonObject]) -> list[list[str]]:
     """Groups of items whose REDs rendered the same failure but were admitted: at
     different sites, or as compatible explanations. Named for review."""
     recorded = [(str(entry["id"]), observation) for entry in items
-                if (observation := _observation(entry.get("redProof"))) is not None]
+                if (observation := _bound_observation(entry)) is not None]
     groups: list[list[str]] = []
     for identifier, (observation, _) in recorded:
         for group in groups:
@@ -537,6 +543,8 @@ def unresolved(
         str(entry["id"])
         for entry in items
         if entry.get("status") in {"pending", "red"}
+        # Prose already-satisfied is a settlement no producer observed (issue #54).
+        or (entry.get("status") == "already-satisfied" and not producer_proved(entry))
         or (entry.get("revalidationRequired") and entry.get("status") not in {"omitted", "superseded"})
         or (entry.get("status") == "superseded" and not (
             terminals[str(entry["id"])].get("status") == "green"
@@ -651,6 +659,7 @@ def all_disposition_only(items: list[JsonObject]) -> bool:
     return bool(items) and all(
         entry.get("status") in DISPOSITION_STATUSES
         and (not entry.get("revalidationRequired") or entry.get("status") == "omitted")
+        and (entry.get("status") != "already-satisfied" or producer_proved(entry))
         for entry in items
     )
 

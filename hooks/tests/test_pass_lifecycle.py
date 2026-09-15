@@ -2322,6 +2322,17 @@ class PassLifecycleTests(unittest.TestCase):
         before = len(self.history_events()); response = self.cli("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final", "--source", "codex-advisor", "--verdict", "commit-ready")
         self.assertEqual((response.returncode, len(self.history_events()) - before), (0, 1), marker + response.stdout + response.stderr)
 
+    def baseline_preserved(self, slug: str, behavior_id: str, marker: str) -> None:
+        """A preservation owner is satisfied only by an executed passing observation (issue #54)."""
+        (self.repo / "test_preserve_probe.py").write_text(
+            "import app, unittest\nclass PreserveProbe(unittest.TestCase):\n"
+            f"    def test_value(self): self.assertEqual(app.value, 1, {marker!r})\n", encoding="utf-8")
+        baseline = subprocess.run(
+            [sys.executable, str(WORKFLOW), "tdd", "--repo", str(self.repo), "--slug", slug, "--phase", "red",
+             "--behavior-id", behavior_id, "--", sys.executable, "-m", "unittest", "test_preserve_probe"],
+            cwd=ROOT, env=self.env, text=True, capture_output=True, check=False)
+        self.assertEqual(baseline.returncode, 0, marker + baseline.stdout + baseline.stderr)
+
     def test_open_correction_batch_blocks_broad_gates_and_routes_tdd_reassessment(self) -> None:
         marker, appeal_marker = "OPEN_CORRECTION_BYPASSED_GATE", "MIXED_CORRECTION_APPEAL_ADMITTED"
         def mixed_disposition(intake: str) -> Path:
@@ -2362,9 +2373,10 @@ class PassLifecycleTests(unittest.TestCase):
             {"id": "BM_ADV_1", "kind": "contract", "basis": "finding", "behavior": "correction closes", "seam": "workflow CLI",
              "expected": "observable", "redFailure": marker, "status": "pending", "sourceRefs": ref},
             {"id": "BM_ADV_PRESERVE", "kind": "preservation", "basis": "finding", "behavior": "preserve advisor intake",
-             "seam": "advisor intake", "expected": "immutable", "redFailure": marker, "status": "already-satisfied",
-             "evidence": "intake remains recorded", "sourceRefs": ref}]})
+             "seam": "advisor intake", "expected": "immutable", "redFailure": marker, "status": "pending",
+             "sourceRefs": ref}]})
         self.run_cli(("tdd-map", "--slug", slug, "--workflow-id", wid, "--input", str(update)))
+        self.baseline_preserved(slug, "BM_ADV_PRESERVE", marker)
         (self.repo / "test_correction_gate.py").write_text("import app,unittest\nclass T(unittest.TestCase):\n"
             f" def test_value(self):self.assertEqual(app.value,2,{marker!r})\n", encoding="utf-8")
         command = [sys.executable, str(WORKFLOW), "tdd", "--repo", str(self.repo), "--slug", slug, "--phase", "red",
@@ -2418,13 +2430,13 @@ class PassLifecycleTests(unittest.TestCase):
             "id": "BM_ADV_PRESERVE", "kind": "preservation", "basis": "advisor finding",
             "behavior": "preserve advisor intake", "seam": "advisor intake",
             "expected": "advisor intake remains valid", "redFailure": "PROOF_CYCLE_NOT_OPEN",
-            "status": "already-satisfied", "evidence": "the current advisor intake is preserved",
-            "sourceRefs": source_ref,
+            "status": "pending", "sourceRefs": [],
         }
         update = self.tmp / "fixed-reassessment.json"
         update.write_text(json.dumps({"reassessment": "map final finding", "items": [mapped, preserved], "dispositions": []}), encoding="utf-8")
         mapped_result = self.cli("tdd-map", "--slug", slug, "--workflow-id", wid, "--input", str(update))
         self.assertEqual(mapped_result.returncode, 0, marker + mapped_result.stdout + mapped_result.stderr)
+        self.baseline_preserved(slug, "BM_ADV_PRESERVE", marker)
         disposition = self.finding_disposition_document(intake_id, "fixed")
         early = self.dispose(slug, wid, "final", "addressed", str(disposition))
         self.assertEqual(early.returncode, 2, marker + early.stdout + early.stderr)

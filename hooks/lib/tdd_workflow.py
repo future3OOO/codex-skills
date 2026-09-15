@@ -197,8 +197,9 @@ def _not_required(
     existing = evidence_document(identity, existing_id)
     if items is not None and not behavior_map.all_disposition_only(items):
         raise WorkflowError(
-            "--not-required requires every mapped item to be already-satisfied "
-            "or omitted by governing evidence"
+            "--not-required requires every mapped item to be already-satisfied by an "
+            "executed baseline or omitted by governing evidence; unresolved: "
+            + ", ".join(behavior_map.unresolved(items))
         )
     runs = existing.get("runs") if isinstance(existing, dict) else None
     if isinstance(runs, list) and any(

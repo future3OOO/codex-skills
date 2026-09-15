@@ -2098,14 +2098,18 @@ def _earned_split(identity: RepoIdentity, state: JsonObject) -> str:
         )
     except (WorkflowError, LedgerError, ValueError):
         return " Contract green=unknown (map evidence unreadable)."
-    contract = [entry for entry in items or [] if entry.get("kind") == "contract"]
+    items = items or []
+    prose = ", ".join(str(entry["id"]) for entry in items
+                      if entry.get("status") == "already-satisfied" and not behavior_map.producer_proved(entry))
+    settled = f" Prose settlement (unresolved until an executed baseline): {prose}." if prose else ""
+    contract = [entry for entry in items if entry.get("kind") == "contract"]
     if not contract:
-        return ""
+        return settled
     earned = sum(1 for entry in contract if behavior_map.green_through_red(entry))
     late = ", ".join(str(entry["id"]) for entry in _late_items(items))
     shared = "; ".join(", ".join(group) for group in behavior_map.shared_observations(items))
     return (f" Contract green={earned}/{len(contract)}." + (f" Late RED: {late}." if late else "")
-            + (f" Shared RED observation: {shared}." if shared else ""))
+            + (f" Shared RED observation: {shared}." if shared else "") + settled)
 
 
 def summary(identity: RepoIdentity, limit: int = 1200) -> str:
