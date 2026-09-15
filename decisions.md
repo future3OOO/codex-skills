@@ -391,6 +391,16 @@ failure cannot open a second item (CX2's rewritten repro script pair is refused)
 A unittest helper living in a non-test module gives each caller its own site, so
 such REDs are admitted and only labelled; the CLI pair (one explanation extending
 the other) is likewise labelled, not refused.
+The entrypoint-absence allowance is first-recorded, not contract-based: no field
+in the item shape names the entrypoint owner (`kind` is contract/preservation), so
+the recorder admits whichever item records that observation first and refuses the
+rest; `skills/tdd/SKILL.md` says "exactly one atomic initial behavior that requires
+it", which the recorder does not enforce (in the replay the winner was
+`BM_SAFE_RESULTS`, a results item). The counterfactual rule (a guarantee that could
+fail while the initial behavior passes cannot inherit) is stated to the agent by the
+skill; the recorder enforces only its mechanical subset, observation equality, so
+REDs stopping at distinct preconditions are admitted. Neither shape occurred in the
+corpus or N1; both stay recorded limits rather than new state (#54 follow-up).
 In this pass the installed (N) recorder recorded seven items `already-satisfied`
 from passing runs after `hooks/lib/*.py` had changed: contract
 `BM_REFUSED_RED_CLOSES_NOTHING` and preservation `BM_FIRST_RED_OPENS_SLICE`,
