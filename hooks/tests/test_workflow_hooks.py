@@ -1355,32 +1355,35 @@ class TollDeletionTests(HookHarness):
             cwd=ROOT, env=env, text=True, capture_output=True, check=False)
         self.assertEqual(consult.returncode, 0, consult.stdout + consult.stderr)
         payload = (rig / "capture" / "payload").read_text(encoding="utf-8")
-        self.assertIn("--- late RED: contract items whose RED or baseline ran after production had changed ---", payload,
+        self.assertIn("--- late RED: items whose RED or baseline ran after production had changed ---", payload,
                       marker + ": " + consult.stderr)
         self.assertIn('"id": "BM_HOOK"', payload, marker)
         self.assertIn("codex_advisor_evidence name=late-red", consult.stderr, marker)
 
-    def test_a_late_baseline_pass_completes(self) -> None:
-        marker = "LATE_BASELINE_PASS_REFUSED_AT_COMPLETE"
-        slug = "late-baseline-pass"
+    def test_a_late_baseline_is_refused_and_the_item_stays_pending(self) -> None:
+        # Issue #54: a candidate-only pass after the behavior landed cannot be
+        # backdated to a baseline; the run is retained and the obligation stays open.
+        marker = "LATE_BASELINE_ADMITTED"
+        slug = "late-baseline"
         wid = self.open_pass(slug, consult=False)
         self.record_preflight_evidence(slug, wid, behavior_map=self.MAP)
         (self.repo / "app.py").write_text("value = 2\n", encoding="utf-8")  # the behavior landed before its RED ran
         self.post_edit("app.py")
         baseline = self.tdd(slug, "red")
-        self.assertEqual(baseline.returncode, 0, marker + ": " + baseline.stdout + baseline.stderr)
-        self.assertIn('"already-satisfied"', baseline.stdout, marker)
-        self.assertIn("Late RED: BM_HOOK", self.state("summary").stdout, marker + ": " + self.state("summary").stdout)
-        record_context_forge(self.repo, self.tmp)
-        verified = self.verify(slug, "--", sys.executable, "-m", "unittest", "test_probe")
-        self.assertEqual(verified.returncode, 0, marker + ": " + verified.stdout + verified.stderr)
-        gate = self.verify(slug, "--kind", "quality-gate", "--base-ref", "HEAD")
-        self.assertEqual(gate.returncode, 0, marker + ": " + gate.stdout + gate.stderr)
-        self.owner_phase("code-review", "not-required", findings="none")
-        final = self.final_intake(slug, wid, [])
-        self.assertEqual(final.returncode, 0, marker + ": " + final.stdout + final.stderr)
+        self.assertEqual(baseline.returncode, 2, marker + ": " + baseline.stdout + baseline.stderr)
+        self.assertNotIn('"already-satisfied"', baseline.stdout, marker)
+        self.assertIn("app.py", baseline.stderr, marker)
+        state = json.loads(self.state("status").stdout)
+        document = json.loads(self.state("evidence", "--evidence-id", str(state["tddEvidence"])).stdout)["document"]
+        run = document["runs"][-1]
+        self.assertFalse(run["valid"], marker)
+        self.assertIn("app.py", str(run.get("redProofFailure")), marker)
+        item = next(entry for entry in document["behaviorMap"] if entry["id"] == "BM_HOOK")
+        self.assertEqual(item["status"], "pending", marker)
+        self.assertNotIn("baselineProof", item, marker)
         completed = self.state("complete")
-        self.assertEqual(completed.returncode, 0, marker + ": " + completed.stdout + completed.stderr)
+        self.assertEqual(completed.returncode, 2, marker + ": " + completed.stdout)
+        self.assertIn("BM_HOOK", completed.stderr, marker)
 
     def test_verification_runs_while_a_material_finding_is_pending(self) -> None:
         marker = "VERIFY_REFUSED_ON_PENDING_FINDING"
@@ -1511,8 +1514,8 @@ class RedFirstTests(HookHarness):
         return [pending_behavior("BM_A", behavior="a is two", seam="app module", expected="app.a == 2", red_failure="A_NOT_TWO"),
                 pending_behavior("BM_B", behavior="b is two", seam="app module", expected="app.b == 2", red_failure="B_NOT_TWO")]
 
-    def open_pass(self, slug: str, behavior_map: list | None = None) -> str:
-        (self.repo / "app.py").write_text("a = 1\nb = 1\n", encoding="utf-8")
+    def open_pass(self, slug: str, behavior_map: list | None = None, app: str = "a = 1\nb = 1\n") -> str:
+        (self.repo / "app.py").write_text(app, encoding="utf-8")
         self.git("commit", "-q", "-am", "two attributes")
         begun = self.state("begin", "--slug", slug)
         self.assertEqual(begun.returncode, 0, begun.stdout + begun.stderr)
@@ -2055,18 +2058,19 @@ class RedFirstTests(HookHarness):
         self.assertEqual(run.get("passStartOid"), start, marker)
         self.assertNotEqual(run.get("headOid"), start, marker)
 
-    def test_a_declared_contract_item_baselines_after_edits_with_the_change_recorded(self) -> None:
-        marker = "DIRTY_BASELINE_STILL_REFUSED"
+    def test_a_declared_contract_item_cannot_baseline_after_edits(self) -> None:
+        marker = "DIRTY_BASELINE_ADMITTED"
         slug = "declared-dirty"
         self.open_pass(slug)
         self.assertEqual(self.tdd(slug, "red", "BM_A", "a").returncode, 0)
         (self.repo / "app.py").write_text("a = 2\nb = 2\n", encoding="utf-8")
         self.assertEqual(self.tdd(slug, "green", "BM_A", "a").returncode, 0)
         baseline = self.tdd(slug, "red", "BM_B", "b")
-        self.assertEqual(baseline.returncode, 0, marker + ": " + baseline.stdout + baseline.stderr)
-        self.assertEqual(self.map_status()["BM_B"], "already-satisfied", marker)
-        self.assertEqual(self.map_item("BM_B").get("baselineProof", {}).get("productionChanged"), ["app.py"], marker)
-        self.assertIn("Late RED: BM_B", self.summary(), marker + ": a late baseline is labelled too: " + self.summary())
+        self.assertEqual(baseline.returncode, 2, marker + ": " + baseline.stdout + baseline.stderr)
+        self.assertEqual(self.map_status()["BM_B"], "pending", marker)
+        self.assertNotIn("baselineProof", self.map_item("BM_B"), marker)
+        self.assertEqual(self.latest_run().get("productionChanged"), ["app.py"], marker)
+        self.assertFalse(self.latest_run()["valid"], marker)
 
     def test_summary_names_a_late_red_and_keeps_it_after_green(self) -> None:
         marker = "LATE_RED_UNLABELED"
@@ -2133,8 +2137,8 @@ class RedFirstTests(HookHarness):
         self.assertEqual(run.get("headOid"), start, marker + ": " + json.dumps(run)[:300])
         self.assertEqual(run.get("productionChanged"), [], marker)
 
-    def test_open_cycles_finish_after_a_late_baseline_lands_beside_them(self) -> None:
-        marker = "OPEN_CYCLES_STRANDED_BY_LATE_BASELINE"
+    def test_open_cycles_finish_after_a_refused_late_baseline_lands_beside_them(self) -> None:
+        marker = "OPEN_CYCLES_STRANDED_BY_REFUSED_BASELINE"
         slug = "open-cycles"
         wid = self.open_pass(slug, [pending_behavior("BM_A", behavior="a is two", seam="app module", expected="app.a == 2", red_failure="A_NOT_TWO"),
                                     pending_behavior("BM_C", behavior="c is two", seam="app module", expected="app.c == 2", red_failure="C_NOT_TWO"),
@@ -2150,15 +2154,13 @@ class RedFirstTests(HookHarness):
             "items": [pending_behavior("BM_B", behavior="b is two", seam="app module", expected="app.b == 2", red_failure="B_NOT_TWO")]})
         self.assertEqual(added.returncode, 0, marker + ": " + added.stdout + added.stderr)
         baseline = self.tdd(slug, "red", "BM_B", "b")
-        self.assertEqual(baseline.returncode, 0, marker + ": " + baseline.stdout + baseline.stderr)
-        self.assert_obligations_only("BM_C", "BM_D")
+        self.assertEqual(baseline.returncode, 2, marker + ": " + baseline.stdout + baseline.stderr)
+        self.assertEqual(self.map_status(), {"BM_A": "green", "BM_C": "red", "BM_D": "red", "BM_B": "pending"}, marker)
         (self.repo / "app.py").write_text("a = 2\nb = 2\nc = 2\nd = 2\n", encoding="utf-8")
         for item, attr in (("BM_C", "c"), ("BM_D", "d")):
             green = self.tdd(slug, "green", item, attr)
             self.assertEqual(green.returncode, 0, marker + ": " + green.stdout + green.stderr)
-        self.assertEqual(self.map_status(), {"BM_A": "green", "BM_C": "green", "BM_D": "green", "BM_B": "already-satisfied"}, marker)
-        # The fixture's own in-pass commit makes every item late; the late baseline must be among them.
-        self.assertIn("BM_B", self.summary().rsplit("Late RED: ", 1)[-1], marker + ": " + self.summary())
+        self.assertEqual(self.map_status(), {"BM_A": "green", "BM_C": "green", "BM_D": "green", "BM_B": "pending"}, marker)
 
     def test_a_late_red_stays_late_when_rerun_on_a_clean_tree(self) -> None:
         marker = "LATE_MARKER_LOST_ON_RERUN"
@@ -2210,8 +2212,11 @@ class RedFirstTests(HookHarness):
     def test_a_baseline_owner_cannot_close_a_finding_as_fixed(self) -> None:
         marker = "BASELINE_OWNER_CLOSED_FIXED"
         slug = "baseline-owner"
-        wid = self.open_pass(slug, [pending_behavior("BM_A", behavior="a is two", seam="app module", expected="app.a == 2", red_failure="A_NOT_TWO")])
+        # b already holds at the pass start, so its baseline precedes the edit.
+        wid = self.open_pass(slug, app="a = 1\nb = 2\n")
         self.assertEqual(self.tdd(slug, "red", "BM_A", "a").returncode, 0)
+        self.assertEqual(self.tdd(slug, "red", "BM_B", "b").returncode, 0)
+        self.assertEqual(self.map_status()["BM_B"], "already-satisfied")
         (self.repo / "app.py").write_text("a = 2\nb = 2\n", encoding="utf-8")
         self.assertEqual(self.tdd(slug, "green", "BM_A", "a").returncode, 0)
         record_context_forge(self.repo, self.tmp)
@@ -2223,12 +2228,9 @@ class RedFirstTests(HookHarness):
                               "--review-context-id", "ctx", "--input", str(intake))
         self.assertEqual(recorded.returncode, 0, recorded.stdout + recorded.stderr)
         summary_id = json.loads(recorded.stdout)["summaryId"]
-        added = self.map_update(slug, wid, "add-b-owner", {"sourceBehaviorId": "BM_A", "reassessment": "SPEC-1 needs an owning attack",
-            "items": [{**pending_behavior("BM_B", behavior="b is two", seam="app module", expected="app.b == 2", red_failure="B_NOT_TWO"),
-                       "sourceRefs": [{"type": "finding", "evidenceId": summary_id, "id": "SPEC-1"}]}]})
-        self.assertEqual(added.returncode, 0, added.stdout + added.stderr)
-        self.assertEqual(self.tdd(slug, "red", "BM_B", "b").returncode, 0)
-        self.assertEqual(self.map_status()["BM_B"], "already-satisfied")
+        owned = self.map_update(slug, wid, "own-b", {"reassessment": "SPEC-1 needs an owning attack",
+            "dispositions": [{"id": "BM_B", "sourceRefs": [{"type": "finding", "evidenceId": summary_id, "id": "SPEC-1"}]}]})
+        self.assertEqual(owned.returncode, 0, owned.stdout + owned.stderr)
         tree = json.loads(self.state("status").stdout)["activeCandidateTree"]
         closure = self.tmp / "review-fixed.json"
         measurement = {"claim": "b is two", "command": "python -m unittest test_probe_b", "result": "OK"}

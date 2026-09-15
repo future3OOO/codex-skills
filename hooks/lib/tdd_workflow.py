@@ -363,6 +363,20 @@ def _tree_binding(identity: RepoIdentity, state: JsonObject) -> dict[str, object
     }
 
 
+def _baseline_refusal(binding: dict[str, object], kind: object) -> str:
+    """Why a passing RED-phase run cannot baseline a pending contract item: production
+    already changed in this pass, so the pass describes the candidate, not the
+    baseline (issue #54). A preservation item's candidate observation is its
+    evidence and is recorded late instead."""
+    changed = [str(path) for path in binding.get("productionChanged") or []]
+    if kind != "contract" or not changed:
+        return ""
+    return ("a pending contract item cannot be baselined after production changed in this pass ("
+            + ", ".join(changed) + "): the candidate-only pass is retained and the item stays pending; "
+            "prove it through its own RED at the real Seam, observe it on the pass-start tree, "
+            "or narrow the obligation with governing evidence")
+
+
 def _run_tdd(values: list[str]) -> int:
     """Run the one mapped-or-imported-legacy candidate-cycle lifecycle."""
     dash = values.index("--") if "--" in values else None
@@ -561,7 +575,8 @@ def _run_tdd(values: list[str]) -> int:
     baseline = False
     nonexecuting = False
     if receipt is not None:
-        outcome, proof, proof_error = tdd_surface.attributed_result(surface, receipt, args.test_id, expected)
+        outcome, proof, proof_error = tdd_surface.attributed_result(
+            surface, receipt, args.test_id, expected, Path(identity.root))
         red_ok = phase == "red" and outcome == "failed"
         baseline = phase == "red" and status == "pending" and outcome == "passed"
         exit_code = 0 if outcome == "passed" else int(receipt["exitCode"]) or 1
@@ -570,12 +585,12 @@ def _run_tdd(values: list[str]) -> int:
         if legacy:
             red_ok = bool(expected) and expected in output
         else:
-            proof, proof_error = tdd_surface.evaluate_red(surface, output, expected)
+            proof, proof_error = tdd_surface.evaluate_red(surface, output, expected, Path(identity.root))
             red_ok = proof is not None
     elif phase == "red" and not legacy and not timed_out and status == "pending":
         # Producer-backed baseline: a pending surface passing is already
-        # satisfied, opens nothing, counts no cycle. A dirty tree does not refuse
-        # it; the run entry records what had changed, and the reviews weigh it.
+        # satisfied, opens nothing, counts no cycle, and describes the baseline
+        # only while this pass has not changed production code.
         proof, proof_error, nonexecuting = _pass_proof(surface, output, baseline=True, exit_code=exit_code)
         baseline = proof is not None
     elif phase == "green" and not legacy and not timed_out and (
@@ -584,6 +599,16 @@ def _run_tdd(values: list[str]) -> int:
         # A GREEN is the surface passing, not the command exiting 0: a skipped or
         # incomplete run reports no passing test and proves nothing.
         proof, proof_error, nonexecuting = _pass_proof(surface, output, baseline=False, exit_code=exit_code)
+    if baseline and (refusal := _baseline_refusal(binding, mapped.get("kind"))):
+        proof, proof_error, baseline = None, refusal, False
+    if red_ok and not legacy and (owner := behavior_map.inherited_red(items, args.behavior_id, proof)):
+        # The same observation cannot open RED for two items: this obligation's
+        # test stopped where another item's already did and observed nothing of
+        # its own; the first RED stays the initial slice.
+        proof, proof_error, red_ok = None, (
+            f"the observed failure {proof['observation']!r} at {proof.get('site')!r} is the RED "
+            f"already recorded for {owner}; an independent guarantee cannot inherit it - drive "
+            "this item through the real Interface once it exists and assert its own promised outcome"), False
     valid = (
         red_ok
         if phase == "red"

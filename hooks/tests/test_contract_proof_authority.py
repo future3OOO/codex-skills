@@ -579,5 +579,243 @@ class ContractProofAuthorityTests(unittest.TestCase):
         for target in ("BM_DONE", "BM_GONE"):
             self.assert_map_refused(slug, workflow_id, self.supersede("BM_A", target, pending="BM_A"), target, marker)
 
+
+    def item_document(self) -> dict[str, object]:
+        state = read_workflow(self.identity)
+        return json.loads(self.h.cli("evidence", "--evidence-id", str(state["tddEvidence"])).stdout)["document"]
+
+    def item(self, behavior_id: str) -> dict[str, object]:
+        return next(entry for entry in self.item_document()["behaviorMap"] if entry["id"] == behavior_id)
+
+    def shared_helper_probe(self) -> Path:
+        """Two independent guarantees funnelled through one helper assertion, the
+        shape CX2 used to admit ten REDs from one absent entrypoint."""
+        probe = self.repo / "test_shared_site.py"
+        probe.write_text(
+            "import app\n\n"
+            "def require_interface(marker):\n"
+            "    assert hasattr(app, 'enable_safe_import'), marker\n\n"
+            "def test_interface_exists():\n"
+            "    require_interface('SAFE_IMPORT_INTERFACE_MISSING')\n\n"
+            "def test_rollback_restores_state():\n"
+            "    require_interface('EXACT_ROLLBACK_BROKEN')\n"
+            "    assert app.rollback() == 'restored', 'EXACT_ROLLBACK_BROKEN'\n",
+            encoding="utf-8")
+        return probe
+
+    def test_an_independent_guarantee_cannot_inherit_another_items_red(self) -> None:
+        # Issue #54: the first RED at an absent entrypoint is the initial slice;
+        # a second item stopping at the same assertion observed nothing of its own.
+        marker = "INHERITED_RED_ADMITTED"
+        slug, _ = self.h.begin_to_preflight([
+            contract("BM_INTERFACE", red_failure="SAFE_IMPORT_INTERFACE_MISSING"),
+            contract("BM_ROLLBACK", red_failure="EXACT_ROLLBACK_BROKEN"),
+        ])
+        self.shared_helper_probe()
+        first = self.tdd_pytest(slug, "red", "BM_INTERFACE", "test_shared_site.py::test_interface_exists")
+        self.assertEqual(first.returncode, 0, marker + ": " + first.stdout + first.stderr)
+        self.assertEqual(self.item_status("BM_INTERFACE"), "red", marker)
+        inherited = self.tdd_pytest(slug, "red", "BM_ROLLBACK", "test_shared_site.py::test_rollback_restores_state")
+        self.assertEqual(inherited.returncode, 2, marker + ": " + inherited.stdout + inherited.stderr)
+        self.assertIn("BM_INTERFACE", inherited.stderr, marker)
+        self.assertEqual(self.item_status("BM_ROLLBACK"), "pending", marker)
+        self.assertEqual(read_workflow(self.identity).get("tddCycleCount"), 1, marker + ": a refused RED opened a cycle")
+
+    def test_an_admitted_red_records_its_observation(self) -> None:
+        marker = "RED_OBSERVATION_UNRECORDED"
+        slug, _ = self.h.begin_to_preflight([contract("BM_INTERFACE", red_failure="SAFE_IMPORT_INTERFACE_MISSING")])
+        self.shared_helper_probe()
+        first = self.tdd_pytest(slug, "red", "BM_INTERFACE", "test_shared_site.py::test_interface_exists")
+        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+        proof = self.item("BM_INTERFACE")["redProof"]
+        self.assertIn("observation", proof, marker)
+        self.assertEqual(proof["observation"], [
+            "AssertionError: ", "assert False", "+  where False = hasattr(app, 'enable_safe_import')",
+        ], marker)
+        self.assertEqual(proof["site"], "test_shared_site.py:4 assert hasattr(app, 'enable_safe_import'), marker", marker)
+
+    def test_a_refused_inherited_red_closes_nothing(self) -> None:
+        marker = "REFUSED_RED_CLOSED_OBLIGATION"
+        slug, _ = self.h.begin_to_preflight([
+            contract("BM_INTERFACE", red_failure="SAFE_IMPORT_INTERFACE_MISSING"),
+            contract("BM_ROLLBACK", red_failure="EXACT_ROLLBACK_BROKEN"),
+        ])
+        self.shared_helper_probe()
+        self.assertEqual(self.tdd_pytest(slug, "red", "BM_INTERFACE", "test_shared_site.py::test_interface_exists").returncode, 0)
+        refused = self.tdd_pytest(slug, "red", "BM_ROLLBACK", "test_shared_site.py::test_rollback_restores_state")
+        self.assertEqual(refused.returncode, 2, refused.stdout + refused.stderr)
+        # The implementation lands; the inherited item still has no RED of its own.
+        (self.repo / "app.py").write_text(
+            "value = 1\n\ndef enable_safe_import():\n    return True\n\ndef rollback():\n    return 'restored'\n", encoding="utf-8")
+        green = self.tdd_pytest(slug, "green", "BM_ROLLBACK", "test_shared_site.py::test_rollback_restores_state")
+        self.assertEqual(green.returncode, 2, marker + ": " + green.stdout + green.stderr)
+        self.assertIn("no valid mapped RED", green.stderr, marker)
+        run = self.item_document()["runs"][-1]
+        self.assertFalse(run["valid"], marker)
+        self.assertEqual(run["behaviorId"], "BM_ROLLBACK", marker)
+        self.assertEqual(self.item_status("BM_ROLLBACK"), "pending", marker)
+        refused_run = next(entry for entry in self.item_document()["runs"]
+                           if entry["behaviorId"] == "BM_ROLLBACK" and entry["phase"] == "red")
+        self.assertFalse(refused_run["valid"], marker)
+        self.assertIn("BM_INTERFACE", str(refused_run.get("redProofFailure")), marker)
+        with self.assertRaises(WorkflowIncomplete, msg=marker) as refusal:
+            complete(self.identity)
+        self.assertIn("BM_ROLLBACK", str(refusal.exception), marker)
+
+    def test_revalidate_refuses_a_never_settled_pending_item(self) -> None:
+        # Issue #54 (advisor SPEC-4): the flagged late-baseline route is reachable
+        # only from prior settlement; flagging an unsettled item would open it.
+        marker = "UNSETTLED_ITEM_FLAGGED"
+        slug, workflow_id = self.h.begin_to_preflight([contract("BM_A"), preservation("BM_KEEP")])
+        flagged = self.h.update_map(slug, workflow_id, {"reassessment": "premature flag", "dispositions": [
+            {"id": "BM_KEEP", "revalidate": True, "evidence": "affected guarantee"}]})
+        self.assertEqual(flagged.returncode, 2, marker + ": " + flagged.stdout + flagged.stderr)
+        self.assertIn("BM_KEEP", flagged.stderr, marker)
+        self.assertEqual(read_workflow(self.identity).get("tddEvidence"), None, marker)
+
+    def test_summary_names_items_whose_reds_share_an_observation(self) -> None:
+        # Unexplained renderings at different sites are admitted; the summary
+        # still shows the lead and review that both REDs observed the same failure.
+        marker = "SHARED_OBSERVATION_UNLABELLED"
+        slug, _ = self.h.begin_to_preflight([
+            contract("BM_INTERFACE", red_failure="SAFE_IMPORT_INTERFACE_MISSING"),
+            contract("BM_ROLLBACK", red_failure="EXACT_ROLLBACK_BROKEN"),
+        ])
+        for behavior_id, script in (
+            ("BM_INTERFACE", "import app; assert hasattr(app, 'enable_safe_import'), 'SAFE_IMPORT_INTERFACE_MISSING'"),
+            ("BM_ROLLBACK", "import app; assert hasattr(app, 'enable_safe_import'), 'EXACT_ROLLBACK_BROKEN'"),
+        ):
+            red = self.h.tdd(slug, "red", behavior_id, script)
+            self.assertEqual(red.returncode, 0, red.stdout + red.stderr)
+        summary = self.h.cli("summary").stdout
+        self.assertIn("Shared RED observation: BM_INTERFACE, BM_ROLLBACK", summary, marker + ": " + summary)
+
+    def two_item_pass(self, first: str, second: str) -> str:
+        slug, _ = self.h.begin_to_preflight([contract("BM_ONE", red_failure=first), contract("BM_TWO", red_failure=second)])
+        return slug
+
+    def assert_both_admitted(self, slug: str, marker: str, *arguments: str) -> None:
+        for behavior_id, target in (("BM_ONE", "test_one"), ("BM_TWO", "test_two")):
+            red = self.tdd_pytest(slug, "red", behavior_id, *arguments, f"test_pair.py::{target}")
+            self.assertEqual(red.returncode, 0, marker + ": " + red.stdout + red.stderr)
+        self.assertEqual(self.item_status("BM_TWO"), "red", marker)
+
+    def test_an_instance_helper_still_cannot_be_inherited(self) -> None:
+        # Review SPEC-1: object reprs carry addresses that differ per run.
+        marker = "INSTANCE_HELPER_RED_INHERITED"
+        slug = self.two_item_pass("INTERFACE_MISSING", "ROLLBACK_BROKEN")
+        (self.repo / "app.py").write_text("value = 1\nclass Database:\n    pass\n", encoding="utf-8")
+        (self.repo / "test_pair.py").write_text(
+            "import app\n\ndef require_interface(marker):\n"
+            "    assert hasattr(app.Database(), 'enable_safe_import'), marker\n\n"
+            "def test_one():\n    require_interface('INTERFACE_MISSING')\n\n"
+            "def test_two():\n    require_interface('ROLLBACK_BROKEN')\n", encoding="utf-8")
+        self.assertEqual(self.tdd_pytest(slug, "red", "BM_ONE", "test_pair.py::test_one").returncode, 0)
+        inherited = self.tdd_pytest(slug, "red", "BM_TWO", "test_pair.py::test_two")
+        self.assertEqual(inherited.returncode, 2, marker + ": " + inherited.stdout + inherited.stderr)
+        self.assertEqual(self.item_status("BM_TWO"), "pending", marker)
+
+    def test_deeper_explanations_keep_independent_guarantees_apart(self) -> None:
+        # Review SPEC-4: the values' origin distinguishes what each test observed.
+        marker = "DISTINCT_EXPLANATION_REFUSED"
+        slug = self.two_item_pass("USER_ROW_NOT_STORED", "AUDIT_ROW_NOT_STORED")
+        (self.repo / "app.py").write_text("value = 1\ndef rows(table):\n    return []\n", encoding="utf-8")
+        (self.repo / "test_pair.py").write_text(
+            "import app\n\ndef test_one():\n    assert len(app.rows('users')) == 1, 'USER_ROW_NOT_STORED'\n\n"
+            "def test_two():\n    assert len(app.rows('audit')) == 1, 'AUDIT_ROW_NOT_STORED'\n", encoding="utf-8")
+        self.assert_both_admitted(slug, marker)
+
+    def test_a_product_diagnostic_is_observed_at_the_test_frame(self) -> None:
+        # Review SPEC-3: the product's raise line is shared; the test statement is the site.
+        marker = "PRODUCT_DIAGNOSTIC_SITE_SHARED"
+        slug = self.two_item_pass("ValidationError: zero", "ValidationError: negative")
+        (self.repo / "app.py").write_text(
+            "value = 1\nclass ValidationError(Exception):\n    pass\n\n"
+            "def check(value):\n    raise ValidationError('zero' if value == 0 else 'negative')\n", encoding="utf-8")
+        (self.repo / "test_pair.py").write_text(
+            "import app\n\ndef test_one():\n    app.check(0)\n\ndef test_two():\n    app.check(-1)\n", encoding="utf-8")
+        self.assert_both_admitted(slug, marker)
+
+    def test_an_empty_site_keys_nothing(self) -> None:
+        # Review SPEC-5: --tb=short prints no location; an unknown site cannot collide.
+        marker = "EMPTY_SITE_COLLIDED"
+        slug = self.two_item_pass("ONE_BROKEN", "TWO_BROKEN")
+        (self.repo / "test_pair.py").write_text(
+            "def test_one():\n    assert False, 'ONE_BROKEN'\n\ndef test_two():\n    assert False, 'TWO_BROKEN'\n",
+            encoding="utf-8")
+        self.assert_both_admitted(slug, marker, "--tb=short")
+
+    def test_a_nonrunner_command_cannot_open_two_reds_on_one_failure(self) -> None:
+        # Review SPEC-2: the command surface is the site of a non-runner observation.
+        marker = "NONRUNNER_RED_INHERITED"
+        slug = self.two_item_pass("ROUTE_MISSING", "MANAGEMENT_BROKEN")
+        script = self.repo / "cli_probe.py"
+        script.write_text("import sys\nprint('error: no such command ROUTE_MISSING MANAGEMENT_BROKEN')\nsys.exit(1)\n", encoding="utf-8")
+        def run(behavior_id: str) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                [sys.executable, str(bmw.WORKFLOW), "tdd", "--repo", str(self.repo), "--slug", slug,
+                 "--phase", "red", "--behavior-id", behavior_id, "--", sys.executable, "cli_probe.py"],
+                cwd=self.repo, env=self.h.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        self.assertEqual(run("BM_ONE").returncode, 0)
+        second = run("BM_TWO")
+        self.assertEqual(second.returncode, 2, marker + ": " + second.stdout + second.stderr)
+        self.assertEqual(self.item_status("BM_TWO"), "pending", marker)
+
+    def test_a_contract_baseline_refuses_any_changed_production_path(self) -> None:
+        # Review SPEC-6: config and suffixless production paths change behavior too.
+        marker = "CONFIG_CHANGE_BASELINE_ADMITTED"
+        slug, _ = self.h.begin_to_preflight([contract("BM_PRESENT", red_failure="VALUE_WAS_NOT_ONE")])
+        (self.repo / "settings.json").write_text('{"value": 1}\n', encoding="utf-8")
+        baseline = self.h.tdd(slug, "red", "BM_PRESENT", "import app; assert app.value == 1, 'VALUE_WAS_NOT_ONE'")
+        self.assertEqual(baseline.returncode, 2, marker + ": " + baseline.stdout + baseline.stderr)
+        self.assertIn("settings.json", baseline.stderr, marker)
+        self.assertEqual(self.item_status("BM_PRESENT"), "pending", marker)
+
+    def test_a_preservation_item_still_baselines_late_and_is_labelled(self) -> None:
+        # Review SPEC-7: preservation keeps one route - the candidate observation, labelled late.
+        marker = "PRESERVATION_LATE_BASELINE_REFUSED"
+        slug, _ = self.h.begin_to_preflight([contract("BM_A"), preservation("BM_KEEP", red_failure="VALUE_WAS_NOT_ONE")])
+        (self.repo / "extra.py").write_text("note = 1\n", encoding="utf-8")
+        baseline = self.h.tdd(slug, "red", "BM_KEEP", "import app; assert app.value == 1, 'VALUE_WAS_NOT_ONE'")
+        self.assertEqual(baseline.returncode, 0, marker + ": " + baseline.stdout + baseline.stderr)
+        self.assertEqual(self.item_status("BM_KEEP"), "already-satisfied", marker)
+        self.assertEqual(self.item("BM_KEEP")["baselineProof"].get("productionChanged"), ["extra.py"], marker)
+
+    def test_an_explained_helper_is_refused_without_a_site(self) -> None:
+        # Return review SPEC-10: the explained predicate is the observation; --tb=short
+        # printing no location must not turn the CX2 shape into an admission.
+        marker = "EXPLAINED_HELPER_ADMITTED_WITHOUT_SITE"
+        slug = self.two_item_pass("INTERFACE_MISSING", "ROLLBACK_BROKEN")
+        self.shared_helper_probe()
+        (self.repo / "test_pair.py").write_text(
+            "import app\n\ndef require_interface(marker):\n"
+            "    assert hasattr(app, 'enable_safe_import'), marker\n\n"
+            "def test_one():\n    require_interface('INTERFACE_MISSING')\n\n"
+            "def test_two():\n    require_interface('ROLLBACK_BROKEN')\n", encoding="utf-8")
+        self.assertEqual(self.tdd_pytest(slug, "red", "BM_ONE", "--tb=short", "test_pair.py::test_one").returncode, 0)
+        inherited = self.tdd_pytest(slug, "red", "BM_TWO", "--tb=short", "test_pair.py::test_two")
+        self.assertEqual(inherited.returncode, 2, marker + ": " + inherited.stdout + inherited.stderr)
+        self.assertEqual(self.item_status("BM_TWO"), "pending", marker)
+
+    def test_a_deeper_explanation_is_not_the_local_bound_observation(self) -> None:
+        # Return review SPEC-11: an explanation that names a different origin is a
+        # different observation even when it extends a shorter one.
+        marker = "DEEPER_EXPLANATION_INHERITED"
+        slug = self.two_item_pass("USER_ROW_NOT_STORED", "AUDIT_ROW_NOT_STORED")
+        (self.repo / "app.py").write_text("value = 1\ndef rows(table):\n    return []\n", encoding="utf-8")
+        (self.repo / "test_pair.py").write_text(
+            "import app\n\ndef test_one():\n    rows = app.rows('users')\n    assert len(rows) == 1, 'USER_ROW_NOT_STORED'\n\n"
+            "def test_two():\n    assert len(app.rows('audit')) == 1, 'AUDIT_ROW_NOT_STORED'\n", encoding="utf-8")
+        self.assert_both_admitted(slug, marker)
+
+    def test_a_late_preservation_baseline_is_labelled_late(self) -> None:
+        # Return review SPEC-12: the preservation route is admitted because it is labelled.
+        marker = "LATE_PRESERVATION_UNLABELLED"
+        slug, _ = self.h.begin_to_preflight([contract("BM_A"), preservation("BM_KEEP", red_failure="VALUE_WAS_NOT_ONE")])
+        (self.repo / "extra.py").write_text("note = 1\n", encoding="utf-8")
+        baseline = self.h.tdd(slug, "red", "BM_KEEP", "import app; assert app.value == 1, 'VALUE_WAS_NOT_ONE'")
+        self.assertEqual(baseline.returncode, 0, baseline.stdout + baseline.stderr)
+        self.assertIn("Late RED: BM_KEEP", self.h.cli("summary").stdout, marker + ": " + self.h.cli("summary").stdout)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

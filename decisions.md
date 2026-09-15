@@ -345,3 +345,76 @@ tests, the full integrated suite, lint and typed gate pass. Fresh native review
 and final Codex Advisor review have no findings; earlier measured findings are
 fixed. Scoped installation and PR delivery accompany this verified change; the
 linked issue/PR owns remote check and reviewer status.
+
+## 2026-09-15 — Issue 54 closure authority at the TDD recorder
+
+**Decision:** Correct [#54](https://github.com/future3OOO/codex-skills/issues/54)
+at the existing evidence-to-status owners, not with a new stage, terminal state
+or semantic-inference subsystem. `tdd_surface.evaluate_red` records what a runner
+RED observed apart from its marker (`redProof.observation`, object addresses dropped;
+`redProof.site`, the last test-side frame `path:line` plus that source line, or
+the non-runner command).
+`tdd_workflow._run_tdd` refuses a RED whose observation another item's RED already
+recorded (an explained assertion anywhere; an unexplained one at the same site)
+and refuses a pending contract item's passing RED-phase run once any production
+path changed in the pass; preservation keeps its candidate-observation routes
+(executed late baseline, prose settlement, flagged revalidation), all labelled
+late, and `tdd-map` refuses `revalidate` on a never-settled pending item. `summary` names items whose
+REDs rendered the same failure at different sites. Root `conftest.py` is test-like
+for the shared path classifier. Skill text (tdd, recorder, tests, preflight,
+production-code, workflow step 6, code-review) carries the one-entrypoint-absence
+rule, the closed late-baseline route and implementation-derived revalidation.
+
+**Reason:** The captured CX2 ledger shows ten items admitted RED through one
+helper assertion at `tests/test_safe_import.py:37`, two CLI items admitted on the
+absent route's exit code, and three items plus one re-entry closed
+`already-satisfied` from passing runs after `sqlite_utils/db.py` and `cli.py`
+changed. Replaying the corrected admission over those 22 distinct valid REDs
+refuses 11 of the 12 inherited ones (BM_CLI_SAFE remains the CLI route's own
+first RED) plus the non-runner pair's second item (same script, identical
+observation) and none of the 10 honest runner REDs; the baseline rule refuses the
+contract item BM_SQLITE_INTERRUPTION and admits the preservation items late.
+Rendering-only identity was rejected because this repository's own unittest
+probes for independent attributes render identically (`1 != 2`); location-only
+identity misses ten of twelve; independent review added address normalisation,
+test-side sites, full explanation levels with prefix matching and non-runner sites.
+
+**Observed limits:** The runtime cannot certify semantic reach. Two escapes stay
+with the skill rule and review: an entrypoint-absence RED re-taken at a different
+unexplained site (labelled by `summary`), and the recorder cannot judge whether a
+changed production path affects the baselined behavior, so any changed code path
+refuses. A non-runner RED's site is its command, so the same command observing the same
+failure cannot open a second item (CX2's rewritten repro script pair is refused).
+A unittest helper living in a non-test module gives each caller its own site, so
+such REDs are admitted and only labelled; the CLI pair (one explanation extending
+the other) is likewise labelled, not refused.
+In this pass the installed (N) recorder recorded seven items `already-satisfied`
+from passing runs after `hooks/lib/*.py` had changed: contract
+`BM_REFUSED_RED_CLOSES_NOTHING` and preservation `BM_FIRST_RED_OPENS_SLICE`,
+`BM_OWN_RERUN_AND_DISTINCT_SITES`, `BM_FLAGGED_REVALIDATION_BASELINE`,
+`BM_CLEAN_BASELINE_ADMITTED`, `BM_NONRUNNER_RED_UNCHANGED`, `BM_REUSED_RED_UNCHANGED`.
+The contract closure is the mechanism the correction closes (the candidate
+recorder would refuse it); its guarantees (GREEN refused without RED, refusal
+durable, completion blocked) are pre-existing behavior the test exercises. The
+six preservation items' executed proof is the full suite green on the final tree
+(verification evidence-9e0dea73f257c61172e5ffb79590223d).
+
+**Status:** Implemented on `fix/issue54-closure-authority` in the isolated
+worktree with RED/GREEN attacks through the workflow CLI, the CX2 corpus replay
+and the real N/N+1 operation on the private estates (`~/.local/share/codex-estates/issue54`:
+one snapshot seeded into N and N+1, bwrap-bound at `~/.codex`, global estate
+read-only, separate sessions/caches/workflow state; `refresh.sh` installs the
+worktree into N+1 only; `verify-loaded.py` receipts show N loads the snapshot
+modules and N+1 the candidate). The installed-estate agent replay from the issue's ordinal-326
+checkpoint ran one pair through `launch.sh` (3600 s per arm, gpt-5.6-sol,
+receipts under `~/.local/share/codex-estates/issue54/replay/RESULT.md`). The N
+arm is void: the app clone still carried CX2's completed branch and the lead
+switched to it. The N+1 arm, which never consulted that branch, established the
+recorder-level criteria: one entrypoint-absence RED per entrypoint, five
+inherited REDs and the CLI pair refused, a post-change contract baseline refused
+and not manufactured, real semantic REDs afterwards, twelve contract items GREEN
+through their own RED. It was stopped before review because the lead invoked
+the claude-advisor precommit wrapper instead of the codex-advisor wrapper, so
+reviewer-claim and final-advisor behavior are not established; Done-when #5
+remains open until a rerun with the leaked branch pruned and the codex-advisor
+wrapper pinned. No shared-estate installation or merge.
