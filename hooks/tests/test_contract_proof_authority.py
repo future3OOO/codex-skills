@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 import unittest
@@ -836,7 +837,8 @@ class ContractProofAuthorityTests(unittest.TestCase):
         admitted = self.tdd_pytest(slug, "red", "BM_ROLLBACK", "test_shared_site.py::test_rollback_restores_state")
         self.assertEqual(admitted.returncode, 0, marker + ": " + admitted.stdout + admitted.stderr)
         self.assertEqual(self.item_status("BM_ROLLBACK"), "red", marker)
-        self.assertNotIn("BM_INTERFACE", self.h.cli("summary").stdout.split("Shared RED observation")[-1], marker)
+        label = re.search(r"Shared RED observation: ([^.]*)\.", self.h.cli("summary").stdout)
+        self.assertNotIn("BM_INTERFACE", label.group(1) if label else "", marker)
 
     def test_a_prose_settled_preservation_item_keeps_the_map_unresolved(self) -> None:
         # Final review SPEC-3: already-satisfied is a producer status; a prose

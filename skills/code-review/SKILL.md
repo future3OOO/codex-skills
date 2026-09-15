@@ -53,10 +53,11 @@ independently to the original objective and current candidate. Challenge whether
 that objective is fulfilled, including materially wrong behavior the declared
 assertions would miss. Judge correction of the original failure, affected-domain
 coverage and preservation separately. Bound every claim to what the retained
-operations observed: a RED whose recorded `observation` is entrypoint absence, a
-`Shared RED observation` in `summary`, or an obligation left pending by a refused
-late baseline is a Spec finding on sensitivity, not proof of the behavior its
-marker names. Challenge the map's omissions against the implementation's
+operations observed: a RED whose recorded `observation` is entrypoint absence
+proves sensitivity, not the behavior its marker names; a `Shared RED observation`
+in `summary` proves one failure, not each listed item's behavior; an obligation
+left pending by a refused late baseline is unresolved, not proven. Each is a Spec
+finding. Challenge the map's omissions against the implementation's
 conversions, callees, shared writers and mutation paths. Return findings for the
 final advisor through the existing workflow; this review does not decide delivery.
 

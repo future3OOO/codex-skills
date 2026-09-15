@@ -70,7 +70,7 @@ Select one pending contract ID and write its RED before the production edit that
 
 **ORDER OF PROOF**
 
-Each contract item's RED belongs on the tree before the production edit that satisfies it; the recorder admits a second RED beside an open one, and the edit hook names any contract item still without its RED instead of refusing. A RED taken after production changed is **late**: recorded as such, labelled in `summary`, shown to the final review, never refused. A passing RED after production changed baselines no contract item (see Statuses). One edit may satisfy several red items; each reaches GREEN through its own RED. A GREEN for an item with no RED is refused. Map updates are admitted while cycles are open.
+Each contract item's RED belongs on the tree before the production edit that satisfies it; the recorder admits a second RED beside an open one, and the edit hook names any contract item still without its RED instead of refusing. A RED taken after production changed is **late**: recorded as such, labelled in `summary`, shown to the final review, never refused for being late; a RED observing another item's recorded failure is still refused as inherited. A passing RED after production changed baselines no contract item (see Statuses). One edit may satisfy several red items; each reaches GREEN through its own RED. A GREEN for an item with no RED is refused. Map updates are admitted while cycles are open.
 
 Several assertions may jointly prove one behavior; every assertion participating in that joint proof carries the same behavior-specific `redFailure` marker, so whichever guarantee breaks first still names the mapped failure. State after success or failure must match the complete observable contract.
 
