@@ -400,7 +400,9 @@ def apply_dispositions(
             permitted = {"pending", "green", *DISPOSITION_STATUSES} if revalidate else DISPOSITION_STATUSES
             if revalidate and mapped.get("revalidationRequired") and previous == "red":
                 permitted = permitted | {"red"}
-            if mapped.get("kind") != "preservation" or previous not in permitted:
+            if mapped.get("kind") != "preservation" or previous not in permitted or (
+                revalidate and previous == "pending" and not mapped.get("revalidationRequired")
+            ):
                 raise ValueError(f"behavior {identifier} is a {mapped.get('kind')} item at {previous}; "
                                  "only a RED contract or settled preservation can be reopened, or preservation revalidated")
             if revalidate and mapped.get("revalidationRequired"):
@@ -444,6 +446,77 @@ def apply_dispositions(
         mapped["evidence"] = evidence
 
 
+def _observation(proof: object) -> tuple[tuple[str, ...], str] | None:
+    """What a recorded RED observed and where; proofs recorded before observations
+    existed key nothing. The site may be empty when the runner printed none."""
+    if not isinstance(proof, dict) or not isinstance(proof.get("observation"), list):
+        return None
+    return tuple(str(line) for line in proof["observation"]), str(proof.get("site") or "")
+
+
+def _bound_observation(entry: JsonObject) -> tuple[tuple[str, ...], str] | None:
+    """The observation of an item's current RED. A reopened item keeps its RED
+    history as evidence, not as ownership: with no bound command it keys nothing."""
+    return _observation(entry.get("redProof")) if entry.get("redCommand") else None
+
+
+def _explained(observation: tuple[str, ...]) -> bool:
+    """pytest `where`/`and` lines name the predicate and its values: the rendering
+    itself is the observation, wherever it sits."""
+    return any(line.startswith("+") for line in observation)
+
+
+def same_observation(first: tuple[str, ...], second: tuple[str, ...]) -> bool:
+    """One rendering extends the other without contradicting it: a pytest explanation
+    that binds an intermediate to a local prints fewer `where` lines for the same
+    predicate. Compatible, not equal: the label's notion, never the refusal's."""
+    if not (_explained(first) and _explained(second)):
+        return first == second
+    shorter, longer = sorted((first, second), key=len)
+    return longer[: len(shorter)] == shorter
+
+
+def inherited_red(items: list[JsonObject], behavior_id: str, proof: JsonObject) -> str | None:
+    """The other item whose recorded RED already observed this failure (issue #54):
+    an explained rendering equal wherever it sits, or an unexplained one equal at
+    the same non-empty site. A second obligation stopping there established
+    nothing of its own."""
+    current = _observation(proof)
+    if current is None:
+        return None
+    marker = str(item(items, behavior_id).get("redFailure", ""))
+    for entry in items:
+        recorded = _bound_observation(entry) if entry.get("id") != behavior_id else None
+        if recorded is None:
+            continue
+        # One output can carry both authored markers; neither is an observation.
+        other = str(entry.get("redFailure", ""))
+        observation = tuple(line.replace(other, "") for line in current[0])
+        theirs = tuple(line.replace(marker, "") for line in recorded[0])
+        if observation != theirs:
+            continue
+        if _explained(observation) or (current[1] and current[1] == recorded[1]):
+            return str(entry["id"])
+    return None
+
+
+def shared_observations(items: list[JsonObject]) -> list[list[str]]:
+    """Groups of items whose REDs rendered the same failure but were admitted: at
+    different sites, or as compatible explanations. Named for review."""
+    recorded = [(str(entry["id"]), observation) for entry in items
+                if (observation := _bound_observation(entry)) is not None]
+    groups: list[list[str]] = []
+    for identifier, (observation, _) in recorded:
+        for group in groups:
+            anchor = next(lines for name, (lines, _) in recorded if name == group[0])
+            if same_observation(anchor, observation):
+                group.append(identifier)
+                break
+        else:
+            groups.append([identifier])
+    return [group for group in groups if len(group) > 1]
+
+
 def green_through_red(entry: JsonObject) -> bool:
     """GREEN through the item's own RED: green now, or recorded green when superseded.
     A superseded item with no record is legacy in-flight state and reads as unproved."""
@@ -470,6 +543,8 @@ def unresolved(
         str(entry["id"])
         for entry in items
         if entry.get("status") in {"pending", "red"}
+        # Prose already-satisfied is a settlement no producer observed (issue #54).
+        or (entry.get("status") == "already-satisfied" and not producer_proved(entry))
         or (entry.get("revalidationRequired") and entry.get("status") not in {"omitted", "superseded"})
         or (entry.get("status") == "superseded" and not (
             terminals[str(entry["id"])].get("status") == "green"
@@ -584,6 +659,7 @@ def all_disposition_only(items: list[JsonObject]) -> bool:
     return bool(items) and all(
         entry.get("status") in DISPOSITION_STATUSES
         and (not entry.get("revalidationRequired") or entry.get("status") == "omitted")
+        and (entry.get("status") != "already-satisfied" or producer_proved(entry))
         for entry in items
     )
 

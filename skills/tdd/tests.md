@@ -25,7 +25,7 @@ for N/N+1 proof and conditional A/B measurements.
 
 The RED must reach the mapped Seam and fail with the declared failure for the claimed product behavior: an assertion carrying a behavior-specific marker, or the product's own exception or diagnostic, recorded as `redFailure` in preflight. For directly invoked pytest and unittest, the recorder also requires at least one executed test and refuses collection, setup, loader, or zero-test failures. A non-runner operation opens the RED when it fails carrying the declared failure; its reach is recorded unresolved and review establishes the promise.
 
-A test for “rollback restores exact state” is **not** a RED for rollback when it stops first at `AttributeError: enable_safe_import`; failing earlier is evidence for no item. The first RED of a new Seam asserts the Seam's existence (`assert hasattr(db, "enable_safe_import"), MARKER`); rollback semantics are a separate item driven once the Seam exists.
+A test for “rollback restores exact state” is **not** a RED for rollback when it stops first at `AttributeError: enable_safe_import`, nor when it stops at `assert hasattr(db, "enable_safe_import"), ROLLBACK_MARKER` - the marker names rollback, the failure observed only absence; failing earlier is evidence for no item. Verified absence of the entrypoint is RED for one atomic initial behavior that requires it; rollback semantics and every other independent guarantee stay pending and are driven once the Seam exists, calling the real entrypoint and independently reading the resulting state.
 
 ```python
 def test_rejected_transfer_preserves_balances():

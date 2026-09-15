@@ -1701,13 +1701,12 @@ def _recorded_items(
     return []
 
 
-def _late_contract_items(items: list[JsonObject]) -> list[JsonObject]:
-    """Contract items whose RED or baseline ran with production already changed:
-    the order of proof the recorder recorded instead of refusing."""
+def _late_items(items: list[JsonObject]) -> list[JsonObject]:
+    """Items whose RED or baseline ran with production already changed: the order
+    of proof the recorder recorded instead of refusing (a contract RED, or a
+    preservation baseline whose observation is candidate-only)."""
     late: list[JsonObject] = []
     for entry in items:
-        if entry.get("kind") != "contract":
-            continue
         proofs = (entry.get("redProof"), entry.get("baselineProof"))
         changed = next((proof["productionChanged"] for proof in proofs
                         if isinstance(proof, dict) and proof.get("productionChanged")), None)
@@ -1866,7 +1865,7 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False) -
         "governedDesignEvidence": design_evidence_id,
         "governedDesign": design,
         "findingLedger": _finding_ledger(identity, state, items),
-        "lateRed": _late_contract_items(items),
+        "lateRed": _late_items(items),
         "tdd": state.get("tdd"),
         "codeReviewStatus": review.get("status"),
     }
@@ -2099,12 +2098,18 @@ def _earned_split(identity: RepoIdentity, state: JsonObject) -> str:
         )
     except (WorkflowError, LedgerError, ValueError):
         return " Contract green=unknown (map evidence unreadable)."
-    contract = [entry for entry in items or [] if entry.get("kind") == "contract"]
+    items = items or []
+    prose = ", ".join(str(entry["id"]) for entry in items
+                      if entry.get("status") == "already-satisfied" and not behavior_map.producer_proved(entry))
+    settled = f" Prose settlement (unresolved until an executed baseline): {prose}." if prose else ""
+    contract = [entry for entry in items if entry.get("kind") == "contract"]
     if not contract:
-        return ""
+        return settled
     earned = sum(1 for entry in contract if behavior_map.green_through_red(entry))
-    late = ", ".join(str(entry["id"]) for entry in _late_contract_items(contract))
-    return f" Contract green={earned}/{len(contract)}." + (f" Late RED: {late}." if late else "")
+    late = ", ".join(str(entry["id"]) for entry in _late_items(items))
+    shared = "; ".join(", ".join(group) for group in behavior_map.shared_observations(items))
+    return (f" Contract green={earned}/{len(contract)}." + (f" Late RED: {late}." if late else "")
+            + (f" Shared RED observation: {shared}." if shared else "") + settled)
 
 
 def summary(identity: RepoIdentity, limit: int = 1200) -> str:

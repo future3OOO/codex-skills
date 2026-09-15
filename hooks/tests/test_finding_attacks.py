@@ -1353,9 +1353,11 @@ class MapCorrectionAttacks(AttackHarness):
             "        self.assertLess(text.index('estimator :='), "
             "text.index('httpClient.Do', text.index('func stream')), 'ESTIMATE_OVERLAP')\n",
             encoding="utf-8")
-        baseline = self.mapped_tdd(slug, "red", [sys.executable, "-m", "unittest", "test_order"])
-        self.assertEqual(baseline.returncode, 0, marker + ": " + baseline.stderr)
-        self.assertEqual(self.map_items()["BM_ATTACK"]["status"], "already-satisfied", marker)
+        # The repair landed before this run: a contract item cannot be backdated to
+        # a baseline from the candidate-only pass; its corrected RED stays owed.
+        late = self.mapped_tdd(slug, "red", [sys.executable, "-m", "unittest", "test_order"])
+        self.assertEqual(late.returncode, 2, marker + ": " + late.stdout + late.stderr)
+        self.assertEqual(self.map_items()["BM_ATTACK"]["status"], "pending", marker)
         self.assertEqual(self.map_items()["BM_ATTACK"]["redProof"], original, marker)
 
     def test_red_correction_preserves_other_open_and_proved_items(self) -> None:
@@ -1406,7 +1408,8 @@ class MapCorrectionAttacks(AttackHarness):
         self.repair_order()
         self.assertEqual(self.mapped_tdd(slug, "green", correct).returncode, 0, marker)
         final = self.map_items()["BM_ATTACK"]
-        for key in expected.keys() - {"status"}:
+        # The corrected RED records its own observation; everything else is retained.
+        for key in expected.keys() - {"status", "redProof"}:
             self.assertEqual(final[key], expected[key], marker)
         self.assertEqual(self.ok_text("evidence", "--evidence-id", old_id), historical, marker)
         self.assertEqual(self.status()["workflowId"], wid, marker)
@@ -1850,11 +1853,11 @@ class MapCorrectionAttacks(AttackHarness):
         wid = self.begin(slug)
         intake = self.behavioral_intake(slug, wid, "wrong value")
         refs = [{"type": "finding", "evidenceId": intake, "id": "SPEC-1"}]
-        keep = {**self.contract("VALUE_NOT_TWO", refs), "id": "BM_KEEP", "kind": "preservation"}
+        keep = {**self.contract("KEEP_NOT_TWO", refs), "id": "BM_KEEP", "kind": "preservation"}
         recorded = self.record_preflight(slug, wid, [self.contract("VALUE_NOT_TWO", refs), keep])
         self.assertEqual(recorded.returncode, 0, recorded.stdout + recorded.stderr)
         self.drive_attack_green(slug, "VALUE_NOT_TWO")
-        self.drive_attack_green(slug, "VALUE_NOT_TWO", "BM_KEEP")
+        self.drive_attack_green(slug, "KEEP_NOT_TWO", "BM_KEEP")
         update = self.map_update(slug, dispositions=[
             {"id": "BM_ATTACK", "status": "superseded", "supersededBy": "BM_KEEP", "evidence": "replacement attack"},
             {"id": "BM_KEEP", "revalidate": True, "evidence": "replacement affected"}])
@@ -2400,12 +2403,18 @@ class WorkflowRecovery(AttackHarness):
 
     def test_settled_recheck_and_baseline_supersession_keep_lineage(self) -> None:
         marker = "RETAINED_PROOF_REFUSED"
-        slug, wid = self.settled()
+        slug = "recovery"
+        wid = self.open_pytest_pass(slug, "VALUE_UNCORRECTED")
+        self.add_claim(slug, wid, "BM_BASELINE")
+        (self.repo / "test_baseline_probe.py").write_text(
+            "import app, unittest\nclass BaselineProbe(unittest.TestCase):\n"
+            "    def test_value(self): self.assertEqual(app.value, 1, 'SECOND_OPERATION_WRONG')\n",
+            encoding="utf-8")
+        self.ok("tdd", "--slug", slug, "--phase", "red", "--behavior-id", "BM_BASELINE",
+                "--", sys.executable, "-m", "unittest", "test_baseline_probe")
+        self.drive_attack_green(slug, "VALUE_UNCORRECTED")
         rerun = self.mapped_tdd(slug, "green", [sys.executable, "-m", "unittest", "test_attack_probe"])
         self.assertEqual(rerun.returncode, 0, marker + rerun.stderr)
-        self.add_claim(slug, wid, "BM_BASELINE")
-        self.ok("tdd", "--slug", slug, "--phase", "red", "--behavior-id", "BM_BASELINE",
-                "--", sys.executable, "-m", "unittest", "test_attack_probe")
         before = self.status()
         original = self.ok("evidence", "--evidence-id", before["tddEvidence"])["document"]
         for target in ("MISSING", "BM_BASELINE"):
@@ -2547,6 +2556,8 @@ class WorkflowRecovery(AttackHarness):
     def test_receipt_outcome_is_not_red_acceptance(self) -> None:
         marker = "RECEIPT_OUTCOME_WRONG"
         slug = "receipt-outcome"
+        (self.repo / "app.py").write_text("value = 2\n")  # the passing case is the pass-start production
+        self.git("commit", "-qam", "value two at pass start")
         wid = self.begin(slug)
         envelope = self.json_file("intake.json", {"schemaVersion": 1, "verdict": "completed", "findings": [
             {"id": "STD-1", "claim": "test convention needs correction", "material": True, "kind": "nonbehavioral"},

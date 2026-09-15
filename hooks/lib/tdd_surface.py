@@ -15,6 +15,8 @@ import shlex
 from collections.abc import Mapping, Sequence
 from pathlib import Path, PurePosixPath
 
+from .state_store import is_test_path
+
 SURFACE_SCHEMA_VERSION = 1
 INTERPRETER = re.compile(r"^python(3(\.\d+)?)?$")
 REPEATED_VERBOSITY = re.compile(r"^-(v+|q+)$")
@@ -57,6 +59,12 @@ UNITTEST_FIXTURES = frozenset({
 })
 PYTEST_FAILURE_HEADER = re.compile(r"^_{3,}.+_{3,}$")
 PYTEST_CAPTURED_HEADER = re.compile(r"^-+ Captured .+ -+$")
+# pytest closes each traceback frame with `path:line:` (the exception class only
+# on the last); unittest frames are `File "..."` lines. Object reprs carry the
+# process's addresses, which say nothing about what was observed.
+PYTEST_LOCATION = re.compile(r"^(\S+):(\d+): ?\w*$")
+UNITTEST_FRAME = re.compile(r'^  File "([^"]+)", line (\d+), in ')
+OBJECT_ADDRESS = re.compile(r" at 0x[0-9a-fA-F]+")
 PYTEST_SUMMARY_RECORDS = (
     "FAILED ",
     "ERROR ",
@@ -299,11 +307,17 @@ def differences(
 
 
 def evaluate_red(
-    surface: Mapping[str, object], output: str, marker: str
+    surface: Mapping[str, object], output: str, marker: str, root: Path | None = None
 ) -> tuple[dict[str, object] | None, str]:
     """Evidence that RED reached the mapped failure, or why it did not: a runner's
     report decides for runner surfaces; a non-runner operation is classified by
-    its final diagnostic and keeps its marker line with reach unresolved."""
+    its final diagnostic and keeps its marker line with reach unresolved.
+
+    A proof also records what the failure observed apart from the authored marker
+    (issue #54): `observation` is the terminal rendering with the marker elided and
+    object addresses dropped; `site` is the last test-side frame of the terminal
+    traceback with that source line when ``root`` resolves it, or the command for
+    a non-runner operation. The same observation cannot open RED for two items."""
     runner = surface.get("runner")
     output = ANSI_ESCAPE.sub("", output)
     lines = [line for line in output.splitlines() if line.strip()]
@@ -313,12 +327,37 @@ def evaluate_red(
     if marker not in output:
         return None, f"output did not contain the mapped redFailure marker {marker!r}"
     if runner == "unittest":
-        return _unittest_red(output, marker)
+        return _with_observation(_unittest_red(output, marker), marker, root)
     if runner == "pytest":
         arguments = surface.get("arguments")
-        return _pytest_red(output, marker, arguments if isinstance(arguments, list) else ())
+        return _with_observation(
+            _pytest_red(output, marker, arguments if isinstance(arguments, list) else ()), marker, root,
+        )
     observed = diagnostic if marker in diagnostic else next(line.strip() for line in lines if marker in line)
-    return {"quality": "failure-observed", "reach": "unresolved", "runner": str(runner), "observedFailure": observed}, ""
+    return {"quality": "failure-observed", "reach": "unresolved", "runner": str(runner),
+            "observedFailure": observed, "observation": [observed.replace(marker, "")],
+            "site": shlex.join(str(token) for token in surface.get("arguments") or [])}, ""
+
+
+def _with_observation(
+    result: tuple[dict[str, object] | None, str], marker: str, root: Path | None
+) -> tuple[dict[str, object] | None, str]:
+    """Replace the runner proof's raw rendering with the recorded observation and site."""
+    proof, _ = result
+    if proof is None:
+        return result
+    rendering = proof.pop("rendering")
+    location = proof.pop("location")
+    observation = [OBJECT_ADDRESS.sub("", line.replace(marker, "")) for line in rendering if line]
+    site = location
+    if root is not None and location:
+        path, _, line_number = location.rpartition(":")
+        try:
+            source = (Path(root) / path).read_text(encoding="utf-8", errors="replace").splitlines()
+            site = f"{location} {source[int(line_number) - 1].strip()}"
+        except (OSError, IndexError, ValueError):
+            site = location
+    return {**proof, "observation": observation, "site": site}, ""
 
 
 def _final_diagnostic(lines: list[str]) -> str:
@@ -364,7 +403,7 @@ def _unittest_red(
         if count:
             summary_counts[count.group(1)] = int(count.group(2))
     failures = _unittest_terminal_failures(output)
-    report_counts = tuple(sum(header.startswith(kind) for _, header, _, _ in failures)
+    report_counts = tuple(sum(header.startswith(kind) for _, header, _, _, _ in failures)
                           for kind in ("FAIL: ", "ERROR: "))
     expected_counts = (
         summary_counts.get("failures", 0),
@@ -392,10 +431,11 @@ def _unittest_red(
     unreached = next((reason for reason in (_unittest_unreached(*block[1:3]) for block in failures) if reason), None)
     if unreached is not None:
         return None, "the operation failed before reaching the production Interface: " + unreached
-    found = next(((rendering[0], line) for _, _, _, rendering in failures for line in rendering if marker in line), None)
+    found = next((block for block in failures for line in block[3] if marker in line), None)
     if found is None:
-        return None, _not_terminal("unittest", [rendering[0] for _, _, _, rendering in failures if rendering])
-    head, observed = found
+        return None, _not_terminal("unittest", [rendering[0] for _, _, _, rendering, _ in failures if rendering])
+    rendering = found[3]
+    head, observed = rendering[0], next(line for line in rendering if marker in line)
     refusal = _pre_interface_refusal(head)
     if refusal is not None:
         return None, refusal
@@ -404,11 +444,13 @@ def _unittest_red(
         "runner": "unittest",
         "testsExecuted": int(ran.group(1)),
         "observedFailure": observed,
+        "rendering": rendering,
+        "location": found[4],
     }, ""
 
 
 def attributed_result(surface: dict[str, object], receipt: dict[str, object], test_id: str,
-                      marker: str) -> tuple[str | None, dict[str, object] | None, str]:
+                      marker: str, root: Path | None = None) -> tuple[str | None, dict[str, object] | None, str]:
     """Attribute a retained verbose unittest report; ambiguity stays single-item."""
     if surface.get("runner") != "unittest" or receipt.get("outputBytes", 16001) > 16000:
         return None, None, "reuse needs a complete verbose unittest execution report"
@@ -452,7 +494,7 @@ def attributed_result(surface: dict[str, object], receipt: dict[str, object], te
         return None, None, "description and test progress cannot be distinguished; use direct execution"
     failures = [f"{outcome}: {name} ({parent})" for name, parent, _, outcome in records
                 if outcome in {"FAIL", "ERROR"}]
-    if sorted(failures) != sorted(header for _, header, _, _ in terminal):
+    if sorted(failures) != sorted(header for _, header, _, _, _ in terminal):
         return None, None, "terminal failures disagree with test results"
     summary = UNITTEST_FAILED.search(output[ran[-1].end():]) if ran else None
     counts = dict(re.findall(r"(failures|errors)=(\d+)", summary[1])) if summary else {}
@@ -474,7 +516,7 @@ def attributed_result(surface: dict[str, object], receipt: dict[str, object], te
         return "passed", {**proof, "quality": "baseline-passed"}, ""
     if outcome.startswith("skipped") or outcome == "expected failure":
         return "skipped", None, "selected test did not execute a passing assertion"
-    checked, error = _unittest_red(output, marker, test_id=test_id)
+    checked, error = _with_observation(_unittest_red(output, marker, test_id=test_id), marker, root)
     if checked is None:
         return None, None, error
     return "failed", {**checked, **proof}, ""
@@ -494,12 +536,13 @@ def _unittest_unreached(header: str, frames: list[str]) -> str | None:
     return f"unittest failed in {fixture} before the test body" if fixture else None
 
 
-def _unittest_terminal_failures(output: str) -> list[tuple[int, str, list[str], list[str]]]:
+def _unittest_terminal_failures(output: str) -> list[tuple[int, str, list[str], list[str], str]]:
     """Per framed FAIL or ERROR block: its offset, header, frame functions of the terminal
-    traceback unittest itself reported, and that traceback's rendering (exception
-    line first). Earlier chained segments and captured output after Stdout:/Stderr:
+    traceback unittest itself reported, that traceback's rendering (exception line
+    first) and its site: the last test-side frame as ``path:line``, else the
+    innermost. Earlier chained segments and captured output after Stdout:/Stderr:
     never count: the failure that ended the test governs."""
-    failures: list[tuple[int, str, list[str], list[str]]] = []
+    failures: list[tuple[int, str, list[str], list[str], str]] = []
     reading = False
     previous = ""
     offset = 0
@@ -507,7 +550,7 @@ def _unittest_terminal_failures(output: str) -> list[tuple[int, str, list[str], 
         line = raw_line.rstrip("\r\n")
         stripped = line.strip()
         if _rule(previous, "=") and line.startswith(("FAIL: ", "ERROR: ")):
-            failures.append((offset, line, [], []))
+            failures.append((offset, line, [], [], ""))
             reading = True
         elif _rule(previous, "-") and line.startswith("Ran "):
             break  # the report's footer: anything after it is the process's own output
@@ -516,9 +559,12 @@ def _unittest_terminal_failures(output: str) -> list[tuple[int, str, list[str], 
         elif stripped in {"Stdout:", "Stderr:"}:
             reading = False
         elif stripped == "Traceback (most recent call last):":
-            failures[-1] = (*failures[-1][:2], [], [])
+            failures[-1] = (*failures[-1][:2], [], [], "")
         elif line.startswith('  File "'):
             failures[-1][2].append(line.rsplit(", in ", 1)[-1])
+            frame = UNITTEST_FRAME.match(line)
+            if frame and (is_test_path(frame.group(1)) or not failures[-1][4]):
+                failures[-1] = (*failures[-1][:4], f"{frame.group(1)}:{frame.group(2)}")
         elif failures[-1][2] and (failures[-1][3] or (line and not line[0].isspace())):
             failures[-1][3].append(stripped)
         previous = line
@@ -560,11 +606,12 @@ def _pytest_red(
             f"holds {headers} header-shaped lines; printed header-shaped text "
             "cannot be attributed to a test - remove it or narrow the command"
         )
-    renderings = _pytest_terminal_renderings(failures)
-    found = next(((block[0], line) for block in renderings for line in block if marker in line), None)
+    renderings, locations = _pytest_terminal_renderings(failures)
+    found = next((index for index, block in enumerate(renderings) for line in block if marker in line), None)
     if found is None:
         return None, _not_terminal("pytest", [block[0] for block in renderings if block])
-    head, observed = found
+    rendering = renderings[found]
+    head, observed = rendering[0], next(line for line in rendering if marker in line)
     refusal = _pre_interface_refusal(head)
     if refusal is not None:
         return None, refusal
@@ -573,6 +620,8 @@ def _pytest_red(
         "runner": "pytest",
         "testsExecuted": counts["failed"] + counts["passed"],
         "observedFailure": observed,
+        "rendering": rendering,
+        "location": locations[found],
     }, ""
 
 
@@ -608,15 +657,21 @@ def _pytest_summary(lines: list[str]) -> tuple[dict[str, int | bool] | None, int
     return None, start
 
 
-def _pytest_terminal_renderings(lines: list[str]) -> list[list[str]]:
+def _pytest_terminal_renderings(lines: list[str]) -> tuple[list[list[str]], list[str]]:
     """Per failed test's block, the E-prefixed rendering of its terminal chain
-    segment, first line first; earlier segments and captured output never count."""
+    segment, first line first, and that segment's site: the last test-side frame
+    as ``path:line``, else the innermost; earlier segments and captured output
+    never count."""
     blocks: list[list[str]] = []
+    locations: list[str] = []
+    innermost: list[str] = []
     captured = False
     for line in lines:
         # Every header is genuine here: _pytest_red matched the header count already.
         if PYTEST_FAILURE_HEADER.match(line):
             blocks.append([])
+            locations.append("")
+            innermost.append("")
             captured = False
         elif not blocks:
             continue
@@ -626,9 +681,14 @@ def _pytest_terminal_renderings(lines: list[str]) -> list[list[str]]:
             continue
         elif line.startswith(("During handling of the above exception", "The above exception was")):
             blocks[-1] = []
+            locations[-1] = innermost[-1] = ""
         elif line.startswith("E "):
             blocks[-1].append(line[1:].strip())
-    return blocks
+        elif location := PYTEST_LOCATION.match(line):
+            innermost[-1] = f"{location.group(1)}:{location.group(2)}"
+            if is_test_path(location.group(1)):
+                locations[-1] = innermost[-1]
+    return blocks, [site or inner for site, inner in zip(locations, innermost)]
 
 
 def _rule(line: str, character: str) -> bool:

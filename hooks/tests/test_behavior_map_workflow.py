@@ -299,7 +299,9 @@ finally:
         self.assertEqual(repeated["tddCycleCount"], state["tddCycleCount"])
         for key in ("activeBehaviorId", "command", "surface"):
             self.assertEqual(after[key], before[key])
-        result = self.tdd(slug, "red", "BM_B", fail)
+        # BM_B needs its own observation: a byte-identical probe would inherit BM_A's RED.
+        fail_b = "import app; assert app.value == 2, 'VALUE_NOT_TWO'  # b"
+        result = self.tdd(slug, "red", "BM_B", fail_b)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         other = read_workflow(resolve_repo_identity(self.repo))
         evidence = self.cli("evidence", "--evidence-id", str(other["tddEvidence"]))
@@ -312,8 +314,8 @@ finally:
         self.assertEqual(original.returncode, 0, original.stderr)
         self.assertEqual(json.loads(original.stdout)["document"], before)
         (self.repo / "app.py").write_text("value = 2\n", encoding="utf-8")
-        for owner, expected_status in (("BM_B", "pending"), ("BM_A", "passed")):
-            result = self.tdd(slug, "green", owner, fail)
+        for owner, expected_status, script in (("BM_B", "pending", fail_b), ("BM_A", "passed", fail)):
+            result = self.tdd(slug, "green", owner, script)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             state = read_workflow(resolve_repo_identity(self.repo))
             evidence = self.cli("evidence", "--evidence-id", str(state["tddEvidence"]))

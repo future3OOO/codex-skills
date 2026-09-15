@@ -220,6 +220,8 @@ import app
 class Reader(unittest.TestCase):
     def test_value(self):
         self.assertEqual(app.value, 2, "READER_VALUE_WRONG")
+    def test_note(self):
+        self.assertEqual(getattr(app, "note", None), "ready", "READER_NOTE_WRONG")
 PY
 CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 - "$ROOT" "$rigtmp/repo" <<'PY'
 import sys
@@ -270,8 +272,8 @@ from hooks.tests.support import build_document, pending_behavior
 state = read_workflow(resolve_repo_identity(sys.argv[2]))
 intake = state["advisorPreflight"]["intakeEvidence"]
 refs = [{"type":"finding", "evidenceId":intake, "id":identifier} for identifier in ("SPEC-1", "SPEC-2")]
-contract = {**pending_behavior("BM_READER", red_failure="READER_VALUE_WRONG"), "sourceRefs":refs}
-keep = {**contract, "id":"BM_KEEP", "kind":"preservation", "sourceRefs":[
+contract = {**pending_behavior("BM_READER", red_failure="READER_NOTE_WRONG"), "sourceRefs":refs}
+keep = {**contract, "id":"BM_KEEP", "kind":"preservation", "redFailure":"READER_VALUE_WRONG", "sourceRefs":[
     *refs, {"type":"design", "evidenceId":state["governedDesignEvidence"], "id":"PRES-1"}]}
 doc = build_document("scoped wrapper diagnostic", behavior_map=[contract, keep])
 doc["chosenApproach"] = "Reuse the hook correctness operation at 82 rows; limit 2048 UTF-8 bytes and 2 seconds per hook, no extra DB reads or subprocesses versus old."
@@ -280,10 +282,24 @@ doc["proofPlan"] = "workflow.py verify -- python3 -m unittest hooks.tests.test_b
 open(sys.argv[3], "w", encoding="utf-8").write(json.dumps(doc))
 PY
 CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" record-preflight --repo "$rigtmp/repo" --slug scoped-rig --workflow-id "$wid" --input "$rigtmp/preflight.json" >/dev/null
-for behavior in BM_KEEP BM_READER; do
-  out=$(CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" tdd --repo "$rigtmp/repo" --slug scoped-rig --phase red --behavior-id "$behavior" -- python3 -m unittest test_transport_probe 2>&1); status=$?
-  check_status "$behavior receives an executed baseline" 0 "$status"
-done
+# The value edit preceded this pass's proof, so the reader contract is proved
+# through its own RED/GREEN on the note it still lacks; the preservation item
+# baselines late on the candidate and is revalidated by the same operation later.
+out=$(CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" tdd --repo "$rigtmp/repo" --slug scoped-rig --phase red --behavior-id BM_READER -- python3 -m unittest test_transport_probe 2>&1); status=$?
+check_status "BM_READER opens RED on the missing note" 0 "$status"
+printf 'value = 2\nnote = "ready"\n' >"$rigtmp/repo/app.py"
+out=$(CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" tdd --repo "$rigtmp/repo" --slug scoped-rig --phase green --behavior-id BM_READER -- python3 -m unittest test_transport_probe 2>&1); status=$?
+check_status "BM_READER reaches GREEN through its RED" 0 "$status"
+out=$(CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" tdd --repo "$rigtmp/repo" --slug scoped-rig --phase red --behavior-id BM_KEEP -- python3 -m unittest test_transport_probe 2>&1); status=$?
+check_status "BM_KEEP receives an executed late baseline" 0 "$status"
+# The GREEN edit changed the candidate; refresh the graph context it binds to.
+CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 - "$ROOT" "$rigtmp/repo" <<'PY'
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from hooks.tests.support import record_context_forge
+record_context_forge(Path(sys.argv[2]), Path(sys.argv[2]).parent)
+PY
 PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/skills/production-code/scripts/code_quality_gate.py" check --repo "$rigtmp/repo" --json >"$rigtmp/gate.json"
 CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" record-production-code --repo "$rigtmp/repo" --slug scoped-rig --workflow-id "$wid" --input "$rigtmp/gate.json" >/dev/null
 CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" set-phase --repo "$rigtmp/repo" --phase implementation --status passed >/dev/null

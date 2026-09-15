@@ -26,9 +26,16 @@ startup, collection, setup, zero-test, import and syntax failures supply no proo
 
 Pytest/unittest test targets must resolve inside the repository; redirecting them to external
 executed source does not establish that binding. A passing pytest/unittest RED
-baselines the item. A passing non-runner operation cannot baseline a pending item;
-it can reach GREEN only through its own RED. Runs, including refusals, are retained.
-A refused RED binds nothing; correct the command and retry.
+baselines a preservation item, and a contract item only while no production path
+has changed since the pass began; afterwards a contract baseline is retained as a
+refused attempt naming the changed paths. A passing non-runner operation cannot
+baseline a pending item; it can reach GREEN only through its own RED. Every RED
+records what it observed apart from the marker (`observation`, with object
+addresses dropped) and where (`site`: the last test-side frame with its source
+line, or the non-runner command); a RED observing the failure another item already
+recorded - an explained pytest assertion whose rendering agrees wherever it sits,
+or the same unexplained one at the same site - is refused as inherited. Only a currently bound RED owns its observation: a reopened item keeps its RED as history and keys nothing. Runs, including refusals, are retained. A refused RED
+binds nothing; correct the command and retry.
 
 Repeated RED and GREEN must match the item's recorded command surface. For pytest
 and unittest, verbosity/fail-fast aliases may differ; selectors, configuration,
@@ -116,7 +123,7 @@ GREEN-through-RED; a passing baseline alone never proves a repair.
 
 ## No behavior change
 
-Use `--not-required` only when every map item is already satisfied or omitted by
+Use `--not-required` only when every map item is already satisfied by an executed baseline or omitted by
 governing evidence:
 
 ```bash

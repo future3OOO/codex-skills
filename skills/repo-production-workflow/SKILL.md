@@ -148,7 +148,7 @@ python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" tdd \
   -- <targeted-command>
 ```
 
-In this governed workflow the public TDD producers are required; `set-phase` does not accept the `tdd` phase. They keep bounded evidence and advance state but are not proof by themselves. For genuinely non-behavioral work, `--not-required` is available only after every map item is already satisfied or omitted by governing evidence:
+In this governed workflow the public TDD producers are required; `set-phase` does not accept the `tdd` phase. They keep bounded evidence and advance state but are not proof by themselves. For genuinely non-behavioral work, `--not-required` is available only after every map item is already satisfied by an executed baseline or omitted by governing evidence:
 
 ```bash
 python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" \
@@ -156,7 +156,7 @@ python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" \
   --not-required "<specific non-behavioral reason>"
 ```
 
-The edit hook advises, never refuses; `WORKFLOW-MAP.md` owns its role. A RED or baseline taken after production changed is late: labelled in `summary` and the final review, never refused at `complete`. A refactor that changes behavior adds its item with `tdd-map` and proves it. Current unresolved obligations block closure. Reference-only updates and successful or positively identified nonexecuting rechecks on an unchanged candidate preserve completed downstream checks; genuine regressions and ambiguous failures invalidate them. Cycle count remains a coarse granularity smell, never a coverage target.
+The edit hook advises, never refuses; `WORKFLOW-MAP.md` owns its role. A RED taken after production changed is late: labelled in `summary` and the final review, never refused at `complete`; a passing RED after production changed cannot baseline a pending contract item, and a RED observing another item's recorded failure is refused as inherited. A refactor that changes behavior adds its item with `tdd-map` and proves it. Current unresolved obligations block closure. Reference-only updates and successful or positively identified nonexecuting rechecks on an unchanged candidate preserve completed downstream checks; genuine regressions and ambiguous failures invalidate them. Cycle count remains a coarse granularity smell, never a coverage target.
 
 ### 7. Production code
 

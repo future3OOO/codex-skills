@@ -72,7 +72,13 @@ capabilities; they do not establish that agents use them to achieve the objectiv
 
 Simplify the responsible decision rather than adding symptom guards. Separate
 intentional contract changes from regressions and reconcile recorded obligations
-with observed outcomes; keep unrelated behavior outside the repair.
+with observed outcomes; keep unrelated behavior outside the repair. After the
+coherent edit, derive attacks from what the implementation chose, not only from
+the original map: conversions, callees, shared writers, hooks, mutation paths and
+public escape paths; probe semantic divergence against an oracle independent of the
+suspect logic, verify prevention rather than later detection, and where cross-owner
+recovery proof is missing drive the failure through another affected public owner
+followed by a normal continuation whose durable effect is read independently.
 
 Use the request/map already in context; load missing evidence once at implementation entry and refresh only on material change. An edit-hook reminder cannot supply reasoning for already-generated edit arguments.
 
