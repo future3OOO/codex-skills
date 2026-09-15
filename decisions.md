@@ -401,6 +401,18 @@ fail while the initial behavior passes cannot inherit) is stated to the agent by
 skill; the recorder enforces only its mechanical subset, observation equality, so
 REDs stopping at distinct preconditions are admitted. Neither shape occurred in the
 corpus or N1; both stay recorded limits rather than new state (#54 follow-up).
+
+**Decision (acceptance claim, Done-when #2):** "11/12 refused, one labelled"
+satisfies only the recorder subcriterion. The `Shared RED observation` label is
+diagnostic; it does not itself prevent GREEN or completion. Semantic reach is
+decided by review through the existing finding lifecycle: `code-review` records
+the label as a Spec finding, `BM_CLI_SAFE` stays pending until re-driven through
+safe insert/upsert/bulk behavior, and `BM_USERS`/`BM_AUDIT` both stand because
+their tests observe distinct calls. That reviewer behavior is not demonstrated in
+the installed replay, so PR #56 references #54 without closing it. No
+entrypoint-ownership field is added: agent-authored state would not establish
+reach; a structured review acknowledgment is a separate correction if replay
+shows reviewers miss surfaced pairs.
 In this pass the installed (N) recorder recorded seven items `already-satisfied`
 from passing runs after `hooks/lib/*.py` had changed: contract
 `BM_REFUSED_RED_CLOSES_NOTHING` and preservation `BM_FIRST_RED_OPENS_SLICE`,
