@@ -889,3 +889,25 @@ the summary line stops the post-compaction rollout greps (unproven).
 (`decisions.md` at 1513 topped a hooks-review packet); the final advisor
 appeal on PR #30 was skipped and neither workflow was run to `complete` at
 the maintainer's direction.
+
+**PR #30 / PR #61 delivery (2026-09-17):**
+[repo-context-forge #30](https://github.com/future3OOO/repo-context-forge/pull/30)
+merged at `d3a50cf`; installed as snapshot
+`~/.local/share/repo-context-forge/d3a50cf…` behind `current`, which the
+Codex, Claude and repo wrappers all resolve; live smoke through the Codex
+wrapper on this checkout: budget 8,000, packet 7,755 tokens whole, 20 targets,
+`workflow_cli.py`/`tdd_workflow.py` 7 dependents each.
+[codex-skills #61](https://github.com/future3OOO/codex-skills/pull/61) merged
+at `3415c12` after the reviewer loop closed (two credential threads
+report-not-actioned on 0/131 commands in this slot and 0/19,747 across 161
+ledgers; non-list `runs` report-only on the `isinstance` writer guard; the
+`Verified by` ordering taken). Scoped install of
+`hooks/lib/_workflow_db.py`, `hooks/lib/workflow_cli.py`,
+`hooks/lib/workflow_state.py`, `hooks/skill-discipline-rearm.py` into
+`~/.codex` from `main` `3415c12`, backup `~/.codex-backups/20260917-093328-pr61`;
+installed probe: `status` carries no intent, `summary` carries the `Map:` line.
+One suite flake on the merge candidate
+(`test_higher_slots_count_during_competing_admissions`, slot-admission timing)
+passed 18/18 when its class ran alone; unrelated to the change. The
+claude-skills mirror of the CLI still carries the old output shapes and needs
+its own port.
