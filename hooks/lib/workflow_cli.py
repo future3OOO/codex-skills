@@ -394,8 +394,8 @@ def _dispatch(args: argparse.Namespace) -> int:
     identity = resolve_repo_identity(args.repo)
     if args.command == "begin":
         state = begin(identity, args.slug, _intent(args))
-        fields = {"schemaVersion", "workflowId", "slug", "activeCandidateTree", "phase", "nextAction"} if args.compact else None
-        _emit_json(public_status(state, fields=fields))
+        # The caller just supplied the intent; the receipt names the pass, never echoes it.
+        _emit_json(public_status(state, fields={"schemaVersion", "workflowId", "slug", "activeCandidateTree", "phase", "nextAction"}))
     elif args.command == "status":
         fields = set(args.fields.split(",")) if args.fields else None
         _emit_json(public_status(_state(identity), identity, fields=fields))

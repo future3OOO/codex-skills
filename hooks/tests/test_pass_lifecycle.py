@@ -362,9 +362,85 @@ class PassLifecycleTests(unittest.TestCase):
     VERBATIM_INTENT = "  line one | pipe\nline two\n\ttabbed\t\n"
 
     def recorded_intent(self) -> str:
-        status = self.cli("status")
+        status = self.cli("status", "--fields", "intent")
         self.assertEqual(status.returncode, 0, status.stdout + status.stderr)
         return json.loads(status.stdout)["intent"]
+
+    def test_status_and_begin_omit_the_intent_unless_requested(self) -> None:
+        # BM_STATUS_WITHOUT_INTENT: the multi-KB task text is recorded once and read back
+        # on request; every default projection (status, begin, mutation receipts) leaves it out.
+        intent = "task text " * 2000
+        begun = self.cli("begin", "--slug", "quiet-intent", "--intent", intent)
+        self.assertEqual(begun.returncode, 0, begun.stdout + begun.stderr)
+        receipt = json.loads(begun.stdout)
+        self.assertEqual({"schemaVersion", "workflowId", "slug", "activeCandidateTree", "phase", "nextAction"},
+                         set(receipt), "INTENT_ECHOED_BY_DEFAULT")
+        status = json.loads(self.cli("status").stdout)
+        self.assertNotIn("intent", status, "INTENT_ECHOED_BY_DEFAULT")
+        self.assertEqual(status["slug"], "quiet-intent")
+        self.assertEqual(self.recorded_intent(), intent, "INTENT_ECHOED_BY_DEFAULT")
+
+    def test_history_returns_events_without_the_state_blob(self) -> None:
+        # BM_HISTORY_WITHOUT_STATE: one event per accepted transition, identified by id, kind
+        # and references; the state projection (and the intent inside it) is not replayed.
+        intent = "ledger text " * 2000
+        self.cli("begin", "--slug", "quiet-history", "--intent", intent)
+        self.advance_to_context_forge()
+        result = self.cli("history")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        events = json.loads(result.stdout)["events"]
+        self.assertGreaterEqual(len(events), 2)
+        self.assertNotIn("ledger text", result.stdout, "HISTORY_REPLAYS_STATE")
+        self.assertTrue(all("state" not in event for event in events), "HISTORY_REPLAYS_STATE")
+        self.assertEqual({"eventId", "workflowId", "kind", "recordedAt", "stateSchemaVersion",
+                          "policyVersion", "activatesWorkflow", "evidenceIds", "manifestIds"},
+                         set(events[0]), "HISTORY_REPLAYS_STATE")
+
+    def test_summary_lists_every_map_item_with_its_status(self) -> None:
+        # BM_SUMMARY_LISTS_MAP: the line the compaction re-arm injects carries the map facts.
+        wid = self.begin_slug("summary-map")
+        self.advance_to_preflight("summary-map", wid)
+        summary = self.cli("summary")
+        self.assertEqual(summary.returncode, 0, summary.stdout + summary.stderr)
+        items = self.preflight_document()["behaviorMap"]
+        for item in items:
+            self.assertIn(item["id"], summary.stdout.split(" Map: ", 1)[1], "SUMMARY_OMITS_MAP")
+            self.assertIn(f"{item['status']}: ", summary.stdout, "SUMMARY_OMITS_MAP")
+        self.assertIn("Missing state is pending, never success.", summary.stdout, "SUMMARY_OMITS_MAP")
+
+    def test_summary_keeps_a_large_map_and_the_verification_command(self) -> None:
+        # BM_SUMMARY_LISTS_MAP: the biggest recorded maps (38 items in live ledgers) still fit,
+        # the closing invariant survives, and the latest verification command is named.
+        wid = self.begin_slug("summary-large-map")
+        self.advance_to_context_forge()
+        self.run_cli(
+            ("advisor-result", "--slug", "summary-large-map", "--workflow-id", wid, "--stage", "preflight", "--source", "codex-advisor", "--verdict", "completed"),
+            ("advisor-disposition", "--slug", "summary-large-map", "--workflow-id", wid, "--stage", "preflight", "--findings", "none"),
+        )
+        document = self.preflight_document()
+        template = next(item for item in document["behaviorMap"] if item["kind"] == "preservation")
+        document["behaviorMap"] = document["behaviorMap"] + [
+            {**template, "id": f"BM_PRESERVE_OUTCOME_SEMANTICS_{index:02d}", "behavior": f"preserved outcome {index}",
+             **({"status": "already-satisfied", "evidence": "baseline"} if index % 2 else {}),
+             "expected": f"outcome {index} unchanged", "redFailure": f"OUTCOME_{index:02d}_CHANGED"}
+            for index in range(38 - len(document["behaviorMap"]))
+        ]
+        recorded = self.record_preflight(wid, document)
+        self.assertEqual(recorded.returncode, 0, recorded.stdout + recorded.stderr)
+        self.owner_phase("tdd", "not-required")
+        self.record_real_gate(wid)
+        self.run_cli(("set-phase", "--phase", "implementation", "--status", "passed"))
+        verified = self.verify_run(sys.executable, "-c", "print('verified-marker')", gate=False)
+        self.assertEqual(verified.returncode, 0, verified.stdout + verified.stderr)
+        summary = self.cli("summary").stdout
+        self.assertLessEqual(len(summary.rstrip("\n")), 3000, "SUMMARY_OMITS_MAP")
+        groups = {group.split(": ", 1)[0]: set(group.split(": ", 1)[1].split(", "))
+                  for group in summary.split(" Map: ", 1)[1].rstrip("\n").rstrip(".").split("; ")}
+        for item in document["behaviorMap"]:
+            self.assertIn(item["id"], groups.get(item["status"], set()), "SUMMARY_OMITS_MAP")
+        self.assertIn("Missing state is pending, never success.", summary, "SUMMARY_OMITS_MAP")
+        self.assertIn("Verified by: ", summary, "SUMMARY_OMITS_MAP")
+        self.assertIn("verified-marker", summary, "SUMMARY_OMITS_MAP")
 
     def test_begin_records_the_task_text_verbatim_from_a_file_or_stdin(self) -> None:
         source = self.tmp / "intent.txt"
@@ -847,8 +923,8 @@ class PassLifecycleTests(unittest.TestCase):
 
         recorded = self.record_preflight(wid, self.preflight_document())
         self.assertEqual(recorded.returncode, 0, recorded.stdout + recorded.stderr)
-        self.assertEqual(json.loads(recorded.stdout).get("intent"), self.VERBATIM_INTENT,
-                         "record-preflight did not echo the recorded intent")
+        self.assertEqual(self.recorded_intent(), self.VERBATIM_INTENT,
+                         "the recorded intent did not survive preflight recording")
 
     def test_a_shell_mutation_after_review_refuses_the_final_recording(self) -> None:
         wid = self.begin_slug("review-to-final-window")
@@ -3048,7 +3124,7 @@ annotate_tdd_evidence(resolve_repo_identity(sys.argv[1]), 'terminal-state', sys.
 
         rebegun = self.cli("begin", "--slug", "production-code-lifetime")
         self.assertEqual(rebegun.returncode, 0, rebegun.stdout + rebegun.stderr)
-        self.assertEqual(json.loads(rebegun.stdout)["productionCode"], "pending",
+        self.assertEqual(json.loads(self.cli("status").stdout)["productionCode"], "pending",
                          "a replacement pass inherited the previous production-code step")
 
         self.assertIn("production-code=pending", self.cli("summary").stdout,

@@ -22,7 +22,7 @@ def main() -> int:
     if identity is None:
         context += "\nWorkflow state unavailable; do not infer that any workflow step passed."
     else:
-        context += "\n" + summary(identity, 1200)
+        context += "\n" + summary(identity)
     print(json.dumps({
         "hookSpecificOutput": {
             "hookEventName": "SessionStart",

@@ -198,7 +198,7 @@ class WorkflowLedgerTests(unittest.TestCase):
         status = self.cli("status", "--repo", str(self.repo))
         self.assertEqual(status.returncode, 0, status.stderr)
         projection = json.loads(status.stdout)
-        self.assertEqual(projection, state)
+        self.assertEqual({key: projection[key] for key in state}, state)
         self.assertEqual(projection["schemaVersion"], 1)
         stable = {
             "schemaVersion", "repo", "slug", "workflowId", "phase", "nextAction",
@@ -419,6 +419,7 @@ class WorkflowLedgerTests(unittest.TestCase):
         self.assertTrue(str(state["preflightEvidence"]).startswith("evidence-"))
         self.assertTrue(str(state["tddEvidence"]).startswith("evidence-"))
         expected = dict(legacy)
+        expected.pop("intent")  # recorded and read back on request, not in the default projection
         expected["preflightEvidence"] = state["preflightEvidence"]
         expected["preflightLatestEvidence"] = state["preflightLatestEvidence"]
         expected["tddEvidence"] = state["tddEvidence"]

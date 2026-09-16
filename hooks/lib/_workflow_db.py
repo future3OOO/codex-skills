@@ -696,6 +696,9 @@ def history(identity: RepoIdentity, workflow_id: str | None = None) -> JsonObjec
             ).fetchall()
             events = []
             for row in rows:
+                # Validated, never published: history fails closed on a row the
+                # projection could not rebuild from, and replays no state blob.
+                _event_state(row, str(row["workflow_id"]))
                 event_id = int(row["event_id"])
                 evidence_ids = [
                     str(item["evidence_id"])
@@ -721,7 +724,6 @@ def history(identity: RepoIdentity, workflow_id: str | None = None) -> JsonObjec
                     "activatesWorkflow": bool(row["activates_workflow"]),
                     "evidenceIds": evidence_ids,
                     "manifestIds": manifest_ids,
-                    "state": _event_state(row, str(row["workflow_id"])),
                 })
             connection.commit()
             return {"events": events}
