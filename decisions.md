@@ -821,6 +821,13 @@ files). No install receipt or installed-entrypoint probe was recorded, so the
 installation path itself is unverified; only installed-content equality is
 claimed.
 
+**Docs-edit waiver (maintainer, 2026-09-16):** Governed workflow passes are not
+required for `decisions.md`-only edits; the record update ships through the
+normal PR review path. This pass's ledger (workflow `e79cb5350b16429ba8bf3136013e39db`)
+was paused at code-review by the override; its retained proof — a real
+RED/GREEN that caught the missing PR34 entry, the quality gate, and the
+final-head check state — stands as evidence, not authorization.
+
 **Record state:** This commit lands the carried-forward Sep-14/Sep-15 notes
 (the #42 consolidation, PR45/PR48/PR50/PR51 deliveries, #30/#47 closures, #29
 brief updates, RCF plugin disable, and #54 replay baseline) that had stayed
