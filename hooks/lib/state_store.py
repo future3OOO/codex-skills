@@ -164,6 +164,49 @@ def record_session_association(session: str, identity: RepoIdentity) -> None:
         print(f"session association unavailable: {exc}", file=sys.stderr)
 
 
+_READS_KEPT = 200
+
+
+def record_reads(identity: RepoIdentity, workflow_id: str, digests: dict[str, str]) -> None:
+    """Remember that this pass read these files, keyed by path with the content hash
+    seen, so a resumed session can be told what it already holds. One sidecar per
+    workflow under the repository slot, written under the slot's flock; the most
+    recent _READS_KEPT paths survive. Fail-soft like the session association: a
+    storage failure never changes the edit hook's exit status."""
+    try:
+        directory = secure_dir(repo_state_dir(identity) / "reads")
+        path = directory / f"{workflow_id}.json"
+        with _flock(directory / ".lock"):
+            reads = _reads_document(path)
+            for key, digest in digests.items():
+                reads.pop(key, None)
+                reads[key] = digest
+            # A list, not a mapping: the atomic writer sorts mapping keys, and recency
+            # is the order the trim and the re-arm both depend on.
+            atomic_write_json(path, {"schemaVersion": 1, "reads": list(reads.items())[-_READS_KEPT:]})
+    except OSError as exc:
+        print(f"read record unavailable: {exc}", file=sys.stderr)
+
+
+def recorded_reads(identity: RepoIdentity, workflow_id: str) -> dict[str, str]:
+    """Every path this pass recorded reading, with the content hash it saw, oldest first."""
+    try:
+        return _reads_document(repo_state_dir(identity) / "reads" / f"{workflow_id}.json")
+    except OSError:
+        return {}
+
+
+def _reads_document(path: Path) -> dict[str, str]:
+    if not path.is_file():
+        return {}
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except ValueError:
+        return {}
+    reads = value.get("reads") if isinstance(value, dict) else None
+    return {str(key): str(digest) for key, digest in reads} if isinstance(reads, list) else {}
+
+
 def session_associations(session: str) -> list[RepoIdentity]:
     """Every repository this session recorded an edit in.
 

@@ -12,8 +12,10 @@ acted-on repetitions).
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -22,14 +24,16 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from hooks.lib.hook_input import edited_path, read_hook_payload, session_key  # noqa: E402
-from hooks.lib.repo_identity import RepoIdentityError, resolve_repo_identity  # noqa: E402
+from hooks.lib._workflow_db import LedgerError  # noqa: E402
+from hooks.lib.hook_input import edited_path, read_hook_payload, read_paths, session_key, working_directory  # noqa: E402
+from hooks.lib.repo_identity import RepoIdentityError, resolve_repo_identity, try_resolve_repo_identity  # noqa: E402
 from hooks.lib.state_store import (  # noqa: E402
     is_reviewable_path,
     is_test_path,
+    record_reads,
     record_session_association,
 )
-from hooks.lib.workflow_state import invalidate_after_edit  # noqa: E402
+from hooks.lib.workflow_state import WorkflowError, invalidate_after_edit, read_workflow  # noqa: E402
 
 
 def _ruff_lines(path: Path) -> list[str]:
@@ -67,8 +71,38 @@ def _emit(document: dict[str, object]) -> None:
         pass
 
 
+def _record_reads(payload: dict[str, object]) -> None:
+    """A Bash read in an active pass is remembered for the compaction re-arm (#59):
+    path plus the hash of the whole file at that moment, whatever range or match the
+    command disclosed. Never a workflow transition, never an exit code."""
+    identity = try_resolve_repo_identity(working_directory(payload))
+    if identity is None:
+        return
+    try:
+        state = read_workflow(identity)
+    except (WorkflowError, LedgerError, ValueError, sqlite3.Error):
+        return
+    if state is None or state.get("phase") == "complete" or not isinstance(state.get("workflowId"), str):
+        return
+    digests = {}
+    for path in read_paths(payload):
+        try:
+            key = path.relative_to(identity.root).as_posix()
+        except ValueError:
+            key = str(path)
+        try:
+            digests[key] = hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError:
+            continue
+    if digests:
+        record_reads(identity, str(state["workflowId"]), digests)
+
+
 def main() -> int:
     payload = read_hook_payload()
+    # Before the write branch: a command that redirects (even 2>/dev/null) is claimed
+    # as an edit by _BASH_WRITE, and 27.6% of the corpus's reads carry one.
+    _record_reads(payload)
     path = edited_path(payload)
     if path is None:
         return 0

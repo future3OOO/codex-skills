@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import sqlite3
 import sys
 from contextlib import closing
@@ -57,6 +58,129 @@ def edited_path(payload: dict[str, object]) -> Path | None:
         target = next((g for g in match.groups() if g), None) if match else None
         return _resolve(target, cwd) if target else None
     return None
+
+
+# Read verbs and their argument rules are the ones the CX2 corpus used (350 shell
+# commands, 239 read events): sed 163, rg 38, inline python 23, cat 14, wc 13, jq 12,
+# nl 9, tail 6, awk 3, `<` 2, head 1. A verb the corpus never used is not claimed.
+_READ_VERBS = {"cat", "head", "tail", "nl", "wc", "jq"}
+_RG_VALUE_OPTIONS = {"-e", "--regexp", "-g", "--glob", "--iglob", "-t", "--type", "-m", "--max-count",
+                     "-A", "-B", "-C", "--max-columns", "-f", "--file"}
+_HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n(.*?\n)?\2\s*(?=\n|$)", re.S)
+_PY_OPEN = re.compile(r"""(?:open|Path)\(\s*['"]([^'"\n]+)['"]\s*(?:,\s*['"]([rwaxb+]+)['"])?""")
+_PY_SQLITE = re.compile(r"""sqlite3\.connect\(\s*['"](?:file:)?([^'"?\n]+)""")
+_PATH_SUFFIXES = (".py", ".md", ".json", ".jsonl", ".txt", ".toml", ".cfg", ".yml", ".yaml", ".rst",
+                  ".sh", ".js", ".ts", ".ini", ".html", ".db", ".sql", ".csv", ".lock", ".sqlite3")
+
+
+def _path_like(token: str) -> bool:
+    if not token or token.startswith(("-", "$(", "http")) or ("=" in token and "/" not in token):
+        return False
+    return (token.startswith(("/", "./", "../", "~")) or token.endswith(_PATH_SUFFIXES)
+            or ("/" in token and not re.search(r"[|&;<>*]", token)))
+
+
+_ASSIGNMENT = re.compile(r'^\s*([A-Za-z_]\w*)=(["\']?)([^\n]*?)\2\s*$', re.M)
+_SHELL_WORDS = {"if", "then", "else", "elif", "do", "while", "until", "!", "{", "(", "fi", "done"}
+
+
+def _substitute(command: str) -> str:
+    """One-line `name=value` assignments the command later reads back as $name."""
+    for match in _ASSIGNMENT.finditer(command):
+        name, value = match.group(1), match.group(3)
+        if name not in {"HOME", "PWD"} and value:
+            command = re.sub(r'"?\$\{?' + name + r'\}?"?', value, command)
+    return command
+
+
+def _segments(command: str) -> list[list[str]]:
+    """Shell segments as token lists: heredoc bodies dropped, lines and operators split,
+    quoting honoured."""
+    text = re.sub(r"(?<!\\)\n", " ; ", _HEREDOC.sub("", _substitute(command)))
+    lexer = shlex.shlex(text, posix=True, punctuation_chars=";|&<>")
+    lexer.whitespace_split = True
+    try:
+        tokens = list(lexer)
+    except ValueError:
+        tokens = command.split()
+    segments: list[list[str]] = [[]]
+    for token in tokens:
+        if token in {";", "|", "||", "&&", "&", "|&", ";;"}:
+            segments.append([])
+        else:
+            segments[-1].append(token)
+    return [segment for segment in segments if segment]
+
+
+def read_candidates(command: str) -> list[str]:
+    """Paths a Bash command reads, as written, before any filesystem resolution."""
+    found: list[str] = []
+    for tokens in _segments(command):
+        while tokens and (re.match(r"^[A-Za-z_]\w*=", tokens[0]) or tokens[0] in {"sudo", "timeout", "nice"}
+                          or tokens[0] in _SHELL_WORDS):
+            tokens = tokens[2:] if tokens[0] == "timeout" else tokens[1:]
+        args: list[str] = []
+        index = 0
+        while index < len(tokens):
+            token = tokens[index]
+            if token in {">", ">>"}:
+                index += 2
+            elif token == "<":
+                if index + 1 < len(tokens) and _path_like(tokens[index + 1]):
+                    found.append(tokens[index + 1])
+                index += 2
+            else:
+                args.append(token)
+                index += 1
+        if not args:
+            continue
+        verb, rest = os.path.basename(args[0]), args[1:]
+        if verb in _READ_VERBS:
+            found.extend(arg for arg in rest if _path_like(arg))
+        elif verb == "sed":
+            if "-i" in rest or any(arg.startswith("--in-place") for arg in rest):
+                continue
+            positional = [arg for arg in rest if not arg.startswith("-")]
+            script_inline = not any(arg in {"-e", "--expression", "-f", "--file"} for arg in rest)
+            found.extend(arg for arg in (positional[1:] if script_inline else positional) if _path_like(arg))
+        elif verb == "rg":
+            positional: list[str] = []
+            skip = False
+            for arg in rest:
+                if skip:
+                    skip = False
+                elif arg in _RG_VALUE_OPTIONS:
+                    skip = True
+                elif not arg.startswith("-"):
+                    positional.append(arg)
+            pattern_inline = not any(arg in {"-e", "--regexp"} for arg in rest)
+            found.extend(arg for arg in (positional[1:] if pattern_inline else positional) if _path_like(arg))
+        elif verb == "awk":
+            positional = [arg for arg in rest if not arg.startswith("-")]
+            found.extend(arg for arg in positional[1:] if _path_like(arg))
+    if re.search(r"\bpython3?\b", command):
+        for match in _PY_OPEN.finditer(command):
+            if not any(flag in (match.group(2) or "r") for flag in "wax") and _path_like(match.group(1)):
+                found.append(match.group(1))
+        found.extend(match.group(1) for match in _PY_SQLITE.finditer(command)
+                     if _path_like(match.group(1)) and not match.group(1).startswith("/dev/"))
+    return list(dict.fromkeys(found))
+
+
+def read_paths(payload: dict[str, object]) -> list[Path]:
+    """Existing regular files a Bash payload reads, resolved against its cwd."""
+    tool_input = payload.get("tool_input")
+    command = tool_input.get("command") if isinstance(tool_input, dict) else None
+    if payload.get("tool_name") != "Bash" or not isinstance(command, str) or not command:
+        return []
+    cwd = payload.get("cwd")
+    cwd = cwd if isinstance(cwd, str) and cwd else None
+    paths: list[Path] = []
+    for candidate in read_candidates(command):
+        resolved = _resolve(candidate.replace("$PWD", cwd or "").replace("$HOME", str(Path.home())), cwd)
+        if resolved.is_file() and resolved not in paths:
+            paths.append(resolved)
+    return paths
 
 
 def working_directory(payload: dict[str, object]) -> str:
