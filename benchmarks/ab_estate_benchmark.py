@@ -33,7 +33,7 @@ ESTATE = ("AGENTS.md", "config.toml", "hooks", "skills")
 # Split so this file never carries the marker it plants. The arm's own gate rejecting
 # the edit is the only thing that proves the gate ran; a clean tree exits zero either way.
 ESCAPE = "TO" + "DO"
-STATE_FIELDS = ("phase", "nextAction", "slug", "intent", "repoContextForge", "gitnexus", "preflight",
+STATE_FIELDS = ("phase", "nextAction", "slug", "repoContextForge", "gitnexus", "preflight",
                 "tdd", "productionCode", "implementation", "verification", "advisorPreflight.status",
                 "advisorPreflight.findings", "codeReview.status", "codeReview.findings",
                 "finalReview.source", "finalReview.status", "finalReview.findings")
@@ -421,7 +421,7 @@ def repetition(arm: dict[str, object], index: int, seed: dict[str, object]) -> t
     start = time.perf_counter()
     begun = run([*cli, "begin", "--repo", str(repo), "--slug", "estate-benchmark",
                  "--intent", "isolated A/B estate benchmark"], env)
-    scenarios.append(scenario("begin", start, [begun], *project(begun.stdout, STATE_FIELDS)))
+    scenarios.append(scenario("begin", start, [begun], *project(begun.stdout, ("phase", "nextAction", "slug"))))
 
     start = time.perf_counter()
     status = run([*cli, "status", "--repo", str(repo)], env)

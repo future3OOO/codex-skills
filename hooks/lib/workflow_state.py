@@ -2038,7 +2038,12 @@ def public_status(state: JsonObject, identity: RepoIdentity | None = None, *,
             result.update(verification="pending", bindingError=drift)
         if not ready or drift:
             result["nextAction"] = _derive_next_action(result)
-    return result if fields is None else {key: value for key, value in result.items() if key in fields}
+    if fields is None:
+        # The recorded task text is multi-KB and already in the caller's context; it is
+        # read back on request (--fields intent) and by the advisor checkpoint, never by default.
+        result.pop("intent", None)
+        return result
+    return {key: value for key, value in result.items() if key in fields}
 
 
 def _selection(command: str, root: object) -> JsonObject:
@@ -2112,7 +2117,41 @@ def _earned_split(identity: RepoIdentity, state: JsonObject) -> str:
             + (f" Shared RED observation: {shared}." if shared else "") + settled)
 
 
-def summary(identity: RepoIdentity, limit: int = 1200) -> str:
+def _map_listing(identity: RepoIdentity, state: JsonObject) -> str:
+    """The map facts a resumed lead otherwise digs out of its own transcript; last in
+    the line so a cap cut takes ids, never the invariant or the verification command."""
+    try:
+        items = behavior_map.recorded_map(
+            evidence_document(identity, state.get("tddEvidence")),
+            evidence_document(identity, state.get("preflightEvidence")),
+        ) or []
+    except (WorkflowError, LedgerError, ValueError):
+        return ""
+    if not items:
+        return ""
+    by_status: dict[str, list[str]] = {}
+    for entry in items:
+        by_status.setdefault(str(entry.get("status")), []).append(str(entry["id"]))
+    return " Map: " + "; ".join(f"{status}: {', '.join(ids)}" for status, ids in by_status.items()) + "."
+
+
+def _latest_verification_command(identity: RepoIdentity, state: JsonObject) -> str:
+    """The command behind the latest verification run, so a resumed lead knows how
+    verification was driven without a second evidence lookup."""
+    try:
+        document = evidence_document(identity, state.get("verificationLatestEvidence"))
+    except (WorkflowError, LedgerError, ValueError):
+        return ""
+    runs = document.get("runs") if isinstance(document, dict) else []
+    commands = [str(run.get("command")) for run in runs
+                if isinstance(run, dict) and run.get("kind") == "generic" and run.get("valid") and run.get("command")]
+    if not commands:
+        return ""
+    command = commands[-1]
+    return f" Verified by: {command[:120] + ' […]' if len(command) > 120 else command}."
+
+
+def summary(identity: RepoIdentity, limit: int = 3000) -> str:
     state = read_workflow(identity)
     if state is None:
         return "Workflow state unavailable; do not infer that any workflow step passed."
@@ -2139,6 +2178,7 @@ def summary(identity: RepoIdentity, limit: int = 1200) -> str:
         f"code-review={code_review.get('status')}/{code_review.get('findings')}, "
         f"final-review={final_review.get('source')}/{final_review.get('status')}/{final_review.get('findings')}. "
         + _earned_split(identity, state)
+        + _latest_verification_command(identity, state)
         + (f" Advisor outage: {advisor.get('reason')}." if advisor.get("status") == "unavailable" else "")
         + (
             f" Paused: {str(paused.get('reason'))[:160]}."
@@ -2146,6 +2186,7 @@ def summary(identity: RepoIdentity, limit: int = 1200) -> str:
             else ""
         )
         + " Missing state is pending, never success."
+        + _map_listing(identity, state)
     )
     suffix = " … Details: workflow status --repo <checkout>; workflow evidence --repo <checkout> --evidence-id <id>."
     return text if len(text) <= limit else text[:max(0, limit - len(suffix))].rsplit(" ", 1)[0] + suffix

@@ -597,7 +597,7 @@ class WorkflowHookTests(HookHarness):
         self.assertFalse((ROOT / "hooks" / "pre-compact-flush.py").exists())
         begun = self.state("begin", "--slug", "compact-state")
         self.assertEqual(begun.returncode, 0, begun.stdout + begun.stderr)
-        before = json.loads(begun.stdout)
+        before = json.loads(self.state("status").stdout)
 
         # A fresh process reads the committed event directly. Durability is the
         # public contract; rewriting a JSON snapshot before compaction was only

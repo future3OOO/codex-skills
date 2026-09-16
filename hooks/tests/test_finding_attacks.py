@@ -2508,7 +2508,7 @@ class WorkflowRecovery(AttackHarness):
         self.assertIn(wid, summary, marker)
         self.assertIn(state["activeCandidateTree"], summary, marker)
         self.assertIn(state["tddEvidence"], summary, marker)
-        self.assertLessEqual(len(summary.rstrip("\n")), 1200)
+        self.assertLessEqual(len(summary.rstrip("\n")), 3000)
         selected = self.cli("status", "--fields", "workflowId,activeCandidateTree,nextAction")
         self.assertEqual(selected.returncode, 0, marker + selected.stderr)
         self.assertEqual(json.loads(selected.stdout), {k: state[k] for k in ("workflowId", "activeCandidateTree", "nextAction")})
