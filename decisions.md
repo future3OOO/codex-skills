@@ -800,8 +800,9 @@ the merge. The issue closure is the delivery fact; it does not claim the
 recorded acceptance gaps were delivered — the void N arm, the partial N+1
 replay stopped before review, unestablished reviewer-claim/final-advisor
 behavior (Done-when #5), and the maintainer-deferred SPEC-4 remain recorded
-limits, not satisfied criteria. The shared estate was refreshed afterward (pre-refresh backup
-`~/.codex-backups/20260915-220853`, 199 files): sampled PR56-owned paths
+limits, not satisfied criteria. The shared estate was refreshed afterward
+(pre-refresh backup `~/.codex-backups/20260915-220853`, 199 files): sampled
+PR56-owned paths
 (`hooks/lib/tdd_workflow.py`, `skills/tdd/SKILL.md`, `skills/tdd/recorder.md`,
 `skills/production-code/SKILL.md`) sha256-match the merged HEAD. The extra
 `claude-advisor` skill — the replay's misroute, not the candidate — was retired
