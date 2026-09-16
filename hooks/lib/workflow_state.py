@@ -2178,7 +2178,6 @@ def summary(identity: RepoIdentity, limit: int = 3000) -> str:
         f"code-review={code_review.get('status')}/{code_review.get('findings')}, "
         f"final-review={final_review.get('source')}/{final_review.get('status')}/{final_review.get('findings')}. "
         + _earned_split(identity, state)
-        + _latest_verification_command(identity, state)
         + (f" Advisor outage: {advisor.get('reason')}." if advisor.get("status") == "unavailable" else "")
         + (
             f" Paused: {str(paused.get('reason'))[:160]}."
@@ -2186,6 +2185,7 @@ def summary(identity: RepoIdentity, limit: int = 3000) -> str:
             else ""
         )
         + " Missing state is pending, never success."
+        + _latest_verification_command(identity, state)
         + _map_listing(identity, state)
     )
     suffix = " … Details: workflow status --repo <checkout>; workflow evidence --repo <checkout> --evidence-id <id>."
