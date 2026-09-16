@@ -809,6 +809,15 @@ PR56-owned paths
 from the shared and issue54 estates on 2026-09-15 (backup
 `~/.codex-backups/retire-claude-advisor-20260915T070615Z`).
 
+**PR34 delivery (supersedes the Sep-13 pre-merge status):**
+[PR #34](https://github.com/future3OOO/codex-skills/pull/34) merged at
+`04aa084d2939e23b031e6ff07c09f657837fc399` on 2026-09-13, delivering #32's
+native-delegate defaults. Its two owned files —
+`skills/repo-context-forge/SKILL.md` and
+`skills/repo-production-workflow/SKILL.md` — sha256-match the shared estate at
+current HEAD (pre-install backup `~/.codex-backups/issue32-20260913-073511`).
+No separate install receipt was recorded.
+
 **Record state:** This commit lands the carried-forward Sep-14/Sep-15 notes
 (the #42 consolidation, PR45/PR48/PR50/PR51 deliveries, #30/#47 closures, #29
 brief updates, RCF plugin disable, and #54 replay baseline) that had stayed
