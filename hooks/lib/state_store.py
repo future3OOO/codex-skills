@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import importlib.util
 import json
 import os
@@ -165,6 +166,19 @@ def record_session_association(session: str, identity: RepoIdentity) -> None:
 
 
 _READS_KEPT = 200
+HASH_BYTES = 8 * 1024 * 1024
+
+
+def content_digest(path: Path) -> str:
+    """What a recorded read compares against later: the sha256 of the bytes when the file
+    is at or under HASH_BYTES, else its size and mtime_ns. Above the bound (the estate's
+    rollouts, indexes and dumps) a full hash per hook fire and per re-arm path is the cost
+    this change exists to avoid; an mtime that moved without content change reads as
+    changed, which fails in the safe direction. Raises OSError like the read it replaces."""
+    stat = path.stat()
+    if stat.st_size > HASH_BYTES:
+        return f"size:{stat.st_size}:{stat.st_mtime_ns}"
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def record_reads(identity: RepoIdentity, workflow_id: str, digests: dict[str, str]) -> None:

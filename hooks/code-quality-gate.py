@@ -12,7 +12,6 @@ acted-on repetitions).
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import sqlite3
@@ -28,6 +27,7 @@ from hooks.lib._workflow_db import LedgerError  # noqa: E402
 from hooks.lib.hook_input import edited_path, read_hook_payload, read_paths, session_key, working_directory  # noqa: E402
 from hooks.lib.repo_identity import RepoIdentityError, resolve_repo_identity, try_resolve_repo_identity  # noqa: E402
 from hooks.lib.state_store import (  # noqa: E402
+    content_digest,
     is_reviewable_path,
     is_test_path,
     record_reads,
@@ -73,8 +73,13 @@ def _emit(document: dict[str, object]) -> None:
 
 def _record_reads(payload: dict[str, object]) -> None:
     """A Bash read in an active pass is remembered for the compaction re-arm (#59):
-    path plus the hash of the whole file at that moment, whatever range or match the
-    command disclosed. Never a workflow transition, never an exit code."""
+    path plus the whole file's digest at that moment, whatever range or match the
+    command disclosed. Never a workflow transition, never an exit code. The paths come
+    first: most Bash payloads read nothing and must cost a few stats, not a repository
+    resolution and a ledger open."""
+    paths = read_paths(payload)
+    if not paths:
+        return
     identity = try_resolve_repo_identity(working_directory(payload))
     if identity is None:
         return
@@ -85,13 +90,13 @@ def _record_reads(payload: dict[str, object]) -> None:
     if state is None or state.get("phase") == "complete" or not isinstance(state.get("workflowId"), str):
         return
     digests = {}
-    for path in read_paths(payload):
+    for path in paths:
         try:
             key = path.relative_to(identity.root).as_posix()
         except ValueError:
             key = str(path)
         try:
-            digests[key] = hashlib.sha256(path.read_bytes()).hexdigest()
+            digests[key] = content_digest(path)
         except OSError:
             continue
     if digests:

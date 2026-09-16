@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import unittest
@@ -47,6 +48,19 @@ class ReadCandidateTests(unittest.TestCase):
         self.assertEqual(self.candidates("python3 - <<'PY'\nimport sqlite3\nc = sqlite3.connect('/home/u/state/workflow.sqlite3')\nPY"),
                          ["/home/u/state/workflow.sqlite3"], marker)
         self.assertEqual(self.candidates("python3 - <<'PY'\nopen('notes/out.md', 'w').write('x')\nPY"), [], marker)
+
+    def test_corpus_prefixes_conditionals_and_substitutions(self) -> None:
+        # BM_CORPUS_SHAPES_PINNED: the shapes the CX2 corpus replay taught, kept here
+        # instead of a frozen 350-command fixture.
+        marker = "READ_CANDIDATES_WRONG"
+        self.assertEqual(self.candidates("timeout 900 python3 -m unittest hooks.tests.test_x"), [], marker)
+        self.assertEqual(self.candidates("PYTHONDONTWRITEBYTECODE=1 sed -n '1,5p' src/a.py"), ["src/a.py"], marker)
+        # A guarded read is claimed as written; the guard is not evaluated, and read_paths
+        # drops a candidate that does not exist before anything is recorded.
+        self.assertEqual(self.candidates("if [ -f decisions.md ]; then sed -n '1,240p' decisions.md; fi"),
+                         ["decisions.md"], marker)
+        self.assertEqual(self.candidates('python3 tool.py --intent "$(< /tmp/intent.txt)"'), [], marker)
+        self.assertEqual(self.candidates('f=/tmp/out.json\njq -r .a "$f"'), ["/tmp/out.json"], marker)
 
     def test_writes_options_and_patterns_are_not_reads(self) -> None:
         marker = "READ_CANDIDATES_WRONG"
@@ -121,6 +135,33 @@ class ReadCaptureHookTests(HookHarness):
         identity = resolve_repo_identity(self.repo)
         wid = json.loads(self.state("status").stdout)["workflowId"]
         self.assertEqual(set(state_store.recorded_reads(identity, wid)), {"app.py"}, "READ_NOT_RECORDED")
+
+    def test_large_file_digest_is_size_and_mtime(self) -> None:
+        # BM_LARGE_FILE_DIGEST: above the hash bound the digest is size:mtime_ns, the
+        # re-arm still answers unchanged, and an mtime change flips it to changed.
+        self.assertEqual(self.state("begin", "--slug", "reads").returncode, 0)
+        self.assertTrue(hasattr(state_store, "HASH_BYTES"), "LARGE_FILE_HASHED")
+        big = self.repo / "big.jsonl"
+        with big.open("wb") as handle:
+            handle.truncate(state_store.HASH_BYTES + 1)
+        self.read("tail -c 10 big.jsonl")
+        identity = resolve_repo_identity(self.repo)
+        wid = json.loads(self.state("status").stdout)["workflowId"]
+        digest = state_store.recorded_reads(identity, wid).get("big.jsonl", "")
+        self.assertTrue(digest.startswith("size:"), "LARGE_FILE_HASHED: " + digest)
+        self.assertIn("Inspected this pass, unchanged since (1): big.jsonl", self.rearm(), "LARGE_FILE_HASHED")
+        stamp = big.stat().st_mtime + 5
+        os.utime(big, (stamp, stamp))
+        self.assertIn("Changed since inspected (1): big.jsonl", self.rearm(), "LARGE_FILE_HASHED")
+
+    def test_non_read_command_opens_no_state(self) -> None:
+        # BM_NON_READ_OPENS_NO_STATE: the majority of Bash payloads read nothing and must
+        # cost the hook no identity resolution or workflow lookup.
+        state_root = Path(self.env["CODEX_WORKFLOW_STATE_ROOT"])
+        self.assertFalse(state_root.exists())
+        result = self.read("git status --short")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(state_root.exists(), "NON_READ_OPENED_STATE")
 
     def test_write_command_still_takes_the_edit_path_and_records_no_read(self) -> None:
         # BM_WRITE_PATH_UNCHANGED
