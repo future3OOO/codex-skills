@@ -835,3 +835,57 @@ uncommitted across the PR50/51/56 fast-forwards; the pre-PR56-ff stash
 snapshot of the same notes is redundant once this lands. Every merged PR
 through #56 now has a delivered or explicitly superseded status. Open PRs
 #40, #52 and #53 carry no delivery claims.
+
+## 2026-09-16 — Context-efficiency passes: repo-context-forge #30 and codex-skills #60/#61
+
+**Decision (maintainer-directed):** work #55/#59/#46 by measurement, ship only
+structural changes at existing owners, no new hook, ledger, stage, or flag.
+Re-derived the CX2 lead independently of the earlier issue comments (o200k,
+canonical `response_item` text): 953,787 tokens; 30 truncations discarding
+192,095; 117 repeat reads of already-read paths costing 226,822; workflow CLI
+168 calls / 114,278 (`history` 8 / 23,019); 11 post-compaction rollout
+self-greps / 73,564 searching for `BM_*` ids and `phase red|green`; JSONL
+searches only 3 calls. Script and per-call tables retained under the session
+scratchpad (`cx2/measure.json`, `cx2/report.md`).
+
+**repo-context-forge [PR #30](https://github.com/future3OOO/repo-context-forge/pull/30)
+(open, not merged):** SoulForge 2.13.2 records every Python import statement
+(`refs.import_source`, `external_imports.package`) and resolves none of them,
+so `SoulForgeMap` dependents came only from identifier-matched `edges`;
+`workflow_cli.py` reported `risk=high direct_dependents=0` with seven real
+importers. The consumer now parses those statements against the `files`
+table and unions them with edges at weight 1.0 (graph built once per
+instance). Live: `workflow_cli.py` 0→7, `tdd_workflow.py` 0→7, matching `rg`.
+The `refs.name`/`calls` swap proposed in #59 overcounts (36 vs 7) and was not
+taken; replacing edges outright would zero non-Python repos. Default packet
+budget 16k→8k: Codex delivers ~10k tokens of one result and cut the middle of
+every 16k packet in CX2 (`gitnexus_analysis` body, `scope_rules`), not the
+targets; at 8k the codex-skills packet arrives whole at 6,493 tokens in the
+compact form, dropping per-file `soulforge_impact` lists and symbol lines (no
+budget renders the full form under the cap; recorded as the accepted trade).
+`targets[:5]` digest cap unchanged: the compact `<targets>` block lists all 20.
+Reviewer round (fleet + cubic) fixed in `c394568`: beyond-package relative
+imports link nothing, package beats a same-named module, backslash
+continuations normalized, README 8k. Occurrence of all three shapes across 25
+captured indexes / 11,158 statements: zero.
+
+**codex-skills [#60](https://github.com/future3OOO/codex-skills/issues/60) /
+[PR #61](https://github.com/future3OOO/codex-skills/pull/61) (open, not
+merged):** `history` embedded the full state projection per event (426,596
+tokens on one real pass); rows are still validated, no longer published
+(2,976 active; bare slot 191,549→15,898). `status` and mutation receipts drop
+`intent` (10,839→1,283); `begin` prints the compact receipt. `summary` (the
+compaction re-arm line) lists the map grouped by status after the closing
+invariant plus the latest valid generic verification command, cap 3,000 sized
+to the largest recorded real map (38 ids). Deviation recorded on #60: bare
+`history` keeps every workflow (prune reports count across workflows).
+
+**Not built, by decision:** #59's read ledger C/D (behavioural effect
+unproven; needs the paired pass), any output-budget hook, by-reference packet
+emission. Expected effect on the CX2 lead from what shipped: ~7–8k tokens from
+whole packet delivery, ~24k deterministic from the CLI shapes, up to ~74k if
+the summary line stops the post-compaction rollout greps (unproven).
+**Observed, not changed:** pr mode ranks the changed file above the intent
+(`decisions.md` at 1513 topped a hooks-review packet); the final advisor
+appeal on PR #30 was skipped and neither workflow was run to `complete` at
+the maintainer's direction.
