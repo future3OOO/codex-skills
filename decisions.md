@@ -791,19 +791,22 @@ All review threads on the merged head are resolved and local main carries the
 merge. Older Claude adapters in separate HOMEs still need the later backport
 before sharing the stronger count-and-claim guarantee, as recorded on Sep-13.
 
-**PR56 delivery (supersedes "No shared-estate installation or merge"):**
+**PR56 delivery (supersedes the earlier "PR #56 references #54 without closing
+it" and "No shared-estate installation or merge" statements):**
 [PR #56](https://github.com/future3OOO/codex-skills/pull/56) merged at
 `f088c144cafedff58c887eebf6cbeb662a5a89a8` on 2026-09-15 and
 [#54](https://github.com/future3OOO/codex-skills/issues/54) closed COMPLETED at
-the merge. The shared estate was refreshed afterward (pre-refresh backup
+the merge. The issue closure is the delivery fact; it does not claim the
+recorded acceptance gaps were delivered — the void N arm, the partial N+1
+replay stopped before review, unestablished reviewer-claim/final-advisor
+behavior (Done-when #5), and the maintainer-deferred SPEC-4 remain recorded
+limits, not satisfied criteria. The shared estate was refreshed afterward (pre-refresh backup
 `~/.codex-backups/20260915-220853`, 199 files): sampled PR56-owned paths
 (`hooks/lib/tdd_workflow.py`, `skills/tdd/SKILL.md`, `skills/tdd/recorder.md`,
 `skills/production-code/SKILL.md`) sha256-match the merged HEAD. The extra
 `claude-advisor` skill — the replay's misroute, not the candidate — was retired
 from the shared and issue54 estates on 2026-09-15 (backup
-`~/.codex-backups/retire-claude-advisor-20260915T070615Z`). SPEC-4 remains
-deferred by the maintainer; the void N arm and partial N+1 replay results stand
-as recorded on Sep-15.
+`~/.codex-backups/retire-claude-advisor-20260915T070615Z`).
 
 **Record state:** This commit lands the carried-forward Sep-14/Sep-15 notes
 (the #42 consolidation, PR45/PR48/PR50/PR51 deliveries, #30/#47 closures, #29
