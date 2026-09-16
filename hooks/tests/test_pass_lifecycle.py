@@ -434,8 +434,10 @@ class PassLifecycleTests(unittest.TestCase):
         self.assertEqual(verified.returncode, 0, verified.stdout + verified.stderr)
         summary = self.cli("summary").stdout
         self.assertLessEqual(len(summary.rstrip("\n")), 3000, "SUMMARY_OMITS_MAP")
+        groups = {group.split(": ", 1)[0]: set(group.split(": ", 1)[1].split(", "))
+                  for group in summary.split(" Map: ", 1)[1].rstrip("\n").rstrip(".").split("; ")}
         for item in document["behaviorMap"]:
-            self.assertIn(item["id"], summary.split(" Map: ", 1)[1], "SUMMARY_OMITS_MAP")
+            self.assertIn(item["id"], groups.get(item["status"], set()), "SUMMARY_OMITS_MAP")
         self.assertIn("Missing state is pending, never success.", summary, "SUMMARY_OMITS_MAP")
         self.assertIn("Verified by: ", summary, "SUMMARY_OMITS_MAP")
         self.assertIn("verified-marker", summary, "SUMMARY_OMITS_MAP")
