@@ -953,7 +953,31 @@ Review round 3 (four threads): `_sqlite_entries` now guards `reads/` with `_walk
 (symlinked directory no longer followed by `prune --apply`; RED reproduced the outside
 deletion at the real Seam). Cubic P2 on the mode-000 test rejected: premise inverted, live
 non-root run OK. CodeRabbit reassignment ordering report-not-actioned: reproduced,
-under-records only, zero corpus reads fed by a reassigned variable. Final advisor ran on
+under-records only, zero corpus reads fed by a reassigned variable.
+
+An independent review then showed the round-3 reassignment disposition was wrong:
+`f=a.py; f=b.py; cat "$f"` returned a.py, a path bash never printed, and a dead
+branch's read was claimed. Rounds 4 to 7 answered that plus 37 findings from four
+review passes. The matcher was rebuilt onto one ordered read/write event stream,
+because arbitration by substring position was the root of a whole family of false
+claims. Reserved words now count only in command-word position; guard chains, group
+scope, assignment scope, the inline-python gate and the write set (redirects, tee,
+sed -i by option letter, cp/mv destinations) all follow from the same stream.
+
+Two judgment errors are worth recording. The corpus of 350 real commands stayed at
+239/239 through every round, so it never once failed and could not have: it contains
+none of the adversarial shapes. Treating it as evidence of correctness is exactly the
+mistake the estate's own rule warns about, that a test written from the same
+assumption as the fix cannot detect its error. And the matcher kept creeping toward
+being a shell interpreter, one rule per round, when the honest shape is a narrow claim
+that declines anything ambiguous. The extractor's expectations now live in
+benchmarks/read_matcher_probes.json, 112 commands with the paths each really read and
+a stated reason per row, and the replay fails on a claimed path the command never read
+rather than only on a miss. That replaced ten unittest methods.
+
+One unrelated fix rode along: test_higher_slots_count_during_competing_admissions
+faked its permit count while using the real account slot directory, so adding any test
+case anywhere could make the parallel suite red. It now gets a private slot root. Final advisor ran on
 swe-2-max through a temporary PATH shim because the gateway's gpt-6-astra credit was
 exhausted (429 usage_limit_reached); verdict commit-ready, envelope recorded by hand
 because the model fenced it.
