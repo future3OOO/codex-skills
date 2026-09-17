@@ -174,10 +174,13 @@ def content_digest(path: Path) -> str:
     is at or under HASH_BYTES, else its size and mtime_ns. Above the bound (the estate's
     rollouts, indexes and dumps) a full hash per hook fire and per re-arm path is the cost
     this change exists to avoid; an mtime that moved without content change reads as
-    changed, which fails in the safe direction. Raises OSError like the read it replaces."""
-    stat = path.stat()
-    if stat.st_size > HASH_BYTES:
-        return f"size:{stat.st_size}:{stat.st_mtime_ns}"
+    changed, which fails in the safe direction. Raises OSError like the read it replaces,
+    including for a path that is no longer a regular file."""
+    status = path.stat()
+    if not stat.S_ISREG(status.st_mode):
+        raise OSError(f"not a regular file: {path}")
+    if status.st_size > HASH_BYTES:
+        return f"size:{status.st_size}:{status.st_mtime_ns}"
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
@@ -218,7 +221,12 @@ def _reads_document(path: Path) -> dict[str, str]:
     except ValueError:
         return {}
     reads = value.get("reads") if isinstance(value, dict) else None
-    return {str(key): str(digest) for key, digest in reads} if isinstance(reads, list) else {}
+    if not isinstance(reads, list) or not all(
+        isinstance(entry, list) and len(entry) == 2 and all(isinstance(part, str) for part in entry)
+        for entry in reads
+    ):
+        return {}
+    return {key: digest for key, digest in reads}
 
 
 def session_associations(session: str) -> list[RepoIdentity]:

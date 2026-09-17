@@ -32,6 +32,7 @@ def _reads_context(identity: RepoIdentity) -> str:
         return ""
     unchanged: list[str] = []
     changed: list[str] = []
+    # Oldest first from the store; the line shows the newest LISTED of each group.
     for key, digest in recorded_reads(identity, str(state["workflowId"])).items():
         path = Path(key) if Path(key).is_absolute() else Path(identity.root) / key
         try:
@@ -44,7 +45,7 @@ def _reads_context(identity: RepoIdentity) -> str:
     def line(label: str, keys: list[str]) -> str:
         if not keys:
             return ""
-        shown = ", ".join(keys[:LISTED])
+        shown = ", ".join(keys[-LISTED:])
         if len(shown) > READS_CHARS:
             shown = shown[:READS_CHARS].rsplit(", ", 1)[0]
         listed = shown.count(", ") + 1

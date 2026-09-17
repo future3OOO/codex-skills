@@ -383,9 +383,25 @@ def _apply_database(
     return "skipped"
 
 
-def _sqlite_entries(slot: Path) -> list[dict[str, str]]:
+def _sqlite_entries(slot: Path, workflows: list[dict[str, object]], apply: bool) -> list[dict[str, str]]:
+    retired = {str(item["workflowId"]) for item in workflows if item["decision"] in {"removable", "removed"}}
     entries: list[dict[str, str]] = []
     for child in sorted(slot.iterdir()):
+        if child.name == "reads" and child.is_dir():
+            # Read sidecars follow their workflow: one file per instance under reads/.
+            for sidecar in sorted(child.iterdir()):
+                name = f"reads/{sidecar.name}"
+                if sidecar.suffix != ".json" or sidecar.stem not in retired:
+                    entries.append({"path": name, "decision": "retained", "reason": "follows-retained-workflow"})
+                elif not apply:
+                    entries.append({"path": name, "decision": "removable", "reason": "follows-removed-workflow"})
+                else:
+                    try:
+                        sidecar.unlink()
+                        entries.append({"path": name, "decision": "removed", "reason": "follows-removed-workflow"})
+                    except OSError as exc:
+                        entries.append({"path": name, "decision": "skipped", "reason": f"unlink-failed: {exc}"})
+            continue
         if child.name in DATABASE_FILES:
             reason = "authoritative-database"
         elif child.name == TELEMETRY:
@@ -498,7 +514,7 @@ def prune(root: Path | None = None, *, apply: bool = False) -> dict[str, object]
                         "store": "sqlite",
                         "status": status,
                         "workflows": workflows,
-                        "entries": _sqlite_entries(slot),
+                        "entries": _sqlite_entries(slot, workflows, apply),
                     })
                     continue
                 if error is not None:

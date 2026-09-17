@@ -67,7 +67,8 @@ _READ_VERBS = {"cat", "head", "tail", "nl", "wc", "jq"}
 _RG_VALUE_OPTIONS = {"-e", "--regexp", "-g", "--glob", "--iglob", "-t", "--type", "-m", "--max-count",
                      "-A", "-B", "-C", "--max-columns", "-f", "--file"}
 _HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n(.*?\n)?\2\s*(?=\n|$)", re.S)
-_PY_OPEN = re.compile(r"""(?:open|Path)\(\s*['"]([^'"\n]+)['"]\s*(?:,\s*['"]([rwaxb+]+)['"])?""")
+_PY_OPEN = re.compile(r"""open\(\s*['"]([^'"\n]+)['"]\s*(?:,\s*(?:mode\s*=\s*)?['"]([rwaxb+t]+)['"])?""")
+_PY_PATH_READ = re.compile(r"""Path\(\s*['"]([^'"\n]+)['"]\s*\)\s*\.\s*(?:read_text|read_bytes)\(""")
 _PY_SQLITE = re.compile(r"""sqlite3\.connect\(\s*['"](?:file:)?([^'"?\n]+)""")
 _PATH_SUFFIXES = (".py", ".md", ".json", ".jsonl", ".txt", ".toml", ".cfg", ".yml", ".yaml", ".rst",
                   ".sh", ".js", ".ts", ".ini", ".html", ".db", ".sql", ".csv", ".lock", ".sqlite3")
@@ -80,16 +81,20 @@ def _path_like(token: str) -> bool:
             or ("/" in token and not re.search(r"[|&;<>*]", token)))
 
 
-_ASSIGNMENT = re.compile(r'^\s*([A-Za-z_]\w*)=(["\']?)([^\n]*?)\2\s*$', re.M)
+_ASSIGNMENT = re.compile(r'^\s*([A-Za-z_]\w*)=(?:"([^"\n]*)"|\'([^\'\n]*)\'|([^\s;&|"\'\n]*))', re.M)
 _SHELL_WORDS = {"if", "then", "else", "elif", "do", "while", "until", "!", "{", "(", "fi", "done"}
 
 
 def _substitute(command: str) -> str:
-    """One-line `name=value` assignments the command later reads back as $name."""
+    """One-line `name=value` assignments the command later reads back as $name: the value
+    stops at whitespace or a separator, only the exact name substitutes (never a longer
+    name sharing its prefix), and the value is inserted verbatim, never as a pattern."""
     for match in _ASSIGNMENT.finditer(command):
-        name, value = match.group(1), match.group(3)
+        name = match.group(1)
+        value = next((group for group in match.groups()[1:] if group), "")
         if name not in {"HOME", "PWD"} and value:
-            command = re.sub(r'"?\$\{?' + name + r'\}?"?', value, command)
+            command = re.sub(r'"?\$(?:\{' + re.escape(name) + r'\}|' + re.escape(name) + r'(?!\w))"?',
+                             lambda _match, value=value: value, command)
     return command
 
 
@@ -160,8 +165,9 @@ def read_candidates(command: str) -> list[str]:
             found.extend(arg for arg in positional[1:] if _path_like(arg))
     if re.search(r"\bpython3?\b", command):
         for match in _PY_OPEN.finditer(command):
-            if not any(flag in (match.group(2) or "r") for flag in "wax") and _path_like(match.group(1)):
+            if not any(flag in (match.group(2) or "r") for flag in "wax+") and _path_like(match.group(1)):
                 found.append(match.group(1))
+        found.extend(match.group(1) for match in _PY_PATH_READ.finditer(command) if _path_like(match.group(1)))
         found.extend(match.group(1) for match in _PY_SQLITE.finditer(command)
                      if _path_like(match.group(1)) and not match.group(1).startswith("/dev/"))
     return list(dict.fromkeys(found))

@@ -62,6 +62,26 @@ class ReadCandidateTests(unittest.TestCase):
         self.assertEqual(self.candidates('python3 tool.py --intent "$(< /tmp/intent.txt)"'), [], marker)
         self.assertEqual(self.candidates('f=/tmp/out.json\njq -r .a "$f"'), ["/tmp/out.json"], marker)
 
+    def test_substitution_is_prefix_safe_escape_safe_and_stops_at_separators(self) -> None:
+        # BM_SUBSTITUTION_SAFE
+        marker = "READ_CANDIDATES_WRONG"
+        self.assertEqual(self.candidates("f=/tmp/a.txt\nsed -n 1p $file"), [], marker)
+        self.assertEqual(self.candidates("f=/tmp/a.txt\nsed -n 1p $f"), ["/tmp/a.txt"], marker)
+        self.assertEqual(self.candidates('f=/tmp/a.txt\nsed -n 1p "${f}"'), ["/tmp/a.txt"], marker)
+        self.assertEqual(self.candidates("x=1 && sed -n 1p real.py"), ["real.py"], marker)
+        # Backslashes in a value are inserted verbatim, never interpreted as escapes.
+        self.assertNotIn("\x0c", "".join(self.candidates("x='C:\\tmp\\f.txt'\nsed -n 1p $x")), marker)
+        self.assertEqual(self.candidates("x=trailing\\\nsed -n 1p $x"), [], marker)
+
+    def test_python_write_forms_are_not_reads(self) -> None:
+        # BM_PY_WRITES_NOT_READS
+        marker = "READ_CANDIDATES_WRONG"
+        self.assertEqual(self.candidates("python3 - <<'PY'\nfrom pathlib import Path\nPath('out.md').write_text('x')\nPY"), [], marker)
+        self.assertEqual(self.candidates("python3 - <<'PY'\nopen('f.txt', 'r+').write('x')\nPY"), [], marker)
+        self.assertEqual(self.candidates("python3 - <<'PY'\nopen('f.txt', 'w')\nPY"), [], marker)
+        self.assertEqual(self.candidates("python3 - <<'PY'\nfrom pathlib import Path\nprint(Path('a.md').read_text())\nPY"), ["a.md"], marker)
+        self.assertEqual(self.candidates("python3 - <<'PY'\nprint(open('b.md').read())\nPY"), ["b.md"], marker)
+
     def test_writes_options_and_patterns_are_not_reads(self) -> None:
         marker = "READ_CANDIDATES_WRONG"
         self.assertEqual(self.candidates("echo hi > notes.txt"), [], marker)
@@ -123,6 +143,8 @@ class ReadCaptureHookTests(HookHarness):
 
     def test_unreadable_file_is_skipped_and_the_hook_still_exits_zero(self) -> None:
         # BM_READ_RECORDED: fail-soft like every sibling recorder.
+        if os.geteuid() == 0:
+            self.skipTest("root reads mode-000 files")
         self.assertEqual(self.state("begin", "--slug", "reads").returncode, 0)
         secret = self.repo / "secret.txt"
         secret.write_text("x", encoding="utf-8")
@@ -153,6 +175,74 @@ class ReadCaptureHookTests(HookHarness):
         stamp = big.stat().st_mtime + 5
         os.utime(big, (stamp, stamp))
         self.assertIn("Changed since inspected (1): big.jsonl", self.rearm(), "LARGE_FILE_HASHED")
+
+    def test_rearm_lists_the_newest_recorded_paths(self) -> None:
+        # BM_REARM_LISTS_NEWEST
+        self.assertEqual(self.state("begin", "--slug", "reads").returncode, 0)
+        identity = resolve_repo_identity(self.repo)
+        wid = json.loads(self.state("status").stdout)["workflowId"]
+        for index in range(70):
+            (self.repo / f"p{index:02d}.py").write_text(f"v = {index}\n", encoding="utf-8")
+            state_store.record_reads(identity, wid, {f"p{index:02d}.py": state_store.content_digest(self.repo / f"p{index:02d}.py")})
+        context = self.rearm()
+        self.assertIn("p69.py", context, "REARM_OMITS_READS")
+        self.assertNotIn("p09.py", context, "REARM_OMITS_READS")
+
+    def test_malformed_sidecar_reads_as_empty_and_hooks_stay_silent(self) -> None:
+        # BM_MALFORMED_SIDECAR_IS_EMPTY
+        self.assertEqual(self.state("begin", "--slug", "reads").returncode, 0)
+        identity = resolve_repo_identity(self.repo)
+        wid = json.loads(self.state("status").stdout)["workflowId"]
+        state_store.record_reads(identity, wid, {"app.py": "h"})
+        sidecar = state_store.repo_state_dir(identity) / "reads" / f"{wid}.json"
+        for broken in ('{"reads": [null]}', '{"reads": [["a"]]}', '{"reads": "x"}'):
+            sidecar.write_text(broken, encoding="utf-8")
+            try:
+                reads = state_store.recorded_reads(identity, wid)
+            except (TypeError, ValueError) as exc:
+                self.fail(f"SIDECAR_CRASHED_HOOK: {exc!r}")
+            self.assertEqual(reads, {}, "SIDECAR_CRASHED_HOOK")
+            self.assertIn("Discipline re-arm", self.rearm())
+            result = self.read("cat app.py")
+            self.assertEqual(result.returncode, 0, "SIDECAR_CRASHED_HOOK: " + result.stderr)
+            self.assertIn("app.py", state_store.recorded_reads(identity, wid), "SIDECAR_CRASHED_HOOK")
+
+    def test_recorded_path_replaced_by_a_fifo_reads_as_changed(self) -> None:
+        # BM_NON_REGULAR_PATH_IS_CHANGED
+        self.assertEqual(self.state("begin", "--slug", "reads").returncode, 0)
+        outside = self.tmp / "outside.txt"
+        outside.write_text("x\n", encoding="utf-8")
+        self.read(f"cat {outside}")
+        outside.unlink()
+        os.mkfifo(outside)
+        try:
+            result = subprocess.run([str(REARM)], cwd=self.repo, env=self.env, text=True,
+                                    input=json.dumps({"cwd": str(self.repo)}), stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE, check=False, timeout=20)
+        except subprocess.TimeoutExpired:
+            self.fail("REARM_BLOCKED_ON_FIFO: the re-arm did not return within 20 s")
+        self.assertEqual(result.returncode, 0, "REARM_BLOCKED_ON_FIFO: " + result.stderr)
+        self.assertIn(f"Changed since inspected (1): {outside}",
+                      json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"], "REARM_BLOCKED_ON_FIFO")
+
+    def test_prune_retires_the_sidecar_with_its_workflow(self) -> None:
+        # BM_SIDECAR_RETIRED_WITH_WORKFLOW
+        self.assertEqual(self.state("begin", "--slug", "oldest").returncode, 0)
+        identity = resolve_repo_identity(self.repo)
+        oldest = json.loads(self.state("status").stdout)["workflowId"]
+        self.read("cat app.py")
+        for index in range(5):
+            self.assertEqual(self.state("begin", "--slug", f"later-{index}").returncode, 0)
+        active = json.loads(self.state("status").stdout)["workflowId"]
+        self.read("cat app.py")
+        reads = state_store.repo_state_dir(identity) / "reads"
+        self.assertTrue((reads / f"{oldest}.json").is_file() and (reads / f"{active}.json").is_file())
+        pruned = subprocess.run([sys.executable, str(ROOT / "skills" / "repo-production-workflow" / "scripts" / "workflow.py"), "prune", "--apply"],
+                                cwd=self.repo, env=self.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        self.assertEqual(pruned.returncode, 0, pruned.stdout + pruned.stderr)
+        self.assertFalse((reads / f"{oldest}.json").exists(), "SIDECAR_NOT_RETIRED")
+        self.assertTrue((reads / f"{active}.json").is_file(), "SIDECAR_NOT_RETIRED")
+        self.assertIn("follows-removed-workflow", pruned.stdout, "SIDECAR_NOT_RETIRED")
 
     def test_non_read_command_opens_no_state(self) -> None:
         # BM_NON_READ_OPENS_NO_STATE: the majority of Bash payloads read nothing and must

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -18,12 +19,15 @@ from hooks.lib.hook_input import read_candidates  # noqa: E402
 
 
 def normalise(path: str, home: str, cwd: str) -> str:
-    path = path.replace("$HOME", home).replace("${HOME}", home)
-    path = path.replace('"$PWD"', cwd).replace("$PWD", cwd)
+    path = re.sub(r"\$\{?HOME\}?(?!\w)", lambda _match: home, path)
+    path = re.sub(r'"?\$\{?PWD\}?"?(?!\w)', lambda _match: cwd, path)
     return home + path[1:] if path.startswith("~") else path
 
 
 def main(argv: list[str]) -> int:
+    if not argv:
+        print("usage: read_matcher_replay.py <labels.json> [home] [cwd]", file=sys.stderr)
+        return 2
     labels_path, home, cwd = argv[0], argv[1] if len(argv) > 1 else os.path.expanduser("~"), argv[2] if len(argv) > 2 else os.getcwd()
     labels = json.loads(Path(labels_path).read_text(encoding="utf-8"))
     misses: list[tuple[str, str]] = []
