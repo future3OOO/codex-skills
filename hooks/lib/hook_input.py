@@ -68,16 +68,22 @@ def edited_path(payload: dict[str, object]) -> Path | None:
 _READ_VERBS = {"cat", "head", "tail", "nl", "wc", "jq"}
 _RG_VALUE_OPTIONS = {"-e", "--regexp", "-g", "--glob", "--iglob", "-t", "--type", "-m", "--max-count",
                      "-A", "-B", "-C", "--max-columns", "-f", "--file"}
-_JQ_VALUE_OPTIONS = {"--arg", "--argjson", "--slurpfile", "--rawfile", "-f", "--from-file",
-                     "--indent", "--seq", "--tab"}
+# Only option forms whose operand boundaries are known are accepted. Auxiliary
+# --rawfile/--slurpfile values are not claims that their contents reached stdout.
+_JQ_VALUE_OPTIONS = {"--arg": 2, "--argjson": 2, "--slurpfile": 2, "--rawfile": 2, "--indent": 1}
+_JQ_READ_ONLY = set("cjrRaSMCseb")
+_JQ_READ_ONLY_LONG = {"--compact-output", "--join-output", "--raw-output", "--raw-output0",
+                      "--raw-input", "--ascii-output", "--sort-keys", "--monochrome-output",
+                      "--color-output", "--slurp", "--exit-status", "--binary", "--tab",
+                      "--seq", "--unbuffered", "--stream", "--stream-errors"}
+_CAT_READ_ONLY = set("AbeEnstTuv")
+_CAT_READ_ONLY_LONG = {"--show-all", "--number-nonblank", "--show-ends", "--number",
+                       "--squeeze-blank", "--show-tabs", "--show-nonprinting"}
 # sed options that only read. Every other letter, in any bundle, declines the command:
 # `i` edits in place, `e` and `f` supply the script from elsewhere.
 _SED_READ_ONLY = set("nsuzEr")
 _SED_READ_ONLY_LONG = {"--quiet", "--silent", "--separate", "--unbuffered", "--null-data",
                        "--regexp-extended", "--posix", "--debug", "--sandbox"}
-# Group 3 is whatever follows the marker word. Dropping it would hide a redirect
-# written there, and with it the reason to decline the whole invocation.
-_HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1([^\n]*)\n(.*?\n)?\2\s*(?=\n|$)", re.S)
 _PATH_SUFFIXES = (".py", ".md", ".json", ".jsonl", ".txt", ".toml", ".cfg", ".yml", ".yaml", ".rst",
                   ".sh", ".js", ".ts", ".ini", ".html", ".db", ".sql", ".csv", ".lock", ".sqlite3")
 
@@ -96,9 +102,10 @@ _STDERR_NULL = re.compile(r"'[^']*'|\"[^\"]*\"|(?<!\S)2>>?\s*/dev/null(?=[\s;|]|
 def _tokens(command: str) -> list[str]:
     """Shell words of an unconditional foreground command, or nothing when the text is
     conditional, backgrounded, substituted or malformed. Such text is not evidence."""
-    if "`" in command or "$(" in command or "\\\n" in command:
+    if "`" in command or "$(" in command or "\\\n" in command or "<<" in command:
         return []
-    text = _HEREDOC.sub(lambda match: match[3] or "", command)
+    # Do not erase heredocs: they can replace an earlier stdin redirection.
+    text = command
     # Keep descriptor adjacency: `2>/dev/null` differs from `2 >/dev/null`.
     text = _STDERR_NULL.sub(lambda match: match[0] if match[0].startswith(("'", '\"')) else "", text)
     lexer = shlex.shlex(text, posix=True, punctuation_chars=";|&<>\n")
@@ -140,12 +147,16 @@ def read_candidates(command: str) -> list[str]:
         while tokens and (_ASSIGNMENT.match(tokens[0]) or tokens[0] in {"sudo", "timeout", "nice"}):
             tokens = tokens[2:] if tokens[0] == "timeout" else tokens[1:]
         args: list[str] = []
+        stdin: str | None = None
         index = 0
         while index < len(tokens):
             token = tokens[index]
             if token == "<":
-                if index + 1 < len(tokens) and _path_like(tokens[index + 1]):
-                    found.append(tokens[index + 1])
+                # Multiple redirects and descriptor-specific input are outside the
+                # supported form. Opening a descriptor does not mean it was read.
+                if stdin is not None or index + 1 == len(tokens) or (index and tokens[index - 1].isdigit()):
+                    return []
+                stdin = tokens[index + 1]
                 index += 2
             elif token and set(token) <= set("|&<>"):
                 return []
@@ -157,23 +168,51 @@ def read_candidates(command: str) -> list[str]:
         verb, rest = os.path.basename(args[0]), args[1:]
         if verb not in _READ_VERBS | {"sed", "rg", "awk"}:
             return []
+        if stdin is not None and verb != "cat":
+            return []
         if verb == "jq":
             positional: list[str] = []
-            skip = False
-            for arg in rest:
-                if skip:
-                    skip = False
-                # --arg and its kin take values that are literals, not input files, and
-                # --args swallows the rest of the line. -n reads no input at all.
-                elif arg in {"-n", "--null-input", "--args", "--jsonargs"}:
-                    return []
-                elif arg in _JQ_VALUE_OPTIONS:
-                    skip = True
-                elif arg.startswith("-"):
+            index = 0
+            while index < len(rest):
+                arg = rest[index]
+                if arg == "--":
+                    positional.extend(rest[index + 1:])
+                    break
+                if arg in _JQ_VALUE_OPTIONS:
+                    # --arg name value consumes TWO words, even when a value looks
+                    # like an option or filename. --indent consumes only one.
+                    index += _JQ_VALUE_OPTIONS[arg] + 1
+                    if index > len(rest):
+                        return []
                     continue
+                if arg.startswith("--"):
+                    if arg not in _JQ_READ_ONLY_LONG:
+                        return []
+                elif arg.startswith("-") and arg != "-":
+                    # Null-input (-n) also declines when bundled, e.g. -cn.
+                    if set(arg[1:]) - _JQ_READ_ONLY:
+                        return []
                 else:
                     positional.append(arg)
+                index += 1
             found.extend(arg for arg in positional[1:] if _path_like(arg))
+        elif verb == "cat":
+            operands: list[str] = []
+            for index, arg in enumerate(rest):
+                if arg == "--":
+                    operands.extend(rest[index + 1:])
+                    break
+                if arg.startswith("--"):
+                    if arg not in _CAT_READ_ONLY_LONG:
+                        return []
+                elif arg.startswith("-") and arg != "-":
+                    if set(arg[1:]) - _CAT_READ_ONLY:
+                        return []
+                else:
+                    operands.append(arg)
+            if stdin is not None and (not operands or "-" in operands) and _path_like(stdin):
+                found.append(stdin)
+            found.extend(arg for arg in operands if _path_like(arg))
         elif verb in _READ_VERBS:
             found.extend(arg for arg in rest if _path_like(arg))
         elif verb == "sed":

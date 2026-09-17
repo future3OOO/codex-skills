@@ -131,6 +131,50 @@ class ReadCandidateTests(unittest.TestCase):
         self.assertEqual(self.candidates("jq --arg k v '.x' logs/run.jsonl"), ['logs/run.jsonl'])
 
 
+    def test_jq_options_do_not_turn_values_into_inputs(self) -> None:
+        for command, expected in (
+            ("jq -cn '.' app.py", []),
+            ("jq -rnc '.' app.py", []),
+            ("jq --null-input '.' app.py", []),
+            ("jq --arg first ignored --arg second app.py '.' input.json", ['input.json']),
+            ("jq --argjson first 1 --arg second app.py '.' input.json", ['input.json']),
+            ("jq --arg flag -n '.' input.json", ['input.json']),
+            ("jq --arg first app.py --arg second b.py '.' input.json", ['input.json']),
+            ("jq --rawfile value app.py '.' input.json", ['input.json']),
+            ("jq --slurpfile value input.json '.' other.json", ['other.json']),
+            ("jq --tab '.' input.json", ['input.json']),
+            ("jq --seq '.' input.json", ['input.json']),
+            ("jq --indent 4 '.' input.json", ['input.json']),
+            ("jq -cMrS '.' input.json", ['input.json']),
+            ("jq -- '.' input.json", ['input.json']),
+            ("jq --arg missing", []),
+            ("jq --from-file filter.jq input.json", []),
+            ("jq --run-tests app.py", []),
+            ("jq --unknown app.py '.' input.json", []),
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(self.candidates(command), expected, "JQ_FALSE_INSPECTION")
+
+    def test_redirected_input_requires_a_supported_stdin_consumer(self) -> None:
+        for command, expected in (
+            ('cat b.py < app.py', ['b.py']),
+            ('cat < app.py', ['app.py']),
+            ('cat - < app.py', ['app.py']),
+            ('cat -n b.py - < app.py', ['app.py', 'b.py']),
+            ('cat -- < app.py', ['app.py']),
+            ('cat -e < app.py', ['app.py']),
+            ('cat --help < app.py', []),
+            ('cat --version b.py', []),
+            ('cat - 3< app.py', []),
+            ('cat < app.py < b.py', []),
+            ('cat < app.py <<EOF\nUNREAD\nEOF', []),
+            ('jq -n . < app.py', []),
+            ('wc -l < app.py', []),
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(self.candidates(command), expected, "UNUSED_STDIN_INSPECTION")
+
+
 class ReadCaptureHookTests(HookHarness):
     def read(self, command: str, session: str = "sess-1") -> subprocess.CompletedProcess[str]:
         payload = {"tool_name": "Bash", "tool_input": {"command": command},
@@ -216,6 +260,59 @@ class ReadCaptureHookTests(HookHarness):
                 self.assertEqual(executed.stdout, printed)
                 self.assertEqual(self.read(command).returncode, 0)
                 self.assertEqual(state_store.recorded_reads(identity, wid), {})
+
+
+    @unittest.skipUnless(shutil.which("jq"), "jq is unavailable")
+    def test_executed_jq_option_boundaries_record_only_real_inputs(self) -> None:
+        (self.repo / "input.json").write_text('{"source":"INPUT_ONLY"}\n', encoding="utf-8")
+        identity = resolve_repo_identity(self.repo)
+        for command, expected_output, expected_paths in (
+            ("jq -cn '.' app.py", 'null', set()),
+            ("jq -rnc '.' app.py", 'null', set()),
+            ("jq --arg first ignored --arg second app.py '.' input.json", '{"source":"INPUT_ONLY"}', {'input.json'}),
+            ("jq --arg flag -n '.' input.json", '{"source":"INPUT_ONLY"}', {'input.json'}),
+            ("jq --rawfile value app.py '.' input.json", '{"source":"INPUT_ONLY"}', {'input.json'}),
+            ("jq --tab '.' input.json", '{"source":"INPUT_ONLY"}', {'input.json'}),
+            ("jq -cMrS '.' input.json", '{"source":"INPUT_ONLY"}', {'input.json'}),
+        ):
+            with self.subTest(command=command):
+                begun = self.state("begin", "--slug", "reads")
+                self.assertEqual(begun.returncode, 0, begun.stderr)
+                wid = json.loads(begun.stdout)["workflowId"]
+                executed = subprocess.run(["bash", "-c", command], cwd=self.repo, env=self.env,
+                                          capture_output=True, text=True, check=True)
+                self.assertEqual(json.loads(executed.stdout), json.loads(expected_output))
+                result = self.read(command)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                recorded = state_store.recorded_reads(identity, wid)
+                self.assertEqual(set(recorded), expected_paths, "JQ_FALSE_INSPECTION")
+                for path, digest in recorded.items():
+                    self.assertEqual(digest, hashlib.sha256((self.repo / path).read_bytes()).hexdigest())
+                self.assertNotIn('app.py', self.rearm(), "JQ_FALSE_INSPECTION")
+
+    def test_executed_cat_stdin_is_claimed_only_when_consumed(self) -> None:
+        self.assertEqual(self.state("begin", "--slug", "reads").returncode, 0)
+        (self.repo / "app.py").write_text('ONLY_APP\n', encoding="utf-8")
+        (self.repo / "b.py").write_text('ONLY_B\n', encoding="utf-8")
+        identity = resolve_repo_identity(self.repo)
+        wid = json.loads(self.state("status").stdout)["workflowId"]
+        for command, printed, expected_paths in (
+            ("cat b.py < app.py", 'ONLY_B\n', {'b.py'}),
+            ("cat < app.py <<'EOF'\nHEREDOC_ONLY\nEOF", 'HEREDOC_ONLY\n', {'b.py'}),
+            ("cat < app.py", 'ONLY_APP\n', {'b.py', 'app.py'}),
+            ("cat b.py - < app.py", 'ONLY_B\nONLY_APP\n', {'b.py', 'app.py'}),
+        ):
+            with self.subTest(command=command):
+                executed = subprocess.run(["bash", "-c", command], cwd=self.repo, env=self.env,
+                                          capture_output=True, text=True, check=True)
+                self.assertEqual(executed.stdout, printed)
+                self.assertEqual(self.read(command).returncode, 0)
+                self.assertEqual(set(state_store.recorded_reads(identity, wid)), expected_paths,
+                                 "UNUSED_STDIN_INSPECTION")
+                if 'app.py' not in expected_paths:
+                    self.assertNotIn('app.py', self.rearm(), "UNUSED_STDIN_INSPECTION")
+                else:
+                    self.assertIn('Inspected this pass, unchanged since (2):', self.rearm())
 
     def test_executed_pipeline_assignment_records_no_inspection(self) -> None:
         self.assertEqual(self.state("begin", "--slug", "reads").returncode, 0)

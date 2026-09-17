@@ -6,6 +6,48 @@ Issue bodies own implementation scope; this record preserves decisions and their
 status. New decisions supersede earlier ones explicitly; observations and open
 acceptance gaps are not completed delivery.
 
+## 2026-09-18 — PR62 final read-capture repair
+
+**Decision:** Keep change C of [#59](https://github.com/future3OOO/codex-skills/issues/59)
+inside [PR #62](https://github.com/future3OOO/codex-skills/pull/62), based on
+`9cd6e11981700bb9277f93979172f237141ef42a`. Repair argument ownership in the
+existing matcher, not a shell interpreter or another workflow stage. `jq`
+option operands have explicit arity; `-n` is rejected even in a short-option
+bundle; unsupported options decline the invocation. Literal `--arg` values
+and auxiliary-file values are not ordinary input-file inspection claims.
+For redirected stdin, only supported `cat` forms establish consumption: no
+file operands or an explicit `-` consumes it; named operands alone do not.
+Multiple/descriptor-specific redirects and non-cat stdin consumers decline.
+Heredocs decline rather than being erased, since a later heredoc can replace
+an earlier input redirect. Ordinary named reads and cat stdin reads remain.
+
+**Evidence:** The original jq bundle, repeated literal argument and unused-stdin
+counterexamples failed against the unchanged head through actual Bash commands,
+PostToolUse, the persisted sidecar and SessionStart. The retained regression tests
+now pass and include preservation controls. An additional heredoc replacement
+case failed before the repair and now declines. Tests compare actual command
+output and sidecar contents; jq subcases use separate workflow instances.
+The source artifact reconstructed the published tree exactly:
+`508303c303b6510397d949a09ad2a725eb691f9f`. No gate, phase, verification receipt,
+edit invalidation, sidecar schema, retention rule or re-arm budget is changed.
+
+**Superseded claims:** The original reassignment disposition was not safe:
+it could claim an unread file. Whole-invocation omission supersedes it.
+The `239/239` claim is not recall evidence for this matcher. The original CX2
+capture is unavailable here; no reconstructed transcript or full-recall claim
+is supplied. Python AST capture, assignment expansion, the standalone replay
+utility and the separate safety document were removed in `9cd6e11`; they are
+not delivered features. This entry is the retained decision owner.
+
+**Boundary:** This is C-only runtime repair, not D or proof that a resumed lead
+obeys the list. A digest match is a context-reuse hint, not whole-file coverage,
+retention after compaction or verification. No shared estate was installed.
+The takeover environment could run the hooks and local gate, but the existing
+RCF bootstrap reported its external producer missing. GitNexus/advisor tools
+and the pinned historical calibration commits are absent locally; their checks
+must not be represented as completed. Final CI and reviewer dispositions belong
+to the published head, not to these local capability observations.
+
 ## 2026-09-14 — Require preflight advice
 
 **Decision:** Require advisor advice before the initial production preflight. Supersedes the
