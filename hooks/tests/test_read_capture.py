@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import unittest
@@ -243,6 +244,26 @@ class ReadCaptureHookTests(HookHarness):
         self.assertFalse((reads / f"{oldest}.json").exists(), "SIDECAR_NOT_RETIRED")
         self.assertTrue((reads / f"{active}.json").is_file(), "SIDECAR_NOT_RETIRED")
         self.assertIn("follows-removed-workflow", pruned.stdout, "SIDECAR_NOT_RETIRED")
+
+    def test_prune_never_follows_a_symlinked_reads_directory(self) -> None:
+        # BM_SYMLINKED_READS_NOT_FOLLOWED: a symlinked reads/ is retained, never walked,
+        # so --apply cannot unlink a matching sidecar name outside the state slot.
+        self.assertEqual(self.state("begin", "--slug", "oldest").returncode, 0)
+        identity = resolve_repo_identity(self.repo)
+        oldest = json.loads(self.state("status").stdout)["workflowId"]
+        for index in range(5):
+            self.assertEqual(self.state("begin", "--slug", f"later-{index}").returncode, 0)
+        outside = self.tmp / "outside"
+        outside.mkdir()
+        target = outside / f"{oldest}.json"
+        target.write_text('{"schemaVersion": 1, "reads": []}', encoding="utf-8")
+        reads = state_store.repo_state_dir(identity) / "reads"
+        shutil.rmtree(reads, ignore_errors=True)
+        reads.symlink_to(outside, target_is_directory=True)
+        pruned = subprocess.run([sys.executable, str(ROOT / "skills" / "repo-production-workflow" / "scripts" / "workflow.py"), "prune", "--apply"],
+                                cwd=self.repo, env=self.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        self.assertEqual(pruned.returncode, 0, pruned.stdout + pruned.stderr)
+        self.assertTrue(target.is_file(), "SYMLINKED_READS_FOLLOWED")
 
     def test_non_read_command_opens_no_state(self) -> None:
         # BM_NON_READ_OPENS_NO_STATE: the majority of Bash payloads read nothing and must

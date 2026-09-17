@@ -387,7 +387,7 @@ def _sqlite_entries(slot: Path, workflows: list[dict[str, object]], apply: bool)
     retired = {str(item["workflowId"]) for item in workflows if item["decision"] in {"removable", "removed"}}
     entries: list[dict[str, str]] = []
     for child in sorted(slot.iterdir()):
-        if child.name == "reads" and child.is_dir():
+        if child.name == "reads" and _walkable(child):
             # Read sidecars follow their workflow: one file per instance under reads/.
             for sidecar in sorted(child.iterdir()):
                 name = f"reads/{sidecar.name}"
