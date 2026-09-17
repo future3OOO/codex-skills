@@ -911,3 +911,49 @@ One suite flake on the merge candidate
 passed 18/18 when its class ran alone; unrelated to the change. The
 claude-skills mirror of the CLI still carries the old output shapes and needs
 its own port.
+
+**#59 change C delivered as [PR #62](https://github.com/future3OOO/codex-skills/pull/62)
+(open, not merged, 2026-09-17):** read capture at the existing PostToolUse hook
+(path plus whole-file sha256 into a per-workflow sidecar under the repository
+slot; runs before the write branch because `_BASH_WRITE` claims any redirect,
+which 27.6% of the CX2 corpus's reads carry), emitted at the SessionStart
+re-arm as "Inspected this pass, unchanged since" / "Changed since inspected",
+each capped at 60 entries and 1,500 chars (3,907 chars at 120 reads). The
+matcher claims only the corpus's verbs (sed, rg, inline python, cat, wc, jq,
+nl, tail, awk, `<`, head); the offline replay over the committed 350-command
+fixture reproduces all 239 labelled read paths at zero context cost and is
+pinned by a test. Delegate review over two rounds: gate escape, alphabetical
+eviction, unreadable-file crash, redirect-suppressed capture and unbounded
+section all fixed; fragment-read wording taken as the honest "inspected"
+label rather than dropping sed ranges (163 of 239 events). Behavioural effect
+is unproven by construction: acceptance is the seeded cut-resume of the CX2
+rollout at ordinal 840 in an isolated codex-home (store keyed by repository
+and workflow id, so the sidecar can be seeded from the replay's path set),
+baseline 117 repeat reads / 226,822 tokens, prediction ≥50% fewer second-read
+tokens, inconclusive if compaction counts differ; requires a maintainer token
+cap before launch. D (RCF consuming the sidecar) remains open.
+Reviewer-fix round (maintainer findings, 2026-09-17): read paths are resolved
+before any repository or ledger lookup; one `content_digest` owner (sha256 at
+or under 8 MiB, `size:mtime_ns` above) serves hook and re-arm; the frozen
+350-command fixture and its test were dropped because the transcript is not in
+the repo and the fixture could never be relabelled. The replay run is the
+recorded evidence: 350 commands, 239 labelled reads, 0 misses, 1 extra
+(`decisions.md` behind an `if [ -f ]` guard the matcher cannot evaluate;
+`is_file()` filters it before the ledger; transcript ordinal 17 shows it was
+not printed). The corpus's lasting shapes live in `ReadCandidateTests`.
+Review round 2 (26 threads, eight roots, all dispositioned on-thread): substitution
+is prefix/escape/separator-safe; python write forms never record; the re-arm lists
+the newest paths; malformed sidecars read as empty; `content_digest` refuses
+non-regular files; the pruner retires `reads/<wid>.json` with its workflow (measured:
+no slot-root prefix convention existed, only `_advisor-sessions/<key>-<wid>.sid`);
+euid-0 skip; replay argv guard and boundary-safe normalisation. Report-not-actioned:
+the >8 MiB same-size-and-mtime swap. Six RED→GREEN cycles, suite, gate and the
+239/239 replay green on the pushed head.
+Review round 3 (four threads): `_sqlite_entries` now guards `reads/` with `_walkable`
+(symlinked directory no longer followed by `prune --apply`; RED reproduced the outside
+deletion at the real Seam). Cubic P2 on the mode-000 test rejected: premise inverted, live
+non-root run OK. CodeRabbit reassignment ordering report-not-actioned: reproduced,
+under-records only, zero corpus reads fed by a reassigned variable. Final advisor ran on
+swe-2-max through a temporary PATH shim because the gateway's gpt-6-astra credit was
+exhausted (429 usage_limit_reached); verdict commit-ready, envelope recorded by hand
+because the model fenced it.
