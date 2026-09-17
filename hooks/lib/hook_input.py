@@ -1,6 +1,7 @@
 """Parse Codex hook input at one boundary."""
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
@@ -62,92 +63,177 @@ def edited_path(payload: dict[str, object]) -> Path | None:
 
 # Read verbs and their argument rules are the ones the CX2 corpus used (350 shell
 # commands, 239 read events): sed 163, rg 38, inline python 23, cat 14, wc 13, jq 12,
-# nl 9, tail 6, awk 3, `<` 2, head 1. A verb the corpus never used is not claimed.
+# nl 9, tail 6, awk 3, `<` 2, head 1. These are historical extraction counts,
+# not recall measurements for this stricter, read-only matcher.
 _READ_VERBS = {"cat", "head", "tail", "nl", "wc", "jq"}
 _RG_VALUE_OPTIONS = {"-e", "--regexp", "-g", "--glob", "--iglob", "-t", "--type", "-m", "--max-count",
                      "-A", "-B", "-C", "--max-columns", "-f", "--file"}
-_HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n(.*?\n)?\2\s*(?=\n|$)", re.S)
-_PY_OPEN = re.compile(r"""open\(\s*['"]([^'"\n]+)['"]\s*(?:,\s*(?:mode\s*=\s*)?['"]([rwaxb+t]+)['"])?""")
-_PY_PATH_READ = re.compile(r"""Path\(\s*['"]([^'"\n]+)['"]\s*\)\s*\.\s*(?:read_text|read_bytes)\(""")
-_PY_SQLITE = re.compile(r"""sqlite3\.connect\(\s*['"](?:file:)?([^'"?\n]+)""")
+# Group 3 is whatever follows the marker word. Dropping it would hide a redirect
+# written there, and with it the reason to decline the whole invocation.
+_HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1([^\n]*)\n(.*?\n)?\2\s*(?=\n|$)", re.S)
 _PATH_SUFFIXES = (".py", ".md", ".json", ".jsonl", ".txt", ".toml", ".cfg", ".yml", ".yaml", ".rst",
                   ".sh", ".js", ".ts", ".ini", ".html", ".db", ".sql", ".csv", ".lock", ".sqlite3")
 
 
 def _path_like(token: str) -> bool:
-    if not token or token.startswith(("-", "$(", "http")) or ("=" in token and "/" not in token):
+    if not token or "$" in token or token.startswith(("-", "http")) or ("=" in token and "/" not in token):
         return False
     return (token.startswith(("/", "./", "../", "~")) or token.endswith(_PATH_SUFFIXES)
             or ("/" in token and not re.search(r"[|&;<>*]", token)))
 
 
-_ASSIGNMENT = re.compile(r'^\s*([A-Za-z_]\w*)=(?:"([^"\n]*)"|\'([^\'\n]*)\'|([^\s;&|"\'\n]*))', re.M)
-_SHELL_WORDS = {"if", "then", "else", "elif", "do", "while", "until", "!", "{", "(", "fi", "done"}
-
-
-def _substitute(command: str) -> str:
-    """One-line `name=value` assignments the command later reads back as $name: the value
-    stops at whitespace or a separator, only the exact name substitutes (never a longer
-    name sharing its prefix), and the value is inserted verbatim, never as a pattern."""
-    for match in _ASSIGNMENT.finditer(command):
-        name = match.group(1)
-        value = next((group for group in match.groups()[1:] if group), "")
-        if name not in {"HOME", "PWD"} and value:
-            command = re.sub(r'"?\$(?:\{' + re.escape(name) + r'\}|' + re.escape(name) + r'(?!\w))"?',
-                             lambda _match, value=value: value, command)
-    return command
+_ASSIGNMENT = re.compile(r"^[A-Za-z_]\w*=")
+_VARIABLE = re.compile(r"\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*))")
+_STDERR_NULL = re.compile(r"'[^']*'|\"[^\"]*\"|(?<!\S)2>>?\s*/dev/null(?=[\s;|]|$)")
+_QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"|\\.|\$(?:\{[A-Za-z_]\w*\}|[A-Za-z_]\w*)")
 
 
 def _segments(command: str) -> list[list[str]]:
-    """Shell segments as token lists: heredoc bodies dropped, lines and operators split,
-    quoting honoured."""
-    text = re.sub(r"(?<!\\)\n", " ; ", _HEREDOC.sub("", _substitute(command)))
-    lexer = shlex.shlex(text, posix=True, punctuation_chars=";|&<>")
+    """Only unconditional foreground segments; malformed shell text is not evidence."""
+    if "`" in command or "$(" in command or "\\\n" in command:
+        return []
+    text = _HEREDOC.sub(lambda match: match[3] or "", command)
+    # Keep descriptor adjacency: `2>/dev/null` differs from `2 >/dev/null`.
+    text = _STDERR_NULL.sub(lambda match: match[0] if match[0].startswith(("'", '\"')) else "", text)
+    lexer = shlex.shlex(text, posix=True, punctuation_chars=";|&<>\n")
+    lexer.whitespace = " \t\r"
     lexer.whitespace_split = True
     try:
         tokens = list(lexer)
     except ValueError:
-        tokens = command.split()
+        return []
     segments: list[list[str]] = [[]]
     for token in tokens:
-        if token in {";", "|", "||", "&&", "&", "|&", ";;"}:
+        if token in {"||", "&&", "&", "|&", ";;", ";&", ";;&"}:
+            return []
+        if token == "|" or (token and set(token) <= {";", "\n"}):
             segments.append([])
         else:
             segments[-1].append(token)
     return [segment for segment in segments if segment]
 
 
-def read_candidates(command: str) -> list[str]:
-    """Paths a Bash command reads, as written, before any filesystem resolution."""
-    found: list[str] = []
+def _substitute(command: str, cwd: str | None = None) -> str:
+    """Expand initial literal assignments only. Reassignment and late assignment
+    decline capture rather than attributing a later read to an earlier value."""
+    # Most commands need no expansion and should pay for only one shell parse.
+    if not _VARIABLE.search(command):
+        return command
+    # A quoted heredoc is interpreted by Python, not expanded by the shell.
+    if _HEREDOC.search(command):
+        return command
+    values = {"HOME": str(Path.home()), "PWD": cwd or os.getcwd()}
+    assigned: set[str] = set()
+    started = False
     for tokens in _segments(command):
-        while tokens and (re.match(r"^[A-Za-z_]\w*=", tokens[0]) or tokens[0] in {"sudo", "timeout", "nice"}
-                          or tokens[0] in _SHELL_WORDS):
+        if len(tokens) == 1 and _ASSIGNMENT.match(tokens[0]):
+            name, value = tokens[0].split("=", 1)
+            if started or name in assigned or not value or re.search(r"[$`\\*?\[\]]", value):
+                return ""
+            values[name] = value
+            assigned.add(name)
+        else:
+            started = True
+
+    def expand(match: re.Match[str]) -> str:
+        token = match.group()
+        if token.startswith(("'", "\\")):
+            return token
+        if token.startswith('"'):
+            if "$" not in token:
+                return token
+            if "\\" in token:
+                return '"$UNRESOLVED"'
+            value = _VARIABLE.sub(lambda item: values.get(item[1] or item[2], "$UNRESOLVED"), token[1:-1])
+            return shlex.quote(value)
+        name = _VARIABLE.fullmatch(token)
+        value = values.get(name[1] or name[2], "$UNRESOLVED") if name else token
+        # Unquoted expansion would split or glob these values; do not invent a path.
+        return "$UNRESOLVED" if re.search(r"[\s*?\[\]]", value) else shlex.quote(value)
+
+    return _QUOTED.sub(expand, command)
+
+
+def _python_reads(command: str) -> list[str] | None:
+    """The supported inline Python shape prints literal reads. A regex occurrence
+    in a conditional, function, writer or sqlite connect is not an inspection."""
+    match = re.fullmatch(r"\s*python3?\s+-\s+<<(['\"])(\w+)\1\s*\n(.*?)\n\2\s*", command, re.S)
+    if match is None:
+        return None
+    try:
+        tree = ast.parse(match[3])
+    except SyntaxError:
+        return None
+    paths: list[str] = []
+    path_imported = False
+    for node in tree.body:
+        if isinstance(node, ast.ImportFrom) and node.module == "pathlib" and node.level == 0:
+            if all(item.name == "Path" and item.asname is None for item in node.names):
+                path_imported = True
+                continue
+        if not (isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)):
+            return None
+        call = node.value
+        if not (isinstance(call.func, ast.Name) and call.func.id == "print" and not call.keywords and len(call.args) == 1):
+            return None
+        read = call.args[0]
+        if not (isinstance(read, ast.Call) and isinstance(read.func, ast.Attribute) and not read.args and not read.keywords):
+            return None
+        owner = read.func.value
+        if not (isinstance(owner, ast.Call) and isinstance(owner.func, ast.Name) and len(owner.args) == 1 and not owner.keywords
+                and isinstance(owner.args[0], ast.Constant) and isinstance(owner.args[0].value, str)):
+            return None
+        if owner.func.id == "Path" and not path_imported:
+            return None
+        if (owner.func.id, read.func.attr) not in {("open", "read"), ("Path", "read_text"), ("Path", "read_bytes")}:
+            return None
+        paths.append(owner.args[0].value)
+    return paths
+
+
+def read_candidates(command: str, *, cwd: str | None = None) -> list[str]:
+    """Candidate reads in supported read-only commands, never arbitrary shell text.
+
+    The PostToolUse digest is taken after the whole invocation. Omit an entire
+    mixed or opaque invocation so a writer cannot lend an unread replacement's
+    digest to an earlier reader. Stderr suppression is not a source-file write.
+    """
+    command = _substitute(command, cwd)
+    segments = _segments(command)
+    python_reads = _python_reads(command)
+    found: list[str] = []
+    for tokens in segments:
+        while tokens and (_ASSIGNMENT.match(tokens[0]) or tokens[0] in {"sudo", "timeout", "nice"}):
             tokens = tokens[2:] if tokens[0] == "timeout" else tokens[1:]
         args: list[str] = []
         index = 0
         while index < len(tokens):
             token = tokens[index]
-            if token in {">", ">>"}:
-                index += 2
-            elif token == "<":
+            if token == "<":
                 if index + 1 < len(tokens) and _path_like(tokens[index + 1]):
                     found.append(tokens[index + 1])
                 index += 2
+            elif token and set(token) <= set("|&<>"):
+                return []
             else:
                 args.append(token)
                 index += 1
         if not args:
             continue
         verb, rest = os.path.basename(args[0]), args[1:]
+        if verb in {"python", "python3"}:
+            if python_reads is None:
+                return []
+        elif verb not in _READ_VERBS | {"sed", "rg", "awk"}:
+            return []
         if verb in _READ_VERBS:
             found.extend(arg for arg in rest if _path_like(arg))
         elif verb == "sed":
-            if "-i" in rest or any(arg.startswith("--in-place") for arg in rest):
-                continue
             positional = [arg for arg in rest if not arg.startswith("-")]
-            script_inline = not any(arg in {"-e", "--expression", "-f", "--file"} for arg in rest)
-            found.extend(arg for arg in (positional[1:] if script_inline else positional) if _path_like(arg))
+            if (any(arg.startswith(("-i", "--in-place")) or arg in {"-e", "--expression", "-f", "--file"} for arg in rest)
+                    or not positional or not re.fullmatch(r"[0-9]+(?:,(?:[0-9]+|\$))?p", positional[0])):
+                return []
+            found.extend(arg for arg in positional[1:] if _path_like(arg))
         elif verb == "rg":
             positional: list[str] = []
             skip = False
@@ -162,14 +248,11 @@ def read_candidates(command: str) -> list[str]:
             found.extend(arg for arg in (positional[1:] if pattern_inline else positional) if _path_like(arg))
         elif verb == "awk":
             positional = [arg for arg in rest if not arg.startswith("-")]
+            if not positional or not re.fullmatch(r"\{\s*print(?:\s+\$[0-9]+)?\s*\}", positional[0]):
+                return []
             found.extend(arg for arg in positional[1:] if _path_like(arg))
-    if re.search(r"\bpython3?\b", command):
-        for match in _PY_OPEN.finditer(command):
-            if not any(flag in (match.group(2) or "r") for flag in "wax+") and _path_like(match.group(1)):
-                found.append(match.group(1))
-        found.extend(match.group(1) for match in _PY_PATH_READ.finditer(command) if _path_like(match.group(1)))
-        found.extend(match.group(1) for match in _PY_SQLITE.finditer(command)
-                     if _path_like(match.group(1)) and not match.group(1).startswith("/dev/"))
+    if segments and python_reads is not None:
+        found.extend(path for path in python_reads if _path_like(path))
     return list(dict.fromkeys(found))
 
 
@@ -182,10 +265,13 @@ def read_paths(payload: dict[str, object]) -> list[Path]:
     cwd = payload.get("cwd")
     cwd = cwd if isinstance(cwd, str) and cwd else None
     paths: list[Path] = []
-    for candidate in read_candidates(command):
-        resolved = _resolve(candidate.replace("$PWD", cwd or "").replace("$HOME", str(Path.home())), cwd)
-        if resolved.is_file() and resolved not in paths:
-            paths.append(resolved)
+    for candidate in read_candidates(command, cwd=cwd):
+        try:
+            resolved = _resolve(candidate, cwd)
+            if resolved.is_file() and resolved not in paths:
+                paths.append(resolved)
+        except (OSError, RuntimeError):
+            continue
     return paths
 
 

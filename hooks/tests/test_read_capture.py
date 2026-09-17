@@ -45,9 +45,9 @@ class ReadCandidateTests(unittest.TestCase):
                          ["tests/test_a.py", "tests/test_b.py"], marker)
         self.assertEqual(self.candidates("awk '{print $1}' data.csv"), ["data.csv"], marker)
         self.assertEqual(self.candidates("tail -100 ~/.codex/state/x/design.md"), ["~/.codex/state/x/design.md"], marker)
-        self.assertEqual(self.candidates("python3 - < scripts/probe.py"), ["scripts/probe.py"], marker)
+        self.assertEqual(self.candidates("python3 - < scripts/probe.py"), [], marker)
         self.assertEqual(self.candidates("python3 - <<'PY'\nimport sqlite3\nc = sqlite3.connect('/home/u/state/workflow.sqlite3')\nPY"),
-                         ["/home/u/state/workflow.sqlite3"], marker)
+                         [], marker)
         self.assertEqual(self.candidates("python3 - <<'PY'\nopen('notes/out.md', 'w').write('x')\nPY"), [], marker)
 
     def test_corpus_prefixes_conditionals_and_substitutions(self) -> None:
@@ -56,10 +56,9 @@ class ReadCandidateTests(unittest.TestCase):
         marker = "READ_CANDIDATES_WRONG"
         self.assertEqual(self.candidates("timeout 900 python3 -m unittest hooks.tests.test_x"), [], marker)
         self.assertEqual(self.candidates("PYTHONDONTWRITEBYTECODE=1 sed -n '1,5p' src/a.py"), ["src/a.py"], marker)
-        # A guarded read is claimed as written; the guard is not evaluated, and read_paths
-        # drops a candidate that does not exist before anything is recorded.
+        # Existence cannot prove that the guarded branch executed.
         self.assertEqual(self.candidates("if [ -f decisions.md ]; then sed -n '1,240p' decisions.md; fi"),
-                         ["decisions.md"], marker)
+                         [], marker)
         self.assertEqual(self.candidates('python3 tool.py --intent "$(< /tmp/intent.txt)"'), [], marker)
         self.assertEqual(self.candidates('f=/tmp/out.json\njq -r .a "$f"'), ["/tmp/out.json"], marker)
 
@@ -69,8 +68,8 @@ class ReadCandidateTests(unittest.TestCase):
         self.assertEqual(self.candidates("f=/tmp/a.txt\nsed -n 1p $file"), [], marker)
         self.assertEqual(self.candidates("f=/tmp/a.txt\nsed -n 1p $f"), ["/tmp/a.txt"], marker)
         self.assertEqual(self.candidates('f=/tmp/a.txt\nsed -n 1p "${f}"'), ["/tmp/a.txt"], marker)
-        self.assertEqual(self.candidates("x=1 && sed -n 1p real.py"), ["real.py"], marker)
-        # Backslashes in a value are inserted verbatim, never interpreted as escapes.
+        self.assertEqual(self.candidates("x=1 && sed -n 1p real.py"), [], marker)
+        # Unsupported escaped assignments are omitted, never interpreted twice.
         self.assertNotIn("\x0c", "".join(self.candidates("x='C:\\tmp\\f.txt'\nsed -n 1p $x")), marker)
         self.assertEqual(self.candidates("x=trailing\\\nsed -n 1p $x"), [], marker)
 
@@ -87,11 +86,59 @@ class ReadCandidateTests(unittest.TestCase):
         marker = "READ_CANDIDATES_WRONG"
         self.assertEqual(self.candidates("echo hi > notes.txt"), [], marker)
         self.assertEqual(self.candidates("rg -n 'BM_A|phase.?red' /tmp/rollout.jsonl > /tmp/out.txt"),
-                         ["/tmp/rollout.jsonl"], marker)
+                         [], marker)
         self.assertEqual(self.candidates("sed -i 's/a/b/' src/a.py"), [], marker)
         self.assertEqual(self.candidates("git diff origin/main...HEAD -- decisions.md"), [], marker)
         self.assertEqual(self.candidates("python3 skills/x/scripts/workflow.py status --repo ."), [], marker)
         self.assertEqual(self.candidates("ls -la hooks/"), [], marker)
+
+    def test_ambiguous_execution_and_writes_decline_the_whole_invocation(self) -> None:
+        commands = [
+            'f=a.py; f=b.py; cat "$f"',
+            'cat "$f"; f=a.py',
+            'f=a.py; cat "$f"; f=b.py; cat "$f"',
+            'if false; then cat app.py; fi',
+            'false && cat app.py',
+            'true || cat app.py',
+            'cat app.py &',
+            'cat app.py; printf "NEW\\n" > app.py',
+            'cat app.py; cp other.py app.py',
+            'cat app.py; mv other.py app.py',
+            'cat app.py; touch app.py',
+            'cat app.py | tee app.py',
+            'cd elsewhere; cat app.py',
+            'cat app.py > /tmp/read-output.txt',
+            'cat app.py >/dev/null',
+            'sed -n "1p;w app.py" app.py',
+            'sed -i.bak "s/a/b/" app.py',
+            'awk \'{print $0 > "app.py"}\' app.py',
+            'python3 - <<\'PY\'\nif False:\n    print(open("app.py").read())\nPY',
+            'python3 - <<\'PY\'\nprint(open("app.py").read())\nopen("app.py", "w").write("new")\nPY',
+            'python3 - <<\'PY\'\nprint(\nPY',
+            'python3 - <<\'PY\'\nprint(1)\nPY',
+            'python3 - <<\'PY\'\nprint(Path("app.py").read_text())\nPY',
+            'python3 - <<\'PY\'\nprint(open(name).read())\nPY',
+            'python3 - <<\'PY\'\nprint(open("app.py").close())\nPY',
+            'python3 - <<\'PY\'\nprint(open("$HOME/app.py").read())\nPY',
+            'cat "app.py',
+        ]
+        for command in commands:
+            with self.subTest(command=command):
+                self.assertEqual(self.candidates(command), [])
+
+    def test_supported_literal_assignments_keep_shell_quote_semantics(self) -> None:
+        self.assertEqual(self.candidates('f=a.py; cat "$f"'), ['a.py'])
+        self.assertEqual(self.candidates('f="a b.py"; cat "$f"'), ['a b.py'])
+        self.assertEqual(self.candidates('f="a b.py"; cat $f'), [])
+        self.assertEqual(self.candidates("f=a.py; cat '$f'"), [])
+        self.assertEqual(self.candidates('f=a.py; cat "${f}"'), ['a.py'])
+        self.assertEqual(self.candidates('f=a.py; cat "$file"'), [])
+        self.assertEqual(self.candidates('cat $missing.py'), [])
+
+    def test_stderr_suppression_does_not_discard_a_read(self) -> None:
+        for command in ('cat app.py 2>/dev/null', 'sed -n 1p app.py 2>>/dev/null'):
+            with self.subTest(command=command):
+                self.assertEqual(self.candidates(command), ['app.py'])
 
 
 class ReadCaptureHookTests(HookHarness):
@@ -132,6 +179,38 @@ class ReadCaptureHookTests(HookHarness):
         self.assertIn("Changed since inspected (1): app.py", context, "REARM_OMITS_READS")
         self.assertNotIn("Inspected this pass, unchanged since", context, "REARM_OMITS_READS")
 
+    def test_executed_ambiguous_reads_do_not_create_sidecar_claims(self) -> None:
+        self.assertEqual(self.state("begin", "--slug", "reads").returncode, 0)
+        (self.repo / "a.py").write_text("A_UNREAD\n", encoding="utf-8")
+        (self.repo / "b.py").write_text("B_READ\n", encoding="utf-8")
+        identity = resolve_repo_identity(self.repo)
+        wid = json.loads(self.state("status").stdout)["workflowId"]
+        for command, stdout in (
+            ('if false; then cat app.py; fi', ''),
+            ('f=a.py; f=b.py; cat "$f"', 'B_READ\n'),
+        ):
+            with self.subTest(command=command):
+                executed = subprocess.run(["bash", "-c", command], cwd=self.repo,
+                                          env=self.env, capture_output=True, text=True, check=True)
+                self.assertEqual(executed.stdout, stdout)
+                self.assertEqual(self.read(command).returncode, 0)
+                self.assertEqual(state_store.recorded_reads(identity, wid), {})
+
+    def test_executed_read_then_write_does_not_refresh_the_old_digest(self) -> None:
+        self.assertEqual(self.state("begin", "--slug", "reads").returncode, 0)
+        self.read("cat app.py")
+        identity = resolve_repo_identity(self.repo)
+        wid = json.loads(self.state("status").stdout)["workflowId"]
+        before = state_store.recorded_reads(identity, wid)
+        command = "cat app.py; printf 'NEW_UNSEEN\\n' > app.py"
+        executed = subprocess.run(["bash", "-c", command], cwd=self.repo,
+                                  env=self.env, capture_output=True, text=True, check=True)
+        self.assertNotIn("NEW_UNSEEN", executed.stdout)
+        self.assertEqual(self.read(command).returncode, 0)
+        self.assertEqual(state_store.recorded_reads(identity, wid), before)
+        self.assertIn("Changed since inspected (1): app.py", self.rearm())
+        self.assertNotIn("Inspected this pass, unchanged since", self.rearm())
+
     def test_recency_survives_the_cap(self) -> None:
         # BM_READ_RECORDED: the most recent paths survive the cap, whatever their names sort to.
         identity = resolve_repo_identity(self.repo)
@@ -161,7 +240,7 @@ class ReadCaptureHookTests(HookHarness):
 
     def test_large_file_digest_is_size_and_mtime(self) -> None:
         # BM_LARGE_FILE_DIGEST: above the hash bound the digest is size:mtime_ns, the
-        # re-arm still answers unchanged, and an mtime change flips it to changed.
+        # re-arm never treats matching metadata as verified content identity.
         self.assertEqual(self.state("begin", "--slug", "reads").returncode, 0)
         self.assertTrue(hasattr(state_store, "HASH_BYTES"), "LARGE_FILE_HASHED")
         big = self.repo / "big.jsonl"
@@ -172,7 +251,16 @@ class ReadCaptureHookTests(HookHarness):
         wid = json.loads(self.state("status").stdout)["workflowId"]
         digest = state_store.recorded_reads(identity, wid).get("big.jsonl", "")
         self.assertTrue(digest.startswith("size:"), "LARGE_FILE_HASHED: " + digest)
-        self.assertIn("Inspected this pass, unchanged since (1): big.jsonl", self.rearm(), "LARGE_FILE_HASHED")
+        self.assertIn("Inspected this pass, content identity unverified (1): big.jsonl", self.rearm(), "LARGE_FILE_HASHED")
+        self.assertNotIn("Inspected this pass, unchanged since", self.rearm())
+        status = big.stat()
+        with big.open("r+b") as handle:
+            handle.seek(state_store.HASH_BYTES // 2)
+            handle.write(b"x")
+        os.utime(big, ns=(status.st_atime_ns, status.st_mtime_ns))
+        self.assertEqual(state_store.content_digest(big), digest)
+        self.assertIn("Inspected this pass, content identity unverified (1): big.jsonl", self.rearm())
+        self.assertNotIn("Inspected this pass, unchanged since", self.rearm())
         stamp = big.stat().st_mtime + 5
         os.utime(big, (stamp, stamp))
         self.assertIn("Changed since inspected (1): big.jsonl", self.rearm(), "LARGE_FILE_HASHED")
@@ -183,11 +271,13 @@ class ReadCaptureHookTests(HookHarness):
         identity = resolve_repo_identity(self.repo)
         wid = json.loads(self.state("status").stdout)["workflowId"]
         for index in range(70):
-            (self.repo / f"p{index:02d}.py").write_text(f"v = {index}\n", encoding="utf-8")
-            state_store.record_reads(identity, wid, {f"p{index:02d}.py": state_store.content_digest(self.repo / f"p{index:02d}.py")})
+            name = f"p{index:02d}_" + "x" * 96 + ".py"
+            (self.repo / name).write_text(f"v = {index}\n", encoding="utf-8")
+            state_store.record_reads(identity, wid, {name: state_store.content_digest(self.repo / name)})
         context = self.rearm()
-        self.assertIn("p69.py", context, "REARM_OMITS_READS")
-        self.assertNotIn("p09.py", context, "REARM_OMITS_READS")
+        self.assertIn("p69_", context, "REARM_OMITS_READS")
+        self.assertNotIn("p10_", context, "REARM_OMITS_READS")
+        self.assertNotIn("p09_", context, "REARM_OMITS_READS")
 
     def test_malformed_sidecar_reads_as_empty_and_hooks_stay_silent(self) -> None:
         # BM_MALFORMED_SIDECAR_IS_EMPTY

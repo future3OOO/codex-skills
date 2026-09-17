@@ -32,6 +32,7 @@ def _reads_context(identity: RepoIdentity) -> str:
         return ""
     unchanged: list[str] = []
     changed: list[str] = []
+    unverified: list[str] = []
     # Oldest first from the store; the line shows the newest LISTED of each group.
     for key, digest in recorded_reads(identity, str(state["workflowId"])).items():
         path = Path(key) if Path(key).is_absolute() else Path(identity.root) / key
@@ -40,20 +41,36 @@ def _reads_context(identity: RepoIdentity) -> str:
         except OSError:
             changed.append(key)
             continue
-        (unchanged if current == digest else changed).append(key)
+        if current != digest:
+            changed.append(key)
+        elif digest.startswith("size:"):
+            # Equal metadata cannot establish equal content, even after a read.
+            unverified.append(key)
+        else:
+            unchanged.append(key)
 
     def line(label: str, keys: list[str]) -> str:
         if not keys:
             return ""
-        shown = ", ".join(keys[-LISTED:])
-        if len(shown) > READS_CHARS:
-            shown = shown[:READS_CHARS].rsplit(", ", 1)[0]
-        listed = shown.count(", ") + 1
-        return f"\n{label} ({len(keys)}): {shown}" + (f", +{len(keys) - listed} more" if len(keys) > listed else "")
+        selected: list[str] = []
+        for key in reversed(keys[-LISTED:]):
+            # JSON quoting keeps embedded commas/newlines inside one path. Count
+            # entries structurally and never emit a partial path at the cap.
+            display = json.dumps(key, ensure_ascii=False) if any(char in key for char in ",\n\r\t") else key
+            candidate = ", ".join([*selected, display])
+            if len(candidate) > READS_CHARS:
+                break
+            selected.append(display)
+        omitted = len(keys) - len(selected)
+        shown = ", ".join(selected)
+        suffix = (", " if selected else "") + f"+{omitted} more" if omitted else ""
+        return f"\n{label} ({len(keys)}): {shown}{suffix}"
 
     # "Inspected", not "read": a sed range or an rg match counts, and unchanged means the
     # whole file still matches the hash taken then, not that every line was seen.
-    return line("Inspected this pass, unchanged since", unchanged) + line("Changed since inspected", changed)
+    return (line("Inspected this pass, unchanged since", unchanged)
+            + line("Changed since inspected", changed)
+            + line("Inspected this pass, content identity unverified", unverified))
 
 
 def main() -> int:
