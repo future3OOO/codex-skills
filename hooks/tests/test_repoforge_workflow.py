@@ -1782,6 +1782,13 @@ class IntakeSerialisationTests(unittest.TestCase):
         meminfo = tmp / "meminfo"
         meminfo.write_text("MemAvailable: 9625600 kB\n")  # two permits
         module._MEMINFO = meminfo
+        # The permit count is faked, so the real account's slot directory would let a
+        # producer in another shard hold one of these two permits and admit nobody. The
+        # property under attack is that a held higher slot counts, not where the slot
+        # root lands, so this loaded module gets its own root.
+        module._real_home = lambda: tmp
+        slots = tmp / ".cache" / "repo-context-forge" / "intake-slots"
+        slots.mkdir(parents=True)
         original_cap = os.environ.pop("RCF_INTAKE_MAX_PARALLEL", None)
         acquired: list[int] = []
         barrier = threading.Barrier(3)
@@ -1791,7 +1798,7 @@ class IntakeSerialisationTests(unittest.TestCase):
             acquired.append(module._acquire_intake_slot())
 
         threads = [threading.Thread(target=acquire, daemon=True) for _ in range(2)]
-        with open(self.slot_dir() / "slot-2.lock", "a+") as high:
+        with open(slots / "slot-2.lock", "a+") as high:
             fcntl.flock(high, fcntl.LOCK_EX)
             try:
                 for thread in threads:
