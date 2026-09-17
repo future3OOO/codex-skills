@@ -9,6 +9,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -140,6 +141,41 @@ class ReadCandidateTests(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(self.candidates(command), ['app.py'])
 
+    def test_an_edit_hidden_in_combined_options_is_not_an_inspection(self) -> None:
+        # `-ni` edits in place exactly as `-i` does; only read-only letters may pass.
+        for command in ("sed -ni '1p' app.py", "cat app.py; sed -ni '1p' app.py",
+                        "sed -i '1p' app.py", "sed -i.bak '1p' app.py",
+                        "sed --in-place '1p' app.py", "sed -e '1p' app.py"):
+            with self.subTest(command=command):
+                self.assertEqual(self.candidates(command), [])
+        self.assertEqual(self.candidates("sed -n '1,40p' app.py"), ['app.py'])
+
+    def test_jq_literal_arguments_and_null_input_are_not_reads(self) -> None:
+        for command in ("jq -n --arg path app.py '$path'", "jq -n '.' app.py",
+                        "jq --args '.' app.py extra"):
+            with self.subTest(command=command):
+                self.assertEqual(self.candidates(command), [])
+        self.assertEqual(self.candidates("jq -r '.x' logs/run.jsonl"), ['logs/run.jsonl'])
+        self.assertEqual(self.candidates("jq --arg k v '.x' logs/run.jsonl"), ['logs/run.jsonl'])
+
+    def test_the_replay_fails_on_a_claimed_path_the_command_did_not_read(self) -> None:
+        # A false positive alone must fail the run, not only a missed read.
+        scratch = Path(tempfile.mkdtemp(prefix="replay-extras-"))
+        self.addCleanup(shutil.rmtree, scratch, True)
+        for name, rows, expected in (("extras", [{"command": "cat app.py", "reads": []}], 1),
+                                     ("clean", [{"command": "cat app.py", "reads": ["app.py"]}], 0)):
+            labels = scratch / f"{name}.json"
+            labels.write_text(json.dumps(rows), encoding="utf-8")
+            replay = subprocess.run([sys.executable, str(ROOT / "benchmarks" / "read_matcher_replay.py"), str(labels)],
+                                    cwd=ROOT, capture_output=True, text=True, check=False)
+            with self.subTest(case=name):
+                self.assertEqual(replay.returncode, expected, replay.stdout + replay.stderr)
+
+    def test_a_pipeline_assignment_does_not_name_the_right_hand_read(self) -> None:
+        # The assignment runs in the left-hand process; `cat` never sees that value.
+        self.assertEqual(self.candidates('f=app.py | cat "$f"'), [])
+        self.assertEqual(self.candidates('f=app.py; cat "$f"'), ['app.py'])
+
 
 class ReadCaptureHookTests(HookHarness):
     def read(self, command: str, session: str = "sess-1") -> subprocess.CompletedProcess[str]:
@@ -195,6 +231,49 @@ class ReadCaptureHookTests(HookHarness):
                 self.assertEqual(executed.stdout, stdout)
                 self.assertEqual(self.read(command).returncode, 0)
                 self.assertEqual(state_store.recorded_reads(identity, wid), {})
+
+    def test_executed_combined_option_edit_records_no_inspection(self) -> None:
+        # Run it for real: the command succeeds, prints nothing, and replaces the file.
+        self.assertEqual(self.state("begin", "--slug", "reads").returncode, 0)
+        (self.repo / "app.py").write_text("one\ntwo\n", encoding="utf-8")
+        identity = resolve_repo_identity(self.repo)
+        wid = json.loads(self.state("status").stdout)["workflowId"]
+        for command in ("sed -ni '1p' app.py", "cat app.py; sed -ni '1p' app.py"):
+            with self.subTest(command=command):
+                (self.repo / "app.py").write_text("one\ntwo\n", encoding="utf-8")
+                subprocess.run(["bash", "-c", command], cwd=self.repo, env=self.env,
+                               capture_output=True, text=True, check=True)
+                self.assertEqual((self.repo / "app.py").read_text(encoding="utf-8"), "one\n")
+                self.assertEqual(self.read(command).returncode, 0)
+                self.assertEqual(state_store.recorded_reads(identity, wid), {})
+        self.assertNotIn("Inspected this pass", self.rearm())
+
+    def test_executed_jq_literal_argument_records_no_inspection(self) -> None:
+        self.assertEqual(self.state("begin", "--slug", "reads").returncode, 0)
+        identity = resolve_repo_identity(self.repo)
+        wid = json.loads(self.state("status").stdout)["workflowId"]
+        for command, printed in (("jq -n --arg path app.py '$path'", '"app.py"\n'),
+                                 ("jq -n '.' app.py", "null\n")):
+            with self.subTest(command=command):
+                executed = subprocess.run(["bash", "-c", command], cwd=self.repo, env=self.env,
+                                          capture_output=True, text=True, check=False)
+                if executed.returncode != 0:
+                    self.skipTest("jq is unavailable")
+                self.assertEqual(executed.stdout, printed)
+                self.assertEqual(self.read(command).returncode, 0)
+                self.assertEqual(state_store.recorded_reads(identity, wid), {})
+
+    def test_executed_pipeline_assignment_records_no_inspection(self) -> None:
+        self.assertEqual(self.state("begin", "--slug", "reads").returncode, 0)
+        (self.repo / "b.py").write_text("B_READ\n", encoding="utf-8")
+        identity = resolve_repo_identity(self.repo)
+        wid = json.loads(self.state("status").stdout)["workflowId"]
+        command = 'f=app.py | cat "$f"'
+        executed = subprocess.run(["bash", "-c", command], cwd=self.repo,
+                                  env={**self.env, "f": "b.py"}, capture_output=True, text=True, check=True)
+        self.assertEqual(executed.stdout, "B_READ\n")
+        self.assertEqual(self.read(command).returncode, 0)
+        self.assertEqual(state_store.recorded_reads(identity, wid), {})
 
     def test_executed_read_then_write_does_not_refresh_the_old_digest(self) -> None:
         self.assertEqual(self.state("begin", "--slug", "reads").returncode, 0)

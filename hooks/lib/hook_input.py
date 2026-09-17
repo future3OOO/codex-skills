@@ -68,6 +68,13 @@ def edited_path(payload: dict[str, object]) -> Path | None:
 _READ_VERBS = {"cat", "head", "tail", "nl", "wc", "jq"}
 _RG_VALUE_OPTIONS = {"-e", "--regexp", "-g", "--glob", "--iglob", "-t", "--type", "-m", "--max-count",
                      "-A", "-B", "-C", "--max-columns", "-f", "--file"}
+_JQ_VALUE_OPTIONS = {"--arg", "--argjson", "--slurpfile", "--rawfile", "-f", "--from-file",
+                     "--indent", "--seq", "--tab"}
+# sed options that only read. Every other letter, in any bundle, declines the command:
+# `i` edits in place, `e` and `f` supply the script from elsewhere.
+_SED_READ_ONLY = set("nsuzEr")
+_SED_READ_ONLY_LONG = {"--quiet", "--silent", "--separate", "--unbuffered", "--null-data",
+                       "--regexp-extended", "--posix", "--debug", "--sandbox"}
 # Group 3 is whatever follows the marker word. Dropping it would hide a redirect
 # written there, and with it the reason to decline the whole invocation.
 _HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1([^\n]*)\n(.*?\n)?\2\s*(?=\n|$)", re.S)
@@ -88,8 +95,9 @@ _STDERR_NULL = re.compile(r"'[^']*'|\"[^\"]*\"|(?<!\S)2>>?\s*/dev/null(?=[\s;|]|
 _QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"|\\.|\$(?:\{[A-Za-z_]\w*\}|[A-Za-z_]\w*)")
 
 
-def _segments(command: str) -> list[list[str]]:
-    """Only unconditional foreground segments; malformed shell text is not evidence."""
+def _tokens(command: str) -> list[str]:
+    """Shell words of an unconditional foreground command, or nothing when the text is
+    conditional, backgrounded, substituted or malformed. Such text is not evidence."""
     if "`" in command or "$(" in command or "\\\n" in command:
         return []
     text = _HEREDOC.sub(lambda match: match[3] or "", command)
@@ -102,20 +110,34 @@ def _segments(command: str) -> list[list[str]]:
         tokens = list(lexer)
     except ValueError:
         return []
-    segments: list[list[str]] = [[]]
-    for token in tokens:
-        if token in {"||", "&&", "&", "|&", ";;", ";&", ";;&"}:
-            return []
-        if token == "|" or (token and set(token) <= {";", "\n"}):
-            segments.append([])
+    return [] if any(token in {"||", "&&", "&", "|&", ";;", ";&", ";;&"} for token in tokens) else tokens
+
+
+def _split(command: str, separators: set[str]) -> list[list[str]]:
+    parts: list[list[str]] = [[]]
+    for token in _tokens(command):
+        if token in separators or (token and set(token) <= {";", "\n"}):
+            parts.append([])
         else:
-            segments[-1].append(token)
-    return [segment for segment in segments if segment]
+            parts[-1].append(token)
+    return [part for part in parts if part]
+
+
+def _segments(command: str) -> list[list[str]]:
+    """One command each: pipeline members are separate commands."""
+    return _split(command, {"|"})
+
+
+def _statements(command: str) -> list[list[str]]:
+    """Sequential statements: a whole pipeline is one statement, because an assignment
+    in its left-hand process never reaches the right-hand one."""
+    return _split(command, set())
 
 
 def _substitute(command: str, cwd: str | None = None) -> str:
-    """Expand initial literal assignments only. Reassignment and late assignment
-    decline capture rather than attributing a later read to an earlier value."""
+    """Expand initial literal assignments only. Reassignment, late assignment and an
+    assignment inside a pipeline decline capture rather than attributing a later read
+    to a value the shell never gave that command."""
     # Most commands need no expansion and should pay for only one shell parse.
     if not _VARIABLE.search(command):
         return command
@@ -125,7 +147,7 @@ def _substitute(command: str, cwd: str | None = None) -> str:
     values = {"HOME": str(Path.home()), "PWD": cwd or os.getcwd()}
     assigned: set[str] = set()
     started = False
-    for tokens in _segments(command):
+    for tokens in _statements(command):
         if len(tokens) == 1 and _ASSIGNMENT.match(tokens[0]):
             name, value = tokens[0].split("=", 1)
             if started or name in assigned or not value or re.search(r"[$`\\*?\[\]]", value):
@@ -226,11 +248,31 @@ def read_candidates(command: str, *, cwd: str | None = None) -> list[str]:
                 return []
         elif verb not in _READ_VERBS | {"sed", "rg", "awk"}:
             return []
-        if verb in _READ_VERBS:
+        if verb == "jq":
+            positional: list[str] = []
+            skip = False
+            for arg in rest:
+                if skip:
+                    skip = False
+                # --arg and its kin take values that are literals, not input files, and
+                # --args swallows the rest of the line. -n reads no input at all.
+                elif arg in {"-n", "--null-input", "--args", "--jsonargs"}:
+                    return []
+                elif arg in _JQ_VALUE_OPTIONS:
+                    skip = True
+                elif arg.startswith("-"):
+                    continue
+                else:
+                    positional.append(arg)
+            found.extend(arg for arg in positional[1:] if _path_like(arg))
+        elif verb in _READ_VERBS:
             found.extend(arg for arg in rest if _path_like(arg))
         elif verb == "sed":
             positional = [arg for arg in rest if not arg.startswith("-")]
-            if (any(arg.startswith(("-i", "--in-place")) or arg in {"-e", "--expression", "-f", "--file"} for arg in rest)
+            # Only the read-only short options, letter by letter: `-ni` edits in place
+            # just as `-i` does, and `-e`/`-f` mean the first positional is not the script.
+            if (any(set(arg[1:]) - _SED_READ_ONLY for arg in rest if arg.startswith("-") and not arg.startswith("--"))
+                    or any(arg.startswith("--") and arg not in _SED_READ_ONLY_LONG for arg in rest)
                     or not positional or not re.fullmatch(r"[0-9]+(?:,(?:[0-9]+|\$))?p", positional[0])):
                 return []
             found.extend(arg for arg in positional[1:] if _path_like(arg))

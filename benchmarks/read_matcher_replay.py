@@ -5,7 +5,9 @@ relabelling is a spec change, not a matcher regression.
 
 Input: a JSON list of {"command": str, "reads": [path, ...]} entries. Output: one
 summary line plus every miss (labelled path the matcher did not return) and every
-extra (matcher path the labels did not carry). Exit 1 on any miss."""
+extra (matcher path the labels did not carry). Exit 1 on either: claiming a path the
+command did not read is the failure this matcher exists to avoid, so an extra alone
+must fail the run."""
 from __future__ import annotations
 
 import json
@@ -44,7 +46,7 @@ def main(argv: list[str]) -> int:
     for kind, rows in (("MISS", misses), ("EXTRA", extras)):
         for command, path in rows:
             print(f"{kind} {path!r} <- {command!r}")
-    return 1 if misses else 0
+    return 1 if misses or extras else 0
 
 
 if __name__ == "__main__":
