@@ -1099,7 +1099,8 @@ every reference spelling of one stored execution refuses. The reproducer
 flips both cases to refused-with-pending and the four dedup/receipt tests
 stay green. The change otherwise stays
 focused (86 net runtime lines at the reviewed head `c8998da`; the `f76acba`
-dedup work brings it to 99 net — the basis for the re-measurement below); STD-1 names a removable five-line forwarding
+dedup work brings it to 99 net — the basis for the re-measurement below);
+STD-1 names a removable five-line forwarding
 helper — **also fixed at `f76acba`** (`_baseline_observation` inlined into
 its single caller). Review intake and reproducible results are retained at
 `/tmp/pr69-review-intake.json`, `/tmp/pr69-review-reproduce.py`, and
