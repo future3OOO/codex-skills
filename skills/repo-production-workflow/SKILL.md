@@ -5,8 +5,8 @@ description: Orchestrate production repository changes from context through fina
 
 # Repo production workflow
 
-Use this skill for production code, configuration, runtime, deploy, generated
-source, and behavior-changing repository work. `AGENTS.md` owns the hard
+Use this skill only when production changes are required: code, configuration,
+runtime, deploy, generated source, or production behavior. `AGENTS.md` owns the hard
 invariants and GitNexus doctrine; [INVARIANT-OWNERSHIP.md](INVARIANT-OWNERSHIP.md)
 maps the remaining owners.
 
@@ -22,7 +22,7 @@ bindings current and report unavailable comparisons under
 
 ## One stable workflow
 
-Resume the active task pass, including related fixes and reviewer corrections;
+In the task-owned worktree required by AGENTS.md, resume the active task pass;
 reuse applicable evidence and refresh invalidated gates. For a new task, choose
 one short slug and begin state before bootstrap:
 

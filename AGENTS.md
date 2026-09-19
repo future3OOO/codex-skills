@@ -69,17 +69,18 @@ non-outdated threads before merging.
 
 ## 7. Production Repo Workflow
 
-For repository changes, use a task-owned Git worktree before starting a workflow
-or editing. Never edit the main/shared checkout or clobber another agent's work.
+For repository changes, select a task-owned Git worktree before invoking
+`$repo-production-workflow`, creating its slug/state, or editing. Never edit
+the main/shared checkout or clobber another agent's state or files.
 
-Invoke `$repo-production-workflow` first for production code, config, runtime,
-deploy, generated-source, or behavior-changing repository work. It owns phase
-order, evidence, independent review, advisor checks, and delivery. Do not jump
-from Repo Context Forge straight to edits.
+Invoke `$repo-production-workflow` first, only when production changes are required
+(code, config, runtime, deploy, generated source, or production behavior). It owns
+phase order, evidence, independent review, advisor checks, and delivery. Do not
+jump from Repo Context Forge straight to edits.
 
-For docs-only changes, follow the lightweight path: verify checkout/branch, inspect
-files directly, edit minimally, clean up, and run diff checks. Skip Repo Context
-Forge and GitNexus. Governance docs that change agent behavior (`AGENTS.md`,
+Docs-only work creates no workflow or slug. Verify checkout/branch, inspect files
+directly, edit minimally, clean up, and run diff checks. Skip Repo Context Forge
+and GitNexus. Governance docs that change agent behavior (`AGENTS.md`,
 `CLAUDE.md`, `docs/agents/`) also require independent `$code-review` before
 handoff.
 

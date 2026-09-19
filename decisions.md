@@ -20,8 +20,9 @@ tests alongside real N/N+1 attacks. A full suite requires necessary coverage
 that targeted checks and available CI cannot provide. Maximize real attack
 coverage; never weaken behavior, preservation, or proof for fewer lines. Assume
 the first implementation is bloated and retain the least production/unit-test
-code that fully meets the objective. Select a task-owned worktree before state
-or edits; preserve main/shared checkouts and other agents' work.
+code that fully meets the objective. Select a task-owned worktree before workflow
+invocation, slug/state creation, or edits; preserve other agents' state and files.
+Start the production workflow only for required production changes, never docs-only work.
 
 Supersede automatic per-fix/per-review workflow resets: related corrections stay
 in the task pass; reuse applicable evidence and rerun invalidated gates. Complete
