@@ -1090,9 +1090,15 @@ stored passing test settling two items through either a later cumulative
 evidence document containing the identical original run, or the accepted
 `:00` spelling of index `:0`. Receipt dedup keys the reference string rather
 than the execution. This leaves acceptance criterion 5 incomplete; reported
-as SPEC-1, with no candidate fix in this review. The change otherwise stays
+as SPEC-1, with no candidate fix in this review — **fixed at `f76acba`**:
+attributed proofs now stamp `sourceExecution`, the sha256 of the resolved
+run's canonical record, and `inherited_baseline` dedups on that identity, so
+every reference spelling of one stored execution refuses. The reproducer
+flips both cases to refused-with-pending and the four dedup/receipt tests
+stay green. The change otherwise stays
 focused (86 net runtime lines); STD-1 names a removable five-line forwarding
-helper. Review intake and reproducible results are retained at
+helper — **also fixed at `f76acba`** (`_baseline_observation` inlined into
+its single caller). Review intake and reproducible results are retained at
 `/tmp/pr69-review-intake.json`, `/tmp/pr69-review-reproduce.py`, and
 `/tmp/pr69-review-results.json`. No merge or installation occurred.
 
