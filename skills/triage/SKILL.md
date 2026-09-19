@@ -89,7 +89,7 @@ Show counts and a one-line summary per issue. Let the maintainer pick.
    - `ready-for-human` — same structure as an agent brief, but note why it can't be delegated (judgment calls, external access, design decisions, manual testing).
    - `needs-info` — post triage notes (template below).
    - `wontfix` (bug) — polite explanation, then close.
-   - `wontfix` (enhancement) — follow [OUT-OF-SCOPE.md](OUT-OF-SCOPE.md) to record a rejection and close; its exclusion for already implemented behavior applies.
+   - `wontfix` (enhancement) — follow [OUT-OF-SCOPE.md](OUT-OF-SCOPE.md) to record a rejection and close; already implemented behavior is not a rejection — point to the verified implementation instead.
    - `needs-triage` — apply the role. Optional comment if there's partial progress.
 
 ## Quick state override
