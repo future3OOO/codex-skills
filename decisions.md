@@ -981,3 +981,68 @@ case anywhere could make the parallel suite red. It now gets a private slot root
 swe-2-max through a temporary PATH shim because the gateway's gpt-6-astra credit was
 exhausted (429 usage_limit_reached); verdict commit-ready, envelope recorded by hand
 because the model fenced it.
+
+## 2026-09-19 — Gate trap removal: #63, repo-context-forge #31/#32
+
+**Decision (maintainer-directed):** Land the three gate-hardening PRs in order
+[codex-skills #63](https://github.com/future3OOO/codex-skills/pull/63) →
+install → verify →
+[repo-context-forge #31](https://github.com/future3OOO/repo-context-forge/pull/31)
+→ reinstall →
+[repo-context-forge #32](https://github.com/future3OOO/repo-context-forge/pull/32).
+CX3 had followed the old AGENTS.md text to the producer's own `bootstrap.py`,
+which rejected `--workflow-slug` and was misread as version skew; the gate now
+names only the installed governed wrapper and forbids the snapshot path, kept
+as a short pointer rather than a runbook. #31 eradicated the plugin surface
+outright — manifest, duplicate skill tree, marketplace registration and the
+`~/plugins` symlink all gone — leaving the installer to publish only a snapshot
+and the `current` pointer. #32 dedupes dependency edges by path at
+`max(edge_weight, 1.0)` so a real producer edge and a weight-1.0
+statement-parsed link cannot sum; shipped ahead of any producer-side fix
+because 28 inflated pairs were already measurable on a real map.
+
+**Status:** #63 merged at `22279e0`; installed via `install.sh` from merged
+main, `~/.codex/AGENTS.md` verified identical, wrapper `--help` advertises
+`--workflow-slug`. #31 merged at `62bb9a8`; its review round fixed three
+verified findings on `ab81c36` (restored `__main__` guard, basename
+`bootstrap.py` filter, README contradiction) and report-not-actioned the
+upgrade-removal ask — zero live remnants measured (`~/plugins` empty,
+marketplace `plugins: []`, backup at `/tmp/rcf-plugin-remnants-backup`). #32
+merged at `7ef95f8`; producer reinstalled to that snapshot, engine-only. Local
+mains fast-forwarded; the live packet reports `workflow_state.py`
+`direct_dependents=24`, so the union plus dedupe is producing real numbers.
+
+**Decision (maintainer-directed):**
+[PR #62](https://github.com/future3OOO/codex-skills/pull/62) stays open,
+unmerged. Its ledger stores a whole-file digest for reads that are
+overwhelmingly fragments (30/30 seeded paths in the real corpus), so the
+re-arm's "inspected, unchanged" claim overstates coverage — the failure
+direction is the harmful one, telling a resumed agent it holds content it
+never saw. The honest redesign records read extents, not whole-file claims.
+Worth keeping from the branch: the capture seam at the existing PostToolUse
+hook, the per-workflow sidecar, the re-arm injection, and the corpus replay
+harness.
+
+**Upstream defect filed:**
+[proxysoul/Empryo#210](https://github.com/proxysoul/Empryo/issues/210), full
+trace mirrored at
+[future3OOO/soulforge#1](https://github.com/future3OOO/soulforge/issues/1):
+tree-sitter `getFileOutline` records Python `imp.source` as raw statement text
+(no `@source` capture in the main query), `isResolvable` excludes bare module
+names, and `resolveImportSource` is repo-root-relative only — the producer
+emits zero confidence-3 Python edges. The PR #30 consumer union stays as the
+permanent fallback for stale databases; a fork-side producer patch is optional
+hygiene, made double-count-safe by #32's dedupe.
+
+**PR [#67](https://github.com/future3OOO/codex-skills/pull/67) (open, review
+complete):** the intake coordinator is now opt-in — `setUp`'s blanket class
+lock (≈935s serialised against a 300s deadline, the real cause of
+`SUITE_COORDINATOR_WEDGED`) became `serialise()`, held only by the 14 cases
+that touch the real slot directory or drive a producer. The three pure
+in-process cases run unsynchronised, and
+`test_higher_slots_count_during_competing_admissions` got a private slot root
+rather than the lock. Verified on head `1473270`: the 14/3 split audited
+against test bodies and helpers, both prior findings confirmed fixed, all
+checks green, both threads resolved. One pre-existing flake observed, not
+caused by this change: `test_a_queued_same_home_waiter_holds_no_capacity` is
+sensitive to external slot capacity in parallel runs.
