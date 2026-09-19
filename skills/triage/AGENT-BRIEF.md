@@ -1,168 +1,94 @@
-# Writing Agent Briefs
+# Writing Issues and Agent Briefs
 
-An agent brief is a structured comment posted on a GitHub issue when it moves to `ready-for-agent`. It is the authoritative specification that an AFK agent will work from. The original issue body and discussion are context — the agent brief is the contract.
+Use the same compact contract for new issues and `ready-for-agent` briefs.
+Reconcile the full request, body and comments; preserve existing obligations
+and maintain one authoritative brief rather than competing copies.
+Read the applicable `AGENTS.md` before drafting execution constraints: it owns
+worktree isolation before workflow state, production/docs-only routing,
+`$diagnose`, `$tdd`, targeted verification, and same-task continuation.
+Carry its pointer into the brief; do not copy the workflow's steps.
 
-## Principles
+## Establish the smallest change before drafting
 
-### Durability over precision
+1. **Target objective.** State the observable behavior after implementation in
+   one sentence: when a specific trigger occurs, what result should follow?
+   Describe the outcome, not an activity such as “add validation.”
+2. **Current behavior.** Inspect the existing implementation and its callers.
+   For a bug, reproduce the failure and trace its cause. Record the observed gap
+   from the objective, linking evidence instead of copying the investigation.
+3. **Smallest change.** Search for existing behavior by domain concept, not just
+   the request's wording; name where you looked and the owner to reuse or modify.
+   Prefer the least code that fully meets the objective while preserving
+   affected behavior. If existing behavior already satisfies it, say no code
+   change is needed. Treat an unverified approach as a question, not a requirement.
+4. **Verification.** Require proof of the objective and affected preservation
+   using the rule below. Fewer lines never justify weaker behavior or proof.
 
-The issue may sit in `ready-for-agent` for days or weeks. The codebase will change in the meantime. Write the brief so it stays useful even as files are renamed, moved, or refactored.
+Name current symbols or paths when they help locate the owner; they are evidence
+for the approach, not a fixed edit script. Exclude unrelated cleanup and
+mechanisms the objective does not require.
 
-- **Do** describe interfaces, types, and behavioral contracts
-- **Do** name specific types, function signatures, or config shapes that the agent should look for or modify
-- **Don't** reference file paths — they go stale
-- **Don't** reference line numbers
-- **Don't** assume the current implementation structure will remain the same
+For a PR, inspect the existing diff and its demonstrated behavior. The brief
+describes only the remaining gaps and smallest correction, preserving working
+contributions rather than instructing an agent to rebuild the feature.
 
-### Behavioral, not procedural
+## Prove the core objective before delivery
 
-Describe **what** the system should do, not **how** to implement it. The agent will explore the codebase fresh and make its own implementation decisions.
+For changed or affected behavior, require the lead to execute equivalent
+inputs against actual N (before) and N+1 (candidate) through the production
+Interface with real collaborators. Name the operation, verify loaded targets,
+and compare observed outputs/state effects against the requested outcome.
+Cover the original failure, supported affected paths and previously working
+behavior the change can affect. Derive expectations from the contract, not the
+new implementation; a passing example cannot close an incomplete repair.
 
-- **Good:** "The `SkillConfig` type should accept an optional `schedule` field of type `CronExpression`"
-- **Bad:** "Open src/types/skill.ts and add a schedule field on line 42"
-- **Good:** "When a user runs `/triage` with no arguments, they should see a summary of issues needing attention"
-- **Bad:** "Add a switch statement in the main handler function"
+Match proof to the whole objective. For agent/workflow behavior, observe an
+actual agent performing the relevant real task with the old and revised
+behavior. CLI/executor/ledger tests prove their component outcomes, not the
+lead's repair/continuation behavior. For efficiency claims, compare measured
+work and results at unchanged correctness guarantees.
 
-### Complete acceptance criteria
+Require this reconciliation before the lead claims completion or commits/pushes
+implementation for delivery, not after a reviewer or user notices the gap.
+Missing targets, dependencies or actual agent execution remain explicit unmet
+acceptance; green suites, CI, source-text checks and workflow/map state cannot
+waive it. State this delivery condition in the brief itself.
 
-The agent needs to know when it's done. Every agent brief must have concrete, testable acceptance criteria. Each criterion should be independently verifiable.
+Reuse existing drivers, captured inputs and applicable executed evidence. Tests
+qualify by the real behavior they reach, not their unit/integration label;
+mocks, substituted collaborators and helper-only assertions cannot replace the
+comparison. Retain useful distinct coverage without a new framework, test per
+bullet, duplicate handoff executions or mandatory report fields. For genuinely
+non-behavioral work, state why behavioral N/N+1 is inapplicable and verify the
+actual before/after artifact; do not manufacture a failing product baseline.
 
-- **Good:** "Running `gh issue list --label needs-triage` returns issues that have been through initial classification"
-- **Bad:** "Triage should work correctly"
-
-### Explicit scope boundaries
-
-State what is out of scope. This prevents the agent from gold-plating or making assumptions about adjacent features.
-
-## Template
-
-```markdown
-## Agent Brief
-
-**Category:** bug / enhancement
-**Summary:** one-line description of what needs to happen
-
-**Current behavior:**
-Describe what happens now. For bugs, this is the broken behavior.
-For enhancements, this is the status quo the feature builds on.
-
-**Desired behavior:**
-Describe what should happen after the agent's work is complete.
-Be specific about edge cases and error conditions.
-
-**Key interfaces:**
-- `TypeName` — what needs to change and why
-- `functionName()` return type — what it currently returns vs what it should return
-- Config shape — any new configuration options needed
-
-**Acceptance criteria:**
-- [ ] Specific, testable criterion 1
-- [ ] Specific, testable criterion 2
-- [ ] Specific, testable criterion 3
-
-**Out of scope:**
-- Thing that should NOT be changed or addressed in this issue
-- Adjacent feature that might seem related but is separate
-```
-
-## Examples
-
-### Good agent brief (bug)
+## Compact contract
 
 ```markdown
-## Agent Brief
+Follow the applicable `AGENTS.md` for execution.
 
-**Category:** bug
-**Summary:** Skill description truncation drops mid-word, producing broken output
+**Target objective:** When [trigger], [observable result].
 
-**Current behavior:**
-When a skill description exceeds 1024 characters, it is truncated at exactly
-1024 characters regardless of word boundaries. This produces descriptions
-that end mid-word (e.g. "Use when the user wants to confi").
+**Current behavior:** [Observed gap and reproduction/evidence link.]
 
-**Desired behavior:**
-Truncation should break at the last word boundary before 1024 characters
-and append "..." to indicate truncation.
+**Smallest change:** [Existing owner to reuse or modify, and why this suffices.]
 
-**Key interfaces:**
-- The `SkillMetadata` type's `description` field — no type change needed,
-  but the validation/processing logic that populates it needs to respect
-  word boundaries
-- Any function that reads SKILL.md frontmatter and extracts the description
-
-**Acceptance criteria:**
-- [ ] Descriptions under 1024 chars are unchanged
-- [ ] Descriptions over 1024 chars are truncated at the last word boundary
-      before 1024 chars
-- [ ] Truncated descriptions end with "..."
-- [ ] The total length including "..." does not exceed 1024 chars
-
-**Out of scope:**
-- Changing the 1024 char limit itself
-- Multi-line description support
+**Verification:**
+- [ ] [Changed or affected behavior: actual N/N+1 targets, real operation and equivalent
+      inputs; expected versus observed outputs/state effects. Non-behavioral
+      change: compare the actual before/after artifact and explain applicability.]
+- [ ] [Affected paths or artifact content that must remain unchanged; compare
+      before/after and reject incomplete repairs or regressions.]
+- [ ] [Whole-objective evidence, including actual agent execution where
+      applicable, reconciled by the lead before committing/pushing for delivery;
+      missing evidence remains unmet acceptance despite component tests passing.]
 ```
 
-### Good agent brief (enhancement)
+Scale the checks to the actual behavior; the template is not a test-count quota.
+Add a blocker or scope boundary only when it changes the implementation decision.
+Do not repeat the objective as separate summary and desired-behavior sections or
+paste repository-wide engineering rules into each issue.
 
-```markdown
-## Agent Brief
-
-**Category:** enhancement
-**Summary:** Add `.out-of-scope/` directory support for tracking rejected feature requests
-
-**Current behavior:**
-When a feature request is rejected, the issue is closed with a `wontfix` label
-and a comment. There is no persistent record of the decision or reasoning.
-Future similar requests require the maintainer to recall or search for the
-prior discussion.
-
-**Desired behavior:**
-Rejected feature requests should be documented in `.out-of-scope/<concept>.md`
-files that capture the decision, reasoning, and links to all issues that
-requested the feature. When triaging new issues, these files should be
-checked for matches.
-
-**Key interfaces:**
-- Markdown file format in `.out-of-scope/` — each file should have a
-  `# Concept Name` heading, a `**Decision:**` line, a `**Reason:**` line,
-  and a `**Prior requests:**` list with issue links
-- The triage workflow should read all `.out-of-scope/*.md` files early
-  and match incoming issues against them by concept similarity
-
-**Acceptance criteria:**
-- [ ] Closing a feature as wontfix creates/updates a file in `.out-of-scope/`
-- [ ] The file includes the decision, reasoning, and link to the closed issue
-- [ ] If a matching `.out-of-scope/` file already exists, the new issue is
-      appended to its "Prior requests" list rather than creating a duplicate
-- [ ] During triage, existing `.out-of-scope/` files are checked and surfaced
-      when a new issue matches a prior rejection
-
-**Out of scope:**
-- Automated matching (human confirms the match)
-- Reopening previously rejected features
-- Bug reports (only enhancement rejections go to `.out-of-scope/`)
-```
-
-### Bad agent brief
-
-```markdown
-## Agent Brief
-
-**Summary:** Fix the triage bug
-
-**What to do:**
-The triage thing is broken. Look at the main file and fix it.
-The function around line 150 has the issue.
-
-**Files to change:**
-- src/triage/handler.ts (line 150)
-- src/types.ts (line 42)
-```
-
-This is bad because:
-- No category
-- Vague description ("the triage thing is broken")
-- References file paths and line numbers that will go stale
-- No acceptance criteria
-- No scope boundaries
-- No description of current vs desired behavior
+For `ready-for-agent`, post this contract under `## Agent Brief`, retaining the
+issue's category and the skill's required AI disclaimer. Resolve material
+unknowns before marking it ready; otherwise ask the specific missing question.

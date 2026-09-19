@@ -15,8 +15,15 @@ Every comment or issue posted to the issue tracker during triage **must** start 
 
 ## Reference docs
 
-- [AGENT-BRIEF.md](AGENT-BRIEF.md) — how to write durable agent briefs
+- [AGENT-BRIEF.md](AGENT-BRIEF.md) — the issue and agent-brief format
 - [OUT-OF-SCOPE.md](OUT-OF-SCOPE.md) — how the `.out-of-scope/` knowledge base works
+
+## Before creating or rewriting any issue
+
+Read [AGENT-BRIEF.md](AGENT-BRIEF.md) and use its compact contract for every
+issue or brief, including quick overrides and revisions. Inspect existing
+behavior before specifying the smallest sufficient change and its proof.
+Triage prepares the handoff; it does not start an implementation workflow.
 
 ## Roles
 
@@ -60,7 +67,7 @@ Show counts and a one-line summary per issue. Let the maintainer pick.
 
 ## Triage a specific issue
 
-1. **Gather context.** Read the full issue (body, comments, labels, reporter, dates). Parse any prior triage notes so you don't re-ask resolved questions. Explore the codebase using the project's domain glossary, respecting ADRs in the area. Read `.out-of-scope/*.md` and surface any prior rejection that resembles this issue.
+1. **Gather context.** Read the full issue (body, comments, labels, reporter, dates); for an explicitly requested PR, inspect its diff and verify its claimed behavior too. Parse any prior triage notes so you don't re-ask resolved questions. Explore the codebase using the project's domain glossary, respecting ADRs in the area. Read `.out-of-scope/*.md` and surface any prior rejection that resembles this issue.
 
 2. **Recommend.** Tell the maintainer your category and state recommendation with reasoning, plus a brief codebase summary relevant to the issue. Wait for direction.
 
@@ -73,12 +80,12 @@ Show counts and a one-line summary per issue. Let the maintainer pick.
    - `ready-for-human` — same structure as an agent brief, but note why it can't be delegated (judgment calls, external access, design decisions, manual testing).
    - `needs-info` — post triage notes (template below).
    - `wontfix` (bug) — polite explanation, then close.
-   - `wontfix` (enhancement) — write to `.out-of-scope/`, link to it from a comment, then close ([OUT-OF-SCOPE.md](OUT-OF-SCOPE.md)).
+   - `wontfix` (enhancement) — follow [OUT-OF-SCOPE.md](OUT-OF-SCOPE.md) to record a rejection and close; already implemented behavior is not a rejection — point to the verified implementation instead.
    - `needs-triage` — apply the role. Optional comment if there's partial progress.
 
 ## Quick state override
 
-If the maintainer says "move #42 to ready-for-agent", trust them and apply the role directly. Confirm what you're about to do (role changes, comment, close), then act. Skip grilling. If moving to `ready-for-agent` without a grilling session, ask whether they want to write an agent brief.
+If the maintainer says "move #42 to ready-for-agent", trust them and apply the role directly. Confirm what you're about to do (role changes, comment, close), then act. Skip grilling; create or reconcile the brief from the existing request and evidence. Ask only for missing information that cannot be discovered.
 
 ## Needs-info template
 
