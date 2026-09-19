@@ -83,8 +83,12 @@ def context_document(identity: RepoIdentity, workflow_id: str) -> dict:
         if (not isinstance(row, dict) or not isinstance(row.get("kind"), str)
                 or row["kind"] not in {"request", "observed-output", "snapshot"}):
             continue
+        try:
+            size = len(_json(row).encode())
+        except UnicodeEncodeError:
+            continue
         content = {key: item for key, item in row.items() if key not in {"id", "at"}}
-        if (len(_json(row).encode()) > 2 * OUTPUT_BYTES
+        if (size > 2 * OUTPUT_BYTES
                 or row.get("id") != _hash(_json(content).encode()) or row.get("delivery") != "unknown"):
             continue
         if "output" in row and (not isinstance(row["output"], str)

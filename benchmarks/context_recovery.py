@@ -104,7 +104,7 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="context-cost-") as directory:
         root = Path(directory)
         report = {"kind": "synthetic-fixture mechanical cost, not native compaction or CX2 replay",
-                  "baseline": arm(args.baseline.resolve(), root / "N"),
+                  "baseline": arm(args.baseline.resolve(), root / "N0"),
                   "candidate": arm(args.candidate.resolve(), root / "N1"),
                   "agentTokenSavings": None, "nativeBoundaryVerified": False}
     args.out.write_text(json.dumps(report, indent=2) + "\n")

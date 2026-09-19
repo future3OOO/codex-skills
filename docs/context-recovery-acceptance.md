@@ -15,10 +15,10 @@ transcript format or a client's retained knowledge from field names.
 
 Command-only payloads remain request history. For source content worth retaining,
 use `context.py read --repo ... --path ... --start ... --end ...`; its JSON gives
-the actual range, exact produced text, source version, and `nextStart` for a
-byte-limited request. `show --id ...` recovers the text, checking current source
-and fragment equality. `--historical` is explicitly stale/unbound output, never
-current coverage. `list --offset ...` pages references without asserting memory.
+the actual range, exact produced text, `sourceDigest` (the content version),
+`sourceBytes`, and `nextStart` for a byte-limited request. `show --id ...` recovers the text, checking current source
+and fragment equality. `--historical` permits stale/unbound recovery; check the
+returned `freshness`, which can still be `source-match`. It never proves coverage. `list --offset ...` pages references without asserting memory.
 Unsupported/binary/oversized sources use ordinary tools. The RCF wrapper emits
 supplemental recovery references on stderr, preserving producer stdout and `--out`
 separation. Completed passes expose recovery only while governance revalidation
@@ -45,9 +45,16 @@ never replace tokens with a byte ratio.
 
 ## Paired native experiment
 
-Fetch the baseline with `git fetch --no-tags origin 33e4614d77bacefdaf405f21d8d61896cacc8238`
-when working from a shallow checkout. Use the README's isolated estate procedure.
-Pin N to `33e4614d77bacefdaf405f21d8d61896cacc8238` and N+1
+Create and verify the baseline checkout before using the README's isolated estate procedure:
+
+```bash
+N=33e4614d77bacefdaf405f21d8d61896cacc8238
+git fetch --no-tags origin "$N" && test "$(git rev-parse FETCH_HEAD)" = "$N" &&
+  git worktree add --detach ../context-N "$N" &&
+  test "$(git -C ../context-N rev-parse HEAD)" = "$N"
+```
+
+Pin N+1
 to the exact candidate commit. Each arm gets the same repository, task, model and
 budget, separate mutable workflow/session state, and verified loaded source.
 Capture both before and after comparable real compaction boundaries. Record the
@@ -71,7 +78,8 @@ python3 benchmarks/context_recovery.py --baseline <checkout> --candidate <checko
   --out <report.json>
 ```
 
-It measures isolated real hook/CLI costs and byte counts on a synthetic fixture. It is useful regression evidence, but it is NOT this native
+It measures isolated real hook/CLI costs and raw byte counts on a synthetic fixture.
+Output includes local paths; use equal-length checkout paths for byte comparisons. It is useful regression evidence, but it is NOT this native
 experiment and does not establish model behavior or token savings. Both refs are
 trusted code running with the caller's permissions, not an OS sandbox. Keep output
 outside the checkout. Run the focused hook/context suites and normal CI; obtain

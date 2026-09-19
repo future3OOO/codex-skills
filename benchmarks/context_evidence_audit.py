@@ -50,7 +50,7 @@ def audit(document: dict) -> dict:
                 or (output is not None and not isinstance(output, str))):
             raise ValueError("sourceVersion/output must be strings or null")
         request = (event["path"], event["operation"], json.dumps(event["requestedScope"], sort_keys=True))
-        same_scope = bound and request in requests
+        same_scope = bound and event["requestedScope"] is not None and request in requests
         fingerprint = (event["path"], version, hashlib.sha256(output.encode()).hexdigest()) if bound and output is not None and version else None
         same_output = fingerprint is not None and fingerprint in outputs
         counts["events"] += 1

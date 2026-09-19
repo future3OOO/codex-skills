@@ -224,6 +224,24 @@ class ContextEvidenceTests(HookHarness):
         sidecar.symlink_to(self.repo / "app.py")
         self.assertEqual(self.document()["records"], [])
 
+    def test_unencodable_row_preserves_recovery_and_future_writes(self) -> None:
+        (self.repo / "app.py").write_text("FIRST\nSECOND\n")
+        first = self.read()
+        sidecar = repo_state_dir(self.identity) / "reads" / f"{self.wid}.json"
+        original = json.loads(sidecar.read_text())
+        before = self.state("history").stdout
+        for damage in ({"output": "\ud800"}, {"path": "\udfff"}, {"request": {"\ud800": 1}}):
+            with self.subTest(damage=ascii(damage)):
+                bad = {**first, **damage}
+                sidecar.write_text(json.dumps({**original, "records": [bad, first]}))
+                self.assertEqual(self.document()["records"], [first], "CORRUPT_ROW_POISONED_STORE")
+                self.assertEqual(self.show(first)["output"], "FIRST\n")
+                self.assertIn("sourceData", self.rearm(), "CORRUPT_ROW_SUPPRESSED_WINDOW")
+                second = self.read(2, 2)
+                self.assertEqual(self.show(second)["output"], "SECOND\n", "CORRUPT_ROW_BLOCKED_WRITER")
+                self.assertEqual(len(self.document()["records"]), 2)
+        self.assertEqual(self.state("history").stdout, before)
+
     def test_multiple_worktrees_workflows_and_outside_paths_are_not_interchangeable(self) -> None:
         row = self.read()
         other = self.tmp / "worktree"
@@ -348,6 +366,11 @@ class ContextEvidenceTests(HookHarness):
              "resultRef": f"synthetic-fixture:{n}", "output": ""}
             for n in (9, 10)
         ])
+        events.extend([
+            {"id": str(n), "path": "app.py", "operation": "sed", "requestedScope": None,
+             "sourceVersion": None, "resultRef": f"synthetic-fixture:{n}", "output": None}
+            for n in (11, 12)
+        ])
         capture = self.tmp / "labels.json"
         capture.write_text(json.dumps({"provenance": {"traceSha256": evidence._hash(json.dumps(events).encode()), "labeler": "synthetic-test"},
                                        "events": events}))
@@ -355,7 +378,7 @@ class ContextEvidenceTests(HookHarness):
         self.assertEqual(result.returncode, 0, result.stderr)
         report = json.loads(result.stdout)
         self.assertEqual(report["counts"]["unboundPath"], 4)
-        self.assertEqual(report["counts"]["repeatedPath"], 4)
+        self.assertEqual(report["counts"]["repeatedPath"], 6)
         self.assertEqual(report["counts"]["sameRequestedScope"], 3)
         self.assertEqual(report["counts"]["sameVersionOutputCandidates"], 2)
         self.assertIsNone(report["avoidableRetrieval"])
