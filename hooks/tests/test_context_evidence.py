@@ -54,6 +54,42 @@ class ContextEvidenceTests(HookHarness):
         self.assertEqual(result.returncode, 0, result.stderr)
         return json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
 
+    def test_optional_observation_rejects_nul_and_uses_working_directory(self) -> None:
+        for cwd, command in ((str(self.repo) + "\0", "cat app.py"),
+                             (str(self.repo), "cat bad\0.py")):
+            payload = {"cwd": cwd, "tool_name": "Bash", "tool_input": {"command": command}}
+            result = self.hook("code-quality-gate.py", payload)
+            self.assertEqual(result.returncode, 0, "OPTIONAL_PATH_BROKE_HOOK: " + result.stderr)
+        command = "cat app.py"
+        output = subprocess.check_output(["bash", "-c", command], cwd=self.repo, text=True)
+        payload = {"working_directory": str(self.repo), "tool_name": "Bash",
+                   "tool_input": {"command": command}, "tool_response": {"stdout": output, "exit_code": 0}}
+        result = subprocess.run([sys.executable, str(ROOT / "hooks/code-quality-gate.py")],
+                                cwd=self.tmp, env=self.env, input=json.dumps(payload), capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        rows = self.document()["records"]
+        self.assertEqual(len(rows), 1, "WORKING_DIRECTORY_LOST_REQUEST")
+        self.assertEqual(rows[0]["output"], output)
+        self.assertEqual(rows[0]["sourceBinding"], "unknown")
+
+    def test_revalidation_preserves_recovery_without_reopening_proof(self) -> None:
+        row = self.read()
+        self.complete_workflow("context", resume=True)
+        self.assertNotIn("sourceData", self.rearm())
+        self.run_context("show", "--id", row["id"], success=False)
+        governance = self.repo / "skills/diagnose/SKILL.md"
+        governance.parent.mkdir(parents=True)
+        governance.write_text("updated governance\n")
+        self.assertEqual(self.post_edit("skills/diagnose/SKILL.md").returncode, 0)
+        state = json.loads(self.state("status").stdout)
+        self.assertEqual(state["phase"], "complete")
+        self.assertTrue(state["revalidation"])
+        self.assertIn("sourceData", self.rearm(), "REVALIDATION_LOST_CONTEXT")
+        before = self.state("history").stdout
+        self.assertEqual(self.show(row)["output"], row["output"])
+        self.assertEqual(self.read()["output"], row["output"])
+        self.assertEqual(self.state("history").stdout, before, "CONTEXT_REOPENED_PROOF")
+
     def test_command_only_and_count_results_are_not_content_claims(self) -> None:
         before = self.state("history").stdout
         for command in ("sed -n '1p' app.py", "wc -l app.py"):
@@ -239,12 +275,15 @@ class ContextEvidenceTests(HookHarness):
         sys.addaudithook(lambda event, args: opened.append(args[0])
                         if active[0] and event == "open" and str(args[0]) == source else None)
         try:
-            for inline, budget in ((False, evidence.CONTEXT_BYTES), (True, 512)):
+            for inline, budget in ((False, evidence.CONTEXT_BYTES), (True, 1)):
                 references = evidence.context_window(self.identity, self.wid, budget, inline=inline)
                 if not inline:
                     self.assertIn(row["id"], references)
                 self.assertNotIn("sourceData", references)
                 self.assertEqual(opened, [], "REFERENCE_LIST_REREAD_SOURCE")
+            available = evidence.context_window(self.identity, self.wid, evidence.CONTEXT_BYTES)
+            self.assertIn("sourceData", available)
+            self.assertEqual(opened, [source], "INLINE_FRAGMENT_NOT_VERIFIED")
         finally:
             active[0] = False
         # A reference is not freshness proof: ordinary recovery must still check.
@@ -303,13 +342,19 @@ class ContextEvidenceTests(HookHarness):
              "attribution": "unbound", "sourceVersion": None, "resultRef": f"synthetic-fixture:{n}", "output": "same"}
             for n in (7, 8)
         ])
+        events.extend([
+            {"id": str(n), "path": "empty.txt", "operation": "cat", "requestedScope": {},
+             "attribution": "unbound", "sourceVersion": "empty-version",
+             "resultRef": f"synthetic-fixture:{n}", "output": ""}
+            for n in (9, 10)
+        ])
         capture = self.tmp / "labels.json"
         capture.write_text(json.dumps({"provenance": {"traceSha256": evidence._hash(json.dumps(events).encode()), "labeler": "synthetic-test"},
                                        "events": events}))
         result = subprocess.run([sys.executable, str(script), str(capture)], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         report = json.loads(result.stdout)
-        self.assertEqual(report["counts"]["unboundPath"], 2)
+        self.assertEqual(report["counts"]["unboundPath"], 4)
         self.assertEqual(report["counts"]["repeatedPath"], 4)
         self.assertEqual(report["counts"]["sameRequestedScope"], 3)
         self.assertEqual(report["counts"]["sameVersionOutputCandidates"], 2)

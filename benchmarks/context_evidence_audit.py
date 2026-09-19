@@ -41,7 +41,7 @@ def audit(document: dict) -> dict:
         if ("path" not in event or (event["path"] is None and event.get("attribution") != "unbound")
                 or (event["path"] is not None and (not isinstance(event["path"], str) or not event["path"]))):
             raise ValueError("path must identify an observed source, or be null with attribution=unbound")
-        bound = event["path"] is not None
+        bound = event["path"] is not None and event.get("attribution") != "unbound"
         if event["id"] in ids:
             raise ValueError("duplicate event id")
         ids.add(event["id"])

@@ -136,9 +136,9 @@ def _segments(command: str) -> list[list[str]]:
 def read_candidates(command: str) -> list[str]:
     """Candidate reads in supported read-only commands, never arbitrary shell text.
 
-    The PostToolUse digest is taken after the whole invocation. Omit an entire
-    mixed or opaque invocation so a writer cannot lend an unread replacement's
-    digest to an earlier reader. Stderr suppression is not a source-file write.
+    These are requested paths, not proof of execution, delivery or coverage.
+    Mixed or opaque invocations are omitted. Stderr suppression is not a
+    source-file write.
     A token carrying `$` is never a path, so nothing is resolved on the shell's
     behalf: an unexpanded reference simply declines.
     """
@@ -252,15 +252,14 @@ def read_paths(payload: dict[str, object]) -> list[Path]:
     command = tool_input.get("command") if isinstance(tool_input, dict) else None
     if payload.get("tool_name") != "Bash" or not isinstance(command, str) or not command:
         return []
-    cwd = payload.get("cwd")
-    cwd = cwd if isinstance(cwd, str) and cwd else None
+    cwd = working_directory(payload)
     paths: list[Path] = []
     for candidate in read_candidates(command):
         try:
             resolved = _resolve(candidate, cwd)
             if resolved.is_file() and resolved not in paths:
                 paths.append(resolved)
-        except (OSError, RuntimeError):
+        except (OSError, RuntimeError, ValueError):
             continue
     return paths
 

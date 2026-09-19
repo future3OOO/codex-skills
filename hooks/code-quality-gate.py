@@ -86,7 +86,7 @@ def _record_reads(payload: dict[str, object]) -> None:
         state = read_workflow(identity)
     except (WorkflowError, LedgerError, ValueError, sqlite3.Error):
         return
-    if state is None or state.get("phase") == "complete" or not isinstance(state.get("workflowId"), str):
+    if state is None or (state.get("phase") == "complete" and not state.get("revalidation")) or not isinstance(state.get("workflowId"), str):
         return
     try:
         observe_request(identity, str(state["workflowId"]), payload, paths)

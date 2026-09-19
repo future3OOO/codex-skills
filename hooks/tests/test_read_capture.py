@@ -299,18 +299,19 @@ class ReadCaptureHookTests(HookHarness):
                 self.assertNotIn('app.py', self.rearm(), "JQ_FALSE_INSPECTION")
 
     def test_executed_cat_stdin_is_claimed_only_when_consumed(self) -> None:
-        self.assertEqual(self.state("begin", "--slug", "reads").returncode, 0)
         (self.repo / "app.py").write_text('ONLY_APP\n', encoding="utf-8")
         (self.repo / "b.py").write_text('ONLY_B\n', encoding="utf-8")
         identity = resolve_repo_identity(self.repo)
-        wid = json.loads(self.state("status").stdout)["workflowId"]
         for command, printed, expected_paths in (
             ("cat b.py < app.py", 'ONLY_B\n', {'b.py'}),
-            ("cat < app.py <<'EOF'\nHEREDOC_ONLY\nEOF", 'HEREDOC_ONLY\n', {'b.py'}),
-            ("cat < app.py", 'ONLY_APP\n', {'b.py', 'app.py'}),
+            ("cat < app.py <<'EOF'\nHEREDOC_ONLY\nEOF", 'HEREDOC_ONLY\n', set()),
+            ("cat < app.py", 'ONLY_APP\n', {'app.py'}),
             ("cat b.py - < app.py", 'ONLY_B\nONLY_APP\n', {'b.py', 'app.py'}),
         ):
             with self.subTest(command=command):
+                begun = self.state("begin", "--slug", "reads")
+                self.assertEqual(begun.returncode, 0, begun.stderr)
+                wid = json.loads(begun.stdout)["workflowId"]
                 executed = subprocess.run(["bash", "-c", command], cwd=self.repo, env=self.env,
                                           capture_output=True, text=True, check=True)
                 self.assertEqual(executed.stdout, printed)
@@ -459,12 +460,15 @@ class ReadCaptureHookTests(HookHarness):
         self.read("cat app.py")
         reads = state_store.repo_state_dir(identity) / "reads"
         self.assertTrue((reads / f"{oldest}.json").is_file() and (reads / f"{active}.json").is_file())
+        (reads / "unowned.json").write_text("{}")
         pruned = subprocess.run([sys.executable, str(ROOT / "skills" / "repo-production-workflow" / "scripts" / "workflow.py"), "prune", "--apply"],
                                 cwd=self.repo, env=self.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
         self.assertEqual(pruned.returncode, 0, pruned.stdout + pruned.stderr)
         self.assertFalse((reads / f"{oldest}.json").exists(), "SIDECAR_NOT_RETIRED")
         self.assertTrue((reads / f"{active}.json").is_file(), "SIDECAR_NOT_RETIRED")
         self.assertIn("follows-removed-workflow", pruned.stdout, "SIDECAR_NOT_RETIRED")
+        self.assertTrue((reads / "unowned.json").is_file())
+        self.assertIn("unowned-read-entry", pruned.stdout, "PRUNE_INVENTED_OWNER")
 
     def test_prune_never_follows_a_symlinked_reads_directory(self) -> None:
         # BM_SYMLINKED_READS_NOT_FOLLOWED: a symlinked reads/ is retained, never walked,

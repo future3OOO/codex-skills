@@ -8,7 +8,7 @@ not another decision record and not proof that a native experiment ran.
 On the isolated candidate estate, retain the exact installed client version,
 configuration and candidate/source identities. Capture a sanitized real
 PostToolUse input and the corresponding final model-visible result. Run the
-payload through `skills/repo-production-workflow/scripts/context.py probe` to
+payload through `python3 skills/repo-production-workflow/scripts/context.py probe` to
 report which fields actually exist. The probe reports observations only: a
 `tool_response` may precede later output replacement/truncation. Do not infer a
 transcript format or a client's retained knowledge from field names.
@@ -19,7 +19,10 @@ the actual range, exact produced text, source version, and `nextStart` for a
 byte-limited request. `show --id ...` recovers the text, checking current source
 and fragment equality. `--historical` is explicitly stale/unbound output, never
 current coverage. `list --offset ...` pages references without asserting memory.
-Unsupported/binary/oversized sources use ordinary tools. No automatic rerun of a
+Unsupported/binary/oversized sources use ordinary tools. The RCF wrapper emits
+supplemental recovery references on stderr, preserving producer stdout and `--out`
+separation. Completed passes expose recovery only while governance revalidation
+is active; no context operation reopens or satisfies proof. No automatic rerun of a
 stored shell command is performed.
 
 ## Reclassify the original capture, not the aggregate table
@@ -42,7 +45,9 @@ never replace tokens with a byte ratio.
 
 ## Paired native experiment
 
-Use the existing README's isolated estate procedure. Pin N to `33e4614d77bacefdaf405f21d8d61896cacc8238` and N+1
+Fetch the baseline with `git fetch --no-tags origin 33e4614d77bacefdaf405f21d8d61896cacc8238`
+when working from a shallow checkout. Use the README's isolated estate procedure.
+Pin N to `33e4614d77bacefdaf405f21d8d61896cacc8238` and N+1
 to the exact candidate commit. Each arm gets the same repository, task, model and
 budget, separate mutable workflow/session state, and verified loaded source.
 Capture both before and after comparable real compaction boundaries. Record the
@@ -78,7 +83,11 @@ context-preservation feature into history-only telemetry.
 ## Supplied CX2 extraction
 
 Bundle SHA-256: `b20a6d529f024a6b28a723f96371ec30bd655de319a62d13c88b8ac2f2d08bfe`.
-Use only `data/lead-*.json` and `data/sub-*.json` as labeling inputs. The complete
+Obtain the maintainer-supplied private `cx2-evidence-bundle.zip` from the PR62
+implementation conversation; it is not a public repository `data/` directory.
+Verify the ZIP hash above, then extract it outside the checkout with
+`python3 -m zipfile -e /path/to/cx2-evidence-bundle.zip /path/to/cx2-data`.
+Use only its `data/lead-*.json` and `data/sub-*.json` as labeling inputs. The complete
 output-disposition artifact accounts for 526 calls and all decoded result characters,
 including unbound remainders. Preserve each thread separately and verify every
 output span against its original result. An explicit unknown is not missing work

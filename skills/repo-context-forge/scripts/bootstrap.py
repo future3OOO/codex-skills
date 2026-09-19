@@ -614,8 +614,7 @@ def main(argv: list[str]) -> int:
     # coverage_plan. Use the captured workflow id so a replacement pass gets no stale window.
     context = active_context(identity, captured_workflow_id, inline=False)
     if context:
-        sys.stdout.flush()
-        print(context)
+        print(context, file=sys.stderr)
     return 0
 
 

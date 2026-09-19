@@ -278,7 +278,7 @@ def active_context(identity: RepoIdentity, workflow_id: str | None = None, *, in
     from .workflow_state import read_workflow
     try:
         state = read_workflow(identity)
-        if (not state or state.get("phase") == "complete"
+        if (not state or (state.get("phase") == "complete" and not state.get("revalidation"))
                 or not isinstance(state.get("workflowId"), str)
                 or (workflow_id is not None and state["workflowId"] != workflow_id)):
             return ""
@@ -317,7 +317,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         identity = resolve_repo_identity(args.repo)
         state = read_workflow(identity)
-        if not state or state.get("phase") == "complete" or not isinstance(state.get("workflowId"), str):
+        if not state or (state.get("phase") == "complete" and not state.get("revalidation")) or not isinstance(state.get("workflowId"), str):
             raise ValueError("no active workflow for context recovery")
         wid = state["workflowId"]
         if args.operation == "read":

@@ -384,6 +384,7 @@ def _apply_database(
 
 
 def _sqlite_entries(slot: Path, workflows: list[dict[str, object]], apply: bool) -> list[dict[str, str]]:
+    known = {str(item["workflowId"]) for item in workflows}
     retired = {str(item["workflowId"]) for item in workflows if item["decision"] in {"removable", "removed"}}
     entries: list[dict[str, str]] = []
     for child in sorted(slot.iterdir()):
@@ -392,7 +393,9 @@ def _sqlite_entries(slot: Path, workflows: list[dict[str, object]], apply: bool)
             for sidecar in sorted(child.iterdir()):
                 name = f"reads/{sidecar.name}"
                 if sidecar.suffix != ".json" or sidecar.stem not in retired:
-                    entries.append({"path": name, "decision": "retained", "reason": "follows-retained-workflow"})
+                    reason = ("follows-retained-workflow" if sidecar.suffix == ".json" and sidecar.stem in known
+                              else "lock" if sidecar.name == ".lock" else "unowned-read-entry")
+                    entries.append({"path": name, "decision": "retained", "reason": reason})
                 elif not apply:
                     entries.append({"path": name, "decision": "removable", "reason": "follows-removed-workflow"})
                 else:

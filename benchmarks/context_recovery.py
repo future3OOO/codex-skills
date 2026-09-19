@@ -58,11 +58,13 @@ def arm(checkout: Path, root: Path) -> dict:
     run([sys.executable, str(cli), "begin", "--repo", str(repo), "--slug", "context-cost"], repo, env)
     command = "\n".join(f"sed -n '1p' {name}" for name in names)
     original, _ = run(["bash", "-c", command], repo, env)
-    payload = {"tool_name": "Bash", "cwd": str(repo), "session_id": "cost", "tool_input": {"command": command}}
+    payload = {"tool_name": "Bash", "cwd": str(repo), "session_id": "cost", "tool_input": {"command": command},
+               "tool_response": {"stdout": original.stdout, "exit_code": original.returncode}}
     hook = checkout / "hooks/code-quality-gate.py"
     rearm = checkout / "hooks/skill-discipline-rearm.py"
     hook_times, rearm_times, bytes_out = [], [], []
-    for _ in range(5):
+    for index in range(5):
+        payload["tool_use_id"] = f"cost-{index}"
         _, elapsed = run([sys.executable, str(hook)], repo, env, payload)
         hook_times.append(elapsed)
         result, elapsed = run([sys.executable, str(rearm)], repo, env, {"cwd": str(repo), "source": "compact"})
@@ -87,7 +89,7 @@ def arm(checkout: Path, root: Path) -> dict:
     if source_identity(checkout) != identity:
         raise RuntimeError("benchmark source changed during execution")
     return {"checkout": str(checkout), **identity, "hookSha256": hashlib.sha256(hook.read_bytes()).hexdigest(),
-            "command": command, "originalOutputBytes": len(original.stdout.encode()),
+            "hookInputKind": "observed-output", "command": command, "originalOutputBytes": len(original.stdout.encode()),
             "hookSeconds": hook_times, "rearmSeconds": rearm_times, "rearmBytes": bytes_out,
             "medianHookSeconds": statistics.median(hook_times), "medianRearmSeconds": statistics.median(rearm_times),
             "snapshotPath": snapshots}
