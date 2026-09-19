@@ -1084,7 +1084,9 @@ commit-ready.
 
 **Independent PR69 review at `c8998da` (2026-09-19):** The review of
 [issue #68](https://github.com/future3OOO/codex-skills/issues/68) supersedes
-the readiness implication of the reviewer-completion statement above. The
+the readiness implication of the reviewer-completion statement above and
+limits its "all three admission paths" claim: the receipt-path identity dedup
+did not hold until `f76acba`. The
 131 tests in the two changed suites pass, but public CLI probes show one
 stored passing test settling two items through either a later cumulative
 evidence document containing the identical original run, or the accepted
@@ -1096,7 +1098,8 @@ run's canonical record, and `inherited_baseline` dedups on that identity, so
 every reference spelling of one stored execution refuses. The reproducer
 flips both cases to refused-with-pending and the four dedup/receipt tests
 stay green. The change otherwise stays
-focused (86 net runtime lines); STD-1 names a removable five-line forwarding
+focused (86 net runtime lines at the reviewed head `c8998da`; the `f76acba`
+dedup work brings it to 99 net — the basis for the re-measurement below); STD-1 names a removable five-line forwarding
 helper — **also fixed at `f76acba`** (`_baseline_observation` inlined into
 its single caller). Review intake and reproducible results are retained at
 `/tmp/pr69-review-intake.json`, `/tmp/pr69-review-reproduce.py`, and
