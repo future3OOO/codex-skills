@@ -189,34 +189,20 @@ repository exploration task inside a git repository, run Repo Context Forge
 before choosing files, editing code, or running GitNexus analysis (docs-only
 exception above).
 
-Call the installed governed wrapper. It is the only entry point that records
-the packet against an active workflow; the producer snapshot under
-`~/.local/share/repo-context-forge/current` is the engine the wrapper runs, not
-a path to invoke directly. Begin the pass first when none is active, then give
-the wrapper that same slug and the same intent:
+Call the installed governed wrapper — never the producer snapshot under
+`~/.local/share/repo-context-forge/current` — with the active pass's slug and
+intent; begin the pass first when none is active:
 
 ```bash
 printf '%s' "$request_text" \
   | python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" \
     begin --repo "$PWD" --slug "<stable-task-slug>" --intent -
 python3 "$HOME/.codex/skills/repo-context-forge/scripts/bootstrap.py" \
-  --repo "$PWD" --workflow-slug "<stable-task-slug>" --intent "<user request>"
+  --repo "$PWD" --workflow-slug "<stable-task-slug>" --intent "$request_text"
 ```
 
-**Pass the request text, not a summary.** Nothing validates the intent: an
-unset `$request_text` opens a pass whose recorded intent is empty, and neither
-`record-preflight` nor either advisor consult will say so, even though that
-intent is the contract they enforce. `$repo-production-workflow` owns how it is
-built, including `--intent-file` for a request too long to survive shell
-quoting.
-
-Both flags matter. Without `--workflow-slug` the packet is produced but nothing
-is recorded: the Repo Context Forge step stays pending, no graph evidence binds
-to the candidate tree, and the typed quality gate cannot evaluate its
-owner-competition rules. Without `--intent` the packet falls back to `repo`
-mode, so target ranking never sees the request. Omit the slug only for
-standalone exploration or planned work with no active pass, which
-`$repo-context-forge` documents.
+Omit `--workflow-slug` only for standalone work with no active pass;
+`$repo-context-forge` documents the modes.
 
 The output must begin with `REPO_CONTEXT_FORGE_REQUIRED_INTAKE`. If the packet
 emits a blocker, stop and surface it.
