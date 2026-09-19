@@ -811,12 +811,12 @@ class MappedTddRepairTests(unittest.TestCase):
             "nonrunner-bound",
         )
         filler = "x" * 60000
-        command = (sys.executable, "-c", f"print('{filler}'); print('tail outcome')")
+        command = (sys.executable, "-c", f"print('tail outcome'); print('{filler}')")
         result = self.tdd(slug, "red", "BM_KEEP", command)
         self.assertEqual(result.returncode, 0, marker + "\n" + result.stderr)
         observed = self.mapped_item("BM_KEEP")["baselineProof"]["observation"]
         self.assertIsInstance(observed, list, marker)
-        self.assertLessEqual(sum(len(line) for line in observed), 1000, marker)
+        self.assertEqual(sum(len(line) for line in observed), 1000, marker)
         self.assertNotIn(filler, "".join(observed), marker)
 
     def test_nonrunner_baseline_on_contract_after_change_is_refused(self) -> None:
