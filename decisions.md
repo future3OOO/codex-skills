@@ -6,6 +6,24 @@ Issue bodies own implementation scope; this record preserves decisions and their
 status. New decisions supersede earlier ones explicitly; observations and open
 acceptance gaps are not completed delivery.
 
+## 2026-09-20 — Workflow-first instructions and real attack probes
+
+**Decision:** Put Production Repo Workflow first in AGENTS.md; use named sections
+instead of the retained §7/§8/§9 numbering from PR #70. Make unit tests real
+behavior probes and retain necessary attacks while removing redundant test code.
+Drive existing Seams after runtime setup; when creating a Seam, return to drive
+its actual behavior. Absence alone never proves it. This supersedes the earlier
+proof-gap stopping instruction. Condense reviewer handling around measured
+findings, current-head closure, and task acceptance; remove PRD requirements.
+
+**Observed:** A native instruction probe required real return-through-Seam
+execution for both a new CLI operation and an existing filesystem operation.
+This is bounded interpretation evidence, not proof of a product implementation
+or universal agent compliance.
+
+**Status:** Candidate on `docs/agents-workflow-first`; PR publication pending.
+Documentation only. No runtime changes, merge, or shared installation.
+
 ## 2026-09-20 — Triage briefs follow the repository workflow
 
 **Decision:** [PR #40](https://github.com/future3OOO/codex-skills/pull/40)

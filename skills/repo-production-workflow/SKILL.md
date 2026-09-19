@@ -220,7 +220,7 @@ After coherent repair and cleanup, assess the intended outcome against the
 verification derived in step 2. Carry applicable observations forward; run missing
 or invalidated operations, real-Seam probes of the changed Interface, and
 required lint/typecheck/build and typed gate, with
-graph reanalysis when required. Apply AGENTS.md's targeted-verification rule.
+graph reanalysis when required. Follow AGENTS.md's attack-probe and verification rules.
 CI's `contracts` job owns the full runner here and step 12 waits for it.
 Verification records only through the unified CLI runner, which executes the command it records and derives status
 per-command-latest — any distinct command whose latest run failed keeps
@@ -341,10 +341,10 @@ on the affected delta, and repeat final review. Reuse applicable evidence.
 ### 12. Delivery and reviewer completion
 
 After the final advisor finds the candidate ready, commit, push, and open/update
-the PR when intended for integration. Run the PR
-Reviewer Completion Gate from `AGENTS.md` on the current head. Merge only with
-explicit maintainer authorization; passing checks and reviews do not authorize
-merge. When global installation is authorized, merge the reviewed PR first.
+the PR when intended for integration. Run the
+[reviewer completion gate](../../AGENTS.md#reviewer-findings-and-completion) on the
+current head. Merge only with explicit maintainer authorization; passing checks
+and reviews do not authorize merge. When global installation is authorized, merge the reviewed PR first.
 For changed paths mapped into
 the live estate, follow the README backup/merge approach from updated main,
 install only owned paths, and record source commit/path set and installed checks.
