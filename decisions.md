@@ -1069,16 +1069,32 @@ runner proofs, and a receipt-owner refusal naming the owning item. The
 contract-item post-change gate applies to every surface type, and a
 non-runner baseline receipt satisfies the `fixed`-disposition
 executed-receipt predicate through the shared
-`run_recorded_baseline`/`BASELINE_PROOF_QUALITIES` in `workflow_state.py` —
-a named widening of what `fixed` accepts: reach stays unresolved and review
-establishes coverage, never the exit code, mirroring the non-runner-RED
-doctrine.
+`run_recorded_baseline`/`BASELINE_PROOF_QUALITIES` in `workflow_state.py`.
+Named widening, scoped: the admitted quality `operation-succeeded` is
+produced only by non-runner baselines; runner receipts still carry
+`baseline-passed` with executed-test reach. For the non-runner shape alone,
+reach stays unresolved and review establishes coverage, never the exit code
+— the same rule the Issue #54 entry set for non-runner REDs.
 Skill and recorder text state the real-Seam distinction; the verification
 step names real-seam probes beside suites and lint/typecheck/build.
 Workflow `probe-baseline` completed clean: 8 TDD cycles, 204-test suite
 green, typed quality gate green, three delegated review rounds with every
 material finding fixed and dispositioned, final advisor verdict
 commit-ready.
+
+**Independent PR69 review at `c8998da` (2026-09-19):** The review of
+[issue #68](https://github.com/future3OOO/codex-skills/issues/68) supersedes
+the readiness implication of the reviewer-completion statement above. The
+131 tests in the two changed suites pass, but public CLI probes show one
+stored passing test settling two items through either a later cumulative
+evidence document containing the identical original run, or the accepted
+`:00` spelling of index `:0`. Receipt dedup keys the reference string rather
+than the execution. This leaves acceptance criterion 5 incomplete; reported
+as SPEC-1, with no candidate fix in this review. The change otherwise stays
+focused (86 net runtime lines); STD-1 names a removable five-line forwarding
+helper. Review intake and reproducible results are retained at
+`/tmp/pr69-review-intake.json`, `/tmp/pr69-review-reproduce.py`, and
+`/tmp/pr69-review-results.json`. No merge or installation occurred.
 
 **Delegate-transport root cause found and fixed:** inter-agent task payloads
 travel as `encrypted_content` parts inside `agent_message` items, and
