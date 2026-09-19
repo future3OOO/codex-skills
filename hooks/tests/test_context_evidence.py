@@ -121,7 +121,8 @@ class ContextEvidenceTests(HookHarness):
         self.assertEqual(self.read(2, 2)["range"], None)  # Explicit beyond-EOF empty scope, not whole-file coverage.
 
     def test_observed_tool_output_is_retained_but_never_source_bound_or_final_delivery(self) -> None:
-        for command, exit_code in (("wc -l app.py", 0), ("rg -n missing app.py", 1)):
+        (self.repo / "app.py").write_text("")  # The failed command has a real, empty observed output.
+        for command, exit_code in (("wc -l app.py", 0), ("cat missing.txt app.py", 1)):
             executed = subprocess.run(["bash", "-c", command], cwd=self.repo, capture_output=True, text=True)
             self.assertEqual(executed.returncode, exit_code)
             payload = {"cwd": str(self.repo), "tool_name": "Bash", "tool_use_id": command,
@@ -229,6 +230,27 @@ class ContextEvidenceTests(HookHarness):
         self.assertLessEqual(len(self.document()["records"]), evidence.RECORD_LIMIT)
         self.assertLessEqual(sum(row["kind"] != "snapshot" for row in self.document()["records"]), 16)
 
+    def test_reference_only_windows_do_not_read_source_content(self) -> None:
+        row = self.read()
+        # Audit real opens rather than mocking the reader or accepting a cached claim.
+        opened = []
+        active = [True]
+        source = str(self.repo / "app.py")
+        sys.addaudithook(lambda event, args: opened.append(args[0])
+                        if active[0] and event == "open" and str(args[0]) == source else None)
+        try:
+            for inline, budget in ((False, evidence.CONTEXT_BYTES), (True, 512)):
+                references = evidence.context_window(self.identity, self.wid, budget, inline=inline)
+                if not inline:
+                    self.assertIn(row["id"], references)
+                self.assertNotIn("sourceData", references)
+                self.assertEqual(opened, [], "REFERENCE_LIST_REREAD_SOURCE")
+        finally:
+            active[0] = False
+        # A reference is not freshness proof: ordinary recovery must still check.
+        (self.repo / "app.py").write_text("changed after reference\n")
+        self.run_context("show", "--id", row["id"], success=False)
+
     def test_rcf_consumer_uses_same_bounded_candidates_without_coverage_mutation(self) -> None:
         row = self.read()
         path = ROOT / "skills/repo-context-forge/scripts/bootstrap.py"
@@ -245,6 +267,20 @@ class ContextEvidenceTests(HookHarness):
         # External RCF is a separate dependency; this checks its exact imported consumer,
         # not a fabricated successful graph/producer run.
 
+    def test_cost_benchmark_binds_clean_source_and_refuses_untracked_or_edited_code(self) -> None:
+        from benchmarks.context_recovery import source_identity
+        original = source_identity(self.repo)
+        self.assertEqual(len(original["commit"]), 40)
+        self.assertEqual(len(original["tree"]), 40)
+        untracked = self.repo / "not_committed.py"
+        untracked.write_text("untracked code\n")
+        with self.assertRaisesRegex(ValueError, "clean checkout"):
+            source_identity(self.repo)
+        untracked.unlink()
+        (self.repo / "app.py").write_text("changed code\n")
+        with self.assertRaisesRegex(ValueError, "clean checkout"):
+            source_identity(self.repo)
+
     def test_capture_audit_separates_repeat_paths_scopes_outputs_and_unknown_savings(self) -> None:
         script = ROOT / "benchmarks/context_evidence_audit.py"
         events = [
@@ -257,15 +293,26 @@ class ContextEvidenceTests(HookHarness):
             {"id": "4", "path": "app.py", "operation": "sed", "requestedScope": [1, 2],
              "sourceVersion": None, "resultRef": "synthetic-fixture:4", "output": None},
         ]
+        events.extend([
+            {"id": str(n), "path": "empty.txt", "operation": "cat", "requestedScope": {},
+             "sourceVersion": "empty-version", "resultRef": f"synthetic-fixture:{n}", "output": ""}
+            for n in (5, 6)
+        ])
+        events.extend([
+            {"id": str(n), "path": None, "operation": "compound-output", "requestedScope": None,
+             "attribution": "unbound", "sourceVersion": None, "resultRef": f"synthetic-fixture:{n}", "output": "same"}
+            for n in (7, 8)
+        ])
         capture = self.tmp / "labels.json"
         capture.write_text(json.dumps({"provenance": {"traceSha256": evidence._hash(json.dumps(events).encode()), "labeler": "synthetic-test"},
                                        "events": events}))
         result = subprocess.run([sys.executable, str(script), str(capture)], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         report = json.loads(result.stdout)
-        self.assertEqual(report["counts"]["repeatedPath"], 3)
-        self.assertEqual(report["counts"]["sameRequestedScope"], 2)
-        self.assertEqual(report["counts"]["sameVersionOutputCandidates"], 1)
+        self.assertEqual(report["counts"]["unboundPath"], 2)
+        self.assertEqual(report["counts"]["repeatedPath"], 4)
+        self.assertEqual(report["counts"]["sameRequestedScope"], 3)
+        self.assertEqual(report["counts"]["sameVersionOutputCandidates"], 2)
         self.assertIsNone(report["avoidableRetrieval"])
         self.assertIsNone(report["tokenSavings"])
         capture.write_text(json.dumps({"events": events}))

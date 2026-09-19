@@ -36,6 +36,8 @@ class ReadCandidateTests(unittest.TestCase):
         self.assertEqual(self.candidates("rg -n 'record-production-code' hooks/lib/x.py | head -120"),
                          ["hooks/lib/x.py"], marker)
         self.assertEqual(self.candidates("rg -n -A3 'foo' -g '*.py' src/"), ["src/"], marker)
+        self.assertEqual(self.candidates("rg --pre-glob '*.py' foo src/"), ["src/"], marker)
+        self.assertEqual(self.candidates("rg -e --pre app.py"), ["app.py"], marker)
         self.assertEqual(self.candidates("cat AGENTS.md decisions.md"), ["AGENTS.md", "decisions.md"], marker)
         self.assertEqual(self.candidates("nl -ba tests/test_a.py | sed -n '1,230p'"), ["tests/test_a.py"], marker)
         self.assertEqual(self.candidates("jq -r '.x' logs/run.jsonl"), ["logs/run.jsonl"], marker)
@@ -85,6 +87,8 @@ class ReadCandidateTests(unittest.TestCase):
             'cat app.py; cp other.py app.py',
             'cat app.py; mv other.py app.py',
             'cat app.py; touch app.py',
+            'rg --pre ./processor needle app.py',
+            'rg --pre=./processor needle app.py',
             'cat app.py | tee app.py',
             'cd elsewhere; cat app.py',
             'cat app.py > /tmp/read-output.txt',

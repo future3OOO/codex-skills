@@ -251,15 +251,17 @@ def context_window(identity: RepoIdentity, workflow_id: str, budget: int = CONTE
     shown = 0
     memo: dict = {}
     for row in reversed(rows[-4:]):
-        current = freshness(identity, row, memo)
-        item = {"id": row["id"], "path": row["path"], "availableRange": row["range"], "freshness": current}
+        # References supply no content. Do not reread source merely to advertise one;
+        # show() still verifies source and fragment when a consumer requests it.
+        item = {"id": row["id"], "path": row["path"], "availableRange": row["range"], "freshness": "unchecked"}
         if row.get("nextStart") is not None:
             item["nextStart"] = row["nextStart"]
         compact = _json(item) + "\n"
-        if inline and current == "source-match":
-            complete = _json({**item, "sourceData": row["output"]}) + "\n"
+        if inline:
+            complete = _json({**item, "freshness": "source-match", "sourceData": row["output"]}) + "\n"
             if len((text + complete).encode()) <= budget - reserve:
-                compact = complete
+                current = freshness(identity, row, memo)
+                compact = complete if current == "source-match" else _json({**item, "freshness": current}) + "\n"
         if len((text + compact).encode()) <= budget - reserve:
             text += compact
             shown += 1

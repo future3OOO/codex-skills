@@ -5,6 +5,8 @@ Input JSON: {"provenance": {"traceSha256": "...", "labeler": "..."}, "events": [
   {"id": "...", "path": "...", "operation": "sed", "requestedScope": {"start": 1, "end": 40},
    "sourceVersion": null, "resultRef": "actual-trace-location", "output": null}]}
 Use exact returned output and observed versions; missing evidence remains null.
+Unassignable output uses path=null, attribution="unbound" and is excluded from
+file-repeat metrics. This preserves the complete capture without guessing paths.
 The tool never infers model retention, delivery, necessity, or token savings.
 """
 from __future__ import annotations
@@ -29,13 +31,17 @@ def audit(document: dict) -> dict:
         raise ValueError("retain a trace digest and labeling provenance")
     ids, paths, requests, outputs = set(), set(), set(), set()
     counts = dict(events=0, repeatedPath=0, sameRequestedScope=0,
-                  sameVersionOutputCandidates=0, unknownSourceVersion=0, missingOutput=0)
+                  sameVersionOutputCandidates=0, unknownSourceVersion=0, missingOutput=0, unboundPath=0)
     observations = []
     for event in document["events"]:
         if (not isinstance(event, dict) or not all(isinstance(event.get(key), str) and event[key]
-                for key in ("id", "path", "operation", "resultRef"))
+                for key in ("id", "operation", "resultRef"))
                 or "requestedScope" not in event or "sourceVersion" not in event or "output" not in event):
             raise ValueError("each event needs identity, request scope and actual result reference; use null for unknowns")
+        if ("path" not in event or (event["path"] is None and event.get("attribution") != "unbound")
+                or (event["path"] is not None and (not isinstance(event["path"], str) or not event["path"]))):
+            raise ValueError("path must identify an observed source, or be null with attribution=unbound")
+        bound = event["path"] is not None
         if event["id"] in ids:
             raise ValueError("duplicate event id")
         ids.add(event["id"])
@@ -44,19 +50,21 @@ def audit(document: dict) -> dict:
                 or (output is not None and not isinstance(output, str))):
             raise ValueError("sourceVersion/output must be strings or null")
         request = (event["path"], event["operation"], json.dumps(event["requestedScope"], sort_keys=True))
-        same_scope = request in requests
-        fingerprint = (event["path"], version, hashlib.sha256(output.encode()).hexdigest()) if output and version else None
+        same_scope = bound and request in requests
+        fingerprint = (event["path"], version, hashlib.sha256(output.encode()).hexdigest()) if bound and output is not None and version else None
         same_output = fingerprint is not None and fingerprint in outputs
         counts["events"] += 1
-        counts["repeatedPath"] += event["path"] in paths
+        counts["repeatedPath"] += bound and event["path"] in paths
+        counts["unboundPath"] += not bound
         counts["sameRequestedScope"] += same_scope
         counts["sameVersionOutputCandidates"] += same_output
         counts["unknownSourceVersion"] += not bool(version)
         counts["missingOutput"] += output is None
         observations.append({"id": event["id"], "resultRef": event["resultRef"],
                              "sameRequestCandidate": same_scope, "sameOutputCandidate": same_output})
-        paths.add(event["path"])
-        requests.add(request)
+        if bound:
+            paths.add(event["path"])
+            requests.add(request)
         if fingerprint:
             outputs.add(fingerprint)
     return {"provenance": provenance, "counts": counts, "observations": observations,

@@ -29,7 +29,17 @@ def run(args: list[str], cwd: Path, env: dict, payload: dict | None = None) -> t
     return result, elapsed
 
 
+def source_identity(checkout: Path) -> dict:
+    """Attribute measurements to all tracked source, not just the hook entrypoint."""
+    def git(*args: str) -> str:
+        return subprocess.check_output(["git", "-C", str(checkout), *args], text=True).strip()
+    if git("status", "--porcelain", "--untracked-files=all"):
+        raise ValueError("benchmark requires a clean checkout, including untracked files")
+    return {"commit": git("rev-parse", "HEAD"), "tree": git("rev-parse", "HEAD^{tree}")}
+
+
 def arm(checkout: Path, root: Path) -> dict:
+    identity = source_identity(checkout)
     root.mkdir()
     env = {**os.environ, "CODEX_HOME": str(root / "home"), "CODEX_WORKFLOW_STATE_ROOT": str(root / "state"),
            "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull, "PYTHONDONTWRITEBYTECODE": "1"}
@@ -66,13 +76,17 @@ def arm(checkout: Path, root: Path) -> dict:
         first = json.loads(result.stdout)
         recovered, recover_time = run([sys.executable, str(snapshot_cli), "show", "--repo", str(repo),
                                        "--id", first["id"]], repo, env)
-        assert json.loads(recovered.stdout)["output"] == first["output"] == "evidence line\n"
+        if json.loads(recovered.stdout)["output"] != first["output"] or first["output"] != "evidence line\n":
+            raise RuntimeError("snapshot recovery returned different content")
         result_with_data, window_time = run([sys.executable, str(rearm)], repo, env, {"cwd": str(repo), "source": "compact"})
-        assert 'sourceData' in json.loads(result_with_data.stdout)["hookSpecificOutput"]["additionalContext"]
+        if "sourceData" not in json.loads(result_with_data.stdout)["hookSpecificOutput"]["additionalContext"]:
+            raise RuntimeError("re-arm output omitted recovered source data")
         snapshots = {"readSeconds": initial_time, "recoverSeconds": recover_time, "rearmSeconds": window_time,
                      "readBytes": len(result.stdout.encode()), "recoverBytes": len(recovered.stdout.encode()),
                      "rearmBytes": len(result_with_data.stdout.encode()), "contentEqual": True}
-    return {"checkout": str(checkout), "hookSha256": hashlib.sha256(hook.read_bytes()).hexdigest(),
+    if source_identity(checkout) != identity:
+        raise RuntimeError("benchmark source changed during execution")
+    return {"checkout": str(checkout), **identity, "hookSha256": hashlib.sha256(hook.read_bytes()).hexdigest(),
             "command": command, "originalOutputBytes": len(original.stdout.encode()),
             "hookSeconds": hook_times, "rearmSeconds": rearm_times, "rearmBytes": bytes_out,
             "medianHookSeconds": statistics.median(hook_times), "medianRearmSeconds": statistics.median(rearm_times),

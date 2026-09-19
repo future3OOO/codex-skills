@@ -41,13 +41,31 @@ cost comparison and labeled-capture audit scripts report their own scope and
 never convert repeat counts into inferred savings. Raw observations must be
 re-audited against the actual final tool result and installed client version.
 
-**Open acceptance:** No native Codex runtime/provider, original CX2 capture or
-external RCF/GitNexus producer is available in the takeover environment. Their
-missing installed-boundary, corpus, external integration and actual-agent paired
-acceptance are not replaced with scripted-agent or guessed-transcript evidence.
-#59 remains open and PR62 draft until the corrected behavioral/performance
-contract is demonstrated and independently reviewed. No shared installation or
-merge to main is included.
+**CX2 intake and bounded-cost correction (2026-09-19):** The supplied bundle
+`b20a6d529f024a6b28a723f96371ec30bd655de319a62d13c88b8ac2f2d08bfe`
+resolves the missing extracted command/result pairs. The independent labeler
+uses only the four raw data files, never the DISPUTED files or their scripts.
+All 526 calls and every observed result character receive either path-attributed
+spans or an explicit unbound disposition. Unbound output stays out of file-repeat
+metrics; unknown source versions remain null. These are capture annotations,
+not proved avoidable reads or restored model memory. Raw transcript contents
+and the reproducible labeler remain in the supplied private evidence artifact.
+
+Reference-only windows, including RCF, no longer open source files. Inline data
+is checked only when it can fit the existing byte budget; show still checks
+freshness before supplying content. Real file-open observation detects the old
+unnecessary read and proves its absence after repair, with stale recovery still
+refused. The CI observation test uses standard cat with an actual failed empty
+result instead of an undeclared rg executable. Empty audit outputs are compared;
+optimized benchmark execution still validates output and pins clean source trees.
+The rg preprocessor form is conservatively excluded from request matching.
+
+**Open acceptance:** The supplied extraction is not a native runtime or complete
+source-version history. No native Codex provider or external RCF/GitNexus producer
+is available here. Installed-boundary and actual-agent paired-compaction acceptance
+are not replaced with scripted-agent evidence. #59 remains open until the corrected
+behavioral/performance contract is demonstrated and independently reviewed. No
+shared installation or merge to main is included.
 
 ## 2026-09-18 — PR62 test isolation and decision reconciliation
 

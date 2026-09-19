@@ -27,7 +27,9 @@ stored shell command is performed.
 Retain a provenance-bearing labeled JSON document matching the schema in
 `benchmarks/context_evidence_audit.py`. Each event must point to its real trace
 location and distinguish requested scope, observed source version and actual
-returned output. Use null when evidence is missing. The tool reports repeated
+returned output. Use null when evidence is missing. Unassignable output uses `path: null` and
+`attribution: "unbound"`; it remains in the capture but is excluded from file-repeat
+metrics. Empty returned output is distinct from missing output. The tool reports repeated
 paths, repeated requests, and repeated output under the same version label separately. None is
 classified as avoidable retrieval: necessary recovery, changed source, overlapping
 ranges and retained-context availability require evidence and judgment.
@@ -40,7 +42,7 @@ never replace tokens with a byte ratio.
 
 ## Paired native experiment
 
-Use the existing README's isolated estate procedure. Pin N to `33e4614` and N+1
+Use the existing README's isolated estate procedure. Pin N to `33e4614d77bacefdaf405f21d8d61896cacc8238` and N+1
 to the exact candidate commit. Each arm gets the same repository, task, model and
 budget, separate mutable workflow/session state, and verified loaded source.
 Capture both before and after comparable real compaction boundaries. Record the
@@ -72,3 +74,15 @@ independent review of the exact final head against the original outcome.
 
 Do not mark #59 complete, merge on a transport-only result, or silently change a
 context-preservation feature into history-only telemetry.
+
+## Supplied CX2 extraction
+
+Bundle SHA-256: `b20a6d529f024a6b28a723f96371ec30bd655de319a62d13c88b8ac2f2d08bfe`.
+Use only `data/lead-*.json` and `data/sub-*.json` as labeling inputs. The complete
+output-disposition artifact accounts for 526 calls and all decoded result characters,
+including unbound remainders. Preserve each thread separately and verify every
+output span against its original result. An explicit unknown is not missing work
+to replace with a guessed source/version. DISPUTED files document past errors only.
+The redacted extraction supplies neither runnable estate nor source-version history;
+it does not by itself establish the paired experiment above. Reference-only windows
+do not rehash sources; current content is verified when actually supplied.

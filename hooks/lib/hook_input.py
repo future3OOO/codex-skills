@@ -67,7 +67,7 @@ def edited_path(payload: dict[str, object]) -> Path | None:
 # not recall measurements for this stricter, read-only matcher.
 _READ_VERBS = {"cat", "head", "tail", "nl", "wc", "jq"}
 _RG_VALUE_OPTIONS = {"-e", "--regexp", "-g", "--glob", "--iglob", "-t", "--type", "-m", "--max-count",
-                     "-A", "-B", "-C", "--max-columns", "-f", "--file"}
+                     "-A", "-B", "-C", "--max-columns", "-f", "--file", "--pre-glob"}
 # Only option forms whose operand boundaries are known are accepted. Auxiliary
 # --rawfile/--slurpfile values are not claims that their contents reached stdout.
 _JQ_VALUE_OPTIONS = {"--arg": 2, "--argjson": 2, "--slurpfile": 2, "--rawfile": 2, "--indent": 1}
@@ -232,6 +232,8 @@ def read_candidates(command: str) -> list[str]:
                     skip = False
                 elif arg in _RG_VALUE_OPTIONS:
                     skip = True
+                elif arg == "--pre" or arg.startswith("--pre="):
+                    return []
                 elif not arg.startswith("-"):
                     positional.append(arg)
             pattern_inline = not any(arg in {"-e", "--regexp"} for arg in rest)
