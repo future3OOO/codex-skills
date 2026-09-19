@@ -1303,19 +1303,24 @@ class IntakeSerialisationTests(unittest.TestCase):
     atomic replace (future3OOO/GitNexus#25), so two producers running together
     can tear it and break every later intake."""
 
-    def setUp(self) -> None:
-        # Every test here drives the real account's slot directory, and the
-        # parallel runner deals each test its own shard: left unsynchronised,
-        # two cap-1 intakes starve each other on slot-0. A dedicated flock
-        # serialises the class across shards without touching the slots'
-        # inode convention.
+    def serialise(self) -> None:
+        """Hold the class coordinator for a case that really uses the account-wide
+        slot directory or drives a real producer.
+
+        Opt-in rather than setUp: the lock is held for a whole case, so applying
+        it to every case queues the class end to end. At roughly 55s a case that
+        queue outruns any deadline once a few cases sit in front of you, which is
+        what SUITE_COORDINATOR_WEDGED was reporting rather than a stuck lock.
+        Cases touching neither the real slot directory nor a producer need no
+        coordination and run in parallel.
+        """
         import fcntl
 
         slots = self.slot_dir()
         slots.mkdir(parents=True, exist_ok=True)
         self._coordinator = open(slots / "suite-serialisation.lock", "a+")
         self.addCleanup(self._coordinator.close)
-        deadline = time.monotonic() + 300
+        deadline = time.monotonic() + 900
         while True:
             try:
                 fcntl.flock(self._coordinator, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -1342,6 +1347,7 @@ class IntakeSerialisationTests(unittest.TestCase):
         return lock, command, env
 
     def test_a_held_lock_stops_a_second_intake_before_its_producer(self) -> None:
+        self.serialise()
         import fcntl
 
         marker = "HELD_LOCK_NO_LONGER_BLOCKS"
@@ -1414,6 +1420,7 @@ class IntakeSerialisationTests(unittest.TestCase):
 
     @unittest.skipUnless(GITNEXUS, "the real GitNexus CLI is unavailable")
     def test_adapter_death_keeps_its_live_producer_locked(self) -> None:
+        self.serialise()
         import fcntl
         import signal
 
@@ -1484,6 +1491,7 @@ class IntakeSerialisationTests(unittest.TestCase):
 
     @unittest.skipUnless(GITNEXUS, "the real GitNexus CLI is unavailable")
     def test_output_does_not_hold_the_producer_lock(self) -> None:
+        self.serialise()
         self.assertTrue(self.intake_pair(), "OUTPUT_HELD_PRODUCER_LOCK")
 
     def clone(self, parent: Path, name: str) -> Path:
@@ -1557,6 +1565,7 @@ class IntakeSerialisationTests(unittest.TestCase):
     @unittest.skipUnless(GITNEXUS, "the real GitNexus CLI is unavailable")
     def test_isolated_home_intakes_respect_the_machine_bound(self) -> None:
         """Three isolated-HOME intakes under a cap of two: a bound, not a mutex."""
+        self.serialise()
         marker = "CROSS_HOME_PRODUCER_BOUND_BROKEN"
         if self.available_mb() < 9400:
             self.skipTest("needs headroom for two real producers")
@@ -1600,6 +1609,7 @@ class IntakeSerialisationTests(unittest.TestCase):
     @unittest.skipUnless(GITNEXUS, "the real GitNexus CLI is unavailable")
     def test_a_held_machine_slot_stops_a_new_intakes_producer(self) -> None:
         """An externally held permit blocks a fresh-HOME intake before its producer."""
+        self.serialise()
         import fcntl
 
         marker = "ADMITTED_WHILE_SLOTS_HELD"
@@ -1623,6 +1633,7 @@ class IntakeSerialisationTests(unittest.TestCase):
     @unittest.skipUnless(GITNEXUS, "the real GitNexus CLI is unavailable")
     def test_adapter_death_keeps_its_live_producers_slot(self) -> None:
         """An orphaned producer retains its capacity reservation until it dies."""
+        self.serialise()
         import signal
 
         marker = "ORPHANED_PRODUCER_LOST_CAPACITY"
@@ -1652,6 +1663,7 @@ class IntakeSerialisationTests(unittest.TestCase):
     def test_a_queued_same_home_waiter_holds_no_capacity(self) -> None:
         """Capacity is taken only after the HOME lock is won: under cap 2 with
         homes A,A,B, B runs beside A1 while A2 queues holding nothing."""
+        self.serialise()
         marker = "HOME_WAITER_HELD_CAPACITY"
         if self.available_mb() < 9400:
             self.skipTest("needs headroom for two real producers")
@@ -1711,6 +1723,7 @@ class IntakeSerialisationTests(unittest.TestCase):
     def test_isolated_homes_may_run_producers_concurrently(self) -> None:
         """The bound is not a mutex: under default permits with real headroom,
         two isolated-HOME intakes overlap — the anti-serialisation contract."""
+        self.serialise()
         marker = "CROSS_HOME_OVERLAP_DENIED"
         if self.available_mb() < 9400:
             self.skipTest("needs headroom for two real producers")
@@ -1773,6 +1786,7 @@ class IntakeSerialisationTests(unittest.TestCase):
         return module
 
     def test_higher_slots_count_during_competing_admissions(self) -> None:
+        self.serialise()
         import fcntl
 
         marker = "HELD_HIGHER_SLOTS_IGNORED"
@@ -1782,6 +1796,13 @@ class IntakeSerialisationTests(unittest.TestCase):
         meminfo = tmp / "meminfo"
         meminfo.write_text("MemAvailable: 9625600 kB\n")  # two permits
         module._MEMINFO = meminfo
+        # The permit count is faked, so the real account's slot directory would let a
+        # producer in another shard hold one of these two permits and admit nobody. The
+        # property under attack is that a held higher slot counts, not where the slot
+        # root lands, so this loaded module gets its own root.
+        module._real_home = lambda: tmp
+        slots = tmp / ".cache" / "repo-context-forge" / "intake-slots"
+        slots.mkdir(parents=True)
         original_cap = os.environ.pop("RCF_INTAKE_MAX_PARALLEL", None)
         acquired: list[int] = []
         barrier = threading.Barrier(3)
@@ -1791,7 +1812,7 @@ class IntakeSerialisationTests(unittest.TestCase):
             acquired.append(module._acquire_intake_slot())
 
         threads = [threading.Thread(target=acquire, daemon=True) for _ in range(2)]
-        with open(self.slot_dir() / "slot-2.lock", "a+") as high:
+        with open(slots / "slot-2.lock", "a+") as high:
             fcntl.flock(high, fcntl.LOCK_EX)
             try:
                 for thread in threads:
@@ -1816,6 +1837,7 @@ class IntakeSerialisationTests(unittest.TestCase):
                     os.environ["RCF_INTAKE_MAX_PARALLEL"] = original_cap
 
     def test_coordinator_covers_registered_cleanups(self) -> None:
+        self.serialise()
         import fcntl
 
         def check_cleanup() -> None:
@@ -1826,6 +1848,7 @@ class IntakeSerialisationTests(unittest.TestCase):
         self.addCleanup(check_cleanup)
 
     def test_cancelled_admission_waiter_allows_reentry(self) -> None:
+        self.serialise()
         import fcntl
 
         marker = "ADMISSION_WAITER_DID_NOT_WAIT"
@@ -1906,6 +1929,7 @@ class IntakeSerialisationTests(unittest.TestCase):
         real flock on real slot files plus a real meminfo file — held slots,
         shrink, release, and re-entry all run against the production code in
         this process."""
+        self.serialise()
         import fcntl
 
         marker = "SHRUNK_CAPACITY_STILL_ADMITTED"
@@ -1988,6 +2012,7 @@ class IntakeSerialisationTests(unittest.TestCase):
         """A same-HOME waiter killed while queued on the HOME lock leaves no
         residue: it never reached the slots, and its death frees the flock it
         was blocked on without touching A1's producer or capacity."""
+        self.serialise()
         import fcntl
         import signal
 
@@ -2025,6 +2050,7 @@ class IntakeSerialisationTests(unittest.TestCase):
         close_fds), so a killed producer frees capacity even while a frozen
         indexer outlives it — the residue is the orphan's bounded remainder,
         not a stranded permit."""
+        self.serialise()
         import fcntl
         import signal
 
