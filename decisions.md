@@ -6,6 +6,20 @@ Issue bodies own implementation scope; this record preserves decisions and their
 status. New decisions supersede earlier ones explicitly; observations and open
 acceptance gaps are not completed delivery.
 
+## 2026-09-19 — AGENTS.md regains its canonical invariants
+
+**Decision:** Write the Hard Production Invariants section that
+`skills/repo-production-workflow/INVARIANT-OWNERSHIP.md` cites as canonical in
+`AGENTS.md`: real-Seam proof (the mock ban, with the outgoing-boundary capture
+carve-out), suite-is-not-targeted-verification, the imaginary-risk ban, and
+root-cause-first. Recast verification around failing attacks at the real Seam,
+fold the PR reviewer gate into the workflow section, and number the operational
+sections 7/8/9 so the ownership map's references resolve literally. Merges and
+shared-estate installation now require explicit maintainer authorization in
+writing.
+
+**Status:** PR on `docs/agents-md-refresh`; not merged or installed.
+
 ## 2026-09-14 — Require preflight advice
 
 **Decision:** Require advisor advice before the initial production preflight. Supersedes the
