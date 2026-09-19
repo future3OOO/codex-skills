@@ -24,13 +24,12 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from hooks.lib._workflow_db import LedgerError  # noqa: E402
+from hooks.lib.context_evidence import observe_request  # noqa: E402
 from hooks.lib.hook_input import edited_path, read_hook_payload, read_paths, session_key, working_directory  # noqa: E402
 from hooks.lib.repo_identity import RepoIdentityError, resolve_repo_identity, try_resolve_repo_identity  # noqa: E402
 from hooks.lib.state_store import (  # noqa: E402
-    content_digest,
     is_reviewable_path,
     is_test_path,
-    record_reads,
     record_session_association,
 )
 from hooks.lib.workflow_state import WorkflowError, invalidate_after_edit, read_workflow  # noqa: E402
@@ -72,11 +71,11 @@ def _emit(document: dict[str, object]) -> None:
 
 
 def _record_reads(payload: dict[str, object]) -> None:
-    """A Bash read in an active pass is remembered for the compaction re-arm (#59):
-    path plus the whole file's digest at that moment, whatever range or match the
-    command disclosed. Never a workflow transition, never an exit code. The paths come
-    first: most Bash payloads read nothing and must cost a few stats, not a repository
-    resolution and a ledger open."""
+    """Record requested operations, never claim content delivery or retained knowledge.
+
+    Resolve candidate paths before any state lookup. No source hashes are computed
+    here: a post-command digest cannot bind an earlier tool result to a version.
+    """
     paths = read_paths(payload)
     if not paths:
         return
@@ -89,18 +88,10 @@ def _record_reads(payload: dict[str, object]) -> None:
         return
     if state is None or state.get("phase") == "complete" or not isinstance(state.get("workflowId"), str):
         return
-    digests = {}
-    for path in paths:
-        try:
-            key = path.relative_to(identity.root).as_posix()
-        except ValueError:
-            key = str(path)
-        try:
-            digests[key] = content_digest(path)
-        except OSError:
-            continue
-    if digests:
-        record_reads(identity, str(state["workflowId"]), digests)
+    try:
+        observe_request(identity, str(state["workflowId"]), payload, paths)
+    except (OSError, ValueError, UnicodeError) as exc:
+        print(f"context observation unavailable: {exc}", file=sys.stderr)
 
 
 def main() -> int:

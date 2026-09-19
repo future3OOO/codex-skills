@@ -6,6 +6,49 @@ Issue bodies own implementation scope; this record preserves decisions and their
 status. New decisions supersede earlier ones explicitly; observations and open
 acceptance gaps are not completed delivery.
 
+## 2026-09-19 — Recoverable context replaces file-level inspection claims
+
+**Decision:** #59 C/D now distinguish requests, observed tool output, source-bound
+snapshots and current recovery. This supersedes the earlier “inspected, unchanged”
+re-arm and any proposal that matching hashes satisfy coverage. The existing
+Bash matcher remains a conservative request locator, not a delivery oracle.
+PostToolUse records no source digest; optional tool responses are observations
+with unknown final delivery and source binding. Missing responses remain unknown.
+
+The workflow's `context.py read/show/list/probe` interface owns bounded source
+snapshot production and recovery. It retains exact produced text, actual line
+range, source version and explicit continuation without claiming the model saw
+or remembers it. Repeated reads still return content. Recovery checks both the
+current source hash and fragment bytes; changed, missing or corrupt sources
+refuse unless historical output is explicitly requested. Ordinary tools remain
+available for unsupported reads. The existing sidecar is versioned, bounded and
+atomic; legacy hash-only entries stay history. At most four source snapshots
+are checked per context window, rather than rehashing every historical path.
+
+SessionStart and the RCF adapter share that bounded window. RCF adds evidence
+candidates after its existing successful packet/recording path; no target,
+coverage obligation, graph record, verification or workflow transition is
+satisfied by context metadata. The isolated admission test, prior parser safety
+repairs, existing pruning and earlier reconciled decision history are retained.
+
+**Evidence boundary:** Real-process tests cover request-only counts, retained
+fragments, unseen continuation, overlapping/repeated scopes, stale/corrupt data,
+missing/FIFO source, legacy records, worktree/workflow isolation, concurrent
+writers, byte limits and RCF's shared consumer. These are transport/recovery
+proof, not a real-agent compaction experiment. The original command-only false
+inspection was reproduced on unchanged `33e4614` before repair. The mechanical
+cost comparison and labeled-capture audit scripts report their own scope and
+never convert repeat counts into inferred savings. Raw observations must be
+re-audited against the actual final tool result and installed client version.
+
+**Open acceptance:** No native Codex runtime/provider, original CX2 capture or
+external RCF/GitNexus producer is available in the takeover environment. Their
+missing installed-boundary, corpus, external integration and actual-agent paired
+acceptance are not replaced with scripted-agent or guessed-transcript evidence.
+#59 remains open and PR62 draft until the corrected behavioral/performance
+contract is demonstrated and independently reviewed. No shared installation or
+merge to main is included.
+
 ## 2026-09-18 — PR62 test isolation and decision reconciliation
 
 **Decision:** Restore the discarded fixture isolation in

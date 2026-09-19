@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
-"""Read capture through the real hook processes: a Bash read is recorded for the
-active pass and the compaction re-arm names what is still unchanged."""
+"""Request matching, safe observation storage, and preservation through real hooks."""
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import shutil
@@ -16,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from hooks.lib import hook_input, state_store  # noqa: E402
+from hooks.lib import context_evidence, hook_input, state_store  # noqa: E402
 from hooks.lib.repo_identity import resolve_repo_identity  # noqa: E402
 from hooks.tests.test_workflow_hooks import HookHarness  # noqa: E402
 
@@ -176,6 +174,10 @@ class ReadCandidateTests(unittest.TestCase):
 
 
 class ReadCaptureHookTests(HookHarness):
+    def requests(self, identity, wid):
+        return {path: row for row in context_evidence.context_document(identity, wid)["records"]
+                if row["kind"] == "request" for path in row["paths"]}
+
     def read(self, command: str, session: str = "sess-1") -> subprocess.CompletedProcess[str]:
         payload = {"tool_name": "Bash", "tool_input": {"command": command},
                    "cwd": str(self.repo), "session_id": session}
@@ -190,7 +192,7 @@ class ReadCaptureHookTests(HookHarness):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
 
-    def test_bash_read_records_the_path_and_hash_without_changing_state(self) -> None:
+    def test_bash_request_records_scope_without_claiming_delivery_or_changing_state(self) -> None:
         # BM_READ_RECORDED
         begun = self.state("begin", "--slug", "reads")
         self.assertEqual(begun.returncode, 0, begun.stdout + begun.stderr)
@@ -199,19 +201,20 @@ class ReadCaptureHookTests(HookHarness):
         self.assertEqual(result.returncode, 0, "READ_NOT_RECORDED: " + result.stdout + result.stderr)
         identity = resolve_repo_identity(self.repo)
         wid = json.loads(before)["workflowId"]
-        digest = hashlib.sha256((self.repo / "app.py").read_bytes()).hexdigest()
-        self.assertEqual(state_store.recorded_reads(identity, wid), {"app.py": digest}, "READ_NOT_RECORDED")
+        observed = self.requests(identity, wid)["app.py"]
+        self.assertEqual(observed["command"], "sed -n '1,3p' app.py")
+        self.assertEqual(observed["delivery"], "unknown")
+        self.assertEqual(observed["sourceBinding"], "unknown")
+        self.assertNotIn("sourceDigest", observed)
         self.assertEqual(self.state("status").stdout, before, "READ_NOT_RECORDED: state changed")
 
-    def test_rearm_names_unchanged_reads_then_changed_ones(self) -> None:
-        # BM_REARM_LISTS_UNCHANGED_AND_CHANGED
+    def test_rearm_does_not_promote_request_freshness_to_coverage(self) -> None:
         self.assertEqual(self.state("begin", "--slug", "reads").returncode, 0)
         self.read("sed -n '1,1p' app.py 2>/dev/null")
-        self.assertIn("Inspected this pass, unchanged since (1): app.py", self.rearm(), "REARM_OMITS_READS")
+        self.assertIn("history only", self.rearm())
         (self.repo / "app.py").write_text("value = 2\n", encoding="utf-8")
-        context = self.rearm()
-        self.assertIn("Changed since inspected (1): app.py", context, "REARM_OMITS_READS")
-        self.assertNotIn("Inspected this pass, unchanged since", context, "REARM_OMITS_READS")
+        self.assertNotIn("Inspected this pass", self.rearm())
+        self.assertNotIn("sourceData", self.rearm())
 
     def test_executed_ambiguous_reads_do_not_create_sidecar_claims(self) -> None:
         self.assertEqual(self.state("begin", "--slug", "reads").returncode, 0)
@@ -228,7 +231,7 @@ class ReadCaptureHookTests(HookHarness):
                                           env=self.env, capture_output=True, text=True, check=True)
                 self.assertEqual(executed.stdout, stdout)
                 self.assertEqual(self.read(command).returncode, 0)
-                self.assertEqual(state_store.recorded_reads(identity, wid), {})
+                self.assertEqual(self.requests(identity, wid), {})
 
     def test_executed_combined_option_edit_records_no_inspection(self) -> None:
         # Run it for real: the command succeeds, prints nothing, and replaces the file.
@@ -243,7 +246,7 @@ class ReadCaptureHookTests(HookHarness):
                                capture_output=True, text=True, check=True)
                 self.assertEqual((self.repo / "app.py").read_text(encoding="utf-8"), "one\n")
                 self.assertEqual(self.read(command).returncode, 0)
-                self.assertEqual(state_store.recorded_reads(identity, wid), {})
+                self.assertEqual(self.requests(identity, wid), {})
         self.assertNotIn("Inspected this pass", self.rearm())
 
     def test_executed_jq_literal_argument_records_no_inspection(self) -> None:
@@ -259,7 +262,7 @@ class ReadCaptureHookTests(HookHarness):
                     self.skipTest("jq is unavailable")
                 self.assertEqual(executed.stdout, printed)
                 self.assertEqual(self.read(command).returncode, 0)
-                self.assertEqual(state_store.recorded_reads(identity, wid), {})
+                self.assertEqual(self.requests(identity, wid), {})
 
 
     @unittest.skipUnless(shutil.which("jq"), "jq is unavailable")
@@ -284,10 +287,11 @@ class ReadCaptureHookTests(HookHarness):
                 self.assertEqual(json.loads(executed.stdout), json.loads(expected_output))
                 result = self.read(command)
                 self.assertEqual(result.returncode, 0, result.stderr)
-                recorded = state_store.recorded_reads(identity, wid)
+                recorded = self.requests(identity, wid)
                 self.assertEqual(set(recorded), expected_paths, "JQ_FALSE_INSPECTION")
-                for path, digest in recorded.items():
-                    self.assertEqual(digest, hashlib.sha256((self.repo / path).read_bytes()).hexdigest())
+                for row in recorded.values():
+                    self.assertEqual(row["delivery"], "unknown")
+                    self.assertNotIn("sourceDigest", row)
                 self.assertNotIn('app.py', self.rearm(), "JQ_FALSE_INSPECTION")
 
     def test_executed_cat_stdin_is_claimed_only_when_consumed(self) -> None:
@@ -307,12 +311,12 @@ class ReadCaptureHookTests(HookHarness):
                                           capture_output=True, text=True, check=True)
                 self.assertEqual(executed.stdout, printed)
                 self.assertEqual(self.read(command).returncode, 0)
-                self.assertEqual(set(state_store.recorded_reads(identity, wid)), expected_paths,
+                self.assertEqual(set(self.requests(identity, wid)), expected_paths,
                                  "UNUSED_STDIN_INSPECTION")
                 if 'app.py' not in expected_paths:
                     self.assertNotIn('app.py', self.rearm(), "UNUSED_STDIN_INSPECTION")
                 else:
-                    self.assertIn('Inspected this pass, unchanged since (2):', self.rearm())
+                    self.assertIn('history only', self.rearm())
 
     def test_executed_pipeline_assignment_records_no_inspection(self) -> None:
         self.assertEqual(self.state("begin", "--slug", "reads").returncode, 0)
@@ -324,34 +328,34 @@ class ReadCaptureHookTests(HookHarness):
                                   env={**self.env, "f": "b.py"}, capture_output=True, text=True, check=True)
         self.assertEqual(executed.stdout, "B_READ\n")
         self.assertEqual(self.read(command).returncode, 0)
-        self.assertEqual(state_store.recorded_reads(identity, wid), {})
+        self.assertEqual(self.requests(identity, wid), {})
 
     def test_executed_read_then_write_does_not_refresh_the_old_digest(self) -> None:
         self.assertEqual(self.state("begin", "--slug", "reads").returncode, 0)
         self.read("cat app.py")
         identity = resolve_repo_identity(self.repo)
         wid = json.loads(self.state("status").stdout)["workflowId"]
-        before = state_store.recorded_reads(identity, wid)
+        before = self.requests(identity, wid)
         command = "cat app.py; printf 'NEW_UNSEEN\\n' > app.py"
         executed = subprocess.run(["bash", "-c", command], cwd=self.repo,
                                   env=self.env, capture_output=True, text=True, check=True)
         self.assertNotIn("NEW_UNSEEN", executed.stdout)
         self.assertEqual(self.read(command).returncode, 0)
-        self.assertEqual(state_store.recorded_reads(identity, wid), before)
-        self.assertIn("Changed since inspected (1): app.py", self.rearm())
+        self.assertEqual(self.requests(identity, wid), before)
+        self.assertIn("history only", self.rearm())
         self.assertNotIn("Inspected this pass, unchanged since", self.rearm())
 
     def test_recency_survives_the_cap(self) -> None:
-        # BM_READ_RECORDED: the most recent paths survive the cap, whatever their names sort to.
         identity = resolve_repo_identity(self.repo)
-        state_store.record_reads(identity, "wid", {f"m{index:03d}.py": "h" for index in range(state_store._READS_KEPT)})
-        state_store.record_reads(identity, "wid", {"aaa.py": "h"})
-        kept = state_store.recorded_reads(identity, "wid")
-        self.assertIn("aaa.py", kept, "READ_NOT_RECORDED")
-        self.assertNotIn("m000.py", kept, "READ_NOT_RECORDED")
-        self.assertEqual(list(kept)[-1], "aaa.py", "READ_NOT_RECORDED")
+        for index in range(context_evidence.RECORD_LIMIT + 1):
+            context_evidence.remember_context(identity, "wid", {
+                "kind": "request", "paths": [f"m{index:03d}.py"], "delivery": "unknown"})
+        kept = self.requests(identity, "wid")
+        self.assertNotIn("m000.py", kept)
+        self.assertEqual(len(kept), 16)
+        self.assertEqual(list(kept)[-1], f"m{context_evidence.RECORD_LIMIT:03d}.py")
 
-    def test_unreadable_file_is_skipped_and_the_hook_still_exits_zero(self) -> None:
+    def test_unreadable_source_stays_unverified_history_and_hook_exits_zero(self) -> None:
         # BM_READ_RECORDED: fail-soft like every sibling recorder.
         if os.geteuid() == 0:
             self.skipTest("root reads mode-000 files")
@@ -366,69 +370,61 @@ class ReadCaptureHookTests(HookHarness):
         self.assertEqual(result.returncode, 0, "READ_NOT_RECORDED: " + result.stderr)
         identity = resolve_repo_identity(self.repo)
         wid = json.loads(self.state("status").stdout)["workflowId"]
-        self.assertEqual(set(state_store.recorded_reads(identity, wid)), {"app.py"}, "READ_NOT_RECORDED")
+        self.assertEqual(set(self.requests(identity, wid)), {"secret.txt", "app.py"})
+        self.assertNotIn("sourceData", self.rearm())
 
-    def test_large_file_digest_is_size_and_mtime(self) -> None:
-        # BM_LARGE_FILE_DIGEST: above the hash bound the digest is size:mtime_ns, the
-        # re-arm never treats matching metadata as verified content identity.
+    def test_large_file_observation_never_hashes_or_claims_content_identity(self) -> None:
         self.assertEqual(self.state("begin", "--slug", "reads").returncode, 0)
-        self.assertTrue(hasattr(state_store, "HASH_BYTES"), "LARGE_FILE_HASHED")
         big = self.repo / "big.jsonl"
         with big.open("wb") as handle:
-            handle.truncate(state_store.HASH_BYTES + 1)
+            handle.truncate(context_evidence.SOURCE_BYTES + 1)
         self.read("tail -c 10 big.jsonl")
         identity = resolve_repo_identity(self.repo)
         wid = json.loads(self.state("status").stdout)["workflowId"]
-        digest = state_store.recorded_reads(identity, wid).get("big.jsonl", "")
-        self.assertTrue(digest.startswith("size:"), "LARGE_FILE_HASHED: " + digest)
-        self.assertIn("Inspected this pass, content identity unverified (1): big.jsonl", self.rearm(), "LARGE_FILE_HASHED")
-        self.assertNotIn("Inspected this pass, unchanged since", self.rearm())
-        status = big.stat()
+        observed = self.requests(identity, wid)["big.jsonl"]
+        self.assertNotIn("sourceDigest", observed)
+        stamp = big.stat()
         with big.open("r+b") as handle:
-            handle.seek(state_store.HASH_BYTES // 2)
+            handle.seek(context_evidence.SOURCE_BYTES // 2)
             handle.write(b"x")
-        os.utime(big, ns=(status.st_atime_ns, status.st_mtime_ns))
-        self.assertEqual(state_store.content_digest(big), digest)
-        self.assertIn("Inspected this pass, content identity unverified (1): big.jsonl", self.rearm())
-        self.assertNotIn("Inspected this pass, unchanged since", self.rearm())
-        stamp = big.stat().st_mtime + 5
-        os.utime(big, (stamp, stamp))
-        self.assertIn("Changed since inspected (1): big.jsonl", self.rearm(), "LARGE_FILE_HASHED")
+        os.utime(big, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+        self.assertIn("history only", self.rearm())
+        self.assertNotIn("sourceData", self.rearm())
 
-    def test_rearm_lists_the_newest_recorded_paths(self) -> None:
-        # BM_REARM_LISTS_NEWEST
+    def test_rearm_lists_newest_available_snapshots_under_the_byte_cap(self) -> None:
         self.assertEqual(self.state("begin", "--slug", "reads").returncode, 0)
         identity = resolve_repo_identity(self.repo)
         wid = json.loads(self.state("status").stdout)["workflowId"]
         for index in range(70):
             name = f"p{index:02d}_" + "x" * 96 + ".py"
             (self.repo / name).write_text(f"v = {index}\n", encoding="utf-8")
-            state_store.record_reads(identity, wid, {name: state_store.content_digest(self.repo / name)})
+            context_evidence.snapshot(identity, wid, name, 1, 1)
         context = self.rearm()
-        self.assertIn("p69_", context, "REARM_OMITS_READS")
-        self.assertNotIn("p10_", context, "REARM_OMITS_READS")
-        self.assertNotIn("p09_", context, "REARM_OMITS_READS")
+        self.assertIn("p69_", context)
+        self.assertNotIn("p10_", context)
+        self.assertNotIn("p09_", context)
+        self.assertLessEqual(len(context_evidence.context_window(identity, wid).encode()), 1500)
 
     def test_malformed_sidecar_reads_as_empty_and_hooks_stay_silent(self) -> None:
         # BM_MALFORMED_SIDECAR_IS_EMPTY
         self.assertEqual(self.state("begin", "--slug", "reads").returncode, 0)
         identity = resolve_repo_identity(self.repo)
         wid = json.loads(self.state("status").stdout)["workflowId"]
-        state_store.record_reads(identity, wid, {"app.py": "h"})
+        self.read("cat app.py")
         sidecar = state_store.repo_state_dir(identity) / "reads" / f"{wid}.json"
         for broken in ('{"reads": [null]}', '{"reads": [["a"]]}', '{"reads": "x"}'):
             sidecar.write_text(broken, encoding="utf-8")
             try:
-                reads = state_store.recorded_reads(identity, wid)
+                reads = self.requests(identity, wid)
             except (TypeError, ValueError) as exc:
                 self.fail(f"SIDECAR_CRASHED_HOOK: {exc!r}")
             self.assertEqual(reads, {}, "SIDECAR_CRASHED_HOOK")
             self.assertIn("Discipline re-arm", self.rearm())
             result = self.read("cat app.py")
             self.assertEqual(result.returncode, 0, "SIDECAR_CRASHED_HOOK: " + result.stderr)
-            self.assertIn("app.py", state_store.recorded_reads(identity, wid), "SIDECAR_CRASHED_HOOK")
+            self.assertIn("app.py", self.requests(identity, wid), "SIDECAR_CRASHED_HOOK")
 
-    def test_recorded_path_replaced_by_a_fifo_reads_as_changed(self) -> None:
+    def test_request_path_replaced_by_fifo_never_blocks_or_claims_delivery(self) -> None:
         # BM_NON_REGULAR_PATH_IS_CHANGED
         self.assertEqual(self.state("begin", "--slug", "reads").returncode, 0)
         outside = self.tmp / "outside.txt"
@@ -443,8 +439,9 @@ class ReadCaptureHookTests(HookHarness):
         except subprocess.TimeoutExpired:
             self.fail("REARM_BLOCKED_ON_FIFO: the re-arm did not return within 20 s")
         self.assertEqual(result.returncode, 0, "REARM_BLOCKED_ON_FIFO: " + result.stderr)
-        self.assertIn(f"Changed since inspected (1): {outside}",
-                      json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"], "REARM_BLOCKED_ON_FIFO")
+        context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("history only", context)
+        self.assertNotIn("sourceData", context)
 
     def test_prune_retires_the_sidecar_with_its_workflow(self) -> None:
         # BM_SIDECAR_RETIRED_WITH_WORKFLOW
@@ -502,7 +499,7 @@ class ReadCaptureHookTests(HookHarness):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         identity = resolve_repo_identity(self.repo)
         wid = json.loads(self.state("status").stdout)["workflowId"]
-        self.assertEqual(state_store.recorded_reads(identity, wid), {}, "WRITE_TREATED_AS_READ")
+        self.assertEqual(self.requests(identity, wid), {}, "WRITE_TREATED_AS_READ")
         kinds_after = [e["kind"] for e in json.loads(self.state("history").stdout)["events"]]
         self.assertGreater(len(kinds_after), len(kinds_before), "WRITE_TREATED_AS_READ: no edit event appended")
 

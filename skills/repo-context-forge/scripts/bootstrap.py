@@ -22,6 +22,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from hooks.lib.repo_identity import RepoIdentity, RepoIdentityError, resolve_repo_identity  # noqa: E402
 from hooks.lib.state_store import _active_candidate_tree  # noqa: E402
+from hooks.lib.context_evidence import active_context  # noqa: E402
 from hooks.lib.workflow_documents import graph_evidence_document  # noqa: E402
 from hooks.lib.workflow_state import (  # noqa: E402
     NO_INSTANCE_ID,
@@ -609,6 +610,12 @@ def main(argv: list[str]) -> int:
                 "rerun the bootstrap</blocker>\n"
             )
             return 2
+    # Evidence candidates complement the packet; they never satisfy or remove its
+    # coverage_plan. Use the captured workflow id so a replacement pass gets no stale window.
+    context = active_context(identity, captured_workflow_id, inline=False)
+    if context:
+        sys.stdout.flush()
+        print(context)
     return 0
 
 
