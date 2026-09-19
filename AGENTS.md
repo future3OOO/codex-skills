@@ -3,13 +3,6 @@
 These rules apply unless a repository `AGENTS.md` adds stricter project-specific
 instructions.
 
-## Codex Skills Decision Record
-
-For codex-skills project work, read the checkout's `decisions.md` at start or
-resume. Before handoff, record consequential decisions, reasons and delivery
-status there; mark superseded decisions and link the owning issue or PR. Keep
-observations distinct from decisions and completed work; no per-edit log.
-
 ## Hard Production Invariants
 
 These four rules govern every pass; the skills point here and own only their
@@ -283,3 +276,11 @@ required check is a blocker or a narrow named exception, never a silent skip.
 
 Keep `.gitnexus/` out of commits unless the repo intentionally tracks an
 ignore rule for it.
+
+## Codex-Skills Decision Record
+
+Applies only to work inside the codex-skills repository, not to other projects
+under these global rules. Read the checkout's `decisions.md` at start or
+resume. Before handoff, record consequential decisions, reasons and delivery
+status there; mark superseded decisions and link the owning issue or PR. Keep
+observations distinct from decisions and completed work; no per-edit log.
