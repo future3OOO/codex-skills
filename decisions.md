@@ -486,3 +486,706 @@ preservation item's executed candidate observation is the evidence preservation
 means; it is labelled late, not hidden). SPEC-4 (the replay's post-recorder
 criterion) is deferred by the maintainer on the issue; the retired extra
 `claude-advisor` skill was the replay's misroute, not the candidate.
+
+## 2026-09-14 — Consolidate workflow consumer corrections
+
+**Decision:** [#42](https://github.com/future3OOO/codex-skills/issues/42) owns
+consumer reconciliation: valid native advisor/reviewer calls, bound RCF refresh,
+compact continuation, accurate edit feedback and merge-before-install. Reuse
+#29's repair judgments, #30's evidence/runtime capabilities and #46's graph
+handoff work. Correct existing instructions instead of adding workflow stages.
+
+**Observed:** PR #45's omitted workflow slug caused an unbound refresh and an
+avoidable advisor retry. Correcting that invocation did not establish recurrence
+prevention. Real parser findings remain correctness work, not removable ceremony.
+
+**Status:** Updated #42's authoritative brief, retaining `bug`/`ready-for-agent`.
+Acceptance requires actual lead N/N+1 behavior and measured overhead reductions
+before delivery. Triage only; no implementation, installation or ledger changes.
+
+**Related decision:** [#29](https://github.com/future3OOO/codex-skills/issues/29)
+now explicitly owns lead investigation and N/N+1 assessment before initial and
+return code-review handoff. Related follow-ups require revisiting the demonstrated
+mechanism using accumulated evidence before another edit, within existing steps.
+Its brief and actual-agent acceptance were updated; no new stage or runtime change.
+The existing execution-reuse clause also requires any separately derived regression
+test to detect the real probe's same behavioral defect on N and pass on N+1;
+retaining the probe itself is preferred. #30's active implementation is unchanged.
+
+**Residual recovery finding:** [#49](https://github.com/future3OOO/codex-skills/issues/49)
+tracks failed-batch recovery after a narrow assertion correction. The lead reran
+33 checks after 32 had passed; the second batch took 37.380 seconds. A separate
+real CLI reproduction confirmed targeted success stays pending and explicit
+replacement refuses the changed tree. Safe narrower recovery remains to be
+designed at the existing owner, so the issue is `bug`/`needs-triage` after #30;
+this does not authorize weaker binding or arbitrary test-edit reuse. Audit:
+`/home/prop_/.local/state/codex-proof/workflow-audit-20260913/continuation-20260914.md`.
+
+**PR45 review:** Reviewed clean `346a317` / tree `b7909d1` against `36679d7`.
+The existing-owner changes support #30's core behavior and bounded receipt/output
+savings; no new material defect was confirmed. Targeted real-CLI baseline recovery
+passed; retained current-tree and applicable earlier evidence supplied preservation.
+Five current review threads still need disposition; no merge, installation or full
+issue closure is claimed. Report:
+`/home/prop_/.local/state/codex-proof/pr45-independent-review/346a317-root-review.md`.
+
+**Review status update:** At unchanged PR45 head `346a317`, all inline threads
+are now resolved with dispositions; CodeRabbit also withdrew its baseline
+hardening finding. One confirmed delivery-instruction gap remains: step 13
+requires owned-path installation but references README's full-estate installer.
+Document the existing scoped backup/copy-or-merge operation and verify it against
+an isolated destination; no new installer framework or repeated parser suite is
+warranted by this finding. The fleet reports incomplete coverage, not a clean
+full review. No candidate edits, installation or merge were performed here.
+
+**Delivery documentation:** The maintainer assigned PR45's scoped-installation
+correction to [PR48](https://github.com/future3OOO/codex-skills/pull/48). Keep the
+procedure in README beside installation, using selected-file rsync with backups
+and existing installed-entrypoint probes. The exact documented copy commands
+passed in an isolated destination: two selected files matched source, the prior
+file was backed up, and six unrelated files were preserved. No live installation;
+PR45 can consume this README correction once integrated.
+
+**PR48 dispositions:** At `15a5b30`, resolved the two existing CodeRabbit threads
+as reported-not-actioned: inherited alternate-HOME installer portability (the
+configured host's MCP path exists), and optional expansion of update commands
+(the named checkouts and clean-main requirement are explicit). No fixes claimed;
+the dirty RCF checkout remains preserved. Cubic's later backup-directory finding
+was rejected using the exact isolated rsync execution: an absent backup tree was
+created and the original bytes preserved. All three threads are resolved; fleet,
+contracts, CodeRabbit and cubic are complete/successful on unchanged `15a5b30`.
+No additional source edits, installation or merge were performed.
+
+**Delivery update:** With explicit maintainer authorization, merged PR48 as
+`30af550` and fast-forwarded local main to the same remote commit, preserving
+local decision records. PR45's installation-documentation finding is addressed
+by the merged README. #47 records this delivery and its completed N/N+1 probe;
+it remains open for outstanding active-client reconnect/build verification.
+#30, #42 and #46 retain their separate unfinished scope. No estate installation.
+
+**PR45 delivery supersedes the pending #30 status:** The maintainer authorized
+merge, local sync and installation. PR45 merged as `dfb0159`; local main matches
+remote. Installed its 12 owned files (seven updated, five already matching),
+preserving 162 other estate files. Backup:
+`/home/prop_/.codex-backups/pr45-20260914-124010`; receipt:
+`/home/prop_/.local/state/codex-proof/pr45-install/install.json`.
+Five existing real CLI probes against installed runtime passed in 29.595 seconds,
+using temporary repositories/ledgers; tests and this record remain repo-only.
+An initial module-path diagnostic encountered a lazily unimported module; explicit
+imports subsequently verified all five runtime module paths in the estate.
+
+Closed #30 with retained N/N+1/native proof and installed verification. Closed #47
+on delivered installation/new-launch evidence after the maintainer waived migration
+of already-running MCP sessions; no claim those old processes reloaded or were
+killed. Updated #29/#42/#46/#49 to consume the delivered baseline and retain only
+their remaining work. No Claude backport or benchmark/live-ledger mutation.
+
+**Subsequent #47 process cleanup:** The maintainer explicitly requested closing
+all stale GitNexus processes. Process memory mappings identified 12 servers on
+the former `e4e227e` pin and five on the obsolete issue94 runtime. All 17 exited
+on SIGTERM; no forced kills or parent-agent termination. Two servers remain,
+both mapped to `18f6d913`; zero stale processes remained at the final audit.
+Combined pre-stop RSS was 2,886,224 KiB, not a measured unique-memory saving.
+This supersedes deferral of the stale-server cleanup, without claiming old
+clients reconnected. Receipt: `~/.local/state/codex-proof/gitnexus-stale-process-cleanup.json`.
+
+**#29 handover consolidation:** At the maintainer's request, replaced the
+3,003-word issue body with one 712-word authoritative brief. Current installed
+owners already express much of the desired behavior: require a demonstrated
+remaining gap before adding instructions, allow a verified no-change outcome,
+and retain production-code as the outcome-rule owner. Preserve actual N/N+1
+and native-lead acceptance before delivery, independent review and applicable
+evidence reuse; use this repo's workflow work without requesting an external
+application. Historical drivers remain references, not benchmark work. Labels
+remain `bug`/`ready-for-agent`; triage only, no implementation or installation.
+
+On the maintainer's preservation check, compared the original acceptance and
+responsibilities with the shortened brief. Restored explicit requirement citation,
+historical-receipt applicability, honest nondeterminism handling and reportable
+unexplored/missing-acceptance gaps where compression had left them implicit.
+Core N/N+1, actual-lead, before-review investigation and no-redundant-work
+requirements remain; the no-change route requires demonstrated behavior.
+
+**#29 sensitivity and review enforcement:** The maintainer requires this behavior
+by default, not after prompting. The brief now requires relevant regression
+checks to detect their claimed defect and existing review intake to report
+missing material outcome/coverage/sensitivity proof as a Spec finding. Reuse
+real N failure where available; targeted fault injection in disposable state
+is sensitivity evidence, never fabricated historical N. Repair/replace ineffective
+checks; remove only those without distinct useful coverage, preserving legitimate
+checks that pass on both versions. No unrelated test purge or mutation framework.
+Actual lead/reviewer acceptance must distinguish false-green claims from valid
+reusable proof. Skills speak generically about the active project's behavior;
+codex-skills is this issue's application target, not a special runtime branch.
+
+**#29 affected-module review:** Clarified that the same general reviewer traces
+related modules, callers/callees, shared-state writers and competing implementations
+using existing evidence/source; no explorer delegates or added review stage.
+Require the responsible-owner correction and removal of superseded guards, with
+actual-agent acceptance covering related interactions. A recorder refusal of
+applicable proof is reported to its owner, never grounds for redundant repair
+execution or fabricated green state. Production behavior remains the objective.
+
+**JSON size investigation:** Using `o200k_base`, whitespace-only compact JSON
+serialization of `issue30-parser/explicit-worktree-graph.json` reduced tokens
+10,833 → 7,389 (31.8%) with equal decoded data; the same-reviewer report reduced
+1,165 → 991 (14.9%). Already-minified bounded/framed graph envelopes saved zero
+tokens because their bulky content is inside strings. Advisor prompt producers
+still use `indent=2` for projection/finding-ledger/late-RED JSON and then concatenate
+those files. Prefer existing-producer compact output and unchanged schemas over
+another format/conversion stage if implemented; preserve string contents and
+immutable historical receipts. These are sample tokenizer counts, not billed
+session savings. Investigation only; no producer or issue-scope changes.
+
+Further inspection: `_workflow_db._json` already serializes stored ledger JSON
+compactly; the advisor receives a finding/attack projection, not the entire
+SQLite database. `_finding_ledger` repeats owning attack details per finding,
+and the wrapper pretty-prints that projection into every phased prompt. Its
+phased advisor cannot read external evidence files, so references alone cannot
+replace required supplied proof. Retained preflight JSON measured 1,038 → 911
+tokens (12.2%) with minification; thirteen text sections plus the map dominate.
+Prioritize existing compact/selected consumers and producer serialization, then
+prove safe removal of duplicated content at existing owners. No ledger rewrite,
+schema change or implementation is authorized by this investigation.
+
+**Actual advisor-prompt measurement:** Recovered the 117,777-byte final prompt
+from `issue30-parser/framed-final-advisor.out`, verifying the three JSON section
+hashes against wrapper metadata. Compact serialization alone reduces its
+`o200k_base` estimate 26,820 → 25,507 tokens: 1,313 (4.9%), comprising finding
+ledger 777, projection 510 and late-RED 26. This replaces graph-sample percentages
+as the relevant bounded estimate for this prompt, not billed session/cost savings.
+Measurement: `~/.local/state/codex-proof/advisor-minification-measurement.json`.
+
+**#29 lead audit:** Its checkout remains clean at `dfb0159`. The lead reused the
+historical docstring RED, then demonstrated that the existing pending-state
+assertion catches a disposable "exit2 but stores green" fault. The copy was
+removed; no extra regression test or runtime fix was needed. A one-owner instruction
+proposal remains subject to actual-agent acceptance; this sensitivity observation
+alone does not prove a default workflow improvement. The lead also acknowledged
+an advisor consult before its concrete proposal and corrected course after user
+direction, so that sequence cannot establish unprompted compliance.
+
+**Compaction override (maintainer-authorized):** Global Codex config now sets
+`model_auto_compact_token_limit = 258000` and scope `body_after_prefix`, avoiding
+the native total-scope 90% clamp while preserving the current 258,400 usable-window
+guard. Actual Codex 0.154.0 app-server config/read verified both values; other
+parsed settings unchanged, backup retained. Existing sessions were not restarted
+or verified reloaded. Trigger accounting can include estimated retained reasoning
+and pending tool output; measured compaction-request input alone does not establish
+the trigger count. Receipt: `~/.local/state/codex-proof/context-compaction-override.json`.
+No #29 implementation, ledger or repository runtime changes.
+
+**#29 behavioral follow-up:** At maintainer request, posted consolidated clarification
+https://github.com/future3OOO/codex-skills/issues/29#issuecomment-5659452705.
+Explicitly supersedes this triage’s erroneous instruction-only/runtime exclusions;
+requires demonstrated corrections at existing instruction/runtime owners. Records
+premature/inherited-context reviewer dispatch, evidence-retention/reconciliation
+failures, and refusal recovery without final-review bypass or fabricated proof.
+Preserves real N/N+1, affected-path preservation and actual-agent acceptance.
+Comment verified against published body. No source, installation or lead-ledger
+changes; the in-progress candidate is not declared complete.
+
+**#29 authoritative body corrected:** Consolidated the maintainer clarification
+and observed failure/recovery requirements into the issue body itself; removed
+the obsolete instruction-only and runtime/dispatch exclusions. Supersedes the
+preceding comment-only scope correction: comment 5659452705 is now only a pointer,
+not a competing brief. Published body/comment verified. Existing proof, preservation,
+independent review and minimal implementation requirements remain. No implementation
+or installed-estate changes by this triage.
+
+**PR50 private estate (maintainer-authorized):** Started fresh Herder agent
+`pr50-live` in pane `w1:p69`, using worktree `codex-skills-pr50-live` at
+`c76f43b` on `fix/issue29-live-estate`. Reused DSWE mount isolation so all
+home-relative Codex entrypoints resolve to the private candidate estate, while
+normal tools/projects remain accessible and the shared estate has a read-only
+comparison path. Candidate state is separate; source refresh is authorized only
+for this private estate. Actual process file/configuration and native-state
+bindings verified in `~/.local/share/codex-estates/pr50/launch-verification.json`.
+No shared installation, merge, benchmark changes or prior-lead state mutations.
+This setup establishes environment binding, not completion of #29 acceptance.
+
+**PR50 shared delivery (maintainer-authorized):** Supersedes the private-only
+delivery status above. [PR #50](https://github.com/future3OOO/codex-skills/pull/50)
+merged at `7198082628f63e13ce4fd7d7fe8c1d2441f66fdd`; local main fast-forwarded,
+retaining uncommitted decision notes. Installed its ten owned source files and
+merged native hook matcher into the global estate, preserving unrelated hooks
+and skills. Backup and exact paths/hashes: `~/.local/state/codex-proof/pr50-global-install.json`.
+Existing real installed-entrypoint probes passed: pending review denied inside
+and outside Git, unrelated state ignored, unchanged handoff proof retained, and
+real content/mode/deletion edits invalidated proof. Existing native sessions were
+not restarted; cached consumers are not claimed reloaded. PR51 remains separate.
+
+**PR51 integration status:** At maintainer request, rebased PR51 onto merged
+PR50 (`7198082`) and pushed with an exact-head lease at `614654a`. Both decision
+records and PR50 runtime/verification changes are preserved; diff checks pass.
+PR51 remains open, unmerged and uninstalled; review on the new head is pending.
+
+**PR51 TDD review at `20b48c9`:** Reviewed the last two commits and cumulative
+TDD references without changing candidate files. One wording correction remains:
+recorder.md must scope repository target resolution to pytest/unittest; the real
+resolver accepts the retained external direct-probe command. No downstream agent
+refusal was observed. Recorder prose fell from 1,266 to 862 words; retained proof
+and lifecycle rules remain present. Report: `/tmp/pr51-tdd-review.json`.
+
+**PR51 reviewer dispositions at `5228f21`:** Supersedes the earlier target-scope
+wording finding, now corrected. Posted measured dispositions and resolved seven
+false-premise, optional or duplicate threads. The outdated advisor thread remains
+open for the missing initial-preflight prerequisite; the outside-diff readiness
+comment shares that owner. Explicitly rejected running preflight at final review.
+Provider-marker wording mismatch is reported without an observed real failure.
+Current checks passed; no implementation, installation, native restart or merge.
+GitHub PR51 carries the complete dispositions; `/tmp/pr51-disposition-results.json`
+retains reply links. Future repair needs actual before/after acceptance.
+
+**PR51 advisor-disposition correction:** Supersedes the preceding required-gate
+recommendation. Step 4 and the advisor skill already require advice before initial
+production preflight. The observed skip used the old optional instructions; it
+does not demonstrate a candidate failure requiring new runtime gating. Corrected
+the original GitHub thread disposition and summary, and resolved the thread as
+reported-not-actioned. No runtime gate or late preflight is required by this evidence.
+
+**PR51 delivery (maintainer-authorized):** Supersedes PR51’s unmerged/private-only
+status above. Merged at `c772ad1d834b22a04a829075886a48f61bf83b9c` after all
+review threads were dispositioned and current checks passed. Local main was
+fast-forwarded, preserving uncommitted notes. Installed the seven changed skill
+and TDD reference files globally, with backups; README and decisions remain
+repository-only. Installed bytes, reference targets, instruction ordering and
+receipt-reuse CLI options verified. Receipt: `~/.local/state/codex-proof/pr51-global-install.json`.
+No native processes restarted, respecting the maintainer’s cancellation. This
+installation verification does not claim measured agent adoption or efficiency.
+
+**Repo Context Forge duplicate-skill audit:** Both global RCF and
+`repo-context-forge@local-codex-plugins` are enabled. The global skill/adapter
+matches codex-skills and calls the clean external producer `db114d20`. The
+plugin calls its own bundled producer at `abde7363` plus six modified tracked
+files, bypassing the global adapter; its producer hash differs. Its manifest
+exports one skill, with no separate MCP/hooks configuration found. Recommend
+disabling the duplicate plugin registration while preserving its dirty checkout
+and the external producer. No plugin/config/source/process changes made by this
+audit; duplicate exposure does not prove double execution or measured waste.
+
+**Repo Context Forge plugin disabled (maintainer-authorized, 2026-09-14):**
+Supersedes the enabled status and pending recommendation above. Set only
+`plugins."repo-context-forge@local-codex-plugins".enabled` to false in global
+Codex config; parsed before/after comparison verified the single change.
+Backup: `~/.codex-backups/disable-rcf-plugin-20260914T113006Z/config.toml`.
+Preserved the global workflow adapter, external producer and plugin cache;
+no processes restarted. Existing session catalogs may retain their prior entries.
+The six modified tracked plugin files all have August 24 timestamps (about
+21 days old). Five exactly match historical committed blobs; the test file
+has no matching blob event in retained history, so its provenance remains
+unresolved. These are observations of a stale/divergent cache, not evidence
+of recent development or measured execution/token waste. No files deleted.
+
+## 2026-09-15 — Issue 54 installed-estate replay baseline
+
+**Decision:** Use the captured CX2 lead session through ordinal 326 as the
+primary actual-agent N/N+1 replay checkpoint for
+[#54](https://github.com/future3OOO/codex-skills/issues/54). At that point the
+advisor findings exist, source is unchanged at base `8d74ffc` / tree `d563862`,
+and the old preflight/TDD/production guidance has not yet been loaded. Use the
+ordinal-385 checkpoint only for a focused transition-owner probe: it follows
+the honest missing-Interface RED but already contains the old skill text, so a
+skill reload there is a reconstructed handoff rather than native resume.
+
+**Reason:** Starting before the skill reads lets the installed candidate affect
+proof selection as well as recorder behavior. The paired replay must distinguish
+runtime terminal-authority enforcement from actual lead/reviewer investigation,
+bind loaded estate bytes, keep mutable state isolated, and withhold later CX2
+defect hints from the agents. Passing requires availability evidence to permit
+progress without authorizing independent semantic obligations or unsupported
+`already-satisfied` closure.
+
+**Status:** Published the exact session-prefix hashes, source/workflow bindings,
+original chronology, private installed-estate setup, and bounded pass/fail
+criteria in
+[issue comment 5673564790](https://github.com/future3OOO/codex-skills/issues/54#issuecomment-5673564790).
+No #54 implementation, installation, session replay, workflow-state mutation,
+merge, or shared-estate change was performed.
+
+## 2026-09-16 — PR36/PR56 deliveries and record catch-up
+
+**PR36 delivery (supersedes the Sep-13 pre-merge status):**
+[PR #36](https://github.com/future3OOO/codex-skills/pull/36) merged at
+`a3f544e76bb2918f819211fe49cf5f888edb879c` on 2026-09-13 after the
+`port254-review` pass completed commit-ready (workflow
+`ebbd64eedacf428fbab4e2447456aaea`: advisor preflight with SPEC-1
+rejected-with-evidence and SPEC-2/SPEC-3 fixed, four TDD cycles, typed
+verification, independent code review with no findings, final advisor
+commit-ready). Scoped installation changed only
+`skills/repo-context-forge/scripts/bootstrap.py` (sha256 `6f8928c1…`,
+backup `~/.codex-backups/pr36-20260913-092935`, 107 other managed files
+unchanged; receipt `~/.local/state/codex-proof/port254-review/install-repaired.json`).
+All review threads on the merged head are resolved and local main carries the
+merge. Older Claude adapters in separate HOMEs still need the later backport
+before sharing the stronger count-and-claim guarantee, as recorded on Sep-13.
+
+**PR56 delivery (supersedes the earlier "PR #56 references #54 without closing
+it" and "No shared-estate installation or merge" statements):**
+[PR #56](https://github.com/future3OOO/codex-skills/pull/56) merged at
+`f088c144cafedff58c887eebf6cbeb662a5a89a8` on 2026-09-15 and
+[#54](https://github.com/future3OOO/codex-skills/issues/54) closed COMPLETED at
+the merge. The issue closure is the delivery fact; it does not claim the
+recorded acceptance gaps were delivered — the void N arm, the partial N+1
+replay stopped before review, unestablished reviewer-claim/final-advisor
+behavior (Done-when #5), and the maintainer-deferred SPEC-4 remain recorded
+limits, not satisfied criteria. The shared estate was refreshed afterward
+(pre-refresh backup `~/.codex-backups/20260915-220853`, 199 files): sampled
+PR56-owned paths
+(`hooks/lib/tdd_workflow.py`, `skills/tdd/SKILL.md`, `skills/tdd/recorder.md`,
+`skills/production-code/SKILL.md`) sha256-match the merged HEAD. The extra
+`claude-advisor` skill — the replay's misroute, not the candidate — was retired
+from the shared and issue54 estates on 2026-09-15 (backup
+`~/.codex-backups/retire-claude-advisor-20260915T070615Z`).
+
+**PR34 delivery (supersedes the Sep-13 pre-merge status):**
+[PR #34](https://github.com/future3OOO/codex-skills/pull/34) merged at
+`04aa084d2939e23b031e6ff07c09f657837fc399` on 2026-09-13, delivering #32's
+native-delegate defaults. Its two owned files —
+`skills/repo-context-forge/SKILL.md` and
+`skills/repo-production-workflow/SKILL.md` — sha256-match the shared estate
+copies against the `f088c14` blobs, verified 2026-09-16 (pre-install backup
+`~/.codex-backups/issue32-20260913-073511`, containing exactly those two
+files). No install receipt or installed-entrypoint probe was recorded, so the
+installation path itself is unverified; only installed-content equality is
+claimed.
+
+**Docs-edit waiver (maintainer, 2026-09-16):** Governed workflow passes are not
+required for `decisions.md`-only edits; the record update ships through the
+normal PR review path. This pass's ledger (workflow `e79cb5350b16429ba8bf3136013e39db`)
+was paused at code-review by the override; its retained proof — a real
+RED/GREEN that caught the missing PR34 entry, the quality gate, and the
+final-head check state — stands as evidence, not authorization.
+
+**Record state:** This commit lands the carried-forward Sep-14/Sep-15 notes
+(the #42 consolidation, PR45/PR48/PR50/PR51 deliveries, #30/#47 closures, #29
+brief updates, RCF plugin disable, and #54 replay baseline) that had stayed
+uncommitted across the PR50/51/56 fast-forwards; the pre-PR56-ff stash
+snapshot of the same notes is redundant once this lands. Every merged PR
+through #56 now has a delivered or explicitly superseded status. Open PRs
+#40, #52 and #53 carry no delivery claims.
+
+## 2026-09-16 — Context-efficiency passes: repo-context-forge #30 and codex-skills #60/#61
+
+**Decision (maintainer-directed):** work #55/#59/#46 by measurement, ship only
+structural changes at existing owners, no new hook, ledger, stage, or flag.
+Re-derived the CX2 lead independently of the earlier issue comments (o200k,
+canonical `response_item` text): 953,787 tokens; 30 truncations discarding
+192,095; 117 repeat reads of already-read paths costing 226,822; workflow CLI
+168 calls / 114,278 (`history` 8 / 23,019); 11 post-compaction rollout
+self-greps / 73,564 searching for `BM_*` ids and `phase red|green`; JSONL
+searches only 3 calls. Script and per-call tables retained under the session
+scratchpad (`cx2/measure.json`, `cx2/report.md`).
+
+**repo-context-forge [PR #30](https://github.com/future3OOO/repo-context-forge/pull/30)
+(open, not merged):** SoulForge 2.13.2 records every Python import statement
+(`refs.import_source`, `external_imports.package`) and resolves none of them,
+so `SoulForgeMap` dependents came only from identifier-matched `edges`;
+`workflow_cli.py` reported `risk=high direct_dependents=0` with seven real
+importers. The consumer now parses those statements against the `files`
+table and unions them with edges at weight 1.0 (graph built once per
+instance). Live: `workflow_cli.py` 0→7, `tdd_workflow.py` 0→7, matching `rg`.
+The `refs.name`/`calls` swap proposed in #59 overcounts (36 vs 7) and was not
+taken; replacing edges outright would zero non-Python repos. Default packet
+budget 16k→8k: Codex delivers ~10k tokens of one result and cut the middle of
+every 16k packet in CX2 (`gitnexus_analysis` body, `scope_rules`), not the
+targets; at 8k the codex-skills packet arrives whole at 6,493 tokens in the
+compact form, dropping per-file `soulforge_impact` lists and symbol lines (no
+budget renders the full form under the cap; recorded as the accepted trade).
+`targets[:5]` digest cap unchanged: the compact `<targets>` block lists all 20.
+Reviewer round (fleet + cubic) fixed in `c394568`: beyond-package relative
+imports link nothing, package beats a same-named module, backslash
+continuations normalized, README 8k. Occurrence of all three shapes across 25
+captured indexes / 11,158 statements: zero.
+
+**codex-skills [#60](https://github.com/future3OOO/codex-skills/issues/60) /
+[PR #61](https://github.com/future3OOO/codex-skills/pull/61) (open, not
+merged):** `history` embedded the full state projection per event (426,596
+tokens on one real pass); rows are still validated, no longer published
+(2,976 active; bare slot 191,549→15,898). `status` and mutation receipts drop
+`intent` (10,839→1,283); `begin` prints the compact receipt. `summary` (the
+compaction re-arm line) lists the map grouped by status after the closing
+invariant plus the latest valid generic verification command, cap 3,000 sized
+to the largest recorded real map (38 ids). Deviation recorded on #60: bare
+`history` keeps every workflow (prune reports count across workflows).
+
+**Not built, by decision:** #59's read ledger C/D (behavioural effect
+unproven; needs the paired pass), any output-budget hook, by-reference packet
+emission. Expected effect on the CX2 lead from what shipped: ~7–8k tokens from
+whole packet delivery, ~24k deterministic from the CLI shapes, up to ~74k if
+the summary line stops the post-compaction rollout greps (unproven).
+
+**Observed, not changed:** PR mode ranks the changed file above the intent
+(`decisions.md` at 1513 topped a hooks-review packet); the final advisor
+appeal on PR #30 was skipped and neither workflow was run to `complete` at
+the maintainer's direction.
+
+**PR #30 / PR #61 delivery (2026-09-17; supersedes the earlier "open, not
+merged" statuses):**
+[repo-context-forge #30](https://github.com/future3OOO/repo-context-forge/pull/30)
+merged at `d3a50cf`; installed as snapshot
+`~/.local/share/repo-context-forge/d3a50cf…` behind `current`, which the
+Codex, Claude and repo wrappers all resolve; live smoke through the Codex
+wrapper on this checkout: budget 8,000, packet 7,755 tokens whole, 20 targets,
+`workflow_cli.py`/`tdd_workflow.py` 7 dependents each.
+[codex-skills #61](https://github.com/future3OOO/codex-skills/pull/61) merged
+at `3415c12` after the reviewer loop closed (two credential threads
+report-not-actioned on 0/131 commands in this slot and 0/19,747 across 161
+ledgers; non-list `runs` report-only on the `isinstance` writer guard; the
+`Verified by` ordering taken). Scoped install of
+`hooks/lib/_workflow_db.py`, `hooks/lib/workflow_cli.py`,
+`hooks/lib/workflow_state.py`, `hooks/skill-discipline-rearm.py` into
+`~/.codex` from `main` `3415c12`, backup `~/.codex-backups/20260917-093328-pr61`;
+installed probe: `status` carries no intent, `summary` carries the `Map:` line
+with each item under its status group (verified live on this pass:
+`Map: green: BM_RECORD; already-satisfied: BM_DELIVERY`).
+One suite flake on the merge candidate
+(`test_higher_slots_count_during_competing_admissions`, slot-admission timing)
+passed 18/18 when its class ran alone; unrelated to the change. The
+claude-skills mirror of the CLI still carries the old output shapes and needs
+its own port.
+
+**#59 change C delivered as [PR #62](https://github.com/future3OOO/codex-skills/pull/62)
+(open, not merged, 2026-09-17):** read capture at the existing PostToolUse hook
+(path plus a content digest — whole-file sha256 at or under 8 MiB,
+`size:mtime_ns` above — into a per-workflow sidecar under the repository
+slot; runs before the write branch because `_BASH_WRITE` claims any redirect,
+which 27.6% of the CX2 corpus's reads carry), emitted at the SessionStart
+re-arm as "Inspected this pass, unchanged since" / "Changed since inspected",
+each capped at 60 entries and 1,500 chars (3,907 chars at 120 reads). The
+matcher claims only the corpus's verbs (sed, rg, inline python, cat, wc, jq,
+nl, tail, awk, `<`, head); the recorded replay over 350 commands reproduces
+all 239 labelled read paths at zero context cost; no committed fixture or
+replay test is retained. Delegate review over two rounds: gate escape, alphabetical
+eviction, unreadable-file crash, redirect-suppressed capture and unbounded
+section all fixed; fragment-read wording taken as the honest "inspected"
+label rather than dropping sed ranges (163 of 239 events). Behavioural effect
+is unproven by construction: acceptance is the seeded cut-resume of the CX2
+rollout at ordinal 840 in an isolated codex-home (store keyed by repository
+and workflow id, so the sidecar can be seeded from the replay's path set),
+baseline 117 repeat reads / 226,822 tokens, prediction ≥50% fewer second-read
+tokens, inconclusive if compaction counts differ; requires a maintainer token
+cap before launch. D (RCF consuming the sidecar) remains open.
+Reviewer-fix round (maintainer findings, 2026-09-17): read paths are resolved
+before any repository or ledger lookup; one `content_digest` owner (sha256 at
+or under 8 MiB, `size:mtime_ns` above) serves hook and re-arm; the frozen
+350-command fixture and its test were dropped because the transcript is not in
+the repo and the fixture could never be relabelled. The replay run is the
+recorded evidence: 350 commands, 239 labelled reads, 0 misses, 1 extra
+(`decisions.md` behind an `if [ -f ]` guard the matcher cannot evaluate;
+`is_file()` filters it before the ledger; transcript ordinal 17 shows it was
+not printed). The corpus's lasting shapes live in `ReadCandidateTests`.
+Review round 2 (26 threads, eight roots, all dispositioned on-thread): substitution
+is prefix/escape/separator-safe; python write forms never record; the re-arm lists
+the newest paths; malformed sidecars read as empty; `content_digest` refuses
+non-regular files; the pruner retires `reads/<wid>.json` with its workflow (measured:
+no slot-root prefix convention existed, only `_advisor-sessions/<key>-<wid>.sid`);
+euid-0 skip; replay argv guard and boundary-safe normalisation. Report-not-actioned:
+the >8 MiB same-size-and-mtime swap. Six RED→GREEN cycles, suite, gate and the
+239/239 replay green on the pushed head.
+Review round 3 (four threads): `_sqlite_entries` now guards `reads/` with `_walkable`
+(symlinked directory no longer followed by `prune --apply`; RED reproduced the outside
+deletion at the real Seam). Cubic P2 on the mode-000 test rejected: premise inverted, live
+non-root run OK. CodeRabbit reassignment ordering report-not-actioned: reproduced,
+under-records only, zero corpus reads fed by a reassigned variable.
+
+An independent review then showed the round-3 reassignment disposition was wrong:
+`f=a.py; f=b.py; cat "$f"` returned a.py, a path bash never printed, and a dead
+branch's read was claimed. Rounds 4 to 7 answered that plus 37 findings from four
+review passes. The matcher was rebuilt onto one ordered read/write event stream,
+because arbitration by substring position was the root of a whole family of false
+claims. Reserved words now count only in command-word position; guard chains, group
+scope, assignment scope, the inline-python gate and the write set (redirects, tee,
+sed -i by option letter, cp/mv destinations) all follow from the same stream.
+
+Two judgment errors are worth recording. The corpus of 350 real commands stayed at
+239/239 through every round, so it never once failed and could not have: it contains
+none of the adversarial shapes. Treating it as evidence of correctness is exactly the
+mistake the estate's own rule warns about, that a test written from the same
+assumption as the fix cannot detect its error. And the matcher kept creeping toward
+being a shell interpreter, one rule per round, when the honest shape is a narrow claim
+that declines anything ambiguous. The extractor's expectations now live in
+benchmarks/read_matcher_probes.json, 112 commands with the paths each really read and
+a stated reason per row, and the replay fails on a claimed path the command never read
+rather than only on a miss. That replaced ten unittest methods.
+
+One unrelated fix rode along: test_higher_slots_count_during_competing_admissions
+faked its permit count while using the real account slot directory, so adding any test
+case anywhere could make the parallel suite red. It now gets a private slot root. Final advisor ran on
+swe-2-max through a temporary PATH shim because the gateway's gpt-6-astra credit was
+exhausted (429 usage_limit_reached); verdict commit-ready, envelope recorded by hand
+because the model fenced it.
+
+## 2026-09-19 — Gate trap removal: #63, repo-context-forge #31/#32
+
+**Decision (maintainer-directed):** Land the three gate-hardening PRs in order
+[codex-skills #63](https://github.com/future3OOO/codex-skills/pull/63) →
+install → verify →
+[repo-context-forge #31](https://github.com/future3OOO/repo-context-forge/pull/31)
+→ reinstall →
+[repo-context-forge #32](https://github.com/future3OOO/repo-context-forge/pull/32).
+CX3 had followed the old AGENTS.md text to the producer's own `bootstrap.py`,
+which rejected `--workflow-slug` and was misread as version skew; the gate now
+names only the installed governed wrapper and forbids the snapshot path, kept
+as a short pointer rather than a runbook. #31 eradicated the plugin surface
+outright — manifest, duplicate skill tree, marketplace registration and the
+`~/plugins` symlink all gone — leaving the installer to publish only a snapshot
+and the `current` pointer. #32 dedupes dependency edges by path at
+`max(edge_weight, 1.0)` so a real producer edge and a weight-1.0
+statement-parsed link cannot sum; shipped ahead of any producer-side fix
+because 28 inflated pairs were already measurable on a real map.
+
+**Status:** #63 merged at `22279e0`; installed via `install.sh` from merged
+main, `~/.codex/AGENTS.md` verified identical, wrapper `--help` advertises
+`--workflow-slug`. #31 merged at `62bb9a8`; its review round fixed three
+verified findings on `ab81c36` (restored `__main__` guard, basename
+`bootstrap.py` filter, README contradiction) and report-not-actioned the
+upgrade-removal ask — zero live remnants measured (`~/plugins` empty,
+marketplace `plugins: []`, backup at `/tmp/rcf-plugin-remnants-backup`). #32
+merged at `7ef95f8`; producer reinstalled to that snapshot, engine-only. Local
+mains fast-forwarded; the live packet reports `workflow_state.py`
+`direct_dependents=24`, so the union plus dedupe is producing real numbers.
+
+**Decision (maintainer-directed):**
+[PR #62](https://github.com/future3OOO/codex-skills/pull/62) stays open,
+unmerged. Its ledger stores a whole-file digest for reads that are
+overwhelmingly fragments (30/30 seeded paths in the real corpus), so the
+re-arm's "inspected, unchanged" claim overstates coverage — the failure
+direction is the harmful one, telling a resumed agent it holds content it
+never saw. The honest redesign records read extents, not whole-file claims.
+Worth keeping from the branch: the capture seam at the existing PostToolUse
+hook, the per-workflow sidecar, the re-arm injection, and the corpus replay
+harness.
+
+**Upstream defect filed:**
+[proxysoul/Empryo#210](https://github.com/proxysoul/Empryo/issues/210), full
+trace mirrored at
+[future3OOO/soulforge#1](https://github.com/future3OOO/soulforge/issues/1):
+tree-sitter `getFileOutline` records Python `imp.source` as raw statement text
+(no `@source` capture in the main query), `isResolvable` excludes bare module
+names, and `resolveImportSource` is repo-root-relative only — the producer
+emits zero confidence-3 Python edges. The PR #30 consumer union stays as the
+permanent fallback for stale databases; a fork-side producer patch is optional
+hygiene, made double-count-safe by #32's dedupe.
+
+**PR [#67](https://github.com/future3OOO/codex-skills/pull/67) (open, review
+complete):** the intake coordinator is now opt-in — `setUp`'s blanket class
+lock (≈935s serialised against a 300s deadline, the real cause of
+`SUITE_COORDINATOR_WEDGED`) became `serialise()`, held only by the 14 cases
+that touch the real slot directory or drive a producer. The three pure
+in-process cases run unsynchronised, and
+`test_higher_slots_count_during_competing_admissions` got a private slot root
+rather than the lock. Verified on head `1473270`: the 14/3 split audited
+against test bodies and helpers, both prior findings confirmed fixed, all
+checks green, both threads resolved. One pre-existing flake observed, not
+caused by this change: `test_a_queued_same_home_waiter_holds_no_capacity` is
+sensitive to external slot capacity in parallel runs.
+
+## 2026-09-19 — Issue 68 non-runner baselines; delegate-transport repair
+
+**Issue [#68](https://github.com/future3OOO/codex-skills/issues/68) delivered
+as [PR #69](https://github.com/future3OOO/codex-skills/pull/69) (open, not
+merged, head `c8998da` after reviewer completion):** a non-runner operation
+that exits 0 on a pending
+item now records a baseline (`already-satisfied`) — a bounded observation
+through `_final_diagnostic` on unstripped lines (traceback-ending output
+names the exception line), `site` as the shlex-joined command, reach marked
+unresolved for review establishment; a silent exit-0 is refused like an
+empty selector. One observed outcome settles one item across all three
+admission paths: observation+site dedup for non-runner proofs,
+stored-execution identity dedup (`sourceReference`+testId) for receipt and
+runner proofs, and a receipt-owner refusal naming the owning item. The
+contract-item post-change gate applies to every surface type, and a
+non-runner baseline receipt satisfies the `fixed`-disposition
+executed-receipt predicate through the shared
+`run_recorded_baseline`/`BASELINE_PROOF_QUALITIES` in `workflow_state.py`.
+Named widening, scoped: the admitted quality `operation-succeeded` is
+produced only by non-runner baselines; runner receipts still carry
+`baseline-passed` with executed-test reach. For the non-runner shape alone,
+reach stays unresolved and review establishes coverage, never the exit code
+— the same rule the Issue #54 entry set for non-runner REDs.
+Skill and recorder text state the real-Seam distinction; the verification
+step names real-seam probes beside suites and lint/typecheck/build.
+Workflow `probe-baseline` completed clean: 8 TDD cycles, 204-test suite
+green, typed quality gate green, three delegated review rounds with every
+material finding fixed and dispositioned, final advisor verdict
+commit-ready.
+
+**Independent PR69 review at `c8998da` (2026-09-19):** The review of
+[issue #68](https://github.com/future3OOO/codex-skills/issues/68) supersedes
+the readiness implication of the reviewer-completion statement above and
+limits its "all three admission paths" claim: the receipt-path identity dedup
+did not hold until `f76acba`. The
+131 tests in the two changed suites pass, but public CLI probes show one
+stored passing test settling two items through either a later cumulative
+evidence document containing the identical original run, or the accepted
+`:00` spelling of index `:0`. Receipt dedup keys the reference string rather
+than the execution. This leaves acceptance criterion 5 incomplete; reported
+as SPEC-1, with no candidate fix in this review — **fixed at `f76acba`**:
+attributed proofs now stamp `sourceExecution`, the sha256 of the resolved
+run's canonical record, and `inherited_baseline` dedups on that identity, so
+every reference spelling of one stored execution refuses. The reproducer
+flips both cases to refused-with-pending and the four dedup/receipt tests
+stay green. The change otherwise stays
+focused (86 net runtime lines at the reviewed head `c8998da`; the `f76acba`
+dedup work brings it to 99 net — the basis for the re-measurement below);
+STD-1 names a removable five-line forwarding
+helper — **also fixed at `f76acba`** (`_baseline_observation` inlined into
+its single caller). Review intake and reproducible results are retained at
+`/tmp/pr69-review-intake.json`, `/tmp/pr69-review-reproduce.py`, and
+`/tmp/pr69-review-results.json`. No merge or installation occurred.
+
+**Minimum-scope reassessment at `f76acba`:** Supersedes the earlier
+unqualified assessment that PR69 was minimal. The alias probes now refuse
+both duplicates, but the base commit already allowed repeated unittest
+receipt attribution: that hardening is separate from admitting non-runner
+baselines. A disposable original-scope variant retains admission, bounded
+observations, observation/site dedup, the existing production-change gate
+and receipt consumption with 36 runtime additions / 6 deletions (30 net),
+versus the PR's 107 / 8 (99 net). The same eight public-CLI checks pass on
+both in approximately six seconds; no full suite was rerun. Two added tests
+(82 lines) cover the additional runner receipt policy. Retaining that broader
+policy requires an explicit scope decision; the smaller experiment does not
+implement it. Review and measured patch: `/tmp/pr69-f76-review.json` and
+`/tmp/pr69-minimum-runtime.patch`. Candidate source remains unchanged.
+
+**Whole-diff measurement at the same head:** Including tests and unchanged
+documentation edits, the disposable original-scope alternative is 103 net
+lines versus 318: runtime 30 versus 99, tests 69 versus 215, docs 4 each.
+Test reduction removes 82 lines for the extra runner policy and consolidates
+64 lines of repeated setup/assertions. Five targeted real-CLI methods pass
+in 5.370 seconds; injected missing dedup and missing output bound both fail
+the compact checks. The scope limitation above still applies. Full patch
+and evidence: `/tmp/pr69-original-scope-full.patch` and
+`/tmp/pr69-whole-diff-review.md`. No candidate edit or delivery occurred.
+
+**Full-behavior comparison:** Retain the demonstrated receipt-path repair;
+this supersedes recommending the 103-line variant as a replacement for PR69.
+Its scope reduction cannot count as an equivalent implementation saving.
+Keeping production byte-identical to `f76acba` and consolidating only the
+tests yields 254 net lines (99 runtime, 151 tests, 4 docs), a verified
+64-line reduction. Seven targeted CLI methods pass in 6.298 seconds and
+both copied-run and alternate-index receipt probes still refuse duplicate
+settlement. Full patch: `/tmp/pr69-full-behavior.patch`; evidence:
+`/tmp/pr69-full-behavior-results.json`. No candidate source was edited.
+
+**Delegate-transport root cause found and fixed:** inter-agent task payloads
+travel as `encrypted_content` parts inside `agent_message` items, and
+CLIProxyAPI's Responses→chat translator dropped them silently — spawned
+delegates received an empty `Payload:` and role-confused as lead (the
+burned-session bug). Patched
+`~/projects/cliproxyapi-fast/internal/translator/openai/openai/responses/openai_openai-responses_request.go`
+(new `agent_message` case plus regression test), rebuilt, swapped the binary
+into `~/cliproxyapi/cli-proxy-api` (backup `cli-proxy-api.bak-20260919T0529Z`),
+restarted `cliproxyapi.service`; verified end-to-end on a live delegate.
+The cliproxyapi-fast change is still uncommitted — it needs its own pass
+before it can be called delivered. The final review also ran on swe-2-max
+through `/tmp/adv-shim` (claude provider) because the gateway's gpt-6-astra
+credit was exhausted; verdict commit-ready.
+
+**Record corrections (PR #58 reviewer findings, same push):** blank line
+plus `PR mode` casing on the Observed entry; the #30/#61 delivery heading
+now supersedes the stale "open, not merged" statuses; the installed-probe
+note records the verified per-item status grouping; the #62 delivery names
+the >8 MiB `size:mtime_ns` digest representation; the dropped 350-command
+fixture is no longer described as committed and pinned.
