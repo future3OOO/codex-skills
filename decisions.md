@@ -6,6 +6,26 @@ Issue bodies own implementation scope; this record preserves decisions and their
 status. New decisions supersede earlier ones explicitly; observations and open
 acceptance gaps are not completed delivery.
 
+## 2026-09-20 — Triage briefs follow the repository workflow
+
+**Decision:** [PR #40](https://github.com/future3OOO/codex-skills/pull/40)
+uses one compact contract for triage and `to-issues`. Briefs point to AGENTS.md
+for execution; triage starts no implementation workflow. Preserve whole-objective
+real N/N+1 proof for changed or affected behavior; use artifact proof only for
+genuinely non-behavioral work.
+AFK describes implementation autonomy, not merge or installation authority.
+This supersedes unconditional behavioral-proof wording in the draft templates.
+
+**Observed:** Matched native drafting on the old and revised triage documents
+both kept a docs-only correction lightweight and a production review correction
+in its existing pass. The revised `to-issues` entry point emitted the shared
+contract and retained authorization limits. These are bounded drafting cases,
+not proof of universal compliance or a measured reliability improvement.
+
+**Status:** Updated against merged PR #70 in an isolated worktree. No runtime
+changes, merge of PR40, or shared installation. The PR records drafting evidence
+and review results; consistency checks alone do not prove agent compliance.
+
 ## 2026-09-19 — AGENTS.md as the workflow's minimal entry point
 
 **Decision:** Keep mandatory invariants, invocation, graph-coverage obligations,
@@ -36,6 +56,8 @@ runtime change, merge, or installation; agent improvement is not established
 by documentation review.
 
 ## 2026-09-14 — Require preflight advice
+
+**Decision:** Require advisor advice before the initial production preflight. Supersedes the
 optional scope/design exception that allowed the [#29](https://github.com/future3OOO/codex-skills/issues/29)
 continuation to omit advice. The workflow and advisor instructions own this rule.
 
@@ -109,6 +131,10 @@ proof of the defect; its failed attempt remains in history.
 review and final advisor review passed. The parent restart corrected its stale
 matcher: actual pending dispatch was denied and verified return review admitted.
 The actual external handoff retained verification; real edits still invalidate it.
+The captured 18-case native identity corpus has zero regressions. The independent
+reviewer confirmed both original live findings corrected; final advisor returned
+commit-ready. Current-head CI and remote reviewer completion remain pending.
+Private-estate refresh is authorized; shared installation and merge are not.
 This is separate from PR #45, merged at `dfb0159` with its own installation receipt.
 No PR #50 merge or shared installation has occurred.
 

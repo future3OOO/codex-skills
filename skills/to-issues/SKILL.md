@@ -21,9 +21,12 @@ If you have not already explored the codebase, do so to understand the current s
 
 ### 3. Draft vertical slices
 
+Read [the compact triage contract](../triage/AGENT-BRIEF.md) before drafting;
+use it for each issue, including its execution pointer and applicable proof.
+
 Break the plan into **tracer bullet** issues. Each issue is a thin vertical slice that cuts through ALL integration layers end-to-end, NOT a horizontal slice of one layer.
 
-Slices may be 'HITL' or 'AFK'. HITL slices require human interaction, such as an architectural decision or a design review. AFK slices can be implemented and merged without human interaction. Prefer AFK over HITL where possible.
+Slices may be 'HITL' or 'AFK'. HITL slices require human interaction, such as an architectural decision or a design review. AFK slices can be implemented without human interaction; merge and installation still require repository authorization. Prefer AFK over HITL where possible.
 
 <vertical-slice-rules>
 - Each slice delivers a narrow but COMPLETE path through every layer (schema, API, UI, tests)
@@ -60,22 +63,7 @@ Publish issues in dependency order (blockers first) so you can reference real is
 
 A reference to the parent issue on the issue tracker (if the source was an existing issue, otherwise omit this section).
 
-## Target objective
-
-When [trigger], [observable result]. A concise description of this vertical slice's end-to-end behavior, not layer-by-layer implementation.
-
-## Current behavior
-
-[Observed gap and reproduction/evidence link — for greenfield work, what the system does in this area today.]
-
-## Smallest change
-
-[Existing owner to reuse or modify, and why this slice is the smallest sufficient end-to-end cut.]
-
-## Verification
-
-- [ ] [Real N/N+1 targets and operation proving the target objective.]
-- [ ] [Affected paths and preserved behavior compared on both.]
+[Insert the task-specific compact contract from `triage/AGENT-BRIEF.md`.]
 
 ## Blocked by
 

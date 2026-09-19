@@ -20,19 +20,10 @@ Every comment or issue posted to the issue tracker during triage **must** start 
 
 ## Before creating or rewriting any issue
 
-- **Target objective:** Write a short, concrete summary of exactly how the system
-  should behave once the issue is implemented: what triggers it and what result
-  the user or caller should observe.
-- **Smallest sufficient code change:** Inspect the existing code first. Identify
-  the smallest change that achieves that objective without regressing existing
-  behavior, reusing existing code wherever possible. Include acceptance checks
-  for both the target behavior and the affected behavior that must be preserved.
-
-Use [AGENT-BRIEF.md](AGENT-BRIEF.md) to write the issue or brief. Keep the issue
-focused on that change; do not turn the investigation into a long implementation
-plan or add unrelated improvements. Every brief, including quick overrides and
-revisions, must include its core-objective real N/N+1 acceptance requirement.
-Passing component tests or satisfying workflow state cannot replace that proof.
+Read [AGENT-BRIEF.md](AGENT-BRIEF.md) and use its compact contract for every
+issue or brief, including quick overrides and revisions. Inspect existing
+behavior before specifying the smallest sufficient change and its proof.
+Triage prepares the handoff; it does not start an implementation workflow.
 
 ## Roles
 

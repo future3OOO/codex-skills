@@ -3,6 +3,10 @@
 Use the same compact contract for new issues and `ready-for-agent` briefs.
 Reconcile the full request, body and comments; preserve existing obligations
 and maintain one authoritative brief rather than competing copies.
+Read the applicable `AGENTS.md` before drafting execution constraints: it owns
+worktree isolation before workflow state, production/docs-only routing,
+`$diagnose`, `$tdd`, targeted verification, and same-task continuation.
+Carry its pointer into the brief; do not copy the workflow's steps.
 
 ## Establish the smallest change before drafting
 
@@ -17,8 +21,8 @@ and maintain one authoritative brief rather than competing copies.
    Prefer the least code that fully meets the objective while preserving
    affected behavior. If existing behavior already satisfies it, say no code
    change is needed. Treat an unverified approach as a question, not a requirement.
-4. **Verification.** Make real N/N+1 Seam attacks a core acceptance requirement
-   using the rule below. Fewer lines never justify a regression.
+4. **Verification.** Require proof of the objective and affected preservation
+   using the rule below. Fewer lines never justify weaker behavior or proof.
 
 Name current symbols or paths when they help locate the owner; they are evidence
 for the approach, not a fixed edit script. Exclude unrelated cleanup and
@@ -30,7 +34,7 @@ contributions rather than instructing an agent to rebuild the feature.
 
 ## Prove the core objective before delivery
 
-Every brief must require the implementing lead to execute equivalent relevant
+For changed or affected behavior, require the lead to execute equivalent
 inputs against actual N (before) and N+1 (candidate) through the production
 Interface with real collaborators. Name the operation, verify loaded targets,
 and compare observed outputs/state effects against the requested outcome.
@@ -61,6 +65,8 @@ actual before/after artifact; do not manufacture a failing product baseline.
 ## Compact contract
 
 ```markdown
+Follow the applicable `AGENTS.md` for execution.
+
 **Target objective:** When [trigger], [observable result].
 
 **Current behavior:** [Observed gap and reproduction/evidence link.]
@@ -68,10 +74,11 @@ actual before/after artifact; do not manufacture a failing product baseline.
 **Smallest change:** [Existing owner to reuse or modify, and why this suffices.]
 
 **Verification:**
-- [ ] [Actual N/N+1 targets, real operation and equivalent inputs; expected
-      change versus observed outputs/state effects proving the target objective.]
-- [ ] [Affected paths and preserved behavior compared on both; incomplete
-      repairs and regressions remain failures.]
+- [ ] [Changed or affected behavior: actual N/N+1 targets, real operation and equivalent
+      inputs; expected versus observed outputs/state effects. Non-behavioral
+      change: compare the actual before/after artifact and explain applicability.]
+- [ ] [Affected paths or artifact content that must remain unchanged; compare
+      before/after and reject incomplete repairs or regressions.]
 - [ ] [Whole-objective evidence, including actual agent execution where
       applicable, reconciled by the lead before committing/pushing for delivery;
       missing evidence remains unmet acceptance despite component tests passing.]
