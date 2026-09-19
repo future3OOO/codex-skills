@@ -314,7 +314,7 @@ def _pass_proof(
     if runner not in {"unittest", "pytest"}:
         if baseline:
             lines = [
-                line.strip()
+                line
                 for line in tdd_surface.ANSI_ESCAPE.sub("", output).splitlines()
                 if line.strip()
             ]
@@ -328,7 +328,7 @@ def _pass_proof(
                 "quality": "operation-succeeded",
                 "reach": "unresolved",
                 "runner": str(runner),
-                "observation": [observed] if observed else [],
+                "observation": [observed],
                 "site": shlex.join(str(token) for token in surface.get("arguments") or []),
             }, "", False
         return {"quality": "operation-succeeded", "runner": str(runner)}, "", False
@@ -616,8 +616,23 @@ def _run_tdd(values: list[str]) -> int:
         # A GREEN is the surface passing, not the command exiting 0: a skipped or
         # incomplete run reports no passing test and proves nothing.
         proof, proof_error, nonexecuting = _pass_proof(surface, output, baseline=False, exit_code=exit_code)
+    if receipt is not None and proof is not None:
+        proof = {**proof, "sourceReference": args.from_evidence}
     if baseline and (refusal := _baseline_refusal(binding, mapped.get("kind"))):
         proof, proof_error, baseline = None, refusal, False
+    if baseline and receipt is not None:
+        # The stored execution already settled another item: its run recorded a
+        # baseline for that item's own id. Re-attributing the same observed
+        # outcome here would settle a second item from one observation.
+        settled = receipt.get("redProof")
+        owner = receipt.get("behaviorId")
+        if (isinstance(owner, str) and owner and owner != args.behavior_id
+                and isinstance(settled, dict)
+                and settled.get("quality") in {"baseline-passed", "operation-succeeded"}):
+            proof, proof_error, baseline = None, (
+                f"the stored execution already settled {owner}: one observed outcome "
+                "cannot baseline two items"
+            ), False
     if baseline and (owner := behavior_map.inherited_baseline(items, args.behavior_id, proof)):
         # One observed outcome settles one item, the baseline mirror of the RED
         # rule above: the same observation at the same site cannot satisfy a

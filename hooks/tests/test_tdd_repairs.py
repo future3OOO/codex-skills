@@ -834,6 +834,63 @@ class MappedTddRepairTests(unittest.TestCase):
         self.assertIn("cannot be baselined after production changed", result.stderr, marker)
         self.assertEqual(self.mapped_item("BM_ACT")["status"], "pending", marker)
 
+    def test_receipt_baseline_cannot_settle_two_items(self) -> None:
+        marker = "RECEIPT_BASELINE_DEDUP_ABSENT"
+        slug, _ = self.begin_with_map(
+            [
+                pending_behavior("BM_ACT", red_failure="ACT_LOST"),
+                {**pending_behavior("BM_ONE", red_failure="FIRST_LOST"), "kind": "preservation"},
+                {**pending_behavior("BM_TWO", red_failure="SECOND_LOST"), "kind": "preservation"},
+            ],
+            "receipt-baseline-dedup",
+        )
+        (self.repo / "test_probe.py").write_text(
+            "import unittest\n"
+            "class BehaviorProbe(unittest.TestCase):\n"
+            "    def test_behavior(self):\n"
+            "        self.assertTrue(True)\n",
+            encoding="utf-8",
+        )
+        first = self.tdd(
+            slug, "red", "BM_ONE",
+            (sys.executable, "-m", "unittest", "-v", "test_probe.BehaviorProbe.test_behavior"),
+        )
+        self.assertEqual(first.returncode, 0, marker + "\n" + first.stderr)
+        self.assertEqual(self.mapped_item("BM_ONE")["status"], "already-satisfied", marker)
+        receipt = json.loads(first.stdout.splitlines()[-1])
+        # The same stored execution cannot settle a second item: one observed
+        # outcome settles one item, for attributed proofs exactly as for
+        # non-runner observations.
+        reuse = self.cli(
+            "tdd", "--repo", str(self.repo), "--slug", slug,
+            "--phase", "red", "--behavior-id", "BM_TWO",
+            "--from-evidence", receipt["summaryId"] + ":" + str(receipt["runIndex"]),
+            "--test-id", "test_probe.BehaviorProbe.test_behavior",
+        )
+        self.assertEqual(reuse.returncode, 2, marker + "\n" + reuse.stderr)
+        self.assertEqual(self.mapped_item("BM_TWO")["status"], "pending", marker)
+
+    def test_nonrunner_baseline_observation_names_the_exception(self) -> None:
+        marker = "OBSERVATION_NOT_RED_SHAPED"
+        slug, _ = self.begin_with_map(
+            [
+                pending_behavior("BM_ACT", red_failure="ACT_LOST"),
+                {**pending_behavior("BM_KEEP", red_failure="KEEP_LOST"), "kind": "preservation"},
+            ],
+            "nonrunner-observation-shape",
+        )
+        command = (
+            sys.executable, "-c",
+            "import sys; sys.stderr.write('Traceback (most recent call last):\\n"
+            "  File \"probe.py\", line 7, in <module>\\n"
+            "    open_lock()\\n"
+            "ValueError: ledger locked\\n')",
+        )
+        result = self.tdd(slug, "red", "BM_KEEP", command)
+        self.assertEqual(result.returncode, 0, marker + "\n" + result.stderr)
+        observed = self.mapped_item("BM_KEEP")["baselineProof"]["observation"]
+        self.assertIn("ValueError: ledger locked", "".join(observed), marker)
+
     def test_missing_target_is_refused_and_the_attempt_is_retained(self) -> None:
         marker = "MISSING_TARGET_REFUSAL_DISCARDED"
         slug, _ = self.begin_with_act("missing-target")

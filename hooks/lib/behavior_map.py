@@ -505,17 +505,32 @@ def _baseline_observation(entry: JsonObject) -> tuple[tuple[str, ...], str] | No
     return _observation(entry.get("baselineProof"))
 
 
+def _baseline_execution(proof: object) -> tuple[str, str] | None:
+    """The stored execution a receipt-attributed baseline was drawn from, or None."""
+    if not isinstance(proof, dict):
+        return None
+    source, test_id = proof.get("sourceReference"), proof.get("testId")
+    if not isinstance(source, str) or not source or not isinstance(test_id, str) or not test_id:
+        return None
+    return source, test_id
+
+
 def inherited_baseline(items: list[JsonObject], behavior_id: str, proof: JsonObject) -> str | None:
     """One observed outcome settles one item: the id of another item whose recorded
-    baseline carries the same observation and site, or None."""
+    baseline carries the same observation and site, or was drawn from the same
+    stored execution and test, or None."""
     current = _observation(proof)
-    if current is None:
+    current_execution = _baseline_execution(proof)
+    if current is None and current_execution is None:
         return None
     for entry in items:
         if entry.get("id") == behavior_id:
             continue
+        recorded_proof = entry.get("baselineProof")
+        if current_execution is not None and _baseline_execution(recorded_proof) == current_execution:
+            return str(entry["id"])
         recorded = _baseline_observation(entry)
-        if recorded is not None and recorded == current:
+        if current is not None and recorded is not None and recorded == current:
             return str(entry["id"])
     return None
 
