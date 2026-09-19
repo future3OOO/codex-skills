@@ -5,20 +5,18 @@ weaken them.
 
 ## Hard Production Invariants
 
-- **Real-Seam proof.** Prove behavior with equivalent real N (before) and
-  N+1 (candidate) operations. Use retained attack probes as primary proof through
-  production Interfaces with real collaborators. A mock, stub, fake, fixture-substituted
-  collaborator, invented gateway, or test-only adapter is never proof. A capture
-  at a Module's own outgoing process boundary is the real Seam for assertions
-  about what that Module emits; the ban targets substituted collaborators inside
-  the asserted contract. `$production-code` owns the comparison and outcome
-  procedure.
-- **Targeted verification.** Agents must not run full test suites; CI owns
-  full-suite coverage. Maximize real attack coverage across affected inputs,
-  failure paths, interactions, and preservation. Code-size targets must never
-  reduce that coverage. Use unit tests only when necessary, scoped to the changed
-  code or affected surface and subject to the same real-Seam proof rule. Do not
-  duplicate a retained probe with a parallel unit-test suite.
+- **Real-Seam proof.** Require equivalent real N/N+1 operations through
+  production Interfaces with real collaborators; retained attack probes are
+  primary proof. Mocks, stubs, fakes, fixture-substituted collaborators, invented
+  gateways, and test-only adapters never prove behavior. Capturing a Module's
+  own outgoing process boundary proves only what it emits. `$production-code`
+  owns the comparison procedure.
+- **Targeted verification.** Run tests for the affected surface alongside real
+  attack probes. Maximize attack coverage across affected inputs, failures,
+  interactions, and preservation. Run a full suite only to close a demonstrated
+  coverage gap that targeted checks and available CI cannot close; name it first.
+  Never substitute a suite for real-Seam proof or duplicate probes with a parallel
+  unit-test suite.
 - **Imaginary-risk ban.** A theoretical risk with no demonstrated failure is a
   report line, not a system. Build nothing for it.
 - **Root-cause-first.** Use `$diagnose` for bugs, failures, flaky behavior, and
@@ -34,11 +32,8 @@ weaken them.
 
 ## Simplicity First
 
-- Assume your first implementation is bloated. Simplify it before handoff.
-  Keep the least production and unit-test code that fully meets the objective
-  and preserves affected behavior. Remove duplication and unnecessary
-  scaffolding. Do not add speculative features, abstractions, configurability,
-  or impossible-scenario handling.
+- Assume your first implementation is bloated. Keep only the production and
+  unit-test code needed to fully meet the objective and preserve affected behavior.
 - Never weaken requirements, desired behavior, affected preservation, or
   necessary proof to reduce lines or meet a review budget.
 - Every changed line must serve the request or cleanup caused by it.
@@ -72,6 +67,9 @@ reviewer/check event and re-query head SHA, checks, merge state, and unresolved
 non-outdated threads before merging.
 
 ## 7. Production Repo Workflow
+
+For repository changes, use a task-owned Git worktree before starting a workflow
+or editing. Never edit the main/shared checkout or clobber another agent's work.
 
 Invoke `$repo-production-workflow` first for production code, config, runtime,
 deploy, generated-source, or behavior-changing repository work. It owns phase
@@ -142,58 +140,32 @@ reconciliation is done. Report unrelated check failures as blockers.
 
 ## 8. Repo Context Forge
 
-For coding, debugging, review, refactor, explanation, planning, or exploration
-inside a Git repository, invoke `$repo-context-forge` before choosing files,
-editing, or GitNexus analysis (docs-only exception in §7). A delegated reviewer consumes
-the lead's packet and evidence under `$code-review`; it does not bootstrap.
-
-Use only the installed governed wrapper
+Before code analysis or edits in Git, invoke `$repo-context-forge` (docs-only
+exception in §7). Use only
 `~/.codex/skills/repo-context-forge/scripts/bootstrap.py`, never the producer
-snapshot under `~/.local/share/repo-context-forge/current`. Follow the workflow
-for governed startup/resume; `$repo-context-forge` owns standalone modes. Supply
-the active pass's slug and intent for governed intake; omit `--workflow-slug`
-only when no pass is active.
-
-Require `REPO_CONTEXT_FORGE_REQUIRED_INTAKE`; stop and surface packet blockers.
-The packet fixes the first-pass surface: `<targets>`, `<soulforge_impact>`,
-`<coverage_plan>`, and `<gitnexus_status><repo>`. Inspect changed files and top
-targets and satisfy coverage before narrowing to a symbol or review thread;
-explain skipped changed/high-ranked targets. GitHub comments supplement that
-intake and the task contract.
-
-Do not leave `.soulforge`, `.codex`, `.claude`, `.gitnexus`, or incidental
-`.gitignore` changes in the checkout. An intentional `.gitnexus/` ignore is
-allowed only when indexing the source checkout; keep the index out of commits.
+snapshot under `~/.local/share/repo-context-forge/current`.
+Stop on packet blockers; satisfy packet scope and coverage before narrowing work.
+Delegated reviewers consume the lead's packet under `$code-review`; no bootstrap.
 
 ## 9. GitNexus
 
-Repo Context Forge fixes the surface; FFF raw discovery stays within it and is
-the first discovery layer outside the gate. GitNexus validates graph impact;
-`detect_changes` never selects initial targets or serves as primary safety proof.
-Use MCP for `query`, `context`, `impact`, and `detect_changes`; CLI for
-indexing/admin only (`analyze`, `status`, `clean`).
+Use FFF first for raw discovery; honor packet scope when present. Use GitNexus
+MCP for graph analysis; CLI only for indexing/admin. Follow `$repo-context-forge`
+for repo selection, executed-check reuse, and required post-edit validation.
 
-Before edits, use the packet's repo and read its executed graph checks. Reuse
-applicable results and run missing checks; packet context covers callers, not
-callees. Cover each changed target:
+Before edits:
 
-- `impact(direction="upstream", includeTests=true)` for indexed symbols or
-  shared contracts; downstream too when moving, deepening, consolidating, or
-  hiding behavior behind an Interface.
-- `context` for callers AND callees. For shared state (table, row, file, lease,
-  claim token, transition helper), inspect every writer and compare risk ratings.
-- Before a NEW file consumes an internal Seam, run `context` on that Seam;
-  import its existing tested owner rather than a second parsing/lifecycle client.
+- Run upstream `impact` with tests for indexed symbols/shared contracts;
+  downstream too when moving, deepening, consolidating, or hiding behavior.
+- Obtain `context` for callers AND callees and every shared-state writer;
+  compare writer risk ratings.
+- Before a new file consumes an internal Seam, obtain its `context` and reuse
+  its existing tested owner.
 
-Graph output never shrinks the packet surface, PR contract, or no-change surfaces.
-
-Re-analyze after indexed-symbol, shared-contract, persistence, config/runtime/
-deploy, external-integration, browser-automation, or transaction-sensitive edits,
-or when the index is stale. Skip docs-only and tiny leaf edits touching no shared
-contract or indexed symbol; state the skip reason. Follow `$repo-context-forge`'s
-Post-Edit Validation procedure for source-checkout reanalysis and MCP
-`detect_changes(scope="unstaged")`. Results are supplemental evidence; unavailable
-MCP for a required check is a blocker or a narrow, explicitly reported exception.
+Never use `detect_changes` to select initial targets or as primary safety proof.
+Graph output must not shrink packet scope, the PR contract, or no-change surfaces.
+Unavailable required MCP checks are blockers or narrow, explicitly reported
+exceptions.
 
 ## Codex-Skills Decision Record
 

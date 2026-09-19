@@ -8,32 +8,25 @@ acceptance gaps are not completed delivery.
 
 ## 2026-09-19 — AGENTS.md as the workflow's minimal entry point
 
-**Decision:** Restore the canonical mock/real-Seam, imaginary-risk, and
-root-cause invariants required by the ownership map. Keep invocation, intake,
-GitNexus doctrine, finding dispositions, and reviewer completion in AGENTS.md;
-let the existing skills own phase order, startup commands, and N/N+1 verification.
-README owns installation procedure. Retain §7/§8/§9 so ownership references resolve.
-This supersedes the initial PR70 wording that duplicated the phase sequence
-and bootstrap runbook: standalone exploration must not start a production pass,
-and agents reuse executed packet checks while obtaining missing callee context.
-The maintainer's clarification supersedes this pass's CI/local fallback: agents
-must not run full suites. Prefer retained N/N+1 attacks through real production
-Seams and real collaborators; unit tests are only for necessary affected-surface
-checks, never a parallel substitute for those probes. Maximize real attack
-coverage; minimizing production and unit-test code must not limit probe coverage
-or weaken requirements, desired behavior, affected preservation, or necessary
-proof. Align the workflow's
-verification step with that canonical rule and remove the nonexistent optional
-reviewer-roster reference. The minimum is the least code that fully meets the
-objective while preserving affected behavior. Make the rules mandatory and
-treat the first implementation as bloated: simplify before handoff without
-weakening behavior or proof. Merge and shared installation retain explicit
-maintainer authorization.
+**Decision:** Keep mandatory invariants, invocation, graph-coverage obligations,
+and reviewer completion in AGENTS.md. Remove duplicated startup, packet, and
+post-edit procedures; existing workflow/RCF skills own those, README owns
+installation. Preserve the installed-wrapper restriction and §7/§8/§9 ownership
+references. Remove the nonexistent optional reviewer-roster reference.
+
+The maintainer's final verification rule supersedes both the automatic local
+full-suite fallback and this pass's blanket ban: default to affected-surface
+tests alongside real N/N+1 attacks. A full suite requires necessary coverage
+that targeted checks and available CI cannot provide. Maximize real attack
+coverage; never weaken behavior, preservation, or proof for fewer lines. Assume
+the first implementation is bloated and retain the least production/unit-test
+code that fully meets the objective. Select a task-owned worktree before state
+or edits; preserve main/shared checkouts and other agents' work.
 
 **Status:** [PR #70](https://github.com/future3OOO/codex-skills/pull/70), docs-only.
-The linked PR carries independent review, current-head checks, and dispositions.
-No runtime change, merge, or installation; improved agent behavior is not
-established by this documentation review.
+The PR carries independent review, current-head checks, and dispositions. No
+runtime change, merge, or installation; agent improvement is not established
+by documentation review.
 
 ## 2026-09-14 — Require preflight advice
 
