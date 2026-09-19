@@ -31,9 +31,12 @@ flowchart LR
     C -->|non-behavioral correction| I
     C -->|evidence-backed rejection| AP[one appeal on the same session]
     AP --> C
-    C -->|yes| WC[workflow complete]
-    WC --> DL[delivery]
-    DL --> PR[reviewer completion]
+    C -->|yes, PR| DL[delivery]
+    C -->|yes, no PR| WC[workflow complete]
+    DL --> PR{reviewer gate closed?}
+    PR -->|yes| WC
+    PR -->|behavioral correction| TM2
+    PR -->|non-behavioral correction| I
 ```
 
 ## State Interface
@@ -165,7 +168,7 @@ resume at the first unsatisfied phase in the same ordered workflow. A
 governance-first pass therefore returns to TDD, while a completed
 implementation returns to verification.
 
-Behavioral findings from the `code-review` delegate or final Codex Advisor against the current unpushed tree return to mapped TDD under the active `workflowId`: add the Behavior Map item, drive its behavior-specific RED, then fix it. Only genuinely non-behavioral corrections return directly to implementation, with the reason recorded. The behavioral/non-behavioral classification is a lead-owned obligation, not a machine-validated edge: the recorder validates the reassessment's structure and blocks completion until one is recorded, but it cannot judge the classification itself - a behavioral defect routed through a why-only reassessment is a doctrine violation the reviews are expected to catch, not a state the hooks can refuse. A legitimate reviewer signal on a pushed PR head, or a bug/regression outside the active workflow intent, instead starts a new workflow with `begin`.
+Behavioral findings from the `code-review` delegate or final Codex Advisor and pushed-head reviewers within the active task return to mapped TDD under the same `workflowId`: add the Behavior Map item, drive its behavior-specific RED, then fix it. Only genuinely non-behavioral corrections return directly to implementation, with the reason recorded. The behavioral/non-behavioral classification is a lead-owned obligation, not a machine-validated edge: the recorder validates the reassessment's structure and blocks completion until one is recorded, but it cannot judge the classification itself - a behavioral defect routed through a why-only reassessment is a doctrine violation the reviews are expected to catch, not a state the hooks can refuse. Separate work outside the active task starts a new workflow with `begin`.
 
 A finding envelope is one correction batch. A pending behavioral finding rides
 the pass as a map-owned attack obligation; dispositions may cover any subset,
@@ -284,9 +287,8 @@ repository's own HEAD, and never an attestation.
 
 ## Delivery is separate
 
-Workflow completion means the production process reached a final ready review.
-Delivery follows only when integration is intended; the no-PR route (local-only
-work, estate syncs, work the user said not to push) completes the workflow,
-reports the change and its verification, and names why no PR exists.
-Commit, push, PR creation, CI, reviewer comments, and mergeability remain normal
-delivery/reviewer-loop concerns after that point.
+After verification and final reviews, deliver when integration is intended.
+Keep the pass active through reviewer corrections; complete after the current-head
+reviewer gate closes. The no-PR route completes after final review, reports the
+change and its verification, and names why no PR exists. Workflow state never
+authorizes Git or replaces the reviewer gate.

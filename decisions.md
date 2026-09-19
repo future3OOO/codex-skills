@@ -23,6 +23,12 @@ the first implementation is bloated and retain the least production/unit-test
 code that fully meets the objective. Select a task-owned worktree before state
 or edits; preserve main/shared checkouts and other agents' work.
 
+Supersede automatic per-fix/per-review workflow resets: related corrections stay
+in the task pass; reuse applicable evidence and rerun invalidated gates. Complete
+after reviewer closure so the terminal-state rule cannot force restarts mid-task.
+Invoke TDD for every code change; require real-Seam RED/GREEN for behavior changes
+and preservation proof for refactors. Diagnosis remains mandatory before bug fixes.
+
 **Status:** [PR #70](https://github.com/future3OOO/codex-skills/pull/70), docs-only.
 The PR carries independent review, current-head checks, and dispositions. No
 runtime change, merge, or installation; agent improvement is not established

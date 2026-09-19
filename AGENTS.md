@@ -51,8 +51,9 @@ weaken them.
 
 - Define verifiable success criteria before editing; for multi-step work, state
   the short plan and its checks.
-- Use `$tdd` for behavior changes through the real Seam. If that Seam cannot
-  be driven, report the proof gap as a finding; never fabricate substitute proof.
+- Invoke `$tdd` before every code change. Behavior changes require real-Seam
+  RED/GREEN; refactors require preservation proof. If the Seam cannot be driven,
+  report the proof gap; never fabricate substitute proof.
 - Never mark work complete while required behavior or proof is missing.
 - Before handoff, inspect the delta and remove bloat, duplication, speculative
   flexibility, and unnecessary files.
@@ -82,8 +83,9 @@ Forge and GitNexus. Governance docs that change agent behavior (`AGENTS.md`,
 `CLAUDE.md`, `docs/agents/`) also require independent `$code-review` before
 handoff.
 
-- Start a new workflow pass for each new PR slice, bug fix, or review-fix round.
-  Resume the same pass after compaction; load only missing or changed context.
+- Keep related fixes and review corrections in the same workflow pass. Resume
+  after compaction; reuse applicable evidence and rerun only invalidated gates.
+  Start a new pass for separate work, never merely for another edit or review.
 - Escalate to `$repo-large-implementation` before coding when work needs a new
   tracked plan, branch strategy, remediation map, multi-PR coordination, or is
   likely to exceed the review budget.
