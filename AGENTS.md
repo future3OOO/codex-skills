@@ -194,6 +194,7 @@ Call the installed governed wrapper — never the producer snapshot under
 intent; begin the pass first when none is active:
 
 ```bash
+# begin only when no pass is active — it does not refuse a second one:
 printf '%s' "$request_text" \
   | python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" \
     begin --repo "$PWD" --slug "<stable-task-slug>" --intent -
