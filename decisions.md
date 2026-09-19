@@ -6,6 +6,35 @@ Issue bodies own implementation scope; this record preserves decisions and their
 status. New decisions supersede earlier ones explicitly; observations and open
 acceptance gaps are not completed delivery.
 
+## 2026-09-19 — AGENTS.md as the workflow's minimal entry point
+
+**Decision:** Keep mandatory invariants, invocation, graph-coverage obligations,
+and reviewer completion in AGENTS.md. Remove duplicated startup, packet, and
+post-edit procedures; existing workflow/RCF skills own those, README owns
+installation. Preserve the installed-wrapper restriction and §7/§8/§9 ownership
+references. Remove the nonexistent optional reviewer-roster reference.
+
+The maintainer's final verification rule supersedes both the automatic local
+full-suite fallback and this pass's blanket ban: default to affected-surface
+tests alongside real N/N+1 attacks. A full suite requires necessary coverage
+that targeted checks and available CI cannot provide. Maximize real attack
+coverage; never weaken behavior, preservation, or proof for fewer lines. Assume
+the first implementation is bloated and retain the least production/unit-test
+code that fully meets the objective. Select a task-owned worktree before workflow
+invocation, slug/state creation, or edits; preserve other agents' state and files.
+Start the production workflow only for required production changes, never docs-only work.
+
+Supersede automatic per-fix/per-review workflow resets: related corrections stay
+in the task pass; reuse applicable evidence and rerun invalidated gates. Complete
+after reviewer closure so the terminal-state rule cannot force restarts mid-task.
+Invoke TDD for every code change; require real-Seam RED/GREEN for behavior changes
+and preservation proof for refactors. Diagnosis remains mandatory before bug fixes.
+
+**Status:** [PR #70](https://github.com/future3OOO/codex-skills/pull/70), docs-only.
+The PR carries independent review, current-head checks, and dispositions. No
+runtime change, merge, or installation; agent improvement is not established
+by documentation review.
+
 ## 2026-09-14 — Require preflight advice
 
 **Decision:** Require advisor advice before the initial production preflight. Supersedes the
