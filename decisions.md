@@ -6,6 +6,32 @@ Issue bodies own implementation scope; this record preserves decisions and their
 status. New decisions supersede earlier ones explicitly; observations and open
 acceptance gaps are not completed delivery.
 
+## 2026-09-19 — PR62 context recovery, reduced implementation
+
+**Decision:** [#59](https://github.com/future3OOO/codex-skills/issues/59) requires
+recoverable fragments, not inferred file inspection. Keep raw Bash requests and
+optional returned output as unbound history; delete command-to-path parsing and
+its tests. Only the explicit snapshot producer binds exact text/range to a source
+digest. Recovery validates it; references do not assert memory or satisfy proof.
+Keep one context owner, existing storage/locks, hooks and RCF consumers.
+
+**Preserved:** Bounded bytes/counts, separate worktrees/workflows, continuation,
+repeated/overlapping reads, stale/corrupt refusal, private atomic writes, pruning,
+governance revalidation and the isolated intake-slot regression. Consolidate tests
+by distinct behavior, not shell spelling. No new layer, stage or dependency.
+
+**History:** The [pre-reduction record](https://github.com/future3OOO/codex-skills/blob/0dca31c94a4b3ed034de2366115ea148090e9ea2/decisions.md)
+retains the reconciled #29/#30/#42/#47/#54 and PR34/36/45/48/50/51/56 deliveries,
+RCF plugin/config decisions and their evidence limits. It also retains the earlier
+PR62 repairs and measured results; obsolete matcher and savings claims stay
+superseded. Condensing this file neither undoes those decisions nor asserts new
+delivery. Existing branch ancestry preserves the documentation reconciliation.
+
+**Evidence limits:** The private CX2 output labels remain auditable, with unknown
+attribution/version kept unknown; 47.7%, 76%, 239/239 and 24-event savings claims
+remain withdrawn. Native compaction and net agent savings remain unproven.
+No global installation or merge to main is included.
+
 ## 2026-09-14 — Require preflight advice
 
 **Decision:** Require advisor advice before the initial production preflight. Supersedes the

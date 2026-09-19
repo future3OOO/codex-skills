@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -22,14 +23,16 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from hooks.lib.hook_input import edited_path, read_hook_payload, session_key  # noqa: E402
-from hooks.lib.repo_identity import RepoIdentityError, resolve_repo_identity  # noqa: E402
+from hooks.lib._workflow_db import LedgerError  # noqa: E402
+from hooks.lib.context_evidence import observe_request  # noqa: E402
+from hooks.lib.hook_input import edited_path, read_hook_payload, session_key, working_directory  # noqa: E402
+from hooks.lib.repo_identity import RepoIdentityError, resolve_repo_identity, try_resolve_repo_identity  # noqa: E402
 from hooks.lib.state_store import (  # noqa: E402
     is_reviewable_path,
     is_test_path,
     record_session_association,
 )
-from hooks.lib.workflow_state import invalidate_after_edit  # noqa: E402
+from hooks.lib.workflow_state import WorkflowError, invalidate_after_edit, read_workflow  # noqa: E402
 
 
 def _ruff_lines(path: Path) -> list[str]:
@@ -67,8 +70,30 @@ def _emit(document: dict[str, object]) -> None:
         pass
 
 
+def _record_context(payload: dict[str, object]) -> None:
+    """Keep bounded observations; never parse commands into source evidence."""
+    inputs = payload.get("tool_input")
+    command = inputs.get("command") if isinstance(inputs, dict) else None
+    if payload.get("tool_name") != "Bash" or not isinstance(command, str) or not command.strip() or "\0" in command:
+        return
+    # Select likely read requests cheaply, without interpreting paths or execution.
+    if command.split(None, 1)[0] not in {"cat", "sed", "rg", "jq", "head", "tail", "nl", "wc", "awk"}:
+        return
+    try:
+        identity = try_resolve_repo_identity(working_directory(payload))
+        if identity is None:
+            return
+        state = read_workflow(identity)
+        if (state and isinstance(state.get("workflowId"), str)
+                and (state.get("phase") != "complete" or state.get("revalidation"))):
+            observe_request(identity, str(state["workflowId"]), payload)
+    except (OSError, WorkflowError, LedgerError, ValueError, UnicodeError, sqlite3.Error) as exc:
+        print(f"context observation unavailable: {exc}", file=sys.stderr)
+
+
 def main() -> int:
     payload = read_hook_payload()
+    _record_context(payload)
     path = edited_path(payload)
     if path is None:
         return 0

@@ -17,7 +17,7 @@ _PATCH_PATH = re.compile(
 # Shell writes observed from the Codex Bash tool: > / >> redirects and tee.
 # Deliberately narrow — cp/mv/sed -i are not claimed until seen from Codex.
 _BASH_WRITE = re.compile(
-    r'(?:>>?|tee\s+(?:-\S+\s+)*)\s*(?:"([^"]+)"|\'([^\']+)\'|([^\s;|&]+))'
+    r'(?:>>?|>\||tee\s+(?:-\S+\s+)*)\s*(?:"([^"]+)"|\'([^\']+)\'|([^\s;|&]+))'
 )
 
 
