@@ -11,8 +11,8 @@ acceptance gaps are not completed delivery.
 **Decision:** Restore the canonical mock/real-Seam, imaginary-risk, and
 root-cause invariants required by the ownership map. Keep invocation, intake,
 GitNexus doctrine, finding dispositions, and reviewer completion in AGENTS.md;
-let the existing skills own phase order, startup commands, N/N+1 verification,
-and installation procedure. Retain §7/§8/§9 so ownership references resolve.
+let the existing skills own phase order, startup commands, and N/N+1 verification.
+README owns installation procedure. Retain §7/§8/§9 so ownership references resolve.
 This supersedes the initial PR70 wording that duplicated the phase sequence
 and bootstrap runbook: standalone exploration must not start a production pass,
 and agents reuse executed packet checks while obtaining missing callee context.

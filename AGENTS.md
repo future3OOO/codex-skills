@@ -142,9 +142,9 @@ reconciliation is done. Report unrelated check failures as blockers.
 
 ## 8. Repo Context Forge
 
-For coding, debugging, review, refactor, explanation, planning, or repository
-exploration, invoke `$repo-context-forge` before choosing files, editing, or
-GitNexus analysis (docs-only exception in §7). A delegated reviewer consumes
+For coding, debugging, review, refactor, explanation, planning, or exploration
+inside a Git repository, invoke `$repo-context-forge` before choosing files,
+editing, or GitNexus analysis (docs-only exception in §7). A delegated reviewer consumes
 the lead's packet and evidence under `$code-review`; it does not bootstrap.
 
 Use only the installed governed wrapper
