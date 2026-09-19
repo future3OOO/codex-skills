@@ -1056,7 +1056,8 @@ sensitive to external slot capacity in parallel runs.
 
 **Issue [#68](https://github.com/future3OOO/codex-skills/issues/68) delivered
 as [PR #69](https://github.com/future3OOO/codex-skills/pull/69) (open, not
-merged, head `8679381`):** a non-runner operation that exits 0 on a pending
+merged, head `c8998da` after reviewer completion):** a non-runner operation
+that exits 0 on a pending
 item now records a baseline (`already-satisfied`) — a bounded observation
 through `_final_diagnostic` on unstripped lines (traceback-ending output
 names the exception line), `site` as the shlex-joined command, reach marked
