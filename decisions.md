@@ -21,7 +21,8 @@ execution for both a new CLI operation and an existing filesystem operation.
 This is bounded interpretation evidence, not proof of a product implementation
 or universal agent compliance.
 
-**Status:** Candidate on `docs/agents-workflow-first`; PR publication pending.
+**Status:** [PR #71](https://github.com/future3OOO/codex-skills/pull/71),
+`docs/agents-workflow-first`. Independent instruction review passed.
 Documentation only. No runtime changes, merge, or shared installation.
 
 ## 2026-09-20 — Triage briefs follow the repository workflow
