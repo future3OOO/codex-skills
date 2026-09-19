@@ -7,8 +7,6 @@ status. New decisions supersede earlier ones explicitly; observations and open
 acceptance gaps are not completed delivery.
 
 ## 2026-09-14 — Require preflight advice
-
-**Decision:** Require advisor advice before the initial production preflight. Supersedes the
 optional scope/design exception that allowed the [#29](https://github.com/future3OOO/codex-skills/issues/29)
 continuation to omit advice. The workflow and advisor instructions own this rule.
 
@@ -82,10 +80,6 @@ proof of the defect; its failed attempt remains in history.
 review and final advisor review passed. The parent restart corrected its stale
 matcher: actual pending dispatch was denied and verified return review admitted.
 The actual external handoff retained verification; real edits still invalidate it.
-The captured 18-case native identity corpus has zero regressions. The independent
-reviewer confirmed both original live findings corrected; final advisor returned
-commit-ready. Current-head CI and remote reviewer completion remain pending.
-Private-estate refresh is authorized; shared installation and merge are not.
 This is separate from PR #45, merged at `dfb0159` with its own installation receipt.
 No PR #50 merge or shared installation has occurred.
 
@@ -141,6 +135,42 @@ neither merge nor installation is authorized. This repair has not changed the
 installed estate; another agent owns its triage changes. This does not supersede
 the rollback/review decision above.
 
+## 2026-09-14 — Triage requires whole-objective N/N+1 proof
+
+**Decision:** Extend [PR #40](https://github.com/future3OOO/codex-skills/pull/40)'s
+compact installed triage contract. Every brief requires real before/after
+operations covering the requested outcome, affected paths and preservation.
+Agent/workflow claims require actual agent execution; component tests cannot
+stand in for that outcome. The brief carries the lead's pre-delivery evidence
+condition, including quick overrides. No new runtime gate or test framework.
+
+Selected guidance from the upstream `claude-skills` triage skill adds
+concept-based reuse discovery, keeps already implemented behavior out of the
+rejection knowledge base, and scopes PR briefs to gaps in the existing
+contribution. These live at the existing owners — `skills/triage/AGENT-BRIEF.md`
+for the brief contract and `skills/triage/OUT-OF-SCOPE.md` for the rejection
+record; upstream's longer template, invocation restrictions and automatic
+`wontfix` classification are not imported.
+
+**Observed:** Fresh native-agent drafting against the installed baseline already
+required lead-run evidence before shipping but allowed a verified commit and
+omitted explicit loaded-target/affected-domain comparisons. The same request
+against the revised skill produced those comparisons and refused delivery
+commit/push on CLI/CI results alone. This is one bounded agent-output comparison,
+not a guarantee that every future agent will comply or proof of #30's repair.
+
+**Status:** Rebased onto main `b9634fe`, preserving merged work and decision
+history. The PR carries the final review, delivery and scoped-installation status.
+At the maintainer's explicit request, installed only the three changed triage
+files from PR40 head `35c2cc8` before merge. Each installed file matched that
+source exactly; all other triage files were unchanged. Prior files and the
+source/path/hash receipt are in
+`~/.codex-backups/20260914-004922-pr40-triage-slice/`. The 09-19 estate
+refresh from the merged PR #69 head restored pre-PR40 triage files, so the
+installed estate no longer carries this contract; merged-head reinstallation
+is required for it to be live. This installation did not establish reviewer
+completion or authorize merging PR40.
+
 ## 2026-09-13 — Same-item RED command correction
 
 **Decision:** [#35](https://github.com/future3OOO/codex-skills/issues/35) extends
@@ -159,6 +189,16 @@ worktree. Public CLI tests cover recovery through completion, proof refusals,
 history, neighboring cycles and stale-run rejection. The issue's delivery PR
 carries final verification, scoped installation and reviewer completion results;
 no Claude backport or other #30 work is included.
+
+## 2026-09-13 — Minimal triage contracts
+
+**Decision:** Every issue and agent brief produced by triage leads with the
+observable target objective and a code-grounded smallest sufficient change.
+Verification covers that objective and affected existing behavior. Replace the
+long brief template and repeated examples with one compact contract.
+
+**Status:** [PR #40](https://github.com/future3OOO/codex-skills/pull/40),
+`docs/triage-minimum-change`. Global installation is not part of this editing pass.
 
 ## 2026-09-13 — Selected Claude PR254 capacity port
 

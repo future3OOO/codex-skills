@@ -60,15 +60,22 @@ Publish issues in dependency order (blockers first) so you can reference real is
 
 A reference to the parent issue on the issue tracker (if the source was an existing issue, otherwise omit this section).
 
-## What to build
+## Target objective
 
-A concise description of this vertical slice. Describe the end-to-end behavior, not layer-by-layer implementation.
+When [trigger], [observable result]. A concise description of this vertical slice's end-to-end behavior, not layer-by-layer implementation.
 
-## Acceptance criteria
+## Current behavior
 
-- [ ] Criterion 1
-- [ ] Criterion 2
-- [ ] Criterion 3
+[Observed gap and reproduction/evidence link — for greenfield work, what the system does in this area today.]
+
+## Smallest change
+
+[Existing owner to reuse or modify, and why this slice is the smallest sufficient end-to-end cut.]
+
+## Verification
+
+- [ ] [Real N/N+1 targets and operation proving the target objective.]
+- [ ] [Affected paths and preserved behavior compared on both.]
 
 ## Blocked by
 
