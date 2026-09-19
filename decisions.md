@@ -885,12 +885,14 @@ unproven; needs the paired pass), any output-budget hook, by-reference packet
 emission. Expected effect on the CX2 lead from what shipped: ~7–8k tokens from
 whole packet delivery, ~24k deterministic from the CLI shapes, up to ~74k if
 the summary line stops the post-compaction rollout greps (unproven).
-**Observed, not changed:** pr mode ranks the changed file above the intent
+
+**Observed, not changed:** PR mode ranks the changed file above the intent
 (`decisions.md` at 1513 topped a hooks-review packet); the final advisor
 appeal on PR #30 was skipped and neither workflow was run to `complete` at
 the maintainer's direction.
 
-**PR #30 / PR #61 delivery (2026-09-17):**
+**PR #30 / PR #61 delivery (2026-09-17; supersedes the earlier "open, not
+merged" statuses):**
 [repo-context-forge #30](https://github.com/future3OOO/repo-context-forge/pull/30)
 merged at `d3a50cf`; installed as snapshot
 `~/.local/share/repo-context-forge/d3a50cf…` behind `current`, which the
@@ -905,7 +907,9 @@ ledgers; non-list `runs` report-only on the `isinstance` writer guard; the
 `hooks/lib/_workflow_db.py`, `hooks/lib/workflow_cli.py`,
 `hooks/lib/workflow_state.py`, `hooks/skill-discipline-rearm.py` into
 `~/.codex` from `main` `3415c12`, backup `~/.codex-backups/20260917-093328-pr61`;
-installed probe: `status` carries no intent, `summary` carries the `Map:` line.
+installed probe: `status` carries no intent, `summary` carries the `Map:` line
+with each item under its status group (verified live on this pass:
+`Map: green: BM_RECORD; already-satisfied: BM_DELIVERY`).
 One suite flake on the merge candidate
 (`test_higher_slots_count_during_competing_admissions`, slot-admission timing)
 passed 18/18 when its class ran alone; unrelated to the change. The
@@ -914,15 +918,16 @@ its own port.
 
 **#59 change C delivered as [PR #62](https://github.com/future3OOO/codex-skills/pull/62)
 (open, not merged, 2026-09-17):** read capture at the existing PostToolUse hook
-(path plus whole-file sha256 into a per-workflow sidecar under the repository
+(path plus a content digest — whole-file sha256 at or under 8 MiB,
+`size:mtime_ns` above — into a per-workflow sidecar under the repository
 slot; runs before the write branch because `_BASH_WRITE` claims any redirect,
 which 27.6% of the CX2 corpus's reads carry), emitted at the SessionStart
 re-arm as "Inspected this pass, unchanged since" / "Changed since inspected",
 each capped at 60 entries and 1,500 chars (3,907 chars at 120 reads). The
 matcher claims only the corpus's verbs (sed, rg, inline python, cat, wc, jq,
-nl, tail, awk, `<`, head); the offline replay over the committed 350-command
-fixture reproduces all 239 labelled read paths at zero context cost and is
-pinned by a test. Delegate review over two rounds: gate escape, alphabetical
+nl, tail, awk, `<`, head); the recorded replay over 350 commands reproduces
+all 239 labelled read paths at zero context cost; no committed fixture or
+replay test is retained. Delegate review over two rounds: gate escape, alphabetical
 eviction, unreadable-file crash, redirect-suppressed capture and unbounded
 section all fixed; fragment-read wording taken as the honest "inspected"
 label rather than dropping sed ranges (163 of 239 events). Behavioural effect
@@ -1046,3 +1051,48 @@ against test bodies and helpers, both prior findings confirmed fixed, all
 checks green, both threads resolved. One pre-existing flake observed, not
 caused by this change: `test_a_queued_same_home_waiter_holds_no_capacity` is
 sensitive to external slot capacity in parallel runs.
+
+## 2026-09-19 — Issue 68 non-runner baselines; delegate-transport repair
+
+**Issue [#68](https://github.com/future3OOO/codex-skills/issues/68) delivered
+as [PR #69](https://github.com/future3OOO/codex-skills/pull/69) (open, not
+merged, head `8679381`):** a non-runner operation that exits 0 on a pending
+item now records a baseline (`already-satisfied`) — a bounded observation
+through `_final_diagnostic` on unstripped lines (traceback-ending output
+names the exception line), `site` as the shlex-joined command, reach marked
+unresolved for review establishment; a silent exit-0 is refused like an
+empty selector. One observed outcome settles one item across all three
+admission paths: observation+site dedup for non-runner proofs,
+stored-execution identity dedup (`sourceReference`+testId) for receipt and
+runner proofs, and a receipt-owner refusal naming the owning item. The
+contract-item post-change gate applies to every surface type, and a
+non-runner baseline receipt satisfies the `fixed`-disposition
+executed-receipt predicate through the shared
+`run_recorded_baseline`/`BASELINE_PROOF_QUALITIES` in `workflow_state.py`.
+Skill and recorder text state the real-Seam distinction; the verification
+step names real-seam probes beside suites and lint/typecheck/build.
+Workflow `probe-baseline` completed clean: 8 TDD cycles, 204-test suite
+green, typed quality gate green, three delegated review rounds with every
+material finding fixed and dispositioned, final advisor verdict
+commit-ready.
+
+**Delegate-transport root cause found and fixed:** inter-agent task payloads
+travel as `encrypted_content` parts inside `agent_message` items, and
+CLIProxyAPI's Responses→chat translator dropped them silently — spawned
+delegates received an empty `Payload:` and role-confused as lead (the
+burned-session bug). Patched
+`~/projects/cliproxyapi-fast/internal/translator/openai/openai/responses/openai_openai-responses_request.go`
+(new `agent_message` case plus regression test), rebuilt, swapped the binary
+into `~/cliproxyapi/cli-proxy-api` (backup `cli-proxy-api.bak-20260919T0529Z`),
+restarted `cliproxyapi.service`; verified end-to-end on a live delegate.
+The cliproxyapi-fast change is still uncommitted — it needs its own pass
+before it can be called delivered. The final review also ran on swe-2-max
+through `/tmp/adv-shim` (claude provider) because the gateway's gpt-6-astra
+credit was exhausted; verdict commit-ready.
+
+**Record corrections (PR #58 reviewer findings, same push):** blank line
+plus `PR mode` casing on the Observed entry; the #30/#61 delivery heading
+now supersedes the stale "open, not merged" statuses; the installed-probe
+note records the verified per-item status grouping; the #62 delivery names
+the >8 MiB `size:mtime_ns` digest representation; the dropped 350-command
+fixture is no longer described as committed and pinned.
