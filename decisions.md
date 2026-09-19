@@ -16,16 +16,24 @@ and installation procedure. Retain §7/§8/§9 so ownership references resolve.
 This supersedes the initial PR70 wording that duplicated the phase sequence
 and bootstrap runbook: standalone exploration must not start a production pass,
 and agents reuse executed packet checks while obtaining missing callee context.
-Targeted real-Seam proof remains required; full-suite placement follows the
-workflow's CI/local coverage rule. Merge and shared installation retain explicit
-maintainer authorization without adding a separate written-approval requirement.
+The maintainer's clarification supersedes this pass's CI/local fallback: agents
+must not run full suites. Prefer retained N/N+1 attacks through real production
+Seams and real collaborators; unit tests are only for necessary affected-surface
+checks, never a parallel substitute for those probes. Maximize real attack
+coverage; minimizing production and unit-test code must not limit probe coverage
+or weaken requirements, desired behavior, affected preservation, or necessary
+proof. Align the workflow's
+verification step with that canonical rule and remove the nonexistent optional
+reviewer-roster reference. The minimum is the least code that fully meets the
+objective while preserving affected behavior. Make the rules mandatory and
+treat the first implementation as bloated: simplify before handoff without
+weakening behavior or proof. Merge and shared installation retain explicit
+maintainer authorization.
 
-**Status:** [PR #70](https://github.com/future3OOO/codex-skills/pull/70), docs-only;
-independent Standards/Spec review and lightweight checks passed. AGENTS.md
-is 195 lines / 1,387 words, down from the initial candidate's 286 / 2,039.
-Pushed for review; the linked PR carries current-head CI and reviewer dispositions.
+**Status:** [PR #70](https://github.com/future3OOO/codex-skills/pull/70), docs-only.
+The linked PR carries independent review, current-head checks, and dispositions.
 No runtime change, merge, or installation; improved agent behavior is not
-established by this review.
+established by this documentation review.
 
 ## 2026-09-14 — Require preflight advice
 

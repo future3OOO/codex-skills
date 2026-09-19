@@ -1,21 +1,24 @@
 # Global Codex Rules
 
-These rules apply unless a repository `AGENTS.md` adds stricter project-specific
-instructions.
+These rules are mandatory. Repository instructions may strengthen them, never
+weaken them.
 
 ## Hard Production Invariants
 
-- **Real-Seam proof.** Prove behavior through the real production Interface
-  with real collaborators. A mock, stub, fake, fixture-substituted collaborator,
-  invented gateway, or test-only adapter is never proof. A capture at a Module's
-  own outgoing process boundary is the real Seam for assertions about what that
-  Module emits; the ban targets substituted collaborators inside the asserted
-  contract. `$production-code` owns N/N+1 comparison and outcome verification.
-- **Targeted verification.** Prefer a retained attack probe at the real Seam;
-  a suite result cannot replace proof of the changed behavior. Run the targeted
-  operations covering the affected behavior and preservation. New tests earn
-  their lines like production code. `$repo-production-workflow` owns full-suite
-  placement: CI where it supplies coverage, locally otherwise.
+- **Real-Seam proof.** Prove behavior with equivalent real N (before) and
+  N+1 (candidate) operations. Use retained attack probes as primary proof through
+  production Interfaces with real collaborators. A mock, stub, fake, fixture-substituted
+  collaborator, invented gateway, or test-only adapter is never proof. A capture
+  at a Module's own outgoing process boundary is the real Seam for assertions
+  about what that Module emits; the ban targets substituted collaborators inside
+  the asserted contract. `$production-code` owns the comparison and outcome
+  procedure.
+- **Targeted verification.** Agents must not run full test suites; CI owns
+  full-suite coverage. Maximize real attack coverage across affected inputs,
+  failure paths, interactions, and preservation. Code-size targets must never
+  reduce that coverage. Use unit tests only when necessary, scoped to the changed
+  code or affected surface and subject to the same real-Seam proof rule. Do not
+  duplicate a retained probe with a parallel unit-test suite.
 - **Imaginary-risk ban.** A theoretical risk with no demonstrated failure is a
   report line, not a system. Build nothing for it.
 - **Root-cause-first.** Use `$diagnose` for bugs, failures, flaky behavior, and
@@ -31,8 +34,13 @@ instructions.
 
 ## Simplicity First
 
-- Write the minimum code that solves the request. No speculative features,
-  abstractions, configurability, or impossible-scenario handling.
+- Assume your first implementation is bloated. Simplify it before handoff.
+  Keep the least production and unit-test code that fully meets the objective
+  and preserves affected behavior. Remove duplication and unnecessary
+  scaffolding. Do not add speculative features, abstractions, configurability,
+  or impossible-scenario handling.
+- Never weaken requirements, desired behavior, affected preservation, or
+  necessary proof to reduce lines or meet a review budget.
 - Every changed line must serve the request or cleanup caused by it.
 
 ## Surgical Changes
@@ -48,8 +56,9 @@ instructions.
 
 - Define verifiable success criteria before editing; for multi-step work, state
   the short plan and its checks.
-- Use `$tdd` for behavior changes where a failing attack at the real Seam is
-  practical. If that Seam cannot be driven, report the proof gap as a finding.
+- Use `$tdd` for behavior changes through the real Seam. If that Seam cannot
+  be driven, report the proof gap as a finding; never fabricate substitute proof.
+- Never mark work complete while required behavior or proof is missing.
 - Before handoff, inspect the delta and remove bloat, duplication, speculative
   flexibility, and unnecessary files.
 
@@ -69,7 +78,7 @@ deploy, generated-source, or behavior-changing repository work. It owns phase
 order, evidence, independent review, advisor checks, and delivery. Do not jump
 from Repo Context Forge straight to edits.
 
-Docs-only changes use the lightweight path: verify checkout/branch, inspect
+For docs-only changes, follow the lightweight path: verify checkout/branch, inspect
 files directly, edit minimally, clean up, and run diff checks. Skip Repo Context
 Forge and GitNexus. Governance docs that change agent behavior (`AGENTS.md`,
 `CLAUDE.md`, `docs/agents/`) also require independent `$code-review` before
@@ -119,8 +128,7 @@ Pushing is not completion. Do not mark complete, switch slices, or start a new
 PRD until the reviewer loop is closed on the current head.
 
 - Enumerate review threads, inline and issue comments, check annotations, CI
-  failures, automated and human findings, and PRD acceptance criteria. Use
-  `docs/agents/reviewers.md` when present for the reviewer roster.
+  failures, automated and human findings, and PRD acceptance criteria.
 - Classify each: legitimate, already-resolved, outdated, duplicate, noise,
   needs-info, or rejected-with-evidence.
 - Fix legitimate findings through the applicable workflow; update the task/PRD

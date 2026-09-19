@@ -218,7 +218,9 @@ After coherent repair and cleanup, assess the intended outcome against the
 verification derived in step 2. Carry applicable observations forward; run missing
 or invalidated operations, real-Seam probes of the changed Interface, and
 required lint/typecheck/build and typed gate, with
-graph reanalysis when required. CI's `contracts` job owns the full runner here and step 13 waits for it; other repositories run it locally unless their CI supplies that coverage. Verification records only through the unified CLI runner, which executes the command it records and derives status
+graph reanalysis when required. Apply AGENTS.md's targeted-verification rule.
+CI's `contracts` job owns the full runner here and step 13 waits for it.
+Verification records only through the unified CLI runner, which executes the command it records and derives status
 per-command-latest — any distinct command whose latest run failed keeps
 verification pending until that same command reruns green, overlapping runs
 record in completion order without rerunning, and a run whose reviewable tree
