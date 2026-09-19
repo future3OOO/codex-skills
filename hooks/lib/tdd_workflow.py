@@ -39,8 +39,10 @@ from .workflow_state import (
     bound_state,
     commit_tdd,
     evidence_document,
+    execution_digest,
     execution_receipt,
     instance_id,
+    run_recorded_baseline,
     safe_slug,
 )
 
@@ -307,14 +309,30 @@ def _pass_proof(
     """The final result positively identifies no execution, not an unknown failure.
 
     A pass is the surface passing, not the command exiting 0: a runner's report of
-    an executed passing test; a non-runner exit 0 closes its own RED, never a baseline."""
+    an executed passing test; a non-runner exit 0 closes its own RED, and baselines a
+    pending item the same way, recording what it observed — reach stays unresolved
+    for review to establish, exactly as a non-runner RED records it."""
     runner = surface.get("runner")
     if runner not in {"unittest", "pytest"}:
         if baseline:
-            return None, (
-                "a baseline needs the runner's own report of an executed passing "
-                "test; a non-runner operation exiting 0 is not one"
-            ), False
+            lines = [
+                line
+                for line in tdd_surface.ANSI_ESCAPE.sub("", output).splitlines()
+                if line.strip()
+            ]
+            observed = tdd_surface._final_diagnostic(lines)[:1000]
+            if not observed:
+                return None, (
+                    "a baseline is the surface passing, not the command exiting 0: "
+                    "the operation emitted nothing to observe"
+                ), False
+            return {
+                "quality": "operation-succeeded",
+                "reach": "unresolved",
+                "runner": str(runner),
+                "observation": [observed],
+                "site": shlex.join(str(token) for token in surface.get("arguments") or []),
+            }, "", False
         return {"quality": "operation-succeeded", "runner": str(runner)}, "", False
     output = tdd_surface.ANSI_ESCAPE.sub("", output)
     if runner == "unittest":
@@ -600,8 +618,37 @@ def _run_tdd(values: list[str]) -> int:
         # A GREEN is the surface passing, not the command exiting 0: a skipped or
         # incomplete run reports no passing test and proves nothing.
         proof, proof_error, nonexecuting = _pass_proof(surface, output, baseline=False, exit_code=exit_code)
+    if receipt is not None and proof is not None:
+        proof = {
+            **proof,
+            "sourceReference": args.from_evidence,
+            "sourceExecution": execution_digest(receipt) or args.from_evidence,
+        }
     if baseline and (refusal := _baseline_refusal(binding, mapped.get("kind"))):
         proof, proof_error, baseline = None, refusal, False
+    if baseline and receipt is not None:
+        # The stored execution already settled another item: its run recorded a
+        # baseline for that item's own id. Re-attributing the same observed
+        # outcome here would settle a second item from one observation.
+        owner = receipt.get("behaviorId")
+        if (isinstance(owner, str) and owner and owner != args.behavior_id
+                and run_recorded_baseline(receipt)):
+            proof, proof_error, baseline = None, (
+                f"the stored execution already settled {owner}: one observed outcome "
+                "cannot baseline two items"
+            ), False
+    if baseline and (owner := behavior_map.inherited_baseline(items, args.behavior_id, proof)):
+        # One observed outcome settles one item, the baseline mirror of the RED
+        # rule above: the same observation at the same site cannot satisfy a
+        # second pending item; a different site carries its own observation.
+        detail = (
+            f"the observed outcome {proof['observation']!r} at {proof.get('site')!r}"
+            if isinstance(proof.get("observation"), list)
+            else f"the stored execution {proof.get('sourceReference')!r} test {proof.get('testId')!r}"
+        )
+        proof, proof_error, baseline = None, (
+            f"{detail} already settled {owner}: one observed outcome cannot baseline two items"
+        ), False
     if red_ok and not legacy and (owner := behavior_map.inherited_red(items, args.behavior_id, proof)):
         # The same observation cannot open RED for two items: this obligation's
         # test stopped where another item's already did and observed nothing of

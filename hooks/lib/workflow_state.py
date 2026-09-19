@@ -1,6 +1,7 @@
 """Repository-scoped production workflow policy and transactional commands."""
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shlex
@@ -803,6 +804,26 @@ def _verification_key(run: JsonObject) -> str:
     return "quality-gate" if run.get("kind") == "quality-gate" else f"generic:{run.get('command')}"
 
 
+BASELINE_PROOF_QUALITIES = frozenset({"baseline-passed", "operation-succeeded"})
+
+
+def run_recorded_baseline(run: object) -> bool:
+    """The run recorded a baseline settlement for its item: a runner's
+    ``baseline-passed`` or a non-runner ``operation-succeeded`` redProof."""
+    proof = run.get("redProof") if isinstance(run, dict) else None
+    return isinstance(proof, dict) and proof.get("quality") in BASELINE_PROOF_QUALITIES
+
+
+def execution_digest(run: object) -> str | None:
+    """Stable identity of a stored execution across reference spellings and
+    cumulative evidence-document copies: the canonical run record."""
+    if not isinstance(run, dict):
+        return None
+    return hashlib.sha256(
+        json.dumps(run, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
 def execution_receipt(identity: RepoIdentity, state: JsonObject, reference: str,
                       transaction: LedgerMutation | None = None) -> tuple[JsonObject, dict[str, str]]:
     """Resolve an actual execution at its original target; references never execute."""
@@ -1478,9 +1499,8 @@ def _resolve_disposition_receipts(identity: RepoIdentity, transaction: LedgerMut
             if reference not in receipts:
                 receipts[reference], _ = execution_receipt(identity, state, reference, transaction)
         if item["status"] == "fixed" and not any(
-            run.get("exitCode") == 0 and (run.get("valid") is True or (
-                isinstance(run.get("redProof"), dict) and run["redProof"].get("quality") == "baseline-passed"
-            )) for run in (receipts[ref] for ref in item["evidenceRefs"])
+            run.get("exitCode") == 0 and (run.get("valid") is True or run_recorded_baseline(run))
+            for run in (receipts[ref] for ref in item["evidenceRefs"])
         ):
             raise WorkflowError("fixed requires a successful current executed receipt")
     if document.get("context") is None:

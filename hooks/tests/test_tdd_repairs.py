@@ -986,8 +986,6 @@ class MappedTddRepairTests(unittest.TestCase):
          UNIT, False, "not carried by the failure that ended"),
         ("marker-absent", "NONRUNNER_UNRELATED_FAILURE_OPENED_RED", None,
          (PY, "-c", "raise SystemExit('unrelated diagnostic')"), False, "did not contain"),
-        ("exit-zero", "NONRUNNER_EXIT0_BASELINED", None,
-         (PY, "-c", "print('PROD_REFUSED_OPERATION')"), False, "baseline"),
         ("bash-missing-command", "SHELL_MISSING_COMMAND_ACCEPTED_AS_RED", None,
          ("bash", "-c", "PROD_REFUSED_OPERATION_missing"), False, "not found"),
         ("sh-missing-command", "SHELL_MISSING_COMMAND_ACCEPTED_AS_RED", None,

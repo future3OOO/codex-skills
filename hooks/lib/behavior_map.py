@@ -500,6 +500,38 @@ def inherited_red(items: list[JsonObject], behavior_id: str, proof: JsonObject) 
     return None
 
 
+def _baseline_execution(proof: object) -> tuple[str, str] | None:
+    """The stored execution a receipt-attributed baseline was drawn from, or None."""
+    if not isinstance(proof, dict):
+        return None
+    source, test_id = (
+        proof.get("sourceExecution") or proof.get("sourceReference")
+    ), proof.get("testId")
+    if not isinstance(source, str) or not source or not isinstance(test_id, str) or not test_id:
+        return None
+    return source, test_id
+
+
+def inherited_baseline(items: list[JsonObject], behavior_id: str, proof: JsonObject) -> str | None:
+    """One observed outcome settles one item: the id of another item whose recorded
+    baseline carries the same observation and site, or was drawn from the same
+    stored execution and test, or None."""
+    current = _observation(proof)
+    current_execution = _baseline_execution(proof)
+    if current is None and current_execution is None:
+        return None
+    for entry in items:
+        if entry.get("id") == behavior_id:
+            continue
+        recorded_proof = entry.get("baselineProof")
+        if current_execution is not None and _baseline_execution(recorded_proof) == current_execution:
+            return str(entry["id"])
+        recorded = _observation(recorded_proof)
+        if current is not None and recorded is not None and recorded == current:
+            return str(entry["id"])
+    return None
+
+
 def shared_observations(items: list[JsonObject]) -> list[list[str]]:
     """Groups of items whose REDs rendered the same failure but were admitted: at
     different sites, or as compatible explanations. Named for review."""
