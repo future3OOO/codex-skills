@@ -181,11 +181,11 @@ Graph output never shrinks the packet surface, PR contract, or no-change surface
 
 Re-analyze after indexed-symbol, shared-contract, persistence, config/runtime/
 deploy, external-integration, browser-automation, or transaction-sensitive edits,
-or when the index is stale. Skip docs-only and tiny leaf edits that do not affect
-shared graph surfaces. Run `gitnexus analyze --skip-agents-md .`, then
-`gitnexus status` and MCP `detect_changes(scope="unstaged")` on that source
-checkout's repo. This is supplemental evidence; unavailable MCP for a required
-check is a blocker or a narrow, explicitly reported exception.
+or when the index is stale. Skip docs-only and tiny leaf edits touching no shared
+contract or indexed symbol; state the skip reason. Follow `$repo-context-forge`'s
+Post-Edit Validation procedure for source-checkout reanalysis and MCP
+`detect_changes(scope="unstaged")`. Results are supplemental evidence; unavailable
+MCP for a required check is a blocker or a narrow, explicitly reported exception.
 
 ## Codex-Skills Decision Record
 

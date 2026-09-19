@@ -22,9 +22,10 @@ maintainer authorization without adding a separate written-approval requirement.
 
 **Status:** [PR #70](https://github.com/future3OOO/codex-skills/pull/70), docs-only;
 independent Standards/Spec review and lightweight checks passed. AGENTS.md
-is 195 lines / 1,388 words, down from the initial candidate's 286 / 2,039.
-Current-head CI and remote reviewer completion remain pending. No runtime change,
-merge, or installation; improved agent behavior is not established by this review.
+is 195 lines / 1,387 words, down from the initial candidate's 286 / 2,039.
+Pushed for review; the linked PR carries current-head CI and reviewer dispositions.
+No runtime change, merge, or installation; improved agent behavior is not
+established by this review.
 
 ## 2026-09-14 — Require preflight advice
 
