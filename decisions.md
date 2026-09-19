@@ -6,19 +6,25 @@ Issue bodies own implementation scope; this record preserves decisions and their
 status. New decisions supersede earlier ones explicitly; observations and open
 acceptance gaps are not completed delivery.
 
-## 2026-09-19 — AGENTS.md regains its canonical invariants
+## 2026-09-19 — AGENTS.md as the workflow's minimal entry point
 
-**Decision:** Write the Hard Production Invariants section that
-`skills/repo-production-workflow/INVARIANT-OWNERSHIP.md` cites as canonical in
-`AGENTS.md`: real-Seam proof (the mock ban, with the outgoing-boundary capture
-carve-out), suite-is-not-targeted-verification, the imaginary-risk ban, and
-root-cause-first. Recast verification around failing attacks at the real Seam,
-fold the PR reviewer gate into the workflow section, and number the operational
-sections 7/8/9 so the ownership map's references resolve literally. Merges and
-shared-estate installation now require explicit maintainer authorization in
-writing.
+**Decision:** Restore the canonical mock/real-Seam, imaginary-risk, and
+root-cause invariants required by the ownership map. Keep invocation, intake,
+GitNexus doctrine, finding dispositions, and reviewer completion in AGENTS.md;
+let the existing skills own phase order, startup commands, N/N+1 verification,
+and installation procedure. Retain §7/§8/§9 so ownership references resolve.
+This supersedes the initial PR70 wording that duplicated the phase sequence
+and bootstrap runbook: standalone exploration must not start a production pass,
+and agents reuse executed packet checks while obtaining missing callee context.
+Targeted real-Seam proof remains required; full-suite placement follows the
+workflow's CI/local coverage rule. Merge and shared installation retain explicit
+maintainer authorization without adding a separate written-approval requirement.
 
-**Status:** PR on `docs/agents-md-refresh`; not merged or installed.
+**Status:** [PR #70](https://github.com/future3OOO/codex-skills/pull/70), docs-only;
+independent Standards/Spec review and lightweight checks passed. AGENTS.md
+is 195 lines / 1,388 words, down from the initial candidate's 286 / 2,039.
+Current-head CI and remote reviewer completion remain pending. No runtime change,
+merge, or installation; improved agent behavior is not established by this review.
 
 ## 2026-09-14 — Require preflight advice
 
