@@ -1,12 +1,12 @@
 ---
 name: repo-production-workflow
-description: Orchestrate production repository changes from context through final review, workflow completion, delivery, and reviewer completion. State is continuity only and never authorizes Git.
+description: Orchestrate production repository changes from context through final review, delivery, reviewer closure, and workflow completion. State is continuity only and never authorizes Git.
 ---
 
 # Repo production workflow
 
-Use this skill for production code, configuration, runtime, deploy, generated
-source, and behavior-changing repository work. `AGENTS.md` owns the hard
+Use this skill only when production changes are required: code, configuration,
+runtime, deploy, generated source, or production behavior. `AGENTS.md` owns the hard
 invariants and GitNexus doctrine; [INVARIANT-OWNERSHIP.md](INVARIANT-OWNERSHIP.md)
 maps the remaining owners.
 
@@ -22,7 +22,9 @@ bindings current and report unavailable comparisons under
 
 ## One stable workflow
 
-Choose one short slug for the whole pass and begin state before bootstrap:
+In the task-owned worktree required by AGENTS.md, resume the active task pass;
+reuse applicable evidence and refresh invalidated gates. For a new task, choose
+one short slug and begin state before bootstrap:
 
 ```bash
 printf '%s' "$request_text" | python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" begin \
@@ -218,7 +220,9 @@ After coherent repair and cleanup, assess the intended outcome against the
 verification derived in step 2. Carry applicable observations forward; run missing
 or invalidated operations, real-Seam probes of the changed Interface, and
 required lint/typecheck/build and typed gate, with
-graph reanalysis when required. CI's `contracts` job owns the full runner here and step 13 waits for it; other repositories run it locally unless their CI supplies that coverage. Verification records only through the unified CLI runner, which executes the command it records and derives status
+graph reanalysis when required. Apply AGENTS.md's targeted-verification rule.
+CI's `contracts` job owns the full runner here and step 12 waits for it.
+Verification records only through the unified CLI runner, which executes the command it records and derives status
 per-command-latest — any distinct command whose latest run failed keeps
 verification pending until that same command reruns green, overlapping runs
 record in completion order without rerunning, and a run whose reviewable tree
@@ -273,8 +277,8 @@ Do not reload unchanged skills or repeat execution solely for handoff. Keep the
 reviewer read-only and assign each needed operation once; the lead owns repairs,
 TDD/verification recording and dispositions. Use a fresh reviewer when context is
 unavailable or changed scope/architecture makes it unusable, naming that reason.
-Pushed-head findings still follow the new-pass rule; historical receipts retain
-their original identity. Every review must describe the current candidate.
+Historical receipts retain their original identity. Every review must describe
+the current candidate.
 
 Before recording, match checkout/workflow/tree against dispatch and
 `workflow.py status`. Retain actual native dispatch and return receipts: canonical
@@ -334,16 +338,7 @@ wrapper leaves final findings pending; the lead explicitly records `none` or
 `addressed` only after validating the output. After a production edit, satisfy current-candidate verification, continue review
 on the affected delta, and repeat final review. Reuse applicable evidence.
 
-### 12. Complete the workflow
-
-```bash
-python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" \
-  complete --repo "$PWD"
-```
-
-`complete` refuses, from inside its transaction, unless every contract item is GREEN, baseline `already-satisfied`, or `withdrawn`, every preservation item is GREEN or validly dispositioned — a superseded item of either kind instead needs a GREEN terminal replacement — no proof gap remains, required phases are ready, material code-review findings are dispositioned, and the context-matched final `codex-advisor` intake has only effective terminal findings. The immutable raw verdict remains evidence but is not an indefinite veto after closure; `context-mismatch` or a pending one-response rejection appeal still blocks; a material re-raise reopens the finding as pending until the lead dispositions it once more against the new measurement; that second measured disposition stands. The reviewable working tree must match the manifest recorded by the lead review, and every evidence phase must carry its producer's evidence reference — a passed phase without one is a bare claim and reads pending, including legacy in-flight state at upgrade time. It changes workflow state only. It does not inspect, intercept, authorize, or execute Git.
-
-### 13. Delivery and reviewer completion
+### 12. Delivery and reviewer completion
 
 After the final advisor finds the candidate ready, commit, push, and open/update
 the PR when intended for integration. Run the PR
@@ -352,8 +347,20 @@ explicit maintainer authorization; passing checks and reviews do not authorize
 merge. When global installation is authorized, merge the reviewed PR first.
 For changed paths mapped into
 the live estate, follow the README backup/merge approach from updated main,
-install only owned paths, and record source commit/path set and installed checks. A reviewer-fix
-round begins a new production pass; pushing is not completion.
+install only owned paths, and record source commit/path set and installed checks.
+Keep the pass active through reviewer closure; corrections repeat only the
+affected steps, including verification and independent review.
+
+### 13. Complete the workflow
+
+Complete after the current-head reviewer gate closes, or on the no-PR route below.
+
+```bash
+python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" \
+  complete --repo "$PWD"
+```
+
+`complete` refuses, from inside its transaction, unless every contract item is GREEN, baseline `already-satisfied`, or `withdrawn`, every preservation item is GREEN or validly dispositioned — a superseded item of either kind instead needs a GREEN terminal replacement — no proof gap remains, required phases are ready, material code-review findings are dispositioned, and the context-matched final `codex-advisor` intake has only effective terminal findings. The immutable raw verdict remains evidence but is not an indefinite veto after closure; `context-mismatch` or a pending one-response rejection appeal still blocks; a material re-raise reopens the finding as pending until the lead dispositions it once more against the new measurement; that second measured disposition stands. The reviewable working tree must match the manifest recorded by the lead review, and every evidence phase must carry its producer's evidence reference — a passed phase without one is a bare claim and reads pending, including legacy in-flight state at upgrade time. It changes workflow state only. It does not inspect, intercept, authorize, or execute Git.
 
 When the completed work is intentionally not delivered as a PR — local-only
 config, an estate sync, or work the user told you not to push — the no-PR

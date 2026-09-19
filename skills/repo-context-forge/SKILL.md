@@ -133,11 +133,12 @@ The bootstrap script auto-selects the mode:
 - `repo`: clean current folder with no diff or intent; use whole-repo context
 
 Packets are generated from a cache-owned analysis checkout. Treat the user's
-checkout as read-only input; Repo Context Forge must not leave `.soulforge` or
-`.gitignore` changes in it.
+checkout as read-only input. Do not leave `.soulforge`, `.codex`, `.claude`,
+`.gitnexus`, or incidental `.gitignore` changes there. An intentional `.gitnexus/`
+ignore is allowed only when indexing the source checkout; never commit the index.
 
-Do not switch to a sibling worktree unless the user explicitly asks. The current
-git folder is the target.
+Use the task checkout selected under AGENTS.md's worktree rule; standalone
+read-only work uses the current checkout. Do not switch task targets during intake.
 
 For a user-described implementation before edits, pass `--intent "<task>"`, and
 add `--workflow-slug "<active-pass-slug>"` only when a governed pass is already
@@ -145,9 +146,7 @@ active — see the two standalone forms in the startup flow above.
 
 ## GitNexus Follow-Up
 
-GitNexus is registered as an MCP server in Claude Code (`gitnexus`). Claude Code
-exposes its tools as `mcp__gitnexus__<name>`; the names below are the GitNexus
-tool semantics (use the equivalent MCP-prefixed tool).
+AGENTS.md §9 owns required context/impact coverage.
 
 The packet's `<gitnexus_analysis>` already answers every `<check>` the plan
 listed — `kind="symbol_context"` entries carry their callers, `kind="symbol_impact"`
@@ -181,8 +180,8 @@ When you do call out:
 Run post-edit GitNexus validation when the edit touches indexed symbols,
 shared APIs/contracts, persistence, config/runtime/deploy surfaces, external
 integrations, browser automation, transaction-sensitive flows, or PR-review
-graph proof. Skip it for docs-only work and small leaf edits that touch no
-shared contract or indexed symbol; state the skip reason and rely on targeted
+graph proof, or a stale index. Skip docs-only work and small leaf edits touching
+no shared contract or indexed symbol; state the skip reason and rely on targeted
 tests plus the production-code gate.
 
 After editing the real source checkout, do not rely on the analysis checkout's
@@ -197,11 +196,8 @@ gitnexus status
 For this post-edit call, the source checkout's absolute path overrides the packet
 `<gitnexus_status><repo>` value. Then call `mcp__gitnexus__detect_changes` with
 `repo` set to that path (`git rev-parse --show-toplevel`) and
-`scope: "unstaged"`. Treat `.gitnexus/` as a local index artifact kept out of
-commits. Remove unintended
-`.codex/skills/gitnexus/` and `.gitignore` changes before finalizing;
-`gitnexus clean --force` removes only the index and registry entry, not those
-changes.
+`scope: "unstaged"`. Apply the checkout-cleanup rule above. `gitnexus clean --force`
+removes only the index and registry entry, not other generated artifacts.
 
 On a governed pass, also rerun the bootstrap wrapper with the same
 `--workflow-slug` and `--revalidate` after the final production edits, before

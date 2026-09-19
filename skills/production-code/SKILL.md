@@ -167,7 +167,7 @@ Load [references/transaction-doctrine.md](references/transaction-doctrine.md) fo
 
 ## Execution Checklist
 
-- Complete the Minimum Implementation Decision before writing code, including untracked files, scratch implementation files, generated source, or a new worktree.
+- Complete the Minimum Implementation Decision before writing code in any file or worktree, including scratch and generated source.
 - Inspect the delta and remove unnecessary additions.
 - Scan for common quality escapes such as `TODO`, `FIXME`, `eslint-disable`, `@ts-ignore`, and broad catch/pass patterns.
 - Run the bundled production code quality gate.
