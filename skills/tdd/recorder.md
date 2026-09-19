@@ -29,9 +29,10 @@ executed source does not establish that binding. A passing pytest/unittest RED
 baselines a preservation item, and a contract item only while no production path
 has changed since the pass began; afterwards a contract baseline is retained as a
 refused attempt naming the changed paths. A passing non-runner operation baselines a
-pending item under the same conditions - bounded observation and site recorded,
-reach unresolved, one observed outcome per item; it can also reach GREEN
-through its own RED. Every RED
+pending item under the same admission conditions; its proof additionally carries a
+bounded observation and site with reach unresolved for review to establish, a
+silent exit 0 is refused like an empty selector, and one observed outcome settles
+one item. It can also reach GREEN through its own RED. Every RED
 records what it observed apart from the marker (`observation`, with object
 addresses dropped) and where (`site`: the last test-side frame with its source
 line, or the non-runner command); a RED observing the failure another item already
