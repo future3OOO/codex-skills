@@ -132,19 +132,13 @@ def remember_context(identity: RepoIdentity, workflow_id: str, content: dict) ->
     return row
 
 
-def observe_request(identity: RepoIdentity, workflow_id: str, payload: dict, paths: list[Path]) -> None:
+def observe_request(identity: RepoIdentity, workflow_id: str, payload: dict) -> None:
     """Remember the request and optional observed output, never infer delivered scope."""
     inputs = payload.get("tool_input")
     command = inputs.get("command") if isinstance(inputs, dict) else None
     if not isinstance(command, str) or len(command.encode()) > 2048:
         return
-    names = []
-    for path in paths[:32]:
-        try:
-            names.append(path.relative_to(identity.root).as_posix())
-        except ValueError:
-            names.append(str(path))
-    record = {"kind": "request", "command": command, "paths": names,
+    record = {"kind": "request", "command": command,
               "session": str(payload.get("session_id", ""))[:128],
               "toolUseId": str(payload.get("tool_use_id", ""))[:128],
               "delivery": "unknown", "sourceBinding": "unknown"}
@@ -291,15 +285,6 @@ def active_context(identity: RepoIdentity, workflow_id: str | None = None, *, in
         return ""
 
 
-def capabilities(payload: dict) -> dict:
-    """Report observed fields only. This is not an installed-client certification."""
-    return {"hookFields": sorted(payload), "hasToolResponse": "tool_response" in payload,
-            "hasToolUseId": isinstance(payload.get("tool_use_id"), str),
-            "hasTranscriptPath": isinstance(payload.get("transcript_path"), str),
-            "finalDeliveryObservable": False,
-            "note": "A hook response can precede later replacement or truncation. No transcript format is assumed."}
-
-
 def main(argv: list[str] | None = None) -> int:
     from .workflow_state import read_workflow
     parser = argparse.ArgumentParser(description=__doc__)
@@ -317,7 +302,11 @@ def main(argv: list[str] | None = None) -> int:
             payload = json.load(sys.stdin)
             if not isinstance(payload, dict):
                 raise ValueError("hook payload must be an object")
-            print(_json(capabilities(payload)))
+            print(_json({"hookFields": sorted(payload), "hasToolResponse": "tool_response" in payload,
+                         "hasToolUseId": isinstance(payload.get("tool_use_id"), str),
+                         "hasTranscriptPath": isinstance(payload.get("transcript_path"), str),
+                         "finalDeliveryObservable": False,
+                         "note": "Hook output may be replaced or truncated later; no transcript format is assumed."}))
             return 0
         identity = resolve_repo_identity(args.repo)
         state = read_workflow(identity)

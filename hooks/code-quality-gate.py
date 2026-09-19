@@ -25,7 +25,7 @@ if str(ROOT) not in sys.path:
 
 from hooks.lib._workflow_db import LedgerError  # noqa: E402
 from hooks.lib.context_evidence import observe_request  # noqa: E402
-from hooks.lib.hook_input import edited_path, read_hook_payload, read_paths, session_key, working_directory  # noqa: E402
+from hooks.lib.hook_input import edited_path, read_hook_payload, session_key, working_directory  # noqa: E402
 from hooks.lib.repo_identity import RepoIdentityError, resolve_repo_identity, try_resolve_repo_identity  # noqa: E402
 from hooks.lib.state_store import (  # noqa: E402
     is_reviewable_path,
@@ -70,35 +70,30 @@ def _emit(document: dict[str, object]) -> None:
         pass
 
 
-def _record_reads(payload: dict[str, object]) -> None:
-    """Record requested operations, never claim content delivery or retained knowledge.
-
-    Resolve candidate paths before any state lookup. No source hashes are computed
-    here: a post-command digest cannot bind an earlier tool result to a version.
-    """
-    paths = read_paths(payload)
-    if not paths:
+def _record_context(payload: dict[str, object]) -> None:
+    """Keep bounded observations; never parse commands into source evidence."""
+    inputs = payload.get("tool_input")
+    command = inputs.get("command") if isinstance(inputs, dict) else None
+    if payload.get("tool_name") != "Bash" or not isinstance(command, str) or not command.strip() or "\0" in command:
         return
-    identity = try_resolve_repo_identity(working_directory(payload))
-    if identity is None:
+    # Select likely read requests cheaply, without interpreting paths or execution.
+    if command.split(None, 1)[0] not in {"cat", "sed", "rg", "jq", "head", "tail", "nl", "wc", "awk"}:
         return
     try:
+        identity = try_resolve_repo_identity(working_directory(payload))
+        if identity is None:
+            return
         state = read_workflow(identity)
-    except (WorkflowError, LedgerError, ValueError, sqlite3.Error):
-        return
-    if state is None or (state.get("phase") == "complete" and not state.get("revalidation")) or not isinstance(state.get("workflowId"), str):
-        return
-    try:
-        observe_request(identity, str(state["workflowId"]), payload, paths)
-    except (OSError, ValueError, UnicodeError) as exc:
+        if (state and isinstance(state.get("workflowId"), str)
+                and (state.get("phase") != "complete" or state.get("revalidation"))):
+            observe_request(identity, str(state["workflowId"]), payload)
+    except (OSError, WorkflowError, LedgerError, ValueError, UnicodeError, sqlite3.Error) as exc:
         print(f"context observation unavailable: {exc}", file=sys.stderr)
 
 
 def main() -> int:
     payload = read_hook_payload()
-    # Before the write branch: a command that redirects (even 2>/dev/null) is claimed
-    # as an edit by _BASH_WRITE, and 27.6% of the corpus's reads carry one.
-    _record_reads(payload)
+    _record_context(payload)
     path = edited_path(payload)
     if path is None:
         return 0

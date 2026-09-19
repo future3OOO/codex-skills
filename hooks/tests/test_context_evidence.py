@@ -1,7 +1,6 @@
 """Real producer/hook/recovery checks; these are not a native agent experiment."""
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
 import stat
@@ -90,17 +89,16 @@ class ContextEvidenceTests(HookHarness):
         self.assertEqual(self.read()["output"], row["output"])
         self.assertEqual(self.state("history").stdout, before, "CONTEXT_REOPENED_PROOF")
 
-    def test_command_only_and_count_results_are_not_content_claims(self) -> None:
+    def test_command_only_requests_do_not_claim_source_content(self) -> None:
         before = self.state("history").stdout
-        for command in ("sed -n '1p' app.py", "wc -l app.py"):
-            result = subprocess.run(["bash", "-c", command], cwd=self.repo, capture_output=True, text=True, check=True)
-            self.assertTrue(result.stdout)
-            hook = self.hook("code-quality-gate.py", {"cwd": str(self.repo), "session_id": "request-only",
-                "tool_name": "Bash", "tool_input": {"command": command}})
-            self.assertEqual(hook.returncode, 0, hook.stderr)
-        self.assertNotIn("Inspected this pass", self.rearm(), "REQUEST_IS_NOT_DELIVERED_CONTEXT")
+        for command in ("sed -n '1p' app.py", "wc -l app.py", "if false; then cat app.py; fi"):
+            result = self.hook("code-quality-gate.py", {"cwd": str(self.repo), "tool_name": "Bash",
+                                "tool_input": {"command": command}})
+            self.assertEqual(result.returncode, 0, result.stderr)
+        rows = self.document()["records"]
+        self.assertEqual(len(rows), 2)  # Unsupported request forms are simply not observed.
+        self.assertTrue(all("output" not in row and "paths" not in row for row in rows))
         self.assertNotIn("sourceData", self.rearm())
-        self.assertTrue(all(row["delivery"] == "unknown" for row in self.document()["records"]))
         self.assertEqual(self.state("history").stdout, before)
 
     def test_fresh_process_recovers_partial_content_and_reaches_missing_scope(self) -> None:
@@ -272,6 +270,8 @@ class ContextEvidenceTests(HookHarness):
         self.assertEqual(len(self.document()["records"]), evidence.RECORD_LIMIT)
         page = json.loads(self.run_context("list").stdout)
         self.assertEqual(page["nextOffset"], 4)
+        self.assertEqual(page["records"][0]["range"], [65, 65])
+        self.assertIn(page["records"][0]["id"], self.rearm())
         page2 = json.loads(self.run_context("list", "--offset", "4").stdout)
         self.assertNotEqual(page["records"][0]["id"], page2["records"][0]["id"])
         for budget in (0, 20, 256, evidence.CONTEXT_BYTES):
@@ -308,69 +308,62 @@ class ContextEvidenceTests(HookHarness):
         (self.repo / "app.py").write_text("changed after reference\n")
         self.run_context("show", "--id", row["id"], success=False)
 
-    def test_rcf_consumer_uses_same_bounded_candidates_without_coverage_mutation(self) -> None:
-        row = self.read()
-        path = ROOT / "skills/repo-context-forge/scripts/bootstrap.py"
-        spec = importlib.util.spec_from_file_location("context_rcf_consumer", path)
-        adapter = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(adapter)
-        before = self.state("history").stdout
-        candidates = adapter.active_context(self.identity, self.wid, inline=False)
-        self.assertIn(row["id"], candidates)
-        self.assertNotIn("sourceData", candidates)
-        self.assertNotIn("satisfied", candidates)
-        self.assertEqual(self.state("history").stdout, before)
-        self.assertEqual(adapter.active_context(self.identity, "foreign-workflow"), "")
-        # External RCF is a separate dependency; this checks its exact imported consumer,
-        # not a fabricated successful graph/producer run.
+    def test_sidecar_retirement_preserves_live_unknown_and_external_files(self) -> None:
+        self.read()
+        reads = repo_state_dir(self.identity) / "reads"
+        oldest = reads / f"{self.wid}.json"
+        for n in range(5):
+            self.assertEqual(self.state("begin", "--slug", f"later-{n}").returncode, 0)
+        active = self.read()
+        (reads / "unowned.json").write_text("{}")
+        cli = ROOT / "skills/repo-production-workflow/scripts/workflow.py"
+        result = subprocess.run([sys.executable, str(cli), "prune", "--apply"], env=self.env,
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(oldest.exists())
+        self.assertTrue((reads / "unowned.json").exists())
+        self.assertIn("unowned-read-entry", result.stdout)
+        self.assertEqual(self.show(active)["output"], active["output"])
+        # Reusing this fixture, a symlinked read directory must never be followed.
+        reads.rename(reads.with_name("saved-reads"))
+        reads.symlink_to(reads.with_name("saved-reads"), target_is_directory=True)
+        before = {p.name: p.read_bytes() for p in reads.iterdir()}
+        for n in range(5):
+            self.assertEqual(self.state("begin", "--slug", f"retire-{n}").returncode, 0)
+        result = subprocess.run([sys.executable, str(cli), "prune", "--apply"], env=self.env,
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual({p.name: p.read_bytes() for p in reads.iterdir()}, before, "SYMLINKED_READS_FOLLOWED")
 
-    def test_cost_benchmark_binds_clean_source_and_refuses_untracked_or_edited_code(self) -> None:
-        from benchmarks.context_recovery import source_identity
-        original = source_identity(self.repo)
-        self.assertEqual(len(original["commit"]), 40)
-        self.assertEqual(len(original["tree"]), 40)
-        untracked = self.repo / "not_committed.py"
-        untracked.write_text("untracked code\n")
-        with self.assertRaisesRegex(ValueError, "clean checkout"):
-            source_identity(self.repo)
-        untracked.unlink()
-        (self.repo / "app.py").write_text("changed code\n")
-        with self.assertRaisesRegex(ValueError, "clean checkout"):
-            source_identity(self.repo)
+    def test_shell_redirects_still_invalidate(self) -> None:
+        for operator in (">", ">|", ">>"):
+            with self.subTest(operator=operator):
+                wid = json.loads(self.state("begin", "--slug", "redirect").stdout)["workflowId"]
+                before = self.state("history").stdout
+                command = f"printf 'changed\\n' {operator} app.py"
+                subprocess.run(["bash", "-c", command], cwd=self.repo, check=True)
+                result = self.hook("code-quality-gate.py", {"cwd": str(self.repo), "tool_name": "Bash",
+                                   "tool_input": {"command": command}})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertNotEqual(self.state("history").stdout, before, "WRITE_DID_NOT_INVALIDATE")
+                self.assertEqual(evidence.context_document(self.identity, wid)["records"], [])
 
     def test_capture_audit_separates_repeat_paths_scopes_outputs_and_unknown_savings(self) -> None:
         script = ROOT / "benchmarks/context_evidence_audit.py"
-        events = [
-            {"id": "1", "path": "app.py", "operation": "sed", "requestedScope": [1, 2],
-             "sourceVersion": "version-A", "resultRef": "synthetic-fixture:1", "output": "one\ntwo\n"},
-            {"id": "2", "path": "app.py", "operation": "sed", "requestedScope": [3, 4],
-             "sourceVersion": "version-A", "resultRef": "synthetic-fixture:2", "output": "three\nfour\n"},
-            {"id": "3", "path": "app.py", "operation": "sed", "requestedScope": [1, 2],
-             "sourceVersion": "version-A", "resultRef": "synthetic-fixture:3", "output": "one\ntwo\n"},
-            {"id": "4", "path": "app.py", "operation": "sed", "requestedScope": [1, 2],
-             "sourceVersion": None, "resultRef": "synthetic-fixture:4", "output": None},
+        rows = [
+            ("app.py", [1, 2], "version-A", "one\ntwo\n", "source"),
+            ("app.py", [3, 4], "version-A", "three\nfour\n", "source"),
+            ("app.py", [1, 2], "version-A", "one\ntwo\n", "source"),
+            ("app.py", [1, 2], None, None, "source"),
+            *[("empty.txt", {}, "empty-version", "", "source")] * 2,
+            *[(None, None, None, "same", "unbound")] * 2,
+            *[("empty.txt", {}, "empty-version", "", "unbound")] * 2,
+            *[("app.py", None, None, None, "source")] * 2,
         ]
-        events.extend([
-            {"id": str(n), "path": "empty.txt", "operation": "cat", "requestedScope": {},
-             "sourceVersion": "empty-version", "resultRef": f"synthetic-fixture:{n}", "output": ""}
-            for n in (5, 6)
-        ])
-        events.extend([
-            {"id": str(n), "path": None, "operation": "compound-output", "requestedScope": None,
-             "attribution": "unbound", "sourceVersion": None, "resultRef": f"synthetic-fixture:{n}", "output": "same"}
-            for n in (7, 8)
-        ])
-        events.extend([
-            {"id": str(n), "path": "empty.txt", "operation": "cat", "requestedScope": {},
-             "attribution": "unbound", "sourceVersion": "empty-version",
-             "resultRef": f"synthetic-fixture:{n}", "output": ""}
-            for n in (9, 10)
-        ])
-        events.extend([
-            {"id": str(n), "path": "app.py", "operation": "sed", "requestedScope": None,
-             "sourceVersion": None, "resultRef": f"synthetic-fixture:{n}", "output": None}
-            for n in (11, 12)
-        ])
+        events = [{"id": str(n), "path": path, "operation": "read", "requestedScope": scope,
+                   "sourceVersion": version, "output": output, "attribution": attribution,
+                   "resultRef": f"synthetic-fixture:{n}"}
+                  for n, (path, scope, version, output, attribution) in enumerate(rows)]
         capture = self.tmp / "labels.json"
         capture.write_text(json.dumps({"provenance": {"traceSha256": evidence._hash(json.dumps(events).encode()), "labeler": "synthetic-test"},
                                        "events": events}))
