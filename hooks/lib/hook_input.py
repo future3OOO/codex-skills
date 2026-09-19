@@ -19,7 +19,7 @@ _PATCH_PATH = re.compile(
 # Deliberately narrow: `read_candidates` declines any invocation that writes at all,
 # so it needs no write set of its own.
 _BASH_WRITE = re.compile(
-    r'(?:>>?|tee\s+(?:-\S+\s+)*)\s*(?:"([^"]+)"|\'([^\']+)\'|([^\s;|&]+))'
+    r'(?:>>?|>\||tee\s+(?:-\S+\s+)*)\s*(?:"([^"]+)"|\'([^\']+)\'|([^\s;|&]+))'
 )
 
 

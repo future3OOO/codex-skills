@@ -496,16 +496,21 @@ class ReadCaptureHookTests(HookHarness):
         self.assertFalse(state_root.exists(), "NON_READ_OPENED_STATE")
 
     def test_write_command_still_takes_the_edit_path_and_records_no_read(self) -> None:
-        # BM_WRITE_PATH_UNCHANGED
-        self.assertEqual(self.state("begin", "--slug", "reads").returncode, 0)
-        kinds_before = [e["kind"] for e in json.loads(self.state("history").stdout)["events"]]
-        result = self.read("printf 'value = 3\\n' > app.py")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        # Real shell writes, including noclobber override, must invalidate rather than capture.
         identity = resolve_repo_identity(self.repo)
-        wid = json.loads(self.state("status").stdout)["workflowId"]
-        self.assertEqual(self.requests(identity, wid), {}, "WRITE_TREATED_AS_READ")
-        kinds_after = [e["kind"] for e in json.loads(self.state("history").stdout)["events"]]
-        self.assertGreater(len(kinds_after), len(kinds_before), "WRITE_TREATED_AS_READ: no edit event appended")
+        for value, operator in enumerate((">", ">|", ">>"), 3):
+            with self.subTest(operator=operator):
+                begun = self.state("begin", "--slug", f"write-{value}")
+                self.assertEqual(begun.returncode, 0, begun.stderr)
+                wid = json.loads(begun.stdout)["workflowId"]
+                command = f"printf 'value = {value}\\n' {operator} app.py"
+                before = json.loads(self.state("history").stdout)["events"]
+                subprocess.run(["bash", "-c", command], cwd=self.repo, env=self.env, check=True)
+                result = self.read(command)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(self.requests(identity, wid), {}, "WRITE_TREATED_AS_READ")
+                after = json.loads(self.state("history").stdout)["events"]
+                self.assertGreater(len(after), len(before), "WRITE_DID_NOT_INVALIDATE")
 
     def test_rearm_keeps_the_discipline_text_and_summary(self) -> None:
         # BM_REARM_BASE_TEXT_UNCHANGED
