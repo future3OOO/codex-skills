@@ -41,6 +41,7 @@ from .workflow_state import (
     evidence_document,
     execution_receipt,
     instance_id,
+    run_recorded_baseline,
     safe_slug,
 )
 
@@ -624,11 +625,9 @@ def _run_tdd(values: list[str]) -> int:
         # The stored execution already settled another item: its run recorded a
         # baseline for that item's own id. Re-attributing the same observed
         # outcome here would settle a second item from one observation.
-        settled = receipt.get("redProof")
         owner = receipt.get("behaviorId")
         if (isinstance(owner, str) and owner and owner != args.behavior_id
-                and isinstance(settled, dict)
-                and settled.get("quality") in {"baseline-passed", "operation-succeeded"}):
+                and run_recorded_baseline(receipt)):
             proof, proof_error, baseline = None, (
                 f"the stored execution already settled {owner}: one observed outcome "
                 "cannot baseline two items"
@@ -637,9 +636,13 @@ def _run_tdd(values: list[str]) -> int:
         # One observed outcome settles one item, the baseline mirror of the RED
         # rule above: the same observation at the same site cannot satisfy a
         # second pending item; a different site carries its own observation.
+        detail = (
+            f"the observed outcome {proof['observation']!r} at {proof.get('site')!r}"
+            if isinstance(proof.get("observation"), list)
+            else f"the stored execution {proof.get('sourceReference')!r} test {proof.get('testId')!r}"
+        )
         proof, proof_error, baseline = None, (
-            f"the observed outcome {proof['observation']!r} at {proof.get('site')!r} already "
-            f"settled {owner}: one observation cannot baseline two items"
+            f"{detail} already settled {owner}: one observed outcome cannot baseline two items"
         ), False
     if red_ok and not legacy and (owner := behavior_map.inherited_red(items, args.behavior_id, proof)):
         # The same observation cannot open RED for two items: this obligation's

@@ -2590,6 +2590,33 @@ class WorkflowRecovery(AttackHarness):
                               "--stage", "preflight", "--findings", "addressed", "--input", str(document))
             self.assertEqual(result.returncode, expected, marker + result.stdout + result.stderr)
 
+    def test_nonrunner_baseline_is_a_fixed_receipt(self) -> None:
+        marker = "NONRUNNER_BASELINE_REFUSED_AS_RECEIPT"
+        slug = "nonrunner-fixed-receipt"
+        wid = self.begin(slug)
+        envelope = self.json_file("intake.json", {"schemaVersion": 1, "verdict": "completed", "findings": [
+            {"id": "STD-1", "claim": "test convention needs correction", "material": True, "kind": "nonbehavioral"},
+        ]})
+        intake = self.ok("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
+                         "--source", "codex-advisor", "--input", str(envelope))["advisorPreflight"]["intakeEvidence"]
+        item = self.owned_map("unused", marker="KEEP_WRONG")[0]
+        item["sourceRefs"] = []
+        r = self.record_preflight(slug, wid, [item])
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        # A non-runner exit-0 baselines the pending contract item: the recorded
+        # run is an executed baseline receipt, exactly as a runner baseline is.
+        run = self.mapped_tdd(slug, "red", [sys.executable, "-c", "print('keeper still holds')"])
+        self.assertEqual(run.returncode, 0, marker + run.stdout + run.stderr)
+        receipt = json.loads(run.stdout.splitlines()[-1])
+        document = self.json_file("fixed.json", {"intakeEvidenceId": intake, "dispositions": [{
+            "finding_id": "STD-1", "status": "fixed",
+            "reason": "Convention verified through the real operation",
+            "evidenceRefs": [receipt["summaryId"] + ":" + str(receipt["runIndex"])],
+        }]})
+        result = self.cli("advisor-disposition", "--slug", slug, "--workflow-id", wid,
+                          "--stage", "preflight", "--findings", "addressed", "--input", str(document))
+        self.assertEqual(result.returncode, 0, marker)
+
     def test_summary_reports_current_binding_after_source_drift(self) -> None:
         slug, _ = self.settled()
         self.ok("verify", "--slug", slug, "--kind", "quality-gate", "--base-ref", "HEAD")

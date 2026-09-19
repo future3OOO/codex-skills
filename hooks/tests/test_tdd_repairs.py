@@ -870,6 +870,51 @@ class MappedTddRepairTests(unittest.TestCase):
         self.assertEqual(reuse.returncode, 2, marker + "\n" + reuse.stderr)
         self.assertEqual(self.mapped_item("BM_TWO")["status"], "pending", marker)
 
+    def test_receipt_baseline_second_attribution_is_refused(self) -> None:
+        marker = "DEDUP_REFUSAL_CRASHES"
+        slug, _ = self.begin_with_map(
+            [
+                pending_behavior("BM_ACT", red_failure="ACT_LOST"),
+                {**pending_behavior("BM_ONE", red_failure="FIRST_LOST"), "kind": "preservation"},
+                {**pending_behavior("BM_TWO", red_failure="SECOND_LOST"), "kind": "preservation"},
+            ],
+            "receipt-chain-dedup",
+        )
+        (self.repo / "test_mixed.py").write_text(
+            "import unittest\n"
+            "class Mix(unittest.TestCase):\n"
+            "    def test_fails(self):\n"
+            "        self.fail('ACT_LOST')\n"
+            "    def test_passes(self):\n"
+            "        self.assertTrue(True)\n",
+            encoding="utf-8",
+        )
+        red = self.tdd(slug, "red", "BM_ACT", (sys.executable, "-m", "unittest", "-v", "test_mixed"))
+        self.assertEqual(red.returncode, 0, marker + "\n" + red.stderr)
+        receipt = json.loads(red.stdout.splitlines()[-1])
+        reference = receipt["summaryId"] + ":" + str(receipt["runIndex"])
+        first = self.cli(
+            "tdd", "--repo", str(self.repo), "--slug", slug,
+            "--phase", "red", "--behavior-id", "BM_ONE",
+            "--from-evidence", reference,
+            "--test-id", "test_mixed.Mix.test_passes",
+        )
+        self.assertEqual(first.returncode, 0, marker + "\n" + first.stderr)
+        self.assertEqual(self.mapped_item("BM_ONE")["status"], "already-satisfied", marker)
+        # The same attributed pass cannot settle a second item. The refusal is
+        # clean and the attempt is retained with its reason — never a crash.
+        second = self.cli(
+            "tdd", "--repo", str(self.repo), "--slug", slug,
+            "--phase", "red", "--behavior-id", "BM_TWO",
+            "--from-evidence", reference,
+            "--test-id", "test_mixed.Mix.test_passes",
+        )
+        self.assertEqual(second.returncode, 2, marker)
+        self.assertIn("cannot baseline two items", second.stderr, marker)
+        self.assertEqual(self.mapped_item("BM_TWO")["status"], "pending", marker)
+        retained = self.retained_run(marker)
+        self.assertIn("cannot baseline two items", str(retained.get("redProofFailure", "")), marker)
+
     def test_nonrunner_baseline_observation_names_the_exception(self) -> None:
         marker = "OBSERVATION_NOT_RED_SHAPED"
         slug, _ = self.begin_with_map(
