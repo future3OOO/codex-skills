@@ -1487,6 +1487,7 @@ class IntakeSerialisationTests(unittest.TestCase):
 
     @unittest.skipUnless(GITNEXUS, "the real GitNexus CLI is unavailable")
     def test_two_real_intakes_never_run_two_producers(self) -> None:
+        self.serialise()
         self.intake_pair()
 
     @unittest.skipUnless(GITNEXUS, "the real GitNexus CLI is unavailable")
@@ -1786,7 +1787,6 @@ class IntakeSerialisationTests(unittest.TestCase):
         return module
 
     def test_higher_slots_count_during_competing_admissions(self) -> None:
-        self.serialise()
         import fcntl
 
         marker = "HELD_HIGHER_SLOTS_IGNORED"
