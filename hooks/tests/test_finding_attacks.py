@@ -2615,7 +2615,7 @@ class WorkflowRecovery(AttackHarness):
         }]})
         result = self.cli("advisor-disposition", "--slug", slug, "--workflow-id", wid,
                           "--stage", "preflight", "--findings", "addressed", "--input", str(document))
-        self.assertEqual(result.returncode, 0, marker)
+        self.assertEqual(result.returncode, 0, marker + "\n" + result.stdout + result.stderr)
 
     def test_summary_reports_current_binding_after_source_drift(self) -> None:
         slug, _ = self.settled()

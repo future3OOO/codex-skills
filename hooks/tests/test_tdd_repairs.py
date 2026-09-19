@@ -868,6 +868,7 @@ class MappedTddRepairTests(unittest.TestCase):
             "--test-id", "test_probe.BehaviorProbe.test_behavior",
         )
         self.assertEqual(reuse.returncode, 2, marker + "\n" + reuse.stderr)
+        self.assertIn("cannot baseline two items", reuse.stderr, marker)
         self.assertEqual(self.mapped_item("BM_TWO")["status"], "pending", marker)
 
     def test_receipt_baseline_second_attribution_is_refused(self) -> None:
