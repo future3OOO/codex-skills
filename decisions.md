@@ -1069,7 +1069,10 @@ runner proofs, and a receipt-owner refusal naming the owning item. The
 contract-item post-change gate applies to every surface type, and a
 non-runner baseline receipt satisfies the `fixed`-disposition
 executed-receipt predicate through the shared
-`run_recorded_baseline`/`BASELINE_PROOF_QUALITIES` in `workflow_state.py`.
+`run_recorded_baseline`/`BASELINE_PROOF_QUALITIES` in `workflow_state.py` —
+a named widening of what `fixed` accepts: reach stays unresolved and review
+establishes coverage, never the exit code, mirroring the non-runner-RED
+doctrine.
 Skill and recorder text state the real-Seam distinction; the verification
 step names real-seam probes beside suites and lint/typecheck/build.
 Workflow `probe-baseline` completed clean: 8 TDD cycles, 204-test suite
