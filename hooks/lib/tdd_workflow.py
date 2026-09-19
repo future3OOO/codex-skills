@@ -39,6 +39,7 @@ from .workflow_state import (
     bound_state,
     commit_tdd,
     evidence_document,
+    execution_digest,
     execution_receipt,
     instance_id,
     run_recorded_baseline,
@@ -618,7 +619,11 @@ def _run_tdd(values: list[str]) -> int:
         # incomplete run reports no passing test and proves nothing.
         proof, proof_error, nonexecuting = _pass_proof(surface, output, baseline=False, exit_code=exit_code)
     if receipt is not None and proof is not None:
-        proof = {**proof, "sourceReference": args.from_evidence}
+        proof = {
+            **proof,
+            "sourceReference": args.from_evidence,
+            "sourceExecution": execution_digest(receipt) or args.from_evidence,
+        }
     if baseline and (refusal := _baseline_refusal(binding, mapped.get("kind"))):
         proof, proof_error, baseline = None, refusal, False
     if baseline and receipt is not None:

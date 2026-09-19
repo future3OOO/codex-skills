@@ -1,6 +1,7 @@
 """Repository-scoped production workflow policy and transactional commands."""
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shlex
@@ -811,6 +812,16 @@ def run_recorded_baseline(run: object) -> bool:
     ``baseline-passed`` or a non-runner ``operation-succeeded`` redProof."""
     proof = run.get("redProof") if isinstance(run, dict) else None
     return isinstance(proof, dict) and proof.get("quality") in BASELINE_PROOF_QUALITIES
+
+
+def execution_digest(run: object) -> str | None:
+    """Stable identity of a stored execution across reference spellings and
+    cumulative evidence-document copies: the canonical run record."""
+    if not isinstance(run, dict):
+        return None
+    return hashlib.sha256(
+        json.dumps(run, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
 
 
 def execution_receipt(identity: RepoIdentity, state: JsonObject, reference: str,
