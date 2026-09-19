@@ -187,20 +187,23 @@ unrelated failures are named as blockers; PRD reconciliation is done.
 For any coding, debugging, review, refactor, explanation, planning, or
 repository exploration task inside a git repository, run Repo Context Forge
 before choosing files, editing code, or running GitNexus analysis (docs-only
-exception above). Run the installed bootstrap wrapper from the target
-checkout:
+exception above).
+
+Call the installed governed wrapper — never the producer snapshot under
+`~/.local/share/repo-context-forge/current` — with the active pass's slug and
+intent; begin the pass first when none is active:
 
 ```bash
-SKILL_DIR="$HOME/.local/share/repo-context-forge/current/skills/repo-context-forge"
-python3 "$SKILL_DIR/scripts/bootstrap.py" --repo "$PWD"
+# begin only when no pass is active — it does not refuse a second one:
+printf '%s' "$request_text" \
+  | python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" \
+    begin --repo "$PWD" --slug "<stable-task-slug>" --intent -
+python3 "$HOME/.codex/skills/repo-context-forge/scripts/bootstrap.py" \
+  --repo "$PWD" --workflow-slug "<stable-task-slug>" --intent "$request_text"
 ```
 
-For planned work before files have changed:
-
-```bash
-SKILL_DIR="$HOME/.local/share/repo-context-forge/current/skills/repo-context-forge"
-python3 "$SKILL_DIR/scripts/bootstrap.py" --repo "$PWD" --intent "<user request>"
-```
+Omit `--workflow-slug` only for standalone work with no active pass;
+`$repo-context-forge` documents the modes.
 
 The output must begin with `REPO_CONTEXT_FORGE_REQUIRED_INTAKE`. If the packet
 emits a blocker, stop and surface it.
