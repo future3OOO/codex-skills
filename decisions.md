@@ -1102,6 +1102,40 @@ its single caller). Review intake and reproducible results are retained at
 `/tmp/pr69-review-intake.json`, `/tmp/pr69-review-reproduce.py`, and
 `/tmp/pr69-review-results.json`. No merge or installation occurred.
 
+**Minimum-scope reassessment at `f76acba`:** Supersedes the earlier
+unqualified assessment that PR69 was minimal. The alias probes now refuse
+both duplicates, but the base commit already allowed repeated unittest
+receipt attribution: that hardening is separate from admitting non-runner
+baselines. A disposable original-scope variant retains admission, bounded
+observations, observation/site dedup, the existing production-change gate
+and receipt consumption with 36 runtime additions / 6 deletions (30 net),
+versus the PR's 107 / 8 (99 net). The same eight public-CLI checks pass on
+both in approximately six seconds; no full suite was rerun. Two added tests
+(82 lines) cover the additional runner receipt policy. Retaining that broader
+policy requires an explicit scope decision; the smaller experiment does not
+implement it. Review and measured patch: `/tmp/pr69-f76-review.json` and
+`/tmp/pr69-minimum-runtime.patch`. Candidate source remains unchanged.
+
+**Whole-diff measurement at the same head:** Including tests and unchanged
+documentation edits, the disposable original-scope alternative is 103 net
+lines versus 318: runtime 30 versus 99, tests 69 versus 215, docs 4 each.
+Test reduction removes 82 lines for the extra runner policy and consolidates
+64 lines of repeated setup/assertions. Five targeted real-CLI methods pass
+in 5.370 seconds; injected missing dedup and missing output bound both fail
+the compact checks. The scope limitation above still applies. Full patch
+and evidence: `/tmp/pr69-original-scope-full.patch` and
+`/tmp/pr69-whole-diff-review.md`. No candidate edit or delivery occurred.
+
+**Full-behavior comparison:** Retain the demonstrated receipt-path repair;
+this supersedes recommending the 103-line variant as a replacement for PR69.
+Its scope reduction cannot count as an equivalent implementation saving.
+Keeping production byte-identical to `f76acba` and consolidating only the
+tests yields 254 net lines (99 runtime, 151 tests, 4 docs), a verified
+64-line reduction. Seven targeted CLI methods pass in 6.298 seconds and
+both copied-run and alternate-index receipt probes still refuse duplicate
+settlement. Full patch: `/tmp/pr69-full-behavior.patch`; evidence:
+`/tmp/pr69-full-behavior-results.json`. No candidate source was edited.
+
 **Delegate-transport root cause found and fixed:** inter-agent task payloads
 travel as `encrypted_content` parts inside `agent_message` items, and
 CLIProxyAPI's Responses→chat translator dropped them silently — spawned
