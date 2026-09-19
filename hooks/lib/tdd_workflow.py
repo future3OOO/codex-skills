@@ -307,14 +307,30 @@ def _pass_proof(
     """The final result positively identifies no execution, not an unknown failure.
 
     A pass is the surface passing, not the command exiting 0: a runner's report of
-    an executed passing test; a non-runner exit 0 closes its own RED, never a baseline."""
+    an executed passing test; a non-runner exit 0 closes its own RED, and baselines a
+    pending item the same way, recording what it observed — reach stays unresolved
+    for review to establish, exactly as a non-runner RED records it."""
     runner = surface.get("runner")
     if runner not in {"unittest", "pytest"}:
         if baseline:
-            return None, (
-                "a baseline needs the runner's own report of an executed passing "
-                "test; a non-runner operation exiting 0 is not one"
-            ), False
+            lines = [
+                line.strip()
+                for line in tdd_surface.ANSI_ESCAPE.sub("", output).splitlines()
+                if line.strip()
+            ]
+            observed = tdd_surface._final_diagnostic(lines)[:1000]
+            if not observed:
+                return None, (
+                    "a baseline is the surface passing, not the command exiting 0: "
+                    "the operation emitted nothing to observe"
+                ), False
+            return {
+                "quality": "operation-succeeded",
+                "reach": "unresolved",
+                "runner": str(runner),
+                "observation": [observed] if observed else [],
+                "site": shlex.join(str(token) for token in surface.get("arguments") or []),
+            }, "", False
         return {"quality": "operation-succeeded", "runner": str(runner)}, "", False
     output = tdd_surface.ANSI_ESCAPE.sub("", output)
     if runner == "unittest":
@@ -602,6 +618,14 @@ def _run_tdd(values: list[str]) -> int:
         proof, proof_error, nonexecuting = _pass_proof(surface, output, baseline=False, exit_code=exit_code)
     if baseline and (refusal := _baseline_refusal(binding, mapped.get("kind"))):
         proof, proof_error, baseline = None, refusal, False
+    if baseline and (owner := behavior_map.inherited_baseline(items, args.behavior_id, proof)):
+        # One observed outcome settles one item, the baseline mirror of the RED
+        # rule above: the same observation at the same site cannot satisfy a
+        # second pending item; a different site carries its own observation.
+        proof, proof_error, baseline = None, (
+            f"the observed outcome {proof['observation']!r} at {proof.get('site')!r} already "
+            f"settled {owner}: one observation cannot baseline two items"
+        ), False
     if red_ok and not legacy and (owner := behavior_map.inherited_red(items, args.behavior_id, proof)):
         # The same observation cannot open RED for two items: this obligation's
         # test stopped where another item's already did and observed nothing of

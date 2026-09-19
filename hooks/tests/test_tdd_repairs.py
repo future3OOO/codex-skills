@@ -747,6 +747,93 @@ class MappedTddRepairTests(unittest.TestCase):
         summary = self.cli("summary", "--repo", str(self.repo))
         self.assertIn("Late RED: BM_ACT", summary.stdout, marker + "\n" + summary.stderr)
 
+    def test_nonrunner_exit0_baselines_pending_items(self) -> None:
+        marker = "NONRUNNER_BASELINE_REFUSED"
+        slug, _ = self.begin_with_map(
+            [
+                pending_behavior("BM_ACT", red_failure="ACT_LOST"),
+                {**pending_behavior("BM_KEEP", red_failure="KEEP_LOST"), "kind": "preservation"},
+            ],
+            "nonrunner-baseline",
+        )
+        command = (sys.executable, "-c", "print('ledger row written')")
+        result = self.tdd(slug, "red", "BM_KEEP", command)
+        self.assertEqual(result.returncode, 0, marker + "\n" + result.stderr)
+        item = self.mapped_item("BM_KEEP")
+        self.assertEqual(item["status"], "already-satisfied", marker)
+        proof = item["baselineProof"]
+        self.assertEqual(proof["quality"], "operation-succeeded", marker)
+        self.assertEqual(proof["reach"], "unresolved", marker)
+        self.assertEqual(proof["runner"], "exact", marker)
+        self.assertIn("ledger row written", "".join(proof["observation"]), marker)
+        self.assertTrue(proof.get("site"), marker)
+
+        # A pending contract item baselines the same way while no production
+        # path has changed in the pass.
+        slug, _ = self.begin_with_map(
+            [pending_behavior("BM_ACT", red_failure="ACT_LOST")],
+            "nonrunner-contract-baseline",
+        )
+        result = self.tdd(slug, "red", "BM_ACT", command)
+        self.assertEqual(result.returncode, 0, marker + "\n" + result.stderr)
+        self.assertEqual(self.mapped_item("BM_ACT")["status"], "already-satisfied", marker)
+
+    def test_one_observation_baselines_only_one_item(self) -> None:
+        marker = "BASELINE_DEDUP_ABSENT"
+        slug, _ = self.begin_with_map(
+            [
+                pending_behavior("BM_ACT", red_failure="ACT_LOST"),
+                {**pending_behavior("BM_ONE", red_failure="FIRST_LOST"), "kind": "preservation"},
+                {**pending_behavior("BM_TWO", red_failure="SECOND_LOST"), "kind": "preservation"},
+            ],
+            "nonrunner-dedup",
+        )
+        command = (sys.executable, "-c", "print('same outcome')")
+        first = self.tdd(slug, "red", "BM_ONE", command)
+        self.assertEqual(first.returncode, 0, marker + "\n" + first.stderr)
+        second = self.tdd(slug, "red", "BM_TWO", command)
+        self.assertEqual(second.returncode, 2, marker + "\n" + second.stderr)
+        self.assertEqual(self.mapped_item("BM_TWO")["status"], "pending", marker)
+        # A different site emitting the same text carries its own observation.
+        admitted = self.tdd(
+            slug, "red", "BM_TWO", (sys.executable, "-c", "print('same' + ' outcome')")
+        )
+        self.assertEqual(admitted.returncode, 0, marker + "\n" + admitted.stderr)
+        self.assertEqual(self.mapped_item("BM_TWO")["status"], "already-satisfied", marker)
+
+    def test_nonrunner_baseline_observation_is_bounded(self) -> None:
+        marker = "OBSERVATION_UNBOUNDED"
+        slug, _ = self.begin_with_map(
+            [
+                pending_behavior("BM_ACT", red_failure="ACT_LOST"),
+                {**pending_behavior("BM_KEEP", red_failure="KEEP_LOST"), "kind": "preservation"},
+            ],
+            "nonrunner-bound",
+        )
+        filler = "x" * 60000
+        command = (sys.executable, "-c", f"print('{filler}'); print('tail outcome')")
+        result = self.tdd(slug, "red", "BM_KEEP", command)
+        self.assertEqual(result.returncode, 0, marker + "\n" + result.stderr)
+        observed = self.mapped_item("BM_KEEP")["baselineProof"]["observation"]
+        self.assertIsInstance(observed, list, marker)
+        self.assertLessEqual(sum(len(line) for line in observed), 2000, marker)
+        self.assertNotIn(filler, "".join(observed), marker)
+
+    def test_nonrunner_baseline_on_contract_after_change_is_refused(self) -> None:
+        marker = "CONTRACT_GATE_BYPASSED"
+        (self.repo / "prod.py").write_text("def op():\n    return 1\n", encoding="utf-8")
+        self.git("add", "prod.py")
+        self.git("commit", "-q", "-m", "prod")
+        slug, _ = self.begin_with_map(
+            [pending_behavior("BM_ACT", red_failure="ACT_LOST")], "nonrunner-gate"
+        )
+        with (self.repo / "prod.py").open("a", encoding="utf-8") as handle:
+            handle.write("# changed before baseline\n")
+        result = self.tdd(slug, "red", "BM_ACT", (sys.executable, "-c", "print('outcome')"))
+        self.assertEqual(result.returncode, 2, marker + "\n" + result.stderr)
+        self.assertIn("cannot be baselined after production changed", result.stderr, marker)
+        self.assertEqual(self.mapped_item("BM_ACT")["status"], "pending", marker)
+
     def test_missing_target_is_refused_and_the_attempt_is_retained(self) -> None:
         marker = "MISSING_TARGET_REFUSAL_DISCARDED"
         slug, _ = self.begin_with_act("missing-target")
@@ -986,8 +1073,6 @@ class MappedTddRepairTests(unittest.TestCase):
          UNIT, False, "not carried by the failure that ended"),
         ("marker-absent", "NONRUNNER_UNRELATED_FAILURE_OPENED_RED", None,
          (PY, "-c", "raise SystemExit('unrelated diagnostic')"), False, "did not contain"),
-        ("exit-zero", "NONRUNNER_EXIT0_BASELINED", None,
-         (PY, "-c", "print('PROD_REFUSED_OPERATION')"), False, "baseline"),
         ("bash-missing-command", "SHELL_MISSING_COMMAND_ACCEPTED_AS_RED", None,
          ("bash", "-c", "PROD_REFUSED_OPERATION_missing"), False, "not found"),
         ("sh-missing-command", "SHELL_MISSING_COMMAND_ACCEPTED_AS_RED", None,

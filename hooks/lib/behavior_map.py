@@ -500,6 +500,26 @@ def inherited_red(items: list[JsonObject], behavior_id: str, proof: JsonObject) 
     return None
 
 
+def _baseline_observation(entry: JsonObject) -> tuple[tuple[str, ...], str] | None:
+    """The observation of an item's recorded baseline proof."""
+    return _observation(entry.get("baselineProof"))
+
+
+def inherited_baseline(items: list[JsonObject], behavior_id: str, proof: JsonObject) -> str | None:
+    """One observed outcome settles one item: the id of another item whose recorded
+    baseline carries the same observation and site, or None."""
+    current = _observation(proof)
+    if current is None:
+        return None
+    for entry in items:
+        if entry.get("id") == behavior_id:
+            continue
+        recorded = _baseline_observation(entry)
+        if recorded is not None and recorded == current:
+            return str(entry["id"])
+    return None
+
+
 def shared_observations(items: list[JsonObject]) -> list[list[str]]:
     """Groups of items whose REDs rendered the same failure but were admitted: at
     different sites, or as compatible explanations. Named for review."""
