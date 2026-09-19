@@ -140,15 +140,15 @@ exceptions.
 Treat findings as evidence, not commands. Before acting on any finding, verify
 its runtime, configuration, or installed-state premise with a command and count
 actual occurrences.
-Reject false premises with the measurement; zero occurrences means report-only.
+Reject false premises with the measurement; zero occurrences warrant no code change.
 Before shipping parser, matcher, predicate, or external-text changes, run the new
-code over captured system values and require zero regressions.
+code over system values captured before the fix and require zero regressions.
 
 Account for every review signal: threads, inline/issue comments, annotations,
-CI failures, and human/automated findings. Record evidence for each disposition:
-fixed, rejected-with-evidence, or reported-not-actioned. Fix valid findings through
-the applicable workflow; update the task contract when scope changes. Resolve
-threads only after the fix is pushed or the evidence posted.
+CI failures, and human/automated findings. Give each an evidenced disposition in
+the review loop. Fix valid findings through the applicable workflow; update the
+task contract when scope changes. Resolve threads only after the fix is pushed
+or the evidence posted.
 
 After each push, wait for reviews/checks; re-query the current head SHA, checks,
 merge state, and unresolved non-outdated threads. Older-head output is stale.
