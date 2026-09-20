@@ -1238,6 +1238,7 @@ def _register_finding_intake(
             if (not reviewer or reviewer == lead) and intake["producer"] == "code-review":
                 reviewer = intake.get("reviewContextId")
             if reviewer and lead and reviewer != lead:
+                state["reviewerContextId"] = reviewer
                 current["repairOwner"] = {
                     "implementerContextId": reviewer, "reviewerContextId": lead,
                 }

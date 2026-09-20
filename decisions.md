@@ -1568,3 +1568,9 @@ unchanged. These corrections remain in the same pass and draft PR.
 The first independent review binds its available context during that same ordinary
 intake; it does not require a subsequent intake to activate retained-reviewer
 ownership. The lead reproduced and corrected that follow-on case before review.
+
+Retain that newly learned independent reviewer in the existing workflow reviewer
+field when assigning the first recurring owner. Without that shared retention,
+subsequent lead certification hid the reviewer from a later unrelated recurrence.
+The full A repair/certification/closure → B recurrence-two sequence reproduced
+and now preserves the same reviewer and denies replacement dispatch.
