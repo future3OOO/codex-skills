@@ -1538,3 +1538,16 @@ reachable certification conflict after findings acquire different reviewers for
 one implementer. These remain active repair/proof obligations. The user-requested
 draft PR exposes the reviewed implementation and open findings; it does not close
 #64, authorize integration, or complete the workflow.
+
+**Draft PR #82 correction:** The scoped-succession conflict was reproduced and
+corrected by selecting ordinary certifications with the existing implementer and
+reviewer pair. Distinct leads now certify their own repairs without changing the
+other finding's ownership or history. The owning RED/GREEN and eighteen retained
+succession attacks pass. New real CLI probes cover both collision-selection paths
+and the bounded closure/re-intake, interruption, restart and completion sequence;
+independent return review accepts their stated scope. CI then exposed two test
+setup errors: the missing-mechanism case had recorded a reassessment, and the
+ownership-hook case inherited a native session ID. Explicitly omit reassessment
+only for the absence attack and supply a declared recorder actor input; retain
+all refusal assertions. Both cases pass in the isolated CI runner without a
+parent session ID. Efficiency acceptance remains open; #82 remains a draft.

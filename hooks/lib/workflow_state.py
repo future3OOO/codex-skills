@@ -727,7 +727,9 @@ def commit_review(
             repairs = [entry for entry in state.get("findingStates", [])
                        if int(entry.get("recurrence", 0)) >= 2 and _finding_unresolved(entry)]
             selected = [entry for entry in repairs if entry.get("repairOwner", {}).get("implementerContextId")
-                        == summary_doc.get("implementationContextId")]
+                        == summary_doc.get("implementationContextId")
+                        and entry.get("repairOwner", {}).get("reviewerContextId")
+                        == summary_doc.get("reviewContextId")]
             succession = summary_doc.get("repairSuccession")
             if succession is not None:
                 _validate_disposition_context(identity, state, succession)

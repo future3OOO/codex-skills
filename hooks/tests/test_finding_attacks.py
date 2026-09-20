@@ -124,7 +124,7 @@ class AttackHarness(unittest.TestCase):
         return self.cli("record-preflight", "--slug", slug, "--workflow-id", wid,
                         "--input", str(payload))
 
-    def drive_attack_green(self, slug: str, marker: str, behavior_id: str = "BM_ATTACK") -> None:
+    def drive_attack_green(self, slug: str, marker: str, behavior_id: str = "BM_ATTACK", *, reassess: bool = True) -> None:
         probe = self.repo / "test_attack_probe.py"
         probe.write_text(
             "import app, unittest\n"
@@ -139,6 +139,8 @@ class AttackHarness(unittest.TestCase):
                                   "--", sys.executable, "-m", "unittest", "test_attack_probe"],
                                  cwd=ROOT, env=self.env, text=True, capture_output=True, check=False)
             self.assertEqual(run.returncode, 0, phase + ": " + run.stdout + run.stderr)
+        if not reassess:
+            return
         update = self.json_file("reassess.json", {
             "sourceBehaviorId": behavior_id, "reassessment": "no new obligation",
             "items": [], "dispositions": [],
@@ -316,7 +318,8 @@ class PendingAdvisorRetries(AttackHarness):
         ref = self.accept(wid, [finding])["advisorPreflight"]["intakeEvidence"]
         self.assertEqual(self.record_preflight("pending-retry", wid,
                          self.owned_map(ref, marker="VALUE_NOT_TWO")).returncode, 0)
-        self.drive_attack_green("pending-retry", "VALUE_NOT_TWO")
+        self.drive_attack_green("pending-retry", "VALUE_NOT_TWO", reassess=False)
+        self.assertNotIn("mechanismEvidence", self.status()["findingStates"][0], marker)
         full = json.loads(self.fixed_disposition(wid, ref, dict(self.ZERO_DOMAIN)).read_text())
         full["dispositions"][0].pop("mechanism")
         evidence = self.status()["tddEvidence"]
@@ -394,6 +397,7 @@ class PendingAdvisorRetries(AttackHarness):
 
     def test_second_recurrence_requires_reviewer_repair_and_lead_review(self) -> None:
         marker = "REPAIR_OWNERSHIP_BYPASSED"
+        self.env["CODEX_THREAD_ID"] = "recurrence-lead-input"
         wid = self.start_final()
         finding = {**self.CAPTURED, "id": "SPEC-1"}
         state = self.accept(wid, [finding])
