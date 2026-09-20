@@ -1428,14 +1428,14 @@ captured CX3 finding values produced zero unintended identity changes and
 preserved all nine original intake documents. These component observations do
 not establish actual reviewer takeover or native compaction recovery.
 
-**Delivery:** In progress in the issue-64 worktree; no commit, push, PR or shared
-installation. The original bounded replay arms stopped at compaction timeouts;
+**Earlier delivery checkpoint (superseded by current status below):** Work was
+then uncommitted; no shared installation. The original bounded replay arms stopped at compaction timeouts;
 their accepted requests did not establish completed compaction. A later native
 run completed compaction; its helper incorrectly waited for a different event
 and timed out after completion. The native `compacted` record, not that helper's
 exit status, establishes completion. Existing evidence is preserved outside the
 checkout in `/home/prop_/issue-64-evidence` and the private issue64 replay estate.
-The user's latest instruction authorizes further testing through `codexs` on
+At that checkpoint the user authorized further testing through `codexs` on
 SWE-2. Normal independent implementation review and mandatory higher-reasoning
 final advice remain required; production advisor policy is unchanged.
 
@@ -1463,7 +1463,8 @@ equivalent-work efficiency measurement. In this implementation pass, SPEC-7 retu
 after two recorded fixes; the retained native reviewer implemented the third repair
 and the lead inspected it. This is actual task work, not the cheap comparison replay.
 Final advice and equivalent-correct-work efficiency still govern acceptance.
-The implementation's final advisor remains required; no commit, push or PR.
+At that checkpoint final advice had not run and delivery had not occurred;
+current delivery status below supersedes this observation.
 
 **Assessment decision:** Restore the existing rule that findings prevent completion
 but not required review. The inherited final checkpoint conflated a completed
@@ -1484,10 +1485,9 @@ reviewer/lead identities remain unchanged; no shared hooks were rewritten.
 
 **Observed:** Four integrated isolation/ownership checks and 35 affected
 finding/review checks pass. Direct historical disposition refuses unsupported
-closure in both forms; the captured 35-value corpus has zero identity regressions
-and preserves nine immutable intakes. Native recovery evidence is reused.
-At this checkpoint, equivalent-completed-work efficiency was unproved. The
-subsequent user authorization supersedes the earlier blanket replay restriction:
+closure in both forms. Native recovery and the corpus evidence above are reused.
+**Historical authorization:** Equivalent-completed-work efficiency was unproved.
+The subsequent authorization superseded the earlier blanket replay restriction:
 reuse the smallest bounded SWE-2 comparison, without benchmark advisor calls.
 No delivery or acceptance waiver follows from component results.
 
@@ -1588,3 +1588,19 @@ authority. Real recurrence lost owners only in this projection; the retained map
 was intact. Both advisor prompt phases now admit the already-supported optional
 `priorFinding`. These fixes require fresh verification and review; efficiency
 acceptance remains open.
+
+
+**Current #64 delivery status:** PR #82 is open for review, not draft; this
+supersedes all earlier no-delivery/draft statements above. Mandatory independent
+and final reviews continue for corrections; efficiency acceptance remains
+unproved, so neither the issue nor workflow is complete. No further benchmarks
+are authorized by the current user instruction.
+
+Accepted map disposition IDs must use the same trimmed spelling when selecting
+diagnosis owners. Optional null mechanism input reuses existing diagnosis like
+omission; nonempty supplied prose/references retain their validation and ownership.
+Both boundary failures reproduced through the CLI; no new fields or stages.
+Legacy evidence can be attached more than once. Recover order from the event
+where that finding first exists, not the evidence ID's first/latest attachment.
+When historical lifecycle entries share a reference, ordinary intake returns its
+fresh observation alias so the pending repair can close without rewriting history.

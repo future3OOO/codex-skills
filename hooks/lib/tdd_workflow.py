@@ -1062,7 +1062,7 @@ def _map_update(values: list[str]) -> int:
     status = "pending" if unresolved else "passed"
     current_evidence_id = state.get("tddEvidence")
     evidence_id = current_evidence_id
-    reassessed = frozenset(str(entry["id"]) for entry in [*added_items, *dispositions])
+    reassessed = frozenset(str(entry["id"]).strip() for entry in [*added_items, *dispositions])
     if source is not None:
         reassessed |= {str(source)}
     if updated != items or reassessed:

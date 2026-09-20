@@ -1123,7 +1123,7 @@ def _register_finding_intake(
     # Read immutable observations once; the state carries only their identities.
     observed: list[tuple[JsonObject, JsonObject, JsonObject, JsonObject]] = []
     latest: dict[tuple[str, str], JsonObject] = {}
-    for entry in finding_states:
+    for finding_index, entry in enumerate(finding_states):
         # Nonbehavioral settled findings cannot match a behavioral signature.
         # Skip unrelated namespaces/IDs before reading their immutable intakes.
         if (entry.get("kind") != "behavioral" and not entry.get("observations")
@@ -1159,7 +1159,7 @@ def _register_finding_intake(
                         if len(roots) == 1:
                             prior = latest[next(iter(roots))]
                             if (prior.get("status") == "fixed" and transaction.evidence_precedes(
-                                    prior.get("dispositionEvidenceId"), reference)):
+                                    prior.get("dispositionEvidenceId"), reference, finding_index)):
                                 old_root = next(iter(roots))
                                 root = {"evidenceId": old_root[0], "id": old_root[1]}
                                 entry["canonicalFinding"] = root
@@ -1190,12 +1190,17 @@ def _register_finding_intake(
             raise WorkflowError("a material behavioral finding requires a measured disposition, not demotion")
         if prior and prior.get("status") in {"pending", "accepted-for-proof", "accepted-follow-up"}:
             reference = str(prior["intakeEvidenceId"])
+            shared_reference = any(other is not prior
+                                   and other["intakeEvidenceId"] == reference
+                                   and other["findingId"] == prior["findingId"] for other in finding_states)
+            if shared_reference:
+                reference = intake_id
             prior["material"] = prior["material"] or item["material"]
             if item["kind"] == "behavioral":
                 prior["kind"] = "behavioral"
             # Review callers consume the fresh summaryId, including exact retries.
             # Advisor callers already receive the canonical intake reference.
-            if intake["producer"] == "code-review" or not any(all(finding.get(k) == item.get(k) for k in ("id", "claim", "kind", "material"))
+            if shared_reference or intake["producer"] == "code-review" or not any(all(finding.get(k) == item.get(k) for k in ("id", "claim", "kind", "material"))
                        and all(document.get(k) == intake.get(k) for k in ("producer", "stage"))
                        for root, ref, document, finding in observed
                        if (str(root["evidenceId"]), str(root["id"])) in matches):
@@ -1720,7 +1725,7 @@ def _resolve_disposition_receipts(identity: RepoIdentity, transaction: LedgerMut
         canonical = entry.get("canonicalFinding") or {
             "evidenceId": entry["intakeEvidenceId"], "id": entry["findingId"],
         }
-        mechanism = item.get("mechanism", entry.get("mechanismEvidence"))
+        mechanism = item.get("mechanism") or entry.get("mechanismEvidence")
         if mechanism is None:
             if item["status"] == "fixed":
                 raise WorkflowError("behavioral fixed requires its existing mechanism explanation or reference")
