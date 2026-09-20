@@ -5,6 +5,11 @@ description: Disciplined diagnosis loop for hard bugs and performance regression
 
 # Diagnose
 
+For recurring behavioral findings, follow the workflow's
+[repair ownership and mechanism rules](../repo-production-workflow/SKILL.md#recurring-behavioral-repairs).
+They govern the recurrence-two reviewer/lead swap; existing review judges whether
+the explanation and executed attacks close the defect class.
+
 A discipline for hard bugs. Skip phases only when explicitly justified.
 
 When exploring the codebase, use the project's domain glossary to get a clear mental model of the relevant modules, and check ADRs in the area you're touching.

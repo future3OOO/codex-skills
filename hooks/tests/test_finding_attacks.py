@@ -102,9 +102,9 @@ class AttackHarness(unittest.TestCase):
         record_context_forge(self.repo, self.tmp)
         return str(json.loads(begun.stdout)["workflowId"])
 
-    def behavioral_intake(self, slug: str, wid: str, claim: str) -> str:
+    def behavioral_intake(self, slug: str, wid: str, claim: str, identifier: str = "SPEC-1") -> str:
         envelope = self.json_file("envelope.json", {"schemaVersion": 1, "findings": [{
-            "id": "SPEC-1", "claim": claim, "material": True, "kind": "behavioral",
+            "id": identifier, "claim": claim, "material": True, "kind": "behavioral",
         }], "verdict": "completed"})
         recorded = self.ok("advisor-result", "--slug", slug, "--workflow-id", wid,
                            "--stage", "preflight", "--source", "codex-advisor",
@@ -163,6 +163,7 @@ class AttackHarness(unittest.TestCase):
                 "materialConsequence": {"claim": "callers observe the wrong value",
                                         "command": "import app", "result": "corrected"},
                 "evidence": "owning attack GREEN through its recorded RED",
+                "mechanism": "The constant initializer supplied 1 to every reader; initialize to 2 so fresh imports and existing callers observe the required value. No other writer exists.",
             }],
         })
 
@@ -238,6 +239,217 @@ class PendingAdvisorRetries(AttackHarness):
     # Captured issue #37 recorder inputs; no provider/model behavior is claimed.
     CAPTURED = {"id": "SPEC-P2", "claim": "Diagnostic marker file is absent",
                 "material": True, "kind": "behavioral"}
+
+    def test_pending_retry_preserves_material_escalation(self) -> None:
+        wid = self.begin("pending-retry")
+        first = self.accept(wid, [{**self.CAPTURED, "material": False}])
+        original = first["findingStates"][0]["intakeEvidenceId"]
+        state = self.accept(wid, [self.CAPTURED])
+        self.assertEqual((len(state["findingStates"]), state["findingStates"][0]["material"],
+                          state["advisorPreflight"]["findings"]), (1, True, "pending"),
+                         "MATERIAL_ESCALATION_LOST")
+        self.assertFalse(self.ok("evidence", "--evidence-id", original)["document"]["findings"][0]["material"])
+
+    def test_behavioral_promotion_requires_current_behavioral_proof(self) -> None:
+        marker = "BEHAVIORAL_PROMOTION_CLOSED_WITH_OLD_NONBEHAVIORAL_PROOF"
+        wid = self.begin("pending-retry")
+        finding = {**self.CAPTURED, "id": "SPEC-1", "kind": "nonbehavioral"}
+        old = self.accept(wid, [finding])["advisorPreflight"]["intakeEvidence"]
+        self.assertEqual(self.record_preflight("pending-retry", wid,
+                         self.owned_map(old, marker="VALUE_NOT_TWO")).returncode, 0)
+        self.drive_attack_green("pending-retry", "VALUE_NOT_TWO")
+        self.accept(wid, [{**finding, "kind": "behavioral"}])
+        entry = self.status()["findingStates"][0]
+        current = entry["observations"][-1]["evidenceId"]
+        evidence = self.status()["tddEvidence"]
+        runs = self.ok("evidence", "--evidence-id", evidence)["document"]["runs"]
+        receipt = f"{evidence}:{next(i for i, run in enumerate(runs) if run.get('phase') == 'green')}"
+        for reference in (old, current):
+            full = json.loads(self.fixed_disposition(wid, reference, dict(self.ZERO_DOMAIN)).read_text())
+            full["dispositions"][0].pop("mechanism")
+            full["dispositions"][0]["kind"] = "nonbehavioral" if reference == old else "behavioral"
+            concise = {"intakeEvidenceId": reference, "dispositions": [{"finding_id": "SPEC-1",
+                       "status": "fixed", "reason": "all reads observe 2", "evidenceRefs": [receipt]}]}
+            for document in (full, concise):
+                self.refused_unchanged(marker, lambda: self.cli("advisor-disposition", "--slug", "pending-retry",
+                    "--workflow-id", wid, "--stage", "preflight", "--findings", "addressed", "--input",
+                    str(self.json_file("promotion.json", document))))
+        self.assertEqual(entry["kind"], "behavioral", marker)
+        self.ok("advisor-disposition", "--slug", "pending-retry", "--workflow-id", wid, "--stage", "preflight",
+                "--findings", "addressed", "--input", str(self.fixed_disposition(wid, current, dict(self.ZERO_DOMAIN))))
+        self.assertEqual(self.status()["findingStates"][0]["status"], "fixed", marker)
+        self.assertEqual(self.ok("evidence", "--evidence-id", old)["document"]["findings"][0]["kind"], "nonbehavioral", marker)
+
+    def test_retained_identity_survives_changed_wording_and_ids(self) -> None:
+        marker = "FINDING_IDENTITY_SPLIT"
+        wid = self.begin("pending-retry")
+        first = self.accept(wid, [self.CAPTURED])
+        original = first["advisorPreflight"]["intakeEvidence"]
+        changed = {**self.CAPTURED, "claim": "The same mechanism also loses '  x  '"}
+        for finding in (changed, {**changed, "id": "RENAMED", "claim": "  " + changed["claim"] + "  "}):
+            state = self.accept(wid, [finding])
+            self.assertEqual(len(state["findingStates"]), 1, marker)
+            self.assertEqual(state["advisorPreflight"]["intakeEvidence"], original, marker)
+        distinct = {**changed, "id": "DISTINCT", "claim": changed["claim"].replace("'  x  '", "' x '")}
+        self.assertEqual(len(self.accept(wid, [distinct])["findingStates"]), 2, marker)
+
+    def test_conflicting_matches_need_an_owned_explicit_reference(self) -> None:
+        marker = "AMBIGUOUS_FINDING_MERGED"
+        wid = self.begin("pending-retry")
+        a, b = self.CAPTURED, {**self.CAPTURED, "id": "B", "claim": "another mechanism"}
+        first = self.accept(wid, [a, b])
+        ref = first["advisorPreflight"]["intakeEvidence"]
+        collision = {**a, "claim": b["claim"]}
+        result = self.response(wid, [collision])
+        self.assertEqual(result.returncode, 2, marker)
+        self.assertIn("ambiguous", result.stderr, marker)
+        for identifier in (a["id"], b["id"]):
+            state = self.accept(wid, [{**collision, "priorFinding": {"evidenceId": ref, "id": identifier}}])
+            self.assertEqual(len(state["findingStates"]), 2, marker)
+        foreign = {**collision, "priorFinding": {"evidenceId": "evidence-foreign", "id": a["id"]}}
+        self.refused_unchanged(marker, lambda: self.response(wid, [foreign]))
+
+    def test_fixed_requires_owned_reusable_mechanism(self) -> None:
+        marker = "UNSUPPORTED_MECHANISM_CLOSED"
+        wid = self.begin("pending-retry")
+        finding = {**self.CAPTURED, "id": "SPEC-1", "claim": "app.value is not 2"}
+        ref = self.accept(wid, [finding])["advisorPreflight"]["intakeEvidence"]
+        self.assertEqual(self.record_preflight("pending-retry", wid,
+                         self.owned_map(ref, marker="VALUE_NOT_TWO")).returncode, 0)
+        self.drive_attack_green("pending-retry", "VALUE_NOT_TWO")
+        full = json.loads(self.fixed_disposition(wid, ref, dict(self.ZERO_DOMAIN)).read_text())
+        full["dispositions"][0].pop("mechanism")
+        evidence = self.status()["tddEvidence"]
+        measured = self.ok("evidence", "--evidence-id", evidence)["document"]
+        green = next(i for i, run in enumerate(measured["runs"]) if run.get("phase") == "green")
+        concise = {"intakeEvidenceId": ref, "dispositions": [{"finding_id": "SPEC-1", "status": "fixed",
+                    "reason": "all reads now yield 2", "evidenceRefs": [f"{evidence}:{green}"]}]}
+        for document in (full, concise):
+            for mechanism in (None, {"evidenceId": "evidence-foreign", "id": "SPEC-1"}):
+                item = document["dispositions"][0]
+                if mechanism is not None:
+                    item["mechanism"] = mechanism
+                result = self.cli("advisor-disposition", "--slug", "pending-retry", "--workflow-id", wid,
+                                  "--stage", "preflight", "--findings", "addressed", "--input",
+                                  str(self.json_file("mechanism.json", document)))
+                self.assertEqual(result.returncode, 2, marker)
+                self.assertIn("mechanism", result.stderr, marker)
+        concise["dispositions"][0]["mechanism"] = (
+            "app.value was initialized to 1, so every caller read the wrong constant. "
+            "Initialize to 2; the invariant is that all reads observe 2. The latest "
+            "counterexample was a fresh import observing 1. There are no other writers."
+        )
+        accepted = self.ok("advisor-disposition", "--slug", "pending-retry", "--workflow-id", wid,
+                           "--stage", "preflight", "--findings", "addressed", "--input",
+                           str(self.json_file("mechanism.json", concise)))
+        self.assertIn("mechanismEvidence", accepted["findingStates"][0], marker)
+
+    def test_recurrence_preserves_mechanism_and_retries_do_not_escalate(self) -> None:
+        marker = "RECURRENCE_HISTORY_LOST"
+        wid = self.begin("pending-retry")
+        finding = {**self.CAPTURED, "id": "SPEC-1"}
+        first = self.accept(wid, [finding])
+        original = first["advisorPreflight"]["intakeEvidence"]
+        self.assertEqual(self.record_preflight("pending-retry", wid,
+                         self.owned_map(original, marker="VALUE_NOT_TWO")).returncode, 0)
+        self.drive_attack_green("pending-retry", "VALUE_NOT_TWO")
+        path = self.fixed_disposition(wid, original, dict(self.ZERO_DOMAIN))
+        document = json.loads(path.read_text())
+        document["dispositions"][0]["mechanism"] = "The constant initializer supplied the wrong value to all reads; change it to 2."
+        path.write_text(json.dumps(document))
+        self.ok("advisor-disposition", "--slug", "pending-retry", "--workflow-id", wid,
+                "--stage", "preflight", "--findings", "addressed", "--input", str(path))
+        fixed = self.status()["findingStates"][0]
+        state = self.accept(wid, [finding])
+        current = state["findingStates"][-1]
+        self.assertEqual(current.get("recurrence"), 1, marker)
+        self.assertEqual(current.get("mechanismEvidence"), fixed.get("mechanismEvidence"), marker)
+        self.assertEqual(state["findingStates"][0], fixed, marker)
+        retried = self.accept(wid, [{**finding, "claim": "The current counterexample also affects a fresh process"}])
+        self.assertEqual(len(retried["findingStates"]), 2, marker)
+        self.assertEqual(retried["findingStates"][-1].get("recurrence"), 1, marker)
+        refused = self.cli("advisor-disposition", "--slug", "pending-retry", "--workflow-id", wid,
+                           "--stage", "preflight", "--findings", "addressed", "--input", str(path))
+        self.assertEqual(refused.returncode, 2, marker)
+
+    def test_active_reassessment_diagnosis_is_recoverable_before_closure(self) -> None:
+        marker = "ACTIVE_MECHANISM_LOST"
+        wid = self.begin("pending-retry")
+        finding = {**self.CAPTURED, "id": "SPEC-1"}
+        ref = self.accept(wid, [finding])["advisorPreflight"]["intakeEvidence"]
+        self.assertEqual(self.record_preflight("pending-retry", wid,
+                         self.owned_map(ref, marker="VALUE_NOT_TWO")).returncode, 0)
+        explanation = "Fresh imports share the incorrect initializer. " * 100 + "Distinct final diagnosis."
+        update = self.json_file("diagnosis.json", {"reassessment": explanation,
+            "items": [{**self.owned_map(ref, marker="FRESH_READ_WRONG")[0], "id": "BM_FRESH"}]})
+        recorded = self.ok("tdd-map", "--slug", "pending-retry", "--workflow-id", wid, "--input", str(update))
+        summary = self.cli("summary").stdout
+        self.assertIn("Mechanism", summary, marker)
+        self.assertIn("Fresh imports share the incorrect initializer.", summary, "RECOVERY_DIAGNOSIS_NOT_SHOWN")
+        self.assertLessEqual(len(summary.strip()), 3000, marker)
+        reference = self.status()["findingStates"][0].get("mechanismEvidence")
+        self.assertEqual(reference, {"evidenceId": recorded["summaryId"], "id": "SPEC-1"}, marker)
+        recovered = self.ok("evidence", "--evidence-id", reference["evidenceId"])["document"]
+        self.assertEqual(recovered["reassessment"], explanation, marker)
+
+    def test_second_recurrence_requires_reviewer_repair_and_lead_review(self) -> None:
+        marker = "REPAIR_OWNERSHIP_BYPASSED"
+        wid = self.start_final()
+        finding = {**self.CAPTURED, "id": "SPEC-1"}
+        state = self.accept(wid, [finding])
+        for recurrence in range(2):
+            ref = state["advisorPreflight"]["intakeEvidence"]
+            update = self.json_file("owner.json", {"reassessment": f"Repair {recurrence}: the initializer affects every read; set it to 2.",
+                "dispositions": [{"id": "BM_ATTACK", "sourceRefs": [{"type": "finding", "evidenceId": ref, "id": "SPEC-1"}]}]})
+            self.ok("tdd-map", "--slug", "pending-retry", "--workflow-id", wid, "--input", str(update))
+            document = self.fixed_disposition(wid, ref, dict(self.ZERO_DOMAIN))
+            self.ok("advisor-disposition", "--slug", "pending-retry", "--workflow-id", wid,
+                    "--stage", "preflight", "--findings", "addressed", "--input", str(document))
+            state = self.accept(wid, [finding])
+        current = state["findingStates"][-1]
+        self.assertEqual(current.get("recurrence"), 2, marker)
+        owner = current.get("repairOwner", {})
+        self.assertEqual(owner.get("implementerContextId"), "retry-fixture", marker)
+        self.assertEqual(owner.get("reviewerContextId"), self.env.get("CODEX_THREAD_ID"), marker)
+        ref = state["advisorPreflight"]["intakeEvidence"]
+        self.ok("tdd-map", "--slug", "pending-retry", "--workflow-id", wid, "--input", str(self.json_file("owner.json", {
+            "reassessment": "Second recurrence requires the reviewer to correct the complete read mechanism.",
+            "dispositions": [{"id": "BM_ATTACK", "sourceRefs": [{"type": "finding", "evidenceId": ref, "id": "SPEC-1"}]}]})))
+        result = self.cli("advisor-disposition", "--slug", "pending-retry", "--workflow-id", wid,
+                          "--stage", "preflight", "--findings", "addressed", "--input",
+                          str(self.fixed_disposition(wid, ref, dict(self.ZERO_DOMAIN))))
+        self.assertEqual(result.returncode, 2, marker)
+        self.assertIn("lead review", result.stderr, marker)
+        for tool, target, expected_denial in (("followup_task", "retry-fixture", False),
+                                               ("followup_task", "another-reviewer", True),
+                                               ("spawn_agent", "retry-fixture", True)):
+            hook = subprocess.run([sys.executable, str(ROOT / "hooks/rcf-intake-gate.py")],
+                input=json.dumps({"tool_name": tool, "session_id": self.env.get("CODEX_THREAD_ID"),
+                                  "cwd": str(self.repo), "tool_input": {"target": target}}),
+                env=self.env, text=True, capture_output=True)
+            self.assertEqual(hook.returncode, 0, hook.stderr)
+            self.assertEqual('"deny"' in hook.stdout, expected_denial, marker)
+        record_context_forge(self.repo, self.tmp)
+        self.ok("verify", "--slug", "pending-retry", "--", "git", "diff", "--check")
+        self.ok("verify", "--slug", "pending-retry", "--kind", "quality-gate", "--base-ref", "HEAD")
+        assessment = self.json_file("ordinary-review.json", {"findings": []})
+        self.ok("record-review", "--slug", "pending-retry", "--workflow-id", wid,
+                "--resolved-model", "recorder-input-not-model-review",
+                "--review-context-id", "fresh-rooted-reviewer", "--input", str(assessment))
+        assessed = self.status()["findingStates"][-1]
+        self.assertEqual(assessed["repairOwner"], owner, marker)
+        self.assertNotIn("repairReviewEvidence", assessed, marker)
+        self.assertEqual(assessed["status"], "pending", marker)
+        review = self.json_file("lead-review.json", {"findings": [], "implementationContextId": "retry-fixture"})
+        for reviewer, expected in (("retry-fixture", 2), (self.env["CODEX_THREAD_ID"], 0)):
+            result = self.cli("record-review", "--slug", "pending-retry", "--workflow-id", wid,
+                              "--resolved-model", "recorder-input-not-model-review", "--review-context-id", reviewer,
+                              "--input", str(review))
+            self.assertEqual(result.returncode, expected, marker + result.stderr)
+        self.ok("advisor-disposition", "--slug", "pending-retry", "--workflow-id", wid,
+                "--stage", "preflight", "--findings", "addressed", "--input",
+                str(self.fixed_disposition(wid, ref, dict(self.ZERO_DOMAIN))))
+        self.assertEqual(self.status()["finalReview"]["status"], "pending", marker)
 
     def response(self, wid: str, findings: list[dict[str, object]], *, stage: str = "preflight",
                  source: str = "codex-advisor", raw: str | None = None) -> subprocess.CompletedProcess[str]:
@@ -375,8 +587,9 @@ class PendingAdvisorRetries(AttackHarness):
         marker = "DISTINCT_FINDING_SUPPRESSED"
         wid = self.begin("pending-retry")
         first = self.accept(wid, [self.CAPTURED])
-        variants = [{**self.CAPTURED, "claim": "different claim"},
-                    {**self.CAPTURED, "material": False}, {**self.CAPTURED, "kind": "nonbehavioral"}]
+        variants = [{**self.CAPTURED, "id": "NEW", "claim": "different claim"},
+                    {**self.CAPTURED, "id": "NOTE", "kind": "nonbehavioral", "material": False},
+                    {**self.CAPTURED, "id": "DOC", "kind": "nonbehavioral"}]
         for count, finding in enumerate(variants, 2):
             self.assertEqual(len(self.accept(wid, [finding])["findingStates"]), count, marker)
         omitted = self.accept(wid, [])
@@ -403,15 +616,26 @@ class PendingAdvisorRetries(AttackHarness):
         self.drive_attack_green("pending-retry", "VALUE_NOT_TWO")
         self.ready(other)
         across_stage = self.accept(other, [self.CAPTURED], stage="final")
-        self.assertEqual(len(across_stage["findingStates"]), 2, marker)
-        self.assertEqual({f["stage"] for f in across_stage["findingStates"]}, {"preflight", "final"}, marker)
+        self.assertEqual(len(across_stage["findingStates"]), 1, marker)
+        observed = across_stage["findingStates"][0]["observations"]
+        self.assertEqual(len(observed), 1, marker)
+        review = self.json_file("cross-producer.json", {"findings": [{**self.CAPTURED,
+            "id": "REVIEW-ALIAS", "axis": "Spec", "severity": "high", "location": "app.py",
+            "evidence": "recorder input, not a native review", "consequence": "same unresolved obligation",
+            "smallest_action": "repair the original finding"}]})
+        self.ok("record-review", "--slug", "pending-retry", "--workflow-id", other,
+                "--resolved-model", "recorder-input-not-model-review", "--review-context-id", "retry-fixture",
+                "--input", str(review))
+        cross = self.status()
+        self.assertEqual(len(cross["findingStates"]), 1, marker)
+        self.assertEqual(cross["codeReview"]["findings"], "pending", marker)
         final_wid = self.start_final()
         note = {**self.CAPTURED, "material": False, "kind": "nonbehavioral"}
         self.accept(final_wid, [note], stage="final")
         (self.repo / "note.txt").write_text("new candidate\n")
         self.ready(final_wid)
         changed_verdict = self.accept(final_wid, [note, {**note, "id": "NEW", "material": True}], stage="final")
-        self.assertEqual(len(changed_verdict["findingStates"]), 3, marker)
+        self.assertEqual(len(changed_verdict["findingStates"]), 2, marker)
 
     def test_observations_retain_raw_bytes(self) -> None:
         marker = "OBSERVATION_LOST"
@@ -1403,7 +1627,9 @@ class MapCorrectionAttacks(AttackHarness):
         expected = {key: value for key, value in contract.items() if key != "redCommand"}
         expected["status"] = "pending"
         self.assertEqual(self.map_items()["BM_ATTACK"], expected, marker)
-        self.assertEqual(self.status()["findingStates"], before["findingStates"], marker)
+        current_finding = self.status()["findingStates"][0]
+        self.assertEqual({k: current_finding[k] for k in before["findingStates"][0]}, before["findingStates"][0], marker)
+        self.assertEqual(current_finding["mechanismEvidence"]["evidenceId"], self.status()["tddEvidence"], marker)
         self.assertEqual(self.mapped_tdd(slug, "red", correct).returncode, 0, marker)
         self.repair_order()
         self.assertEqual(self.mapped_tdd(slug, "green", correct).returncode, 0, marker)
@@ -1619,9 +1845,9 @@ class MapCorrectionAttacks(AttackHarness):
         foreign = self.behavioral_intake("foreign-owner", foreign_wid, "foreign claim")
         wid = self.begin(slug)
         first = self.behavioral_intake(slug, wid, "first claim")
-        second = self.behavioral_intake(slug, wid, "second claim with the same label")
-        refs = [{"type": "finding", "evidenceId": value, "id": "SPEC-1"}
-                for value in (first, second)]
+        second = self.behavioral_intake(slug, wid, "second independent claim", "SPEC-2")
+        refs = [{"type": "finding", "evidenceId": value, "id": identifier}
+                for value, identifier in ((first, "SPEC-1"), (second, "SPEC-2"))]
         keep = {**self.KEEP_OMITTED, "status": "already-satisfied", "evidence": "initial evidence"}
         pending = {key: value for key, value in self.KEEP_OMITTED.items() if key != "evidence"}
         pending.update(status="pending", expected="keep.value is 2")
@@ -1686,8 +1912,10 @@ class MapCorrectionAttacks(AttackHarness):
         changed = self.map_update(slug, dispositions=[{"id": "BM_KEEP", "sourceRefs": refs}])
         self.assertEqual(changed.returncode, 0, changed.stdout + changed.stderr)
         after = self.status()
-        self.assertEqual({key: value for key, value in before.items() if key not in {"tddEvidence", "updatedAt"}},
-                         {key: value for key, value in after.items() if key not in {"tddEvidence", "updatedAt"}})
+        self.assertEqual({key: value for key, value in before.items() if key not in {"tddEvidence", "updatedAt", "findingStates"}},
+                         {key: value for key, value in after.items() if key not in {"tddEvidence", "updatedAt", "findingStates"}})
+        for prior, current in zip(before["findingStates"], after["findingStates"]):
+            self.assertEqual({key: current[key] for key in prior}, prior)
         self.assertEqual(self.map_items()["BM_KEEP"]["sourceRefs"], refs)
         still_bound()
         events = self.ok_text("history")
@@ -2537,6 +2765,7 @@ class WorkflowRecovery(AttackHarness):
             "intakeEvidenceId": intake, "dispositions": [{
                 "finding_id": "SPEC-1", "status": "fixed",
                 "reason": "The owning attack and current app read both return two; the tested read has zero incorrect results.",
+                "mechanism": "The initializer supplied the wrong constant to all readers; setting it to 2 corrects the complete read surface, including the fresh import counterexample.",
                 "evidenceRefs": [receipt["evidenceId"] + ":0"],
             }],
         })

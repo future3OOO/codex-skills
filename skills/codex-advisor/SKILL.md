@@ -5,6 +5,11 @@ description: Consult the Codex advisor at the workflow preflight and final-revie
 
 # Codex advisor
 
+For recurring behavioral findings, follow the workflow's
+[repair ownership and mechanism rules](../repo-production-workflow/SKILL.md#recurring-behavioral-repairs).
+They govern the recurrence-two reviewer/lead swap; existing review judges whether
+the explanation and executed attacks close the defect class.
+
 Use `scripts/ask-codex-advisor.sh` as the sole production transport. Do not use
 the plugin forwarder, Agent tool, or a second wrapper as a fallback.
 
@@ -92,8 +97,9 @@ contradicting measurement. It returns only this strict envelope:
 {"schemaVersion":1,"findings":[{"id":"SPEC-1","claim":"...","material":true,"kind":"behavioral"}],"verdict":"fix-before-commit"}
 ```
 
-Findings carry exactly `id`, `claim`, `material`, and `kind` (`behavioral` or
-`nonbehavioral`). Final verdict is `commit-ready`, `fix-before-commit`, or
+Findings carry `id`, `claim`, `material`, and `kind` (`behavioral` or
+`nonbehavioral`), with optional `priorFinding` as defined by the linked recurring
+repair contract. Final verdict is `commit-ready`, `fix-before-commit`, or
 `context-mismatch`; use `fix-before-commit` only with a material finding, and
 `commit-ready` only when context matches and none is material.
 `context-mismatch` is reserved for a candidate or projection identity mismatch

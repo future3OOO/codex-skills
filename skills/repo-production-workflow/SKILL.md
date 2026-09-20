@@ -337,6 +337,50 @@ behavioral finding is fixed by owning it: add the attack item with its finding
 corrections record their current-tree evidence directly. A later map update
 that would leave a fixed finding without its owning attack refuses.
 
+#### Recurring behavioral repairs
+
+Explain the missed mechanism before repairing again: cause, affected inputs/paths,
+invariants, class-wide correction and latest counterexample. Include reachable
+states/shared writers when relevant. Keep the explanation in existing diagnosis,
+`tdd-map` reassessment or disposition evidence; no separate document or acknowledgement.
+The recorder retains linked reassessment prose automatically. A behavioral `fixed`
+uses that explanation, or `mechanism` prose/reference (`{"evidenceId":"...","id":"..."}`)
+in the ordinary disposition. Record it once; references retain workflow/finding
+ownership. Review judges adequacy; an artifact never replaces current owning proof.
+Instance-only repair remains `accepted-follow-up` with the in-pass obligation open.
+
+Both intake paths reconcile retained namespace/ID and exact behavioral claims
+(outer whitespace only). A differently identified/worded observation can use
+`priorFinding: {"evidenceId":"...","id":"..."}`; an explicit owned reference
+resolves ambiguous matches. Distinct findings need distinct IDs. Pending retries
+preserve progress. Each `fixed` followed by re-intake increments recurrence, retaining
+immutable observations, dispositions, mechanism evidence and proof.
+
+At recurrence two or later, the retained reviewer implements that repair and the
+lead reviews it. This is the narrow exception to step 10's read-only reviewer and
+repair-before-dispatch rules: continue the existing reviewer using its recorded
+context ID; no fresh/nested reviewer or interim advisor. Record the lead's review
+through `record-review` with its actual lead context ID and the intake's
+`implementationContextId` identifying the retained repair author. Self-review or a
+review of an earlier candidate cannot close the repair. An ordinary independent
+assessment without `implementationContextId` can run with ownership pending; it
+does not certify the repair or change its owners. Verify the repaired product,
+then retain the mandatory final advisor pass. Ordinary initial review is unchanged.
+
+If the retained context is unusable or rooted elsewhere, use step 10's explicitly
+rooted fallback. The existing lead-review intake can record authorized succession
+with `repairSuccession: {context, findings, previousOwner, evidence}`: current
+workflow/candidate context, affected finding `{evidenceId, id}` references, the exact
+previous implementer/reviewer pair, and the authorization and native-checkout
+evidence. The ordinary author/reviewer fields name the actual successor actors.
+This appends predecessor history and changes only the named pending recurring
+repairs; it never rewrites historical authorship or permits self-certification.
+No separate transfer command or review stage is required.
+
+After compaction, use the existing summary/checkpoint mechanism reference and repair
+ownership. Retrieve long evidence through `workflow evidence`; missing evidence is
+visibly missing. Availability alone does not prove resumed-agent use.
+
 ### 11. Final Codex Advisor review
 
 Before the consult, reconcile known material obligations using step 2's verification

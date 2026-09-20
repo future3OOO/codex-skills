@@ -5,6 +5,11 @@ description: Review a diff since a fixed point along independent Standards and S
 
 # Code review
 
+For recurring behavioral findings, follow the workflow's
+[repair ownership and mechanism rules](../repo-production-workflow/SKILL.md#recurring-behavioral-repairs).
+They govern the recurrence-two reviewer/lead swap; existing review judges whether
+the explanation and executed attacks close the defect class.
+
 Initial review uses a fresh native context in the lead's checkout; return review
 continues that context when usable. You own review, not implementation: read source and run tests or attacks, but never
 edit candidate source, rewrite the contract, mutate the active workflow ledger,

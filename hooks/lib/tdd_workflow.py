@@ -787,6 +787,7 @@ def _run_tdd(values: list[str]) -> int:
                 kind=doc_kind,
                 active=next_active,
                 reassessment_pending=reassessment_pending,
+                reassessment=(current or {}).get("reassessment"),
                 behaviorId=args.behavior_id,
                 behavior=contract["behavior"],
                 seam=contract["seam"],
@@ -1061,7 +1062,10 @@ def _map_update(values: list[str]) -> int:
     status = "pending" if unresolved else "passed"
     current_evidence_id = state.get("tddEvidence")
     evidence_id = current_evidence_id
-    if updated != items:
+    reassessed = frozenset(str(entry["id"]) for entry in [*added_items, *dispositions])
+    if source is not None:
+        reassessed |= {str(source)}
+    if updated != items or reassessed:
         document = {**(current or _map_doc(
             slug=str(state["slug"]), workflow_id=str(state["workflowId"]),
             items=items, status=status, kind="map",
@@ -1084,14 +1088,14 @@ def _map_update(values: list[str]) -> int:
         if before == after and not review_changed:
             _, evidence_id = annotate_tdd_evidence(
                 identity, str(state["slug"]), str(state["workflowId"]), document,
-                expected_evidence_id=current_evidence_id,
+                expected_evidence_id=current_evidence_id, reassessed=reassessed,
             )
         else:
             action = "in-progress" if unresolved else "passed"
             _, evidence_id = commit_tdd(
                 identity, str(state["slug"]), str(state["workflowId"]), document, action,
                 expected_evidence_id=current_evidence_id,
-                review_changed=review_changed,
+                review_changed=review_changed, reassessed=reassessed,
             )
     _emit_json(
         {

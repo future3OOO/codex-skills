@@ -1403,3 +1403,138 @@ now supersedes the stale "open, not merged" statuses; the installed-probe
 note records the verified per-item status grouping; the #62 delivery names
 the >8 MiB `size:mtime_ns` digest representation; the dropped 350-command
 fixture is no longer described as committed and pinned.
+
+## 2026-09-20 — Recurring behavioral repairs retain their mechanism
+
+**Decision:** [Issue #64](https://github.com/future3OOO/codex-skills/issues/64)
+extends the existing intake/disposition ledger: retained namespace/ID or exact
+outer-trimmed behavioral claim identifies a finding; an owned prior reference
+resolves ambiguity. Bind and reuse diagnosis from explicitly submitted reassessment
+or repair disposition, scoped to changed/source map owners; ordinary TDD runs
+cannot reattribute carried explanation text. At recurrence two the
+retained reviewer implements and the lead reviews that implementer's repairs,
+preserving other implementers' pending obligations, followed by mandatory final advice. Existing owning-map proof
+still decides closure. No additional store, command, stage or coverage policy;
+[#65](https://github.com/future3OOO/codex-skills/issues/65) owns input coverage.
+Historical fixed/re-intake chains use committed event order, preserving old
+immutable evidence rather than guessing from timestamps. Already-pending upgraded
+recurrences receive the same retained repair ownership as newly observed ones,
+including unrelated and empty intake. Empty review that first recovers ownership
+does not certify the repair; a properly attributed lead review is still required.
+
+**Observed:** Targeted public-CLI probes pass for identity, both mechanism
+forms, ownership recording, receipt reuse and reassessment. Replaying 35
+captured CX3 finding values produced zero unintended identity changes and
+preserved all nine original intake documents. These component observations do
+not establish actual reviewer takeover or native compaction recovery.
+
+**Delivery:** In progress in the issue-64 worktree; no commit, push, PR or shared
+installation. The original bounded replay arms stopped at compaction timeouts;
+their accepted requests did not establish completed compaction. A later native
+run completed compaction; its helper incorrectly waited for a different event
+and timed out after completion. The native `compacted` record, not that helper's
+exit status, establishes completion. Existing evidence is preserved outside the
+checkout in `/home/prop_/issue-64-evidence` and the private issue64 replay estate.
+The user's latest instruction authorizes further testing through `codexs` on
+SWE-2. Normal independent implementation review and mandatory higher-reasoning
+final advice remain required; production advisor policy is unchanged.
+
+A retained native lead continued on `swe-2-max`, recorded ordinary mechanism
+reassessment, and repaired the observation/disposition defect in the actual
+codex-skills seed. Nine targeted product probes passed before its time limit
+interrupted verification bookkeeping. Independent CLI RED/GREEN replay of the
+actual pre-repair and repaired product confirms mixed-observation closure and
+preserved refusal after owning-proof reassessment. This settles product-repair
+TDD, not actual reviewer takeover or efficiency. Independent implementation review
+found a nonbehavioral-to-behavioral promotion that allowed closure with old proof;
+the current projection now controls closure while immutable observations remain
+unchanged. Targeted CLI RED/GREEN and return review confirm the correction.
+Lead review also corrected lost nonmaterial-to-material escalation in both intake paths.
+
+**Recovery decision and observation:** A resumed SWE-2 agent received a working
+mechanism reference but reconstructed source in 21 commands without retrieving it.
+Expose at most 600 characters of the existing reassessment in the existing bounded
+summary, alongside its full reference. Reusing the same completed-compaction prefix
+and request, the agent retrieved the full evidence (over the summary limit), selected
+the existing counterexample probe, and used the retained diagnosis to identify the
+repair in four commands. The explanation itself was 756 characters. Independent
+return review accepts this bounded native recovery observation; it is not an
+equivalent-work efficiency measurement. In this implementation pass, SPEC-7 returned
+after two recorded fixes; the retained native reviewer implemented the third repair
+and the lead inspected it. This is actual task work, not the cheap comparison replay.
+Final advice and equivalent-correct-work efficiency still govern acceptance.
+The implementation's final advisor remains required; no commit, push or PR.
+
+**Assessment decision:** Restore the existing rule that findings prevent completion
+but not required review. The inherited final checkpoint conflated a completed
+independent assessment with resolved findings. Bind pending assessments to their
+reviewed tree and admit final evaluation with current TDD and verification;
+retain finding/proof completion checks, freshness, duplicate-result refusal and
+appeal rules. Real CLI RED/GREEN and affected lifecycle probes cover this correction.
+It adds no advisor stage or transport and preserves mandatory higher-reasoning advice.
+
+**Isolation integration:** Resumed the same pass on `94044a0`, including
+[PR #79](https://github.com/future3OOO/codex-skills/pull/79). Preserve its
+single-task routing and diagnostics alongside recurrence-two dispatch ownership.
+An ordinary installed CLI verification bound the current session explicitly to
+this worktree; status and shell working directories are not routing authority.
+The original reviewer native checkout is main, so the installed workflow's
+explicitly rooted CLI fallback owns the new independent assessment. Historical
+reviewer/lead identities remain unchanged; no shared hooks were rewritten.
+
+**Observed:** Four integrated isolation/ownership checks and 35 affected
+finding/review checks pass. Direct historical disposition refuses unsupported
+closure in both forms; the captured 35-value corpus has zero identity regressions
+and preserves nine immutable intakes. Native recovery evidence is reused.
+At this checkpoint, equivalent-completed-work efficiency was unproved. The
+subsequent user authorization supersedes the earlier blanket replay restriction:
+reuse the smallest bounded SWE-2 comparison, without benchmark advisor calls.
+No delivery or acceptance waiver follows from component results.
+
+**Assessment correction:** The rooted fallback exposed a recurring-repair admission
+failure: ordinary independent review was required to name a repair implementer.
+Require that identity only for explicit repair certification. A real CLI RED/GREEN
+probe preserves pending ownership, denies unknown explicit authors and leaves
+completion blocked. The existing ownership attack also retains this distinction;
+no new command, actor replacement or completion exception is introduced.
+
+
+**Reassessment and historical review correction:** The first attributed review
+must normalize historical recurrence before selecting the repair owner; failed
+identity checks still roll back. Explicit map dispositions, items and the existing
+source behavior identify reassessment targets even when map structure is unchanged.
+A revised diagnosis is retained for those owners, while identical repeats remain
+no-ops and ordinary carried prose cannot bind unrelated owners. This supersedes
+the earlier changed-map-only targeting decision. Both reproduced attacks and the
+affected no-op, multiple-owner and historical-disposition preservation pass.
+The explicitly rooted replacement reviewer implemented these corrections; the
+continuing lead independently reviewed the actual delta. Historical actor records
+are preserved, and the replacement is not presented as the original reviewer.
+
+
+**Ownership continuity and diagnosis reuse:** The authorized rooted fallback
+exposed a real recording gap: the old actor pair could not be replaced honestly.
+Record finding-scoped succession within the existing independent review, with
+current workflow/candidate context, exact predecessor and supporting evidence.
+Retain predecessor history and immutable authorship; stale, foreign, self and
+unselected transfers cannot certify a repair. This is exceptional continuity,
+not another stage or an authorization system.
+
+Diagnosis equality is judged against each selected owner's bound explanation,
+including disposition references, rather than the last map document's text.
+This supersedes the global-text no-op decision. Equal prose can update a different
+owner while already-applicable explanations remain no-ops. Both corrections were
+implemented by the rooted reviewer and independently inspected by the continuing
+lead; real CLI attacks and affected preservation pass. Efficiency acceptance
+and delivery remain pending until their actual results are reconciled.
+
+**Final assessment and delivery status:** The current final advisor observed the
+actual rooted reviewer → continuing lead → final advisor sequence. It retained
+efficiency acceptance: aggregate measured tokens fell 8.4% and elapsed time 7.3%,
+but candidate reporting was interrupted and full equivalent completion is unproved.
+No further benchmark agents will run under the user's cost instruction. The
+assessment also identified missing collision/race preservation probes and a
+reachable certification conflict after findings acquire different reviewers for
+one implementer. These remain active repair/proof obligations. The user-requested
+draft PR exposes the reviewed implementation and open findings; it does not close
+#64, authorize integration, or complete the workflow.

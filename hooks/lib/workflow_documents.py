@@ -7,6 +7,7 @@ import os
 import re
 import sys
 import tempfile
+import uuid
 from pathlib import Path
 from .state_store import utc_timestamp
 
@@ -85,7 +86,12 @@ def advisor_envelope(
         if not isinstance(kind, str) or kind not in {"behavioral", "nonbehavioral"}:
             kind = "behavioral"
         identifiers.add(str(identifier))
-        typed.append({"id": identifier, "claim": item["claim"], "material": item["material"], "kind": kind})
+        prior = item.get("priorFinding")
+        if prior is not None and (not isinstance(prior, dict) or set(prior) != {"evidenceId", "id"}
+                                  or not all(_text(v) for v in prior.values())):
+            raise ValueError("priorFinding requires evidenceId and id")
+        typed.append({"id": identifier, "claim": item["claim"], "material": item["material"], "kind": kind,
+                      **({"priorFinding": prior} if prior is not None else {})})
     if stage == "final" and verdict in {"commit-ready", "fix-before-commit"} and ((verdict == "commit-ready") == any(item["material"] for item in typed)):
         raise ValueError("advisor envelope verdict is incompatible with finding materiality")
     return {
@@ -99,6 +105,7 @@ def advisor_envelope(
         "raw": text,
         "sha256": hashlib.sha256(raw).hexdigest(),
         "recordedAt": utc_timestamp(),
+        "observationId": uuid.uuid4().hex,
     }, str(verdict)
 
 
@@ -490,10 +497,17 @@ def _finding_dispositions(value: object, allowed: set[str]) -> list[JsonObject]:
             raise ValueError(f"finding {identifier} has an invalid or duplicate disposition")
         if identifier in seen:
             raise ValueError(_disposition_error(status, f"finding {identifier} has a duplicate disposition"))
+        mechanism = item.get("mechanism")
+        if mechanism is not None and not (_text(mechanism) or (
+            isinstance(mechanism, dict) and set(mechanism) == {"evidenceId", "id"}
+            and all(_text(v) for v in mechanism.values())
+        )):
+            raise ValueError("mechanism requires repair prose or an evidenceId/id reference")
+        mechanism_fields = {"mechanism"} if "mechanism" in item else set()
         if "evidenceRefs" in item:
             refs = item["evidenceRefs"]
             extra = {"reference"} if status == "accepted-follow-up" else set()
-            if (set(item) != {"finding_id", "status", "reason", "evidenceRefs"} | extra
+            if (set(item) != {"finding_id", "status", "reason", "evidenceRefs"} | extra | mechanism_fields
                     or not _text(item.get("reason")) or not isinstance(refs, list) or not refs
                     or not all(_text(ref) for ref in refs)
                     or extra and not _text(item.get("reference"))):
@@ -518,7 +532,7 @@ def _finding_dispositions(value: object, allowed: set[str]) -> list[JsonObject]:
                 _refuse_temp_paths(str(item["evidence"]), f"finding {identifier} evidence")
             except ValueError as exc:
                 raise ValueError(_disposition_error(status, str(exc))) from exc
-        if set(item) != common | extra:
+        if set(item) != common | extra | mechanism_fields:
             raise ValueError(_disposition_error(status, f"finding {identifier} {status} has unknown or missing fields"))
         if status in {"fixed", "rejected-with-evidence"} and not (
             premise["result"].strip().lower() == "false"
@@ -568,10 +582,31 @@ def review_summary(
         "schemaVersion": 1, "slug": slug, "workflowId": workflow_id,
         "producer": "code-review", "stage": "code-review",
         "resolvedModel": model, "reviewContextId": context, "recordedAt": utc_timestamp(),
+        "observationId": uuid.uuid4().hex,
     }
     if value == {"findings": [], "dispositions": []}:
         value = {"findings": []}
-    if set(value) == {"findings"}:
+    if set(value) in ({"findings"}, {"findings", "implementationContextId"},
+                      {"findings", "implementationContextId", "repairSuccession"}):
+        if "implementationContextId" in value:
+            if not _text(value["implementationContextId"]):
+                raise ValueError("implementationContextId must identify the actual repair author")
+            common["implementationContextId"] = value["implementationContextId"]
+        if "repairSuccession" in value:
+            succession = value["repairSuccession"]
+            if (not isinstance(succession, dict)
+                    or set(succession) != {"context", "findings", "previousOwner", "evidence"}
+                    or not _text(succession.get("evidence"))):
+                raise ValueError("repairSuccession requires context, findings, previousOwner and evidence")
+            owner, refs = succession["previousOwner"], succession["findings"]
+            if (not isinstance(owner, dict) or set(owner) != {"implementerContextId", "reviewerContextId"}
+                    or not all(_text(v) for v in owner.values())):
+                raise ValueError("repairSuccession requires the previous implementer and reviewer")
+            if (not isinstance(refs, list) or not refs or any(
+                    not isinstance(ref, dict) or set(ref) != {"evidenceId", "id"}
+                    or not all(_text(v) for v in ref.values()) for ref in refs)):
+                raise ValueError("repairSuccession findings require evidenceId/id references")
+            common["repairSuccession"] = {**succession, "context": _disposition_context(succession["context"])}
         findings = value["findings"]
         if not isinstance(findings, list):
             raise ValueError("review intake findings must be an array")
@@ -581,7 +616,11 @@ def review_summary(
             if not isinstance(item, dict):
                 raise ValueError("each review finding must be an object")
             identifier = item.get("id")
-            missing, extra = required - set(item), set(item) - required
+            missing, extra = required - set(item), set(item) - required - {"priorFinding"}
+            prior = item.get("priorFinding")
+            if prior is not None and (not isinstance(prior, dict) or set(prior) != {"evidenceId", "id"}
+                                      or not all(_text(v) for v in prior.values())):
+                raise ValueError("priorFinding requires evidenceId and id")
             if len(missing) == 1 and not extra:
                 raise ValueError(f"finding {identifier} requires {next(iter(missing))}")
             if missing or extra:
