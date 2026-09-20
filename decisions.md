@@ -16,7 +16,8 @@ its actual behavior. Absence alone never proves it. This supersedes the earlier
 proof-gap stopping instruction. Condense reviewer handling around measured
 findings, current-head closure, and task acceptance; remove PRD requirements.
 README owns codex-skills installation policy; replace its duplication in reusable
-instructions with one codex-skills-only pointer.
+instructions with one codex-skills-only pointer. Require creating or reusing and
+entering the task-owned worktree before workflow invocation or state creation.
 
 **Observed:** A native instruction probe required real return-through-Seam
 execution for both a new CLI operation and an existing filesystem operation.
