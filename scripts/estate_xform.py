@@ -54,9 +54,9 @@ TOKENS = {
     ("CLAUDE.md", "AGENTS.md"),
     ("`Agent` tool", "`spawn_agent`"),
     ("Agent tool", "spawn_agent"),
+    ("subagent_type=general-purpose", "agent_type=default"),
     ("subagent_type", "agent_type"),
-    ("general-purpose", "router_deepseek_deepseek_v4_flash"),
-    ("`Explore`", "`router_deepseek_deepseek_v4_flash`"),
+    ("`Explore`", "`explorer`"),
     ("TodoWrite", "update_plan"),
     ("AskUserQuestion", "request_user_input"),
     ("NotebookEdit", "apply_patch"),
@@ -95,7 +95,18 @@ def xform_path(path: str, target: str) -> str:
 
 
 def inverse_pairs(target: str) -> list:
-    return [(new, old) for old, new in TOKENS[target]]
+    pairs = [(new, old) for old, new in TOKENS[target]]
+    if target == "codex":
+        # The generated inverse of the qualified pair would emit
+        # subagent_type=..., which the generic key rename re-clobbers into
+        # subsubagent_type; compose through agent_type= instead, and never
+        # rewrite the bare word default (prose collision).
+        pairs.remove(("agent_type=default", "subagent_type=general-purpose"))
+        pairs.insert(
+            pairs.index(("agent_type", "subagent_type")),
+            ("agent_type=default", "agent_type=general-purpose"),
+        )
+    return pairs
 
 
 def main() -> None:
