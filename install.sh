@@ -20,7 +20,7 @@ chmod +x "$DEST"/hooks/*.py
 
 # rsync excludes stop new copies only; remove matching artifacts already live.
 find "$DEST/skills" "$DEST/hooks" -type f \
-  \( -name 'test_*.py' -o -name 'test-*.sh' -o -name '*.pyc' \) -delete
+  \( -name 'test_*.py' -o -name 'test-*.sh' -o -name '*.pyc' -o -name '*:Zone.Identifier' \) -delete
 find "$DEST/skills" "$DEST/hooks" -type d \
   \( -name tests -o -name __pycache__ \) -prune -exec rm -rf {} +
 
