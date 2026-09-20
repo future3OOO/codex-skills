@@ -24,11 +24,15 @@ The `router_deepseek_deepseek_v4_flash` pin (ported Sep 12) resolves only
 under the codex-router provider; under a ChatGPT-account session the spawn
 400s with "model is not supported." `default` inherits the parent model —
 still deepseek under codexd, codex-family otherwise. Provider-conditional
-model pins are banned from skill text.
+model pins are banned from skill text, and `estate_xform.py` no longer
+generates one: the codex TOKENS map now sends `general-purpose` to `default`
+and `Explore` to `explorer`, so the next upstream sync cannot re-embed it.
 
 **Status:** pending PR. Reproduction: rollout record shows the errored
 spawn (`design_critique`, 400 invalid_request_error); the same call with
-`default` cannot hit the provider check.
+`default` cannot hit the provider check. Verified the sync path end-to-end:
+`estate_xform.py to-codex` on upstream `subagent_type=general-purpose` now
+emits `agent_type=default`.
 
 ## 2026-09-20 — Installer excludes harness-owned system skills
 
