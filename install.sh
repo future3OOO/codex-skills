@@ -6,7 +6,7 @@ set -euo pipefail
 SRC="$(cd "$(dirname "$0")" && pwd -P)"
 DEST="${CODEX_HOME:-$HOME/.codex}"
 BACKUP="$HOME/.codex-backups/$(date +%Y%m%d-%H%M%S)"
-EXCLUDES=(--exclude='tests/' --exclude='test_*.py' --exclude='test-*.sh' \
+EXCLUDES=(--exclude='.system/' --exclude='tests/' --exclude='test_*.py' --exclude='test-*.sh' \
   --exclude='__pycache__' --exclude='*.pyc')
 
 mkdir -p "$DEST" "$BACKUP"
