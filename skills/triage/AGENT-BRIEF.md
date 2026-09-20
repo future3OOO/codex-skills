@@ -6,8 +6,8 @@ Preserve requested outcomes and proof while removing unnecessary workflow ceremo
 
 Link to the applicable `AGENTS.md`; it owns execution and review corrections.
 Triage starts no pass and invents no phases, approvals, reviews, budgets or stopping
-rules. Keep user restrictions scoped: benchmark restrictions do not govern delivery
-reviews. Distinguish repair from completed-code review under the existing workflow.
+rules. Apply user restrictions only to their stated scope. Distinguish repair from
+completed-code review under the existing workflow.
 Resolve contradictory instructions instead of layering another policy over them.
 
 ## Establish the contract

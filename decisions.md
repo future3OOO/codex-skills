@@ -17,6 +17,9 @@ AGENTS.md requires less ceremony and net code reduction in review follow-up comm
 
 **Status:** [PR #80](https://github.com/future3OOO/codex-skills/pull/80) open; documentation only.
 
+**Checkout correction:** A real native parent/child probe confirmed `--worktree`
+binds both to one checkout. This supersedes PR #79's CLI-review fallback.
+
 ## 2026-09-20 — Task worktrees own dispatch and recovery
 
 **Decision:** Correct PR #50's aggregation of session-associated worktrees.
