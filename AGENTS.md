@@ -36,9 +36,6 @@ handoff.
 
 After required review, commit, push, and open/update the PR when a remote exists
 and branch/PR alignment is verified, unless the user or workflow says otherwise.
-Merge and shared-estate installation require explicit maintainer authorization;
-when installation is authorized, merge the reviewed PR first and follow README's
-owned-path installation procedure.
 
 ## Hard Production Invariants
 
@@ -156,9 +153,11 @@ Do not declare completion or switch tasks until task acceptance is reconciled,
 legitimate findings are fixed or rejected with evidence, no unresolved
 non-outdated threads remain, and required checks pass. Unrelated failures are blockers.
 
-## Codex-Skills Decision Record
+## Codex-Skills Only
 
 For codex-skills work only, read the checkout's `decisions.md` at start/resume.
 Before handoff, record consequential decisions, reasons, and delivery status;
 mark superseded decisions and link the owning issue or PR. Keep observations
 separate from decisions and completed work; no per-edit log.
+
+For codex-skills installation, follow the checkout’s [README](README.md#scoped-updates).

@@ -344,10 +344,7 @@ After the final advisor finds the candidate ready, commit, push, and open/update
 the PR when intended for integration. Run the
 [reviewer completion gate](../../AGENTS.md#reviewer-findings-and-completion) on the
 current head. Merge only with explicit maintainer authorization; passing checks
-and reviews do not authorize merge. When global installation is authorized, merge the reviewed PR first.
-For changed paths mapped into
-the live estate, follow the README backup/merge approach from updated main,
-install only owned paths, and record source commit/path set and installed checks.
+and reviews do not authorize merge.
 Keep the pass active through reviewer closure; corrections repeat only the
 affected steps, including verification and independent review.
 
