@@ -42,10 +42,7 @@ every advisor consult; a paraphrase written here is the paraphrase those steps
 will enforce. `--intent "<text>"` still takes a literal argument, and
 `--intent`/`--intent-file` are mutually exclusive.
 
-The repository-scoped SQLite event ledger remembers accepted transitions, logical evidence, phase, and next action across process restarts.
-Native `begin` and `verify` also select their explicit task worktree for that
-session’s dispatch and recovery hooks; shell `workdir` alone does not relocate
-the native session. This routing selects no proof and changes no other task. Its disposable active projection is repaired from that history. It is agent-writable workflow continuity, not an attestation, approval, audit credential, or Git boundary.
+The repository-scoped SQLite event ledger remembers accepted transitions, logical evidence, phase, and next action across process restarts. Its disposable active projection is repaired from that history. It is agent-writable workflow continuity, not an attestation, approval, audit credential, or Git boundary.
 
 `workflow.py status` is the public `schemaVersion: 1` JSON projection consumed by
 hooks and advisor automation. It exposes semantic workflow facts and logical
@@ -280,8 +277,8 @@ callers, tests, or another active authority. In this governed workflow `workflow
 workflow it stays optional. For a genuinely trivial change, record
 `set-phase --phase code-review --status not-required --findings none`.
 
-Retain its agent and intake IDs. For return review use native `followup_task` with
-the correction delta, original finding identities and changed/missing evidence.
+Retain its agent and intake IDs. Resume it via `followup_task` or, for the CLI fallback,
+`codex exec -C "<task-worktree>" resume <id>` with the delta, finding IDs and changed/missing evidence.
 Do not reload unchanged skills or repeat execution solely for handoff. Keep the
 reviewer read-only and assign each needed operation once; the lead owns repairs,
 TDD/verification recording and dispositions. Use a fresh reviewer when context is
