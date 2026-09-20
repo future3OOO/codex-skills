@@ -6,6 +6,18 @@ Issue bodies own implementation scope; this record preserves decisions and their
 status. New decisions supersede earlier ones explicitly; observations and open
 acceptance gaps are not completed delivery.
 
+## 2026-09-20 — Triage preserves outcomes without prescribing ceremony
+
+**Decision:** Tighten PR #40's shared brief contract: preserve requested behavior
+and proof, leave methods to the implementer unless necessary, and reject invented
+or contradictory obligations. Keep user restrictions scoped and one authoritative
+brief. This supersedes copying a separate delivery condition into every brief.
+Efficiency still means improvement over the stated baseline at equivalent correct
+outcomes. Existing execution and review owners retain their authority.
+
+**Delivery:** `fix/triage-workflow-boundaries`; documentation-only follow-up to PR #40.
+No runtime, issue #64/#65, or installed-estate changes.
+
 ## 2026-09-20 — Task worktrees own dispatch and recovery
 
 **Decision:** Correct PR #50's aggregation of session-associated worktrees.
