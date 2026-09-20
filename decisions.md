@@ -1574,3 +1574,10 @@ field when assigning the first recurring owner. Without that shared retention,
 subsequent lead certification hid the reviewer from a later unrelated recurrence.
 The full A repair/certification/closure → B recurrence-two sequence reproduced
 and now preserves the same reviewer and denies replacement dispatch.
+
+**#64 skill pruning:** Keep recurring-repair policy authoritative in the workflow;
+review, advisor and diagnosis skills carry conditional pointers. Remove repeated
+policy and recorder narration while preserving identity, mechanism/proof, repair
+ownership, authorized succession and recovery requirements. This wording-only
+correction stays in PR #82, open for review per user instruction; it does not
+establish estate efficiency.

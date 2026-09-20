@@ -5,10 +5,8 @@ description: Consult the Codex advisor at the workflow preflight and final-revie
 
 # Codex advisor
 
-For recurring behavioral findings, follow the workflow's
-[repair ownership and mechanism rules](../repo-production-workflow/SKILL.md#recurring-behavioral-repairs).
-They govern the recurrence-two reviewer/lead swap; existing review judges whether
-the explanation and executed attacks close the defect class.
+For recurring behavioral findings, apply the workflow's
+[repair contract](../repo-production-workflow/SKILL.md#recurring-behavioral-repairs).
 
 Use `scripts/ask-codex-advisor.sh` as the sole production transport. Do not use
 the plugin forwarder, Agent tool, or a second wrapper as a fallback.
