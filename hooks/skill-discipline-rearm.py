@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""SessionStart(resume|compact): restore workflow rules and bounded pass state."""
+"""SessionStart(compact): restore workflow rules and bounded pass state."""
 from __future__ import annotations
 
 import json

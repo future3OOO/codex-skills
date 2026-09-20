@@ -227,7 +227,7 @@ session and defers the rest here.
 |---|---|
 | `PreToolUse(Edit\|Write\|apply_patch)` | Advise, never refuse: name what the pass has not recorded and admit the edit; docs, scratch, and non-repository paths are silent; test-like paths skip only the RED advice |
 | `PostToolUse(Edit\|Write\|apply_patch)` | Invalidate downstream readiness, record the session's repository association where a pass exists, then return quality feedback — the gate run carries the pass's recorded base OID as `--base-ref` when bootstrap recorded one, so growth warnings read branch-cumulative per edit; with no recorded base the hook derives nothing and the gate reports the base-binding gap |
-| `SessionStart(compact\|resume)` | Restore the full workflow chain and bounded current summary from committed SQLite state |
+| `SessionStart(compact)` | Restore the full workflow chain and bounded current summary from committed SQLite state |
 
 The session association marker: `PostToolUse` records one immutable marker per repository
 per session under `sessions/<session>/<repo-key>.json` in the state root,
