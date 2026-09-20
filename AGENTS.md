@@ -160,4 +160,4 @@ Before handoff, record consequential decisions, reasons, and delivery status;
 mark superseded decisions and link the owning issue or PR. Keep observations
 separate from decisions and completed work; no per-edit log.
 
-For codex-skills installation, follow the checkout’s [README](README.md#scoped-updates).
+For codex-skills installation, follow [README](https://github.com/future3OOO/codex-skills/blob/main/README.md#scoped-updates).

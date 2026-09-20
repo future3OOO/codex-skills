@@ -22,10 +22,9 @@ bindings current and report unavailable comparisons under
 
 ## One stable workflow
 
-Create or reuse a task-owned Git worktree and enter it before `begin` or
-bootstrap. Resume that task’s active pass; reuse applicable evidence and refresh
-invalidated gates. For a new task, choose one short slug; `begin` creates and
-activates its state for that worktree before bootstrap:
+Follow [AGENTS.md](../../AGENTS.md#production-repo-workflow) for isolation and pass reuse.
+For a new task, choose one short slug; `begin` creates and activates its state
+for that worktree before bootstrap:
 
 ```bash
 printf '%s' "$request_text" | python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" begin \
