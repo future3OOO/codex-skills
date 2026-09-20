@@ -23,4 +23,4 @@ The dependency's relevant semantics are part of the Seam. When correctness depen
 
 A programmed stand-in may isolate a diagnostic hypothesis. Label it diagnostic-only, delete it after use, and never count it as RED/GREEN, regression, or production verification.
 
-When no real Seam can be driven safely or deterministically, record the proof gap and use `codebase-design` or `improve-codebase-architecture`. The gap remains unresolved and blocks TDD completion; do not manufacture green evidence or invent a second production path for the test.
+Establish the real runtime and reachable preconditions needed to drive the Seam safely. For a Seam the change must create, follow [TDD’s creation-and-return rule](SKILL.md#task-boundary-and-seams). Completion requires actual execution; never manufacture green evidence or invent a second production path for tests.

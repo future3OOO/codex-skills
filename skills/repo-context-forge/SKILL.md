@@ -146,7 +146,7 @@ active — see the two standalone forms in the startup flow above.
 
 ## GitNexus Follow-Up
 
-AGENTS.md §9 owns required context/impact coverage.
+AGENTS.md — GitNexus owns required context/impact coverage.
 
 The packet's `<gitnexus_analysis>` already answers every `<check>` the plan
 listed — `kind="symbol_context"` entries carry their callers, `kind="symbol_impact"`

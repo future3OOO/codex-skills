@@ -25,7 +25,7 @@ Tests serve the task's behavior surface. Do not test unrelated unchanged behavio
 
 A **Seam** is the public Interface or externally observable product boundary where behavior is driven and observed without substituting an interior path. Name it before writing the test. When the contract is inferred from repository convention or an analogue, the RED must exercise an input that distinguishes the plausible interpretations.
 
-If a required behavior has no clean real Seam, record the proof gap and stop the behavior-changing edit. Use `/codebase-design` or `/improve-codebase-architecture`; the gap stays pending and blocks completion.
+Make the real Seam drivable: establish its required runtime and collaborators; use `/codebase-design` to expose the production Interface when needed. If the change creates the Seam, prove its absence as narrowly allowed by the Core Rule, create it, then return and drive every required behavior through it. Setup or entrypoint absence never substitutes for executed behavior proof.
 
 ## 1. Record the Behavior Map in Preflight
 
