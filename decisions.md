@@ -1604,3 +1604,7 @@ Legacy evidence can be attached more than once. Recover order from the event
 where that finding first exists, not the evidence ID's first/latest attachment.
 When historical lifecycle entries share a reference, ordinary intake returns its
 fresh observation alias so the pending repair can close without rewriting history.
+Lead certification is finding-scoped: unrelated review observations do not block
+a selected repair, while re-raising that repair revokes its prior certificate.
+Real closure probes demonstrated both former failures; actor/tree and overall
+completion checks retain authority.

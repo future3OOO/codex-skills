@@ -763,7 +763,10 @@ def commit_review(
                         or summary_doc.get("reviewContextId") != reviewer
                         or summary_doc.get("implementationContextId") != implementer):
                     raise WorkflowError("second recurrence requires retained reviewer repair and independent lead review")
-                if not intake:
+                if any(_finding_state(state, write.evidence_id, finding["id"]) is entry for finding in intake):
+                    entry.pop("repairReviewEvidence", None)
+                    entry.pop("repairReviewedTree", None)
+                else:
                     entry["repairReviewEvidence"] = write.evidence_id
                     entry["repairReviewedTree"] = _candidate_tree(identity)
             if not any(_finding_unresolved(entry) and entry.get("repairOwner")
