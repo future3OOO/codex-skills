@@ -17,9 +17,6 @@ AGENTS.md requires less ceremony and net code reduction in review follow-up comm
 
 **Status:** [PR #80](https://github.com/future3OOO/codex-skills/pull/80) open; documentation only.
 
-**Checkout correction:** A real native parent/child probe confirmed `--worktree`
-binds both to one checkout. This supersedes PR #79's CLI-review fallback.
-
 ## 2026-09-20 — Task worktrees own dispatch and recovery
 
 **Decision:** Correct PR #50's aggregation of session-associated worktrees.
@@ -32,8 +29,11 @@ must launch in the task checkout; a shell workdir does not relocate native tools
 **Scope:** Emergency runtime isolation portion of #78 only. Its general skill
 instruction repairs remain separate. No shared-estate edits or acceptance waivers.
 
-**Delivery:** Source change on `fix/task-workflow-isolation`, linked to #78.
-Shared installation remains unchanged; integration is through the emergency PR.
+**Delivery:** merged in [PR #79](https://github.com/future3OOO/codex-skills/pull/79);
+shared installation unchanged. [PR #80](https://github.com/future3OOO/codex-skills/pull/80)
+supersedes its reviewer CLI-review fallback with native task-worktree startup —
+a real native parent/child probe confirmed `--worktree` binds lead and
+delegates to one checkout.
 
 ## 2026-09-20 — Hook merge reconciles managed entries
 

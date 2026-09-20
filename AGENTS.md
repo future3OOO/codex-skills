@@ -7,7 +7,8 @@ weaken them.
 
 Use a native session rooted in a task-owned worktree. New task:
 `codex --enable worktrees --worktree -C <repo>`; existing task:
-`codex resume -C <worktree> <session-id>`. Select a task branch before workflow state or edits.
+`codex resume -C <worktree> <session-id>` — the picker lists sessions with
+their roots, `git worktree list` the paths. Select a task branch before workflow state or edits.
 Shell `workdir` does not relocate the session. Lead, native delegates and advisors
 must use that checkout. Never edit main or clobber another task's state or files.
 
