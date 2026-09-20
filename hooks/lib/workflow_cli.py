@@ -247,8 +247,6 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
     state = bound_state(identity, safe_slug(args.slug))
     slug = str(state["slug"])
     workflow_id = _workflow_id(state)
-    if session := session_key({"session_id": os.environ.get("CODEX_THREAD_ID")}):
-        bind_session_worktree(session, identity)
 
     # The tree this run's result will describe. The recorder compares it with
     # the tree at commit; a run that could not sample it is recorded invalid.
@@ -305,6 +303,8 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
             raise ValueError("a command is required after --")
 
     try:
+        if session := session_key({"session_id": os.environ.get("CODEX_THREAD_ID")}):
+            bind_session_worktree(session, identity)
         raw, exit_code, timed_out = _run(command, identity, args.timeout)
     finally:
         if graph_context_path is not None:

@@ -99,6 +99,16 @@ class HookHarness(unittest.TestCase):
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
         )
 
+    def hook_output(self, hook: Path, cwd: Path, *, tool: str = "spawn_agent") -> str:
+        result = subprocess.run(
+            [sys.executable, str(hook)], cwd=cwd, env=self.env, text=True,
+            input=json.dumps({"cwd": str(cwd), "session_id": SESSION, "source": "compact",
+                              "tool_name": tool, "tool_input": {"agent_type": "default"}}),
+            capture_output=True, timeout=15,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout
+
     def intake(self, relative: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             [sys.executable, str(INTAKE)], cwd=self.repo, env=self.env, text=True,
@@ -257,14 +267,8 @@ class WorkflowHookTests(HookHarness):
         for cwd in (main, task, self.tmp):
             for tool in ("spawn_agent", "collaborationfollowup_task", "send_message"):
                 with self.subTest(cwd=cwd, tool=tool):
-                    result = subprocess.run(
-                        [sys.executable, str(INTAKE)], cwd=cwd, env=self.env, text=True,
-                        input=json.dumps({"tool_name": tool, "cwd": str(cwd), "session_id": SESSION,
-                                          "tool_input": {"agent_type": "default"}}),
-                        capture_output=True, check=False, timeout=15,
-                    )
-                    self.assertEqual(result.returncode, 0, result.stderr)
-                    self.assertNotEqual(json.loads(result.stdout or "{}").get("hookSpecificOutput", {}).get("permissionDecision"), "deny", marker + result.stdout)
+                    result = self.hook_output(INTAKE, cwd, tool=tool)
+                    self.assertNotEqual(json.loads(result or "{}").get("hookSpecificOutput", {}).get("permissionDecision"), "deny", marker + result)
         for p in (main, task):
             self.assertEqual(self.state("history", repo=p).stdout, histories[str(p)])
         print(f"target={ROOT} task-worktrees=2 dispatches=9 per-hook-limit=15s unrelated-history=unchanged")
@@ -286,28 +290,18 @@ class WorkflowHookTests(HookHarness):
                 binding.write_bytes(malformed)
             for hook in (INTAKE, ROOT / "hooks/skill-discipline-rearm.py"):
                 with self.subTest(malformed=malformed, hook=hook.name):
-                    result = subprocess.run(
-                        [sys.executable, str(hook)], cwd=self.repo, env=self.env, text=True,
-                        input=json.dumps({"tool_name": "spawn_agent", "cwd": str(self.repo),
-                                          "session_id": SESSION, "tool_input": {"agent_type": "default"}}),
-                        capture_output=True, check=False, timeout=15,
-                    )
-                    self.assertEqual(result.returncode, 0, result.stderr)
-                    output = json.loads(result.stdout)["hookSpecificOutput"]
+                    result = self.hook_output(hook, self.repo)
+                    output = json.loads(result)["hookSpecificOutput"]
                     self.assertTrue(output.get("permissionDecision") == "deny" or "unresolved" in output.get("additionalContext", ""))
-                    self.assertNotIn("slug=task", result.stdout, marker)
-                    self.assertNotIn("[task/", result.stdout, marker)
+                    self.assertNotIn("slug=task", result, marker)
+                    self.assertNotIn("[task/", result, marker)
         binding.unlink()
         binding.write_bytes(original)
         before = self.state("history").stdout
-        result = subprocess.run(
-            [sys.executable, str(INTAKE)], cwd=self.repo, env=self.env, text=True,
-            input=json.dumps({"tool_name": "spawn_agent", "cwd": str(self.repo), "session_id": SESSION,
-                              "tool_input": {"agent_type": "default"}}), capture_output=True, timeout=15,
-        )
-        self.assertIn(str(self.repo), result.stdout)
-        self.assertIn("[task/", result.stdout)
-        self.assertIn("verification", result.stdout)
+        result = self.hook_output(INTAKE, self.repo)
+        self.assertIn(str(self.repo), result)
+        self.assertIn("[task/", result)
+        self.assertIn("verification", result)
         self.assertEqual(self.state("history").stdout, before)
 
     def test_rearm_uses_bound_task_from_launch_checkout(self) -> None:
@@ -320,14 +314,9 @@ class WorkflowHookTests(HookHarness):
         self.assertEqual(self.state("begin", "--slug", "task", repo=task).returncode, 0)
         # Observing another workflow must not switch the session's task.
         self.assertEqual(self.state("status", repo=main).returncode, 0)
-        result = subprocess.run(
-            [sys.executable, str(ROOT / "hooks/skill-discipline-rearm.py")], cwd=main, env=self.env,
-            input=json.dumps({"cwd": str(main), "session_id": SESSION, "source": "compact"}),
-            capture_output=True, text=True, check=False, timeout=15,
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("slug=task ", result.stdout, marker + result.stdout)
-        self.assertNotIn("slug=unrelated-main", result.stdout, marker)
+        result = self.hook_output(ROOT / "hooks/skill-discipline-rearm.py", main)
+        self.assertIn("slug=task ", result, marker + result)
+        self.assertNotIn("slug=unrelated-main", result, marker)
 
     def test_failed_verification_keeps_task_selected(self) -> None:
         marker = "FAILED_VERIFY_LOST_TASK"
@@ -348,18 +337,14 @@ class WorkflowHookTests(HookHarness):
         )
         self.assertNotEqual(failed.returncode, 0)
         for hook in (INTAKE, ROOT / "hooks/skill-discipline-rearm.py"):
-            result = subprocess.run(
-                [sys.executable, str(hook)], cwd=main, env=self.env, text=True,
-                input=json.dumps({"cwd": str(main), "session_id": SESSION, "tool_name": "spawn_agent",
-                                  "tool_input": {"agent_type": "default"}}), capture_output=True, timeout=15,
-            )
-            self.assertIn(str(task), result.stdout, marker + result.stdout)
+            result = self.hook_output(hook, main)
+            self.assertIn(str(task), result, marker + result)
             if hook == INTAKE:
-                self.assertEqual(json.loads(result.stdout)["hookSpecificOutput"]["permissionDecision"], "deny", marker)
-                self.assertIn("verification", result.stdout, marker)
+                self.assertEqual(json.loads(result)["hookSpecificOutput"]["permissionDecision"], "deny", marker)
+                self.assertIn("verification", result, marker)
             else:
-                self.assertIn("slug=task ", result.stdout, marker)
-                self.assertIn("verification=pending", result.stdout, marker)
+                self.assertIn("slug=task ", result, marker)
+                self.assertIn("verification=pending", result, marker)
 
     def test_failed_begin_preserves_selected_task(self) -> None:
         marker = "FAILED_BEGIN_RETARGETED_TASK"
@@ -370,16 +355,12 @@ class WorkflowHookTests(HookHarness):
         failed = self.state("begin", "--slug", "other", "--intent-file", str(self.tmp / "absent"), repo=other)
         self.assertNotEqual(failed.returncode, 0)
         for hook in (INTAKE, ROOT / "hooks/skill-discipline-rearm.py"):
-            result = subprocess.run(
-                [sys.executable, str(hook)], cwd=other, env=self.env, text=True,
-                input=json.dumps({"cwd": str(other), "session_id": SESSION, "tool_name": "spawn_agent",
-                                  "tool_input": {"agent_type": "default"}}), capture_output=True, timeout=15,
-            )
-            self.assertIn(str(self.repo), result.stdout, marker + result.stdout)
+            result = self.hook_output(hook, other)
+            self.assertIn(str(self.repo), result, marker + result)
             if hook == INTAKE:
-                self.assertEqual(json.loads(result.stdout)["hookSpecificOutput"]["permissionDecision"], "deny", marker)
+                self.assertEqual(json.loads(result)["hookSpecificOutput"]["permissionDecision"], "deny", marker)
             else:
-                self.assertIn("slug=original ", result.stdout, marker)
+                self.assertIn("slug=original ", result, marker)
 
     def test_interrupted_begin_does_not_admit_workflow_free_target(self) -> None:
         import fcntl
@@ -412,15 +393,11 @@ class WorkflowHookTests(HookHarness):
                     os.killpg(process.pid, signal.SIGTERM)
                 process.communicate(timeout=10)
         for hook in (INTAKE, ROOT / "hooks/skill-discipline-rearm.py"):
-            result = subprocess.run(
-                [sys.executable, str(hook)], cwd=self.repo, env=self.env, text=True,
-                input=json.dumps({"cwd": str(self.repo), "session_id": SESSION, "tool_name": "spawn_agent",
-                                  "tool_input": {"agent_type": "default"}}), capture_output=True, timeout=15,
-            )
-            self.assertIn("no active workflow", result.stdout, marker + result.stdout)
-            self.assertIn(str(other), result.stdout, marker)
+            result = self.hook_output(hook, self.repo)
+            self.assertIn("no active workflow", result, marker + result)
+            self.assertIn(str(other), result, marker)
             if hook == INTAKE:
-                self.assertEqual(json.loads(result.stdout)["hookSpecificOutput"]["permissionDecision"], "deny", marker)
+                self.assertEqual(json.loads(result)["hookSpecificOutput"]["permissionDecision"], "deny", marker)
 
     def test_rejected_begin_preserves_selected_task(self) -> None:
         marker = "REJECTED_BEGIN_RETARGETED_TASK"
@@ -429,34 +406,45 @@ class WorkflowHookTests(HookHarness):
         unborn = self.tmp / "unborn"
         unborn.mkdir()
         self.git("init", "-q", repo=unborn)
-        unreadable = other / "unreadable.py"
         for target, slug, diagnostic in ((other, "", "non-empty slug"),
                                           (unborn, "other", "HEAD^{commit}"),
                                           (other, "other", "candidate capture failed")):
             with self.subTest(diagnostic=diagnostic):
                 self.assertEqual(self.state("begin", "--slug", "original").returncode, 0)
                 if diagnostic == "candidate capture failed":
-                    unreadable.write_text("value = 1\n")
-                    unreadable.chmod(0)
-                try:
-                    failed = self.state("begin", "--slug", slug, repo=target)
-                    self.assertNotEqual(failed.returncode, 0)
-                    self.assertIn(diagnostic, failed.stderr)
-                    for hook in (INTAKE, ROOT / "hooks/skill-discipline-rearm.py"):
-                        result = subprocess.run(
-                            [sys.executable, str(hook)], cwd=target, env=self.env, text=True,
-                            input=json.dumps({"cwd": str(target), "session_id": SESSION,
-                                              "tool_name": "spawn_agent", "tool_input": {"agent_type": "default"}}),
-                            capture_output=True, timeout=15,
-                        )
-                        self.assertIn(str(self.repo), result.stdout, marker + result.stdout)
-                        if hook == INTAKE:
-                            self.assertEqual(json.loads(result.stdout)["hookSpecificOutput"]["permissionDecision"], "deny", marker)
-                        else:
-                            self.assertIn("slug=original ", result.stdout, marker)
-                finally:
-                    if unreadable.exists():
-                        unreadable.chmod(0o600)
+                    self.git("init", "-q", str(other / "unborn-nested"))
+                failed = self.state("begin", "--slug", slug, repo=target)
+                self.assertNotEqual(failed.returncode, 0)
+                self.assertIn(diagnostic, failed.stderr)
+                for hook in (INTAKE, ROOT / "hooks/skill-discipline-rearm.py"):
+                    result = self.hook_output(hook, target)
+                    self.assertIn(str(self.repo), result, marker + result)
+                    if hook == INTAKE:
+                        self.assertEqual(json.loads(result)["hookSpecificOutput"]["permissionDecision"], "deny", marker)
+                    else:
+                        self.assertIn("slug=original ", result, marker)
+
+    def test_rejected_verify_preserves_selected_task(self) -> None:
+        marker = "REJECTED_VERIFY_RETARGETED_TASK"
+        other = self.second_repo("other")
+        self.env["CODEX_THREAD_ID"] = "setup-owner"
+        self.assertEqual(self.state("begin", "--slug", "other", repo=other).returncode, 0)
+        self.env["CODEX_THREAD_ID"] = SESSION
+        cases = ((["--kind", "quality-gate"], "requires --base-ref"),
+                 (["--kind", "quality-gate", "--base-ref", "HEAD", "--", "true"], "accepts no command"),
+                 (["--base-ref", "HEAD"], "belongs to --kind quality-gate"),
+                 ([], "a command is required"))
+        for args, diagnostic in cases:
+            with self.subTest(diagnostic=diagnostic):
+                self.assertEqual(self.state("begin", "--slug", "original").returncode, 0)
+                failed = subprocess.run(
+                    [sys.executable, str(WORKFLOW), "verify", "--repo", str(other), "--slug", "other", *args],
+                    cwd=other, env=self.env, text=True, capture_output=True, timeout=15,
+                )
+                self.assertNotEqual(failed.returncode, 0)
+                self.assertIn(diagnostic, failed.stderr)
+                for hook in (INTAKE, ROOT / "hooks/skill-discipline-rearm.py"):
+                    self.assertIn(str(self.repo), self.hook_output(hook, other), marker)
 
     def _verification_selection(self, *, cancel: bool) -> None:
         marker = "CANCEL_LOST_TASK" if cancel else "OLDER_VERIFY_RETARGETED_TASK"
@@ -491,12 +479,9 @@ class WorkflowHookTests(HookHarness):
                 self.assertEqual(self.state("begin", "--slug", "new-main", repo=main).returncode, 0)
                 release.touch()
             process.communicate(timeout=10)
-            result = subprocess.run(
-                [sys.executable, str(ROOT / "hooks/skill-discipline-rearm.py")], cwd=main, env=self.env,
-                input=json.dumps({"cwd": str(main), "session_id": SESSION}), capture_output=True, text=True, timeout=15,
-            )
+            result = self.hook_output(ROOT / "hooks/skill-discipline-rearm.py", main)
             selected = "task" if cancel else "new-main"
-            self.assertIn(f"slug={selected} ", result.stdout, marker + result.stdout)
+            self.assertIn(f"slug={selected} ", result, marker + result)
         finally:
             if process.poll() is None:
                 import signal

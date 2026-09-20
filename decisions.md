@@ -9,9 +9,9 @@ acceptance gaps are not completed delivery.
 ## 2026-09-20 — Task worktrees own dispatch and recovery
 
 **Decision:** Correct PR #50's aggregation of session-associated worktrees.
-Public workflow begin/verify select the explicit task checkout at command entry
+Validated workflow begin/verify select the explicit task checkout before execution
 in the existing session-state area. Dispatch and re-arm share that selection;
-read-only queries, older completions and cancellation cannot retarget it.
+read-only queries and completed or cancelled verification cannot retarget it.
 Readiness still comes from that checkout's actual workflow evidence. Reviewers
 must launch in the task checkout; a shell workdir does not relocate native tools.
 
