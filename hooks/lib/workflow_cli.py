@@ -11,12 +11,11 @@ from collections.abc import Callable
 from pathlib import Path
 
 from ._workflow_db import LedgerError, history
-from .hook_input import session_key
 from .preflight_document import validated_document
 from .command_runner import emit_json as _emit_json, print_output as _print_output, run as _run, run_entry as _run_entry
 from .repo_identity import RepoIdentity, RepoIdentityError, resolve_repo_identity
 from .state_prune import prune
-from .state_store import _active_candidate_tree, bind_session_worktree, repo_state_dir, state_root, tree_manifest, utc_timestamp
+from .state_store import _active_candidate_tree, repo_state_dir, state_root, tree_manifest, utc_timestamp
 from .workflow_documents import (
     advisor_disposition_document,
     advisor_envelope,
@@ -303,8 +302,6 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
             raise ValueError("a command is required after --")
 
     try:
-        if session := session_key({"session_id": os.environ.get("CODEX_THREAD_ID")}):
-            bind_session_worktree(session, identity)
         raw, exit_code, timed_out = _run(command, identity, args.timeout)
     finally:
         if graph_context_path is not None:
@@ -397,8 +394,7 @@ def _dispatch(args: argparse.Namespace) -> int:
     identity = resolve_repo_identity(args.repo)
     if args.command == "begin":
         intent = _intent(args)
-        session = session_key({"session_id": os.environ.get("CODEX_THREAD_ID")})
-        state = begin(identity, args.slug, intent, session=session)
+        state = begin(identity, args.slug, intent)
         # The caller just supplied the intent; the receipt names the pass, never echoes it.
         _emit_json(public_status(state, fields={"schemaVersion", "workflowId", "slug", "activeCandidateTree", "phase", "nextAction"}))
     elif args.command == "status":

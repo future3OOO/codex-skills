@@ -437,10 +437,7 @@ def _retire_associations(root: Path, apply: bool) -> list[dict[str, str]]:
     Each sessions/<session>/<key>.json embeds the repository identity its
     writer recorded; a confirmed-absent root retires the marker, anything
     else - a live root, a mismatched filename, malformed or symlinked data -
-    is preserved and reported. The Stop reader (state_store's
-    session_associations) deliberately cannot serve here: it returns only
-    valid identities and silently skips malformed markers, while retirement
-    must see every file to preserve and report the unclassifiable ones.
+    is preserved and reported.
     """
     entries: list[dict[str, str]] = []
     for session in _walk(root / "sessions"):

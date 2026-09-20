@@ -27,7 +27,6 @@ from .repo_identity import RepoIdentity
 from .workflow_documents import validate_advisor_projection, validate_design_declaration
 from .state_store import (
     _active_candidate_tree,
-    bind_session_worktree,
     is_governance_path,
     is_reviewable_path,
     is_test_path,
@@ -225,7 +224,7 @@ def _derive_next_action(state: JsonObject, tdd_document: JsonObject | None = Non
     return phase
 
 
-def begin(identity: RepoIdentity, slug: str, intent: str = "", *, session: str | None = None) -> JsonObject:
+def begin(identity: RepoIdentity, slug: str, intent: str = "") -> JsonObject:
     normalized = safe_slug(slug)
     if normalized == "unnamed-workflow":
         raise ValueError("workflow requires a non-empty slug")
@@ -234,8 +233,6 @@ def begin(identity: RepoIdentity, slug: str, intent: str = "", *, session: str |
     if head is None:
         raise WorkflowError("workflow begin requires HEAD^{commit}")
     candidate = _active_candidate_tree(identity)
-    if session:
-        bind_session_worktree(session, identity)
     state: JsonObject = {
         "schemaVersion": 1,
         "repo": identity.as_dict(),

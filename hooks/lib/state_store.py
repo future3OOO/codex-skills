@@ -15,7 +15,7 @@ from typing import Iterable, Iterator
 
 import fcntl
 
-from .repo_identity import CanonicalRoot, RepoIdentity
+from .repo_identity import RepoIdentity
 
 _PATH_POLICY_FILE = (
     Path(__file__).resolve().parents[2]
@@ -162,55 +162,6 @@ def record_session_association(session: str, identity: RepoIdentity) -> None:
             atomic_write_json(path, {"schemaVersion": 1, "repo": identity.as_dict(), "at": utc_timestamp()})
     except OSError as exc:
         print(f"session association unavailable: {exc}", file=sys.stderr)
-
-
-def session_associations(session: str) -> list[RepoIdentity]:
-    """Every repository this session recorded an edit in.
-
-    The identity is read back from the marker rather than re-derived, so no
-    reader needs Git. A marker that does not parse is skipped rather than
-    raising: it can only cost this repository its Stop feedback, and one
-    unreadable file must not silence the others.
-
-    Fail-soft on the directory too, symmetrically with the writer. Reaching the
-    markers has to secure their parent first, which is a real filesystem call
-    that can fail for reasons of its own, and this is the first thing Stop does:
-    an unreadable store must degrade to the no-association fallback, never take
-    the hook down with it.
-    """
-    try:
-        markers = sorted(_session_dir(session).glob("*.json"))
-    except OSError as exc:
-        print(f"session associations unavailable: {exc}", file=sys.stderr)
-        return []
-    identities = []
-    for marker in markers:
-        repo = (read_json(marker) or {}).get("repo")
-        if isinstance(repo, dict) and isinstance(repo.get("root"), str) and isinstance(repo.get("key"), str):
-            identities.append(RepoIdentity(CanonicalRoot(repo["root"]), repo["key"]))
-    return identities
-
-
-def bind_session_worktree(session: str, identity: RepoIdentity) -> None:
-    """Select a task at command entry, never when an older command finishes."""
-    atomic_write_json(_session_dir(session) / "active-worktree.json",
-                      {"schemaVersion": 1, "worktree": identity.as_dict()})
-
-
-def session_worktree(session: str) -> RepoIdentity | None:
-    """Read explicit routing separately from the historical association set."""
-    path = _session_dir(session) / "active-worktree.json"
-    if path.is_symlink():
-        raise ValueError(f"unreadable task worktree binding for session {session}")
-    if not path.exists():
-        return None
-    value = read_json(path)
-    repo = value.get("worktree") if value else None
-    if (not value or type(value.get("schemaVersion")) is not int or value["schemaVersion"] != 1
-            or not isinstance(repo, dict) or not isinstance(repo.get("root"), str)
-            or not isinstance(repo.get("key"), str)):
-        raise ValueError(f"unreadable task worktree binding for session {session}")
-    return RepoIdentity(CanonicalRoot(repo["root"]), repo["key"])
 
 
 def utc_timestamp() -> str:
