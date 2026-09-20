@@ -6,6 +6,20 @@ Issue bodies own implementation scope; this record preserves decisions and their
 status. New decisions supersede earlier ones explicitly; observations and open
 acceptance gaps are not completed delivery.
 
+## 2026-09-20 — Hook merge reconciles managed entries
+
+**Decision:** The installer's hooks.json merge now removes every installed
+copy of a managed command before appending managed groups. The previous
+command-keyed append-only merge could never update an installed hook's
+matcher, event, or timeout: `7198082` widened `rcf-intake-gate`'s matcher to
+agent-spawn tools and any estate installed before it still fires only on
+`Bash|apply_patch`. Replace-our-set also fixes event moves and managed-hook
+removal; foreign entries (gitnexus) survive untouched.
+
+**Status:** pending PR. Real installer probes on isolated `CODEX_HOME`: stale
+matcher updated, wrong-event copy removed, foreign hook preserved, fresh
+install complete, second run idempotent.
+
 ## 2026-09-20 — Installer cleans previously-leaked artifacts
 
 **Decision:** Extend the installer's already-live cleanup `find` with

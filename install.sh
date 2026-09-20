@@ -24,13 +24,14 @@ find "$DEST/skills" "$DEST/hooks" -type f \
 find "$DEST/skills" "$DEST/hooks" -type d \
   \( -name tests -o -name __pycache__ \) -prune -exec rm -rf {} +
 
-# Merge our hook entries into the live hooks.json; entries the installer does
-# not own (gitnexus and any others) survive. Commands expand $HOME.
+# Merge our hook entries into the live hooks.json. A managed command replaces
+# every installed copy of itself — a command-keyed append-only merge leaves
+# stale matchers, events, and timeouts behind forever. Entries the installer
+# does not own (gitnexus and any others) survive. Commands expand $HOME.
 python3 - "$SRC/hooks.json" "$DEST/hooks.json" <<'PY'
 import json, os, sys
 from pathlib import Path
 
-managed = json.loads(Path(sys.argv[1]).read_text())["hooks"]
 live_path = Path(sys.argv[2])
 live = json.loads(live_path.read_text()) if live_path.exists() else {"hooks": {}}
 home = os.environ["HOME"]
@@ -44,15 +45,15 @@ def expand(value):
         return {k: expand(v) for k, v in value.items()}
     return value
 
-for event, groups in managed.items():
-    existing = live.setdefault("hooks", {}).setdefault(event, [])
-    known = {h.get("command") for g in existing for h in g.get("hooks", [])}
+managed = expand(json.loads(Path(sys.argv[1]).read_text())["hooks"])
+ours = {h.get("command") for gs in managed.values() for g in gs for h in g.get("hooks", [])}
+
+for event, groups in live["hooks"].items():
     for group in groups:
-        group = expand(group)
-        fresh = [h for h in group.get("hooks", []) if h.get("command") not in known]
-        if fresh:
-            existing.append({**group, "hooks": fresh})
-            known.update(h.get("command") for h in fresh)
+        group["hooks"] = [h for h in group.get("hooks", []) if h.get("command") not in ours]
+    live["hooks"][event] = [g for g in groups if g.get("hooks")]
+for event, groups in managed.items():
+    live["hooks"].setdefault(event, []).extend(groups)
 live_path.write_text(json.dumps(live, indent=2) + "\n")
 PY
 
