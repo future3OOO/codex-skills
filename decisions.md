@@ -1505,7 +1505,7 @@ identity checks still roll back. Explicit map dispositions, items and the existi
 source behavior identify reassessment targets even when map structure is unchanged.
 A revised diagnosis is retained for those owners, while identical repeats remain
 no-ops and ordinary carried prose cannot bind unrelated owners. This supersedes
-the earlier changed-map-only targeting decision. Both reproduced attacks and the
+the earlier implementation choice to target changed map items only. Both reproduced attacks and the
 affected no-op, multiple-owner and historical-disposition preservation pass.
 The explicitly rooted replacement reviewer implemented these corrections; the
 continuing lead independently reviewed the actual delta. Historical actor records
@@ -1522,7 +1522,7 @@ not another stage or an authorization system.
 
 Diagnosis equality is judged against each selected owner's bound explanation,
 including disposition references, rather than the last map document's text.
-This supersedes the global-text no-op decision. Equal prose can update a different
+This supersedes the earlier implementation choice to compare diagnosis text globally. Equal prose can update a different
 owner while already-applicable explanations remain no-ops. Both corrections were
 implemented by the rooted reviewer and independently inspected by the continuing
 lead; real CLI attacks and affected preservation pass. Efficiency acceptance
@@ -1581,3 +1581,10 @@ policy and recorder narration while preserving identity, mechanism/proof, repair
 ownership, authorized succession and recovery requirements. This wording-only
 correction stays in PR #82, open for review per user instruction; it does not
 establish estate efficiency.
+
+**#64 final-review evidence correction:** Resolve checkpoint attack owners through
+the existing observation links and canonical finding, without changing closure
+authority. Real recurrence lost owners only in this projection; the retained map
+was intact. Both advisor prompt phases now admit the already-supported optional
+`priorFinding`. These fixes require fresh verification and review; efficiency
+acceptance remains open.

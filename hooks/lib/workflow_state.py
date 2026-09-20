@@ -1983,18 +1983,7 @@ def _finding_ledger(
     the verbatim claim beside the seams and statuses of the attacks that closed
     it, so a broad finding narrowed to one convenient attack is visible.
     """
-    owners: dict[tuple[str, str], list[JsonObject]] = {}
-    for entry in items:
-        for ref in entry.get("sourceRefs", []):
-            if isinstance(ref, dict) and ref.get("type") == "finding":
-                owners.setdefault((str(ref.get("evidenceId")), str(ref.get("id"))), []).append({
-                    "id": entry.get("id"), "kind": entry.get("kind"),
-                    "behavior": entry.get("behavior"), "expected": entry.get("expected"),
-                    "seam": entry.get("seam"), "status": entry.get("status"),
-                    "proofCommand": entry.get("proofCommand"),
-                    "executedCommands": behavior_map.executed_commands(entry),
-                    "revalidationRequired": entry.get("revalidationRequired") is True,
-                })
+    owned = _linked_finding_items(None, items=items, state=state)
     states = state.get("findingStates")
     intakes: dict[str, dict[str, JsonObject]] = {}
     dispositions: dict[str, dict[str, JsonObject]] = {}
@@ -2019,6 +2008,9 @@ def _finding_ledger(
         measured = dispositions.get(disposition_id, {}).get(str(entry.get("dispositionFindingId", finding_id)))
         measurement = {key: measured[key] for key in ("premise", "occurrence", "materialConsequence", "evidence", "reference")
                        if measured.get(key) is not None} if measured else None
+        refs = ({"evidenceId": intake_id, "id": finding_id}, entry.get("canonicalFinding", {}))
+        attacks = {key: item for ref in refs
+                   for key, item in owned.get((str(ref.get("evidenceId")), str(ref.get("id"))), {}).items()}
         ledger.append({
             "intakeEvidenceId": intake_id,
             "producer": entry.get("producer"), "stage": entry.get("stage"),
@@ -2026,7 +2018,11 @@ def _finding_ledger(
             "material": entry.get("material"), "status": entry.get("status"),
             "claim": claim,
             **{key: entry[key] for key in ("canonicalFinding", "recurrence", "observations", "mechanismEvidence", "mechanismHistory", "repairOwner", "repairOwnerHistory") if key in entry},
-            "owners": owners.get((intake_id, str(entry.get("findingId"))), []),
+            "owners": [{**{key: item.get(key) for key in
+                           ("id", "kind", "behavior", "expected", "seam", "status", "proofCommand")},
+                        "executedCommands": behavior_map.executed_commands(item),
+                        "revalidationRequired": item.get("revalidationRequired") is True}
+                       for item in attacks.values()],
             "measurement": measurement,
         })
     return ledger

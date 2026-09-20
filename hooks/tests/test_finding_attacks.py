@@ -368,6 +368,9 @@ class PendingAdvisorRetries(AttackHarness):
         self.assertEqual(current.get("recurrence"), 1, marker)
         self.assertEqual(current.get("mechanismEvidence"), fixed.get("mechanismEvidence"), marker)
         self.assertEqual(state["findingStates"][0], fixed, marker)
+        ledger = self.ok("checkpoint", "--phase", "final-review")["findingLedger"]
+        self.assertEqual([owner["id"] for owner in ledger[-1]["owners"]], ["BM_ATTACK"],
+                         "RECURRENCE_LEDGER_LOST_OWNERS")
         retried = self.accept(wid, [{**finding, "claim": "The current counterexample also affects a fresh process"}])
         self.assertEqual(len(retried["findingStates"]), 2, marker)
         self.assertEqual(retried["findingStates"][-1].get("recurrence"), 1, marker)
