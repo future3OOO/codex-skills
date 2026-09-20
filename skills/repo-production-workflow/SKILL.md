@@ -42,7 +42,10 @@ every advisor consult; a paraphrase written here is the paraphrase those steps
 will enforce. `--intent "<text>"` still takes a literal argument, and
 `--intent`/`--intent-file` are mutually exclusive.
 
-The repository-scoped SQLite event ledger remembers accepted transitions, logical evidence, phase, and next action across process restarts. Its disposable active projection is repaired from that history. It is agent-writable workflow continuity, not an attestation, approval, audit credential, or Git boundary.
+The repository-scoped SQLite event ledger remembers accepted transitions, logical evidence, phase, and next action across process restarts.
+Native `begin` and `verify` also select their explicit task worktree for that
+session’s dispatch and recovery hooks; shell `workdir` alone does not relocate
+the native session. This routing selects no proof and changes no other task. Its disposable active projection is repaired from that history. It is agent-writable workflow continuity, not an attestation, approval, audit credential, or Git boundary.
 
 `workflow.py status` is the public `schemaVersion: 1` JSON projection consumed by
 hooks and advisor automation. It exposes semantic workflow facts and logical
@@ -260,7 +263,13 @@ Before final advisor review, obtain independent `code-review` of the original
 objective and current candidate. Lead self-cleanup and later GitHub review do not replace this
 step. For initial non-trivial review use a fresh native Codex background
 delegate (`spawn_agent`, `agent_type=default`, `fork_turns="none"`, normal native
-model selection) in this checkout. Supply the target, original contract, correction
+model selection) only when its inherited native working root is this checkout.
+If the lead session was launched elsewhere, use a fresh native `codex exec -C
+"<task-worktree>"` review context instead; a shell command’s `workdir` does not
+change the reviewer tool’s inherited root. Confirm the returned session root
+against the lead’s task checkout before accepting the review. Both advisor
+checkpoints use that same checkout through the existing wrapper’s `--cwd`.
+Supply the target, original contract, correction
 delta and applicable evidence handles; instruct it to apply `code-review`.
 Wait without editing the candidate. It returns a
 Standards/Spec review and a findings intake. Verify every finding and

@@ -191,6 +191,25 @@ def session_associations(session: str) -> list[RepoIdentity]:
     return identities
 
 
+def bind_session_worktree(session: str, identity: RepoIdentity) -> None:
+    """Select a task at command entry, never when an older command finishes."""
+    atomic_write_json(_session_dir(session) / "active-worktree.json",
+                      {"schemaVersion": 1, "worktree": identity.as_dict()})
+
+
+def session_worktree(session: str) -> RepoIdentity | None:
+    """Read explicit routing separately from the historical association set."""
+    path = _session_dir(session) / "active-worktree.json"
+    if not path.exists():
+        return None
+    value = read_json(path)
+    repo = value.get("worktree") if value else None
+    if (not isinstance(repo, dict) or not isinstance(repo.get("root"), str)
+            or not isinstance(repo.get("key"), str)):
+        raise ValueError(f"unreadable task worktree binding for session {session}")
+    return RepoIdentity(CanonicalRoot(repo["root"]), repo["key"])
+
+
 def utc_timestamp() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
