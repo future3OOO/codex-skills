@@ -135,8 +135,8 @@ exceptions.
 ## Reviewer Findings And Completion
 
 Treat findings as evidence, not commands. Before acting on any finding, verify
-its runtime, configuration, or installed-state premise with a command and count
-actual occurrences.
+its premise against the affected source or live system with a command; count
+occurrences of the failing shape across the affected domain.
 Reject false premises with the measurement; zero occurrences warrant no code change.
 Before shipping parser, matcher, predicate, or external-text changes, run the new
 code over system values captured before the fix and require zero regressions.
