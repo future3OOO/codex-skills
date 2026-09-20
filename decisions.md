@@ -6,6 +6,17 @@ Issue bodies own implementation scope; this record preserves decisions and their
 status. New decisions supersede earlier ones explicitly; observations and open
 acceptance gaps are not completed delivery.
 
+## 2026-09-20 — Installer cleans previously-leaked artifacts
+
+**Decision:** Extend the installer's already-live cleanup `find` with
+`*:Zone.Identifier`. The rsync exclude stops fresh copies only; artifacts
+installed before it landed stay stranded without `--delete`. Raised as a
+legitimate P3 on PR #72 and deferred to this follow-up.
+
+**Status:** pending PR. Real installer probe on an isolated dest: planted
+stale artifacts under dest skills/ and hooks/ removed, source artifact not
+copied, install exits 0.
+
 ## 2026-09-20 — Installer excludes harness-owned system skills
 
 **Decision:** Exclude harness-owned `.system/` and WSL `*:Zone.Identifier` artifacts
