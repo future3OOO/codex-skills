@@ -18,7 +18,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from hooks.lib._workflow_db import LedgerError  # noqa: E402
-from hooks.lib.hook_input import edited_path, is_explorer_continuation, read_hook_payload, session_key, working_directory  # noqa: E402
+from hooks.lib.hook_input import edited_path, is_explorer_continuation, read_hook_payload, working_directory  # noqa: E402
 from hooks.lib.repo_identity import RepoIdentityError, resolve_repo_identity, try_resolve_repo_identity  # noqa: E402
 from hooks.lib.state_store import is_reviewable_path, is_test_path  # noqa: E402
 from hooks.lib.tdd_workflow import edit_blockers  # noqa: E402
@@ -53,11 +53,14 @@ def main() -> int:
                             return 0
                     elif is_explorer_continuation(payload):
                         return 0
-                session = session_key(payload)
+                raw_session = payload.get("session_id")
+                session = raw_session if isinstance(raw_session, str) and raw_session.strip() else None
                 target = inputs.get("target") or inputs.get("id") if isinstance(inputs, dict) else None
-                repairs = [entry.get("repairOwner", {}) for entry in state.get("findingStates", [])
+                repairs = [owner for entry in state.get("findingStates", [])
                            if isinstance(entry, dict) and entry.get("status") in {"pending", "accepted-follow-up"}
-                           and int(entry.get("recurrence", 0)) >= 2]
+                           and int(entry.get("recurrence", 0)) >= 2 and (owner := entry.get("repairOwner"))
+                           and owner.get("implementerContextId") and owner.get("reviewerContextId")
+                           and owner["implementerContextId"] != owner["reviewerContextId"]]
                 if repairs:
                     if not (tool_name in {"followup_task", "send_input", "send_message", "resume_agent"}
                             and any(target is not None and target == owner.get("implementerContextId")

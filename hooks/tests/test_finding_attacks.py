@@ -2995,6 +2995,7 @@ class WorkflowRecovery(AttackHarness):
                 attributed = json.loads(result.stdout.splitlines()[-1])
                 document = self.json_file("mixed-fixed.json", {"intakeEvidenceId": intake, "dispositions": [{
                     "finding_id": "SPEC-1", "status": "fixed", "reason": "The label attack passes with zero wrong labels while the independent value attack still fails.",
+                    "mechanism": "The shared initializer supplied waiting to every label reader. Initialize label to ready; the attributed label operation now passes independently of the still-incorrect value initializer.",
                     "evidenceRefs": [attributed["summaryId"] + ":" + str(attributed["runIndex"])],
                 }]})
                 disposed = self.cli("advisor-disposition", "--slug", slug, "--workflow-id", wid,

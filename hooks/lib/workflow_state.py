@@ -1225,15 +1225,22 @@ def _register_finding_intake(
         observed.append((root, {"evidenceId": intake_id, "id": item["id"]}, intake, item))
         references.append(reference)
     for current in latest.values():
-        if _finding_unresolved(current) and int(current.get("recurrence", 0)) >= 2 and not current.get("repairOwner"):
+        owner = current.get("repairOwner", {})
+        if (_finding_unresolved(current) and int(current.get("recurrence", 0)) >= 2
+                and (not owner.get("implementerContextId") or not owner.get("reviewerContextId")
+                     or owner["implementerContextId"] == owner["reviewerContextId"])):
+            current.pop("repairOwner", None)
+            lead = state.get("leadContextId") or os.environ.get("CODEX_THREAD_ID")
             reviewer = state.get("reviewerContextId")
-            if not reviewer:
+            if not reviewer or reviewer == lead:
                 review = transaction.evidence(state.get("codeReviewIntakeEvidence") or state.get("codeReviewEvidence"))
                 reviewer = review.get("reviewContextId") if review else None
-            current["repairOwner"] = {
-                "implementerContextId": reviewer,
-                "reviewerContextId": state.get("leadContextId") or os.environ.get("CODEX_THREAD_ID"),
-            }
+            if (not reviewer or reviewer == lead) and intake["producer"] == "code-review":
+                reviewer = intake.get("reviewContextId")
+            if reviewer and lead and reviewer != lead:
+                current["repairOwner"] = {
+                    "implementerContextId": reviewer, "reviewerContextId": lead,
+                }
     return intake_id if intake_id in references or not references else references[0]
 
 

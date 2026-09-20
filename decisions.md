@@ -1551,3 +1551,20 @@ ownership-hook case inherited a native session ID. Explicitly omit reassessment
 only for the absence attack and supply a declared recorder actor input; retain
 all refusal assertions. Both cases pass in the isolated CI runner without a
 parent session ID. Efficiency acceptance remains open; #82 remains a draft.
+
+**PR #82 ownership edge cases:** Automated review reproduced recurrence before
+any reviewer exists creating an unusable partial owner, and exact actor comparison
+incorrectly using a filesystem-normalized session key. Keep ownership unassigned
+until both distinct identities are available; normalize previously derived
+incomplete ownership through existing intake reconciliation. Until then, initial
+review follows the ordinary verified dispatch path. A retained older runtime
+produced the partial owner and the candidate recovered it through real CLI review
+without changing the immutable intake. Continuation compares raw actor identity;
+filesystem-safe keys remain unchanged for routing. Counterexamples, normalized-key
+collision refusal, captured native ID preservation and affected succession pass.
+The remaining CI receipt-attribution test now supplies the required explanation
+for its independent label repair; executed receipt counts and skip refusals stay
+unchanged. These corrections remain in the same pass and draft PR.
+The first independent review binds its available context during that same ordinary
+intake; it does not require a subsequent intake to activate retained-reviewer
+ownership. The lead reproduced and corrected that follow-on case before review.
