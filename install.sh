@@ -48,7 +48,7 @@ def expand(value):
 managed = expand(json.loads(Path(sys.argv[1]).read_text())["hooks"])
 ours = {h.get("command") for gs in managed.values() for g in gs for h in g.get("hooks", [])}
 
-for event, groups in live["hooks"].items():
+for event, groups in live.setdefault("hooks", {}).items():
     for group in groups:
         group["hooks"] = [h for h in group.get("hooks", []) if h.get("command") not in ours]
     live["hooks"][event] = [g for g in groups if g.get("hooks")]
