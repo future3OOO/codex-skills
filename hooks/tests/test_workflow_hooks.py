@@ -270,29 +270,40 @@ class WorkflowHookTests(HookHarness):
         print(f"target={ROOT} task-worktrees=2 dispatches=9 per-hook-limit=15s unrelated-history=unchanged")
 
     def test_binding_errors_never_select_another_workflow(self) -> None:
+        marker = "INVALID_BINDING_SELECTED_WORKFLOW"
         self.env["CODEX_THREAD_ID"] = SESSION
         self.assertEqual(self.state("begin", "--slug", "task").returncode, 0)
         binding = Path(self.env["CODEX_WORKFLOW_STATE_ROOT"]) / "sessions" / SESSION / "active-worktree.json"
         original = binding.read_bytes()
-        for malformed in (b"{", b'{"worktree":{"root":"/missing-task-worktree","key":"1"}}'):
-            binding.write_bytes(malformed)
+        invalid = [b"{", b'{"schemaVersion":1,"worktree":{"root":"/missing-task-worktree","key":"1"}}', None]
+        invalid.extend(json.dumps({**json.loads(original), "schemaVersion": version}).encode()
+                       for version in (None, 0, 2, "1", True))
+        for malformed in invalid:
+            binding.unlink(missing_ok=True)
+            if malformed is None:
+                binding.symlink_to(self.tmp / "absent-binding")
+            else:
+                binding.write_bytes(malformed)
             for hook in (INTAKE, ROOT / "hooks/skill-discipline-rearm.py"):
-                result = subprocess.run(
-                    [sys.executable, str(hook)], cwd=self.repo, env=self.env, text=True,
-                    input=json.dumps({"tool_name": "spawn_agent", "cwd": str(self.repo),
-                                      "session_id": SESSION, "tool_input": {"agent_type": "default"}}),
-                    capture_output=True, check=False,
-                )
-                self.assertEqual(result.returncode, 0, result.stderr)
-                output = json.loads(result.stdout)["hookSpecificOutput"]
-                self.assertTrue(output.get("permissionDecision") == "deny" or "unresolved" in output.get("additionalContext", ""))
-                self.assertNotIn("slug=task", result.stdout)
+                with self.subTest(malformed=malformed, hook=hook.name):
+                    result = subprocess.run(
+                        [sys.executable, str(hook)], cwd=self.repo, env=self.env, text=True,
+                        input=json.dumps({"tool_name": "spawn_agent", "cwd": str(self.repo),
+                                          "session_id": SESSION, "tool_input": {"agent_type": "default"}}),
+                        capture_output=True, check=False, timeout=15,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    output = json.loads(result.stdout)["hookSpecificOutput"]
+                    self.assertTrue(output.get("permissionDecision") == "deny" or "unresolved" in output.get("additionalContext", ""))
+                    self.assertNotIn("slug=task", result.stdout, marker)
+                    self.assertNotIn("[task/", result.stdout, marker)
+        binding.unlink()
         binding.write_bytes(original)
         before = self.state("history").stdout
         result = subprocess.run(
             [sys.executable, str(INTAKE)], cwd=self.repo, env=self.env, text=True,
             input=json.dumps({"tool_name": "spawn_agent", "cwd": str(self.repo), "session_id": SESSION,
-                              "tool_input": {"agent_type": "default"}}), capture_output=True,
+                              "tool_input": {"agent_type": "default"}}), capture_output=True, timeout=15,
         )
         self.assertIn(str(self.repo), result.stdout)
         self.assertIn("[task/", result.stdout)
@@ -312,7 +323,7 @@ class WorkflowHookTests(HookHarness):
         result = subprocess.run(
             [sys.executable, str(ROOT / "hooks/skill-discipline-rearm.py")], cwd=main, env=self.env,
             input=json.dumps({"cwd": str(main), "session_id": SESSION, "source": "compact"}),
-            capture_output=True, text=True, check=False,
+            capture_output=True, text=True, check=False, timeout=15,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("slug=task ", result.stdout, marker + result.stdout)
@@ -333,14 +344,14 @@ class WorkflowHookTests(HookHarness):
         failed = subprocess.run(
             [sys.executable, str(WORKFLOW), "verify", "--repo", str(task), "--slug", "task",
              "--", sys.executable, "-c", "raise SystemExit(1)"],
-            cwd=main, env=self.env, capture_output=True, text=True,
+            cwd=main, env=self.env, capture_output=True, text=True, timeout=15,
         )
         self.assertNotEqual(failed.returncode, 0)
         for hook in (INTAKE, ROOT / "hooks/skill-discipline-rearm.py"):
             result = subprocess.run(
                 [sys.executable, str(hook)], cwd=main, env=self.env, text=True,
                 input=json.dumps({"cwd": str(main), "session_id": SESSION, "tool_name": "spawn_agent",
-                                  "tool_input": {"agent_type": "default"}}), capture_output=True,
+                                  "tool_input": {"agent_type": "default"}}), capture_output=True, timeout=15,
             )
             self.assertIn(str(task), result.stdout, marker + result.stdout)
             if hook == INTAKE:
@@ -362,7 +373,7 @@ class WorkflowHookTests(HookHarness):
             result = subprocess.run(
                 [sys.executable, str(hook)], cwd=other, env=self.env, text=True,
                 input=json.dumps({"cwd": str(other), "session_id": SESSION, "tool_name": "spawn_agent",
-                                  "tool_input": {"agent_type": "default"}}), capture_output=True,
+                                  "tool_input": {"agent_type": "default"}}), capture_output=True, timeout=15,
             )
             self.assertIn(str(self.repo), result.stdout, marker + result.stdout)
             if hook == INTAKE:
@@ -404,12 +415,48 @@ class WorkflowHookTests(HookHarness):
             result = subprocess.run(
                 [sys.executable, str(hook)], cwd=self.repo, env=self.env, text=True,
                 input=json.dumps({"cwd": str(self.repo), "session_id": SESSION, "tool_name": "spawn_agent",
-                                  "tool_input": {"agent_type": "default"}}), capture_output=True,
+                                  "tool_input": {"agent_type": "default"}}), capture_output=True, timeout=15,
             )
             self.assertIn("no active workflow", result.stdout, marker + result.stdout)
             self.assertIn(str(other), result.stdout, marker)
             if hook == INTAKE:
                 self.assertEqual(json.loads(result.stdout)["hookSpecificOutput"]["permissionDecision"], "deny", marker)
+
+    def test_rejected_begin_preserves_selected_task(self) -> None:
+        marker = "REJECTED_BEGIN_RETARGETED_TASK"
+        self.env["CODEX_THREAD_ID"] = SESSION
+        other = self.second_repo("other")
+        unborn = self.tmp / "unborn"
+        unborn.mkdir()
+        self.git("init", "-q", repo=unborn)
+        unreadable = other / "unreadable.py"
+        for target, slug, diagnostic in ((other, "", "non-empty slug"),
+                                          (unborn, "other", "HEAD^{commit}"),
+                                          (other, "other", "candidate capture failed")):
+            with self.subTest(diagnostic=diagnostic):
+                self.assertEqual(self.state("begin", "--slug", "original").returncode, 0)
+                if diagnostic == "candidate capture failed":
+                    unreadable.write_text("value = 1\n")
+                    unreadable.chmod(0)
+                try:
+                    failed = self.state("begin", "--slug", slug, repo=target)
+                    self.assertNotEqual(failed.returncode, 0)
+                    self.assertIn(diagnostic, failed.stderr)
+                    for hook in (INTAKE, ROOT / "hooks/skill-discipline-rearm.py"):
+                        result = subprocess.run(
+                            [sys.executable, str(hook)], cwd=target, env=self.env, text=True,
+                            input=json.dumps({"cwd": str(target), "session_id": SESSION,
+                                              "tool_name": "spawn_agent", "tool_input": {"agent_type": "default"}}),
+                            capture_output=True, timeout=15,
+                        )
+                        self.assertIn(str(self.repo), result.stdout, marker + result.stdout)
+                        if hook == INTAKE:
+                            self.assertEqual(json.loads(result.stdout)["hookSpecificOutput"]["permissionDecision"], "deny", marker)
+                        else:
+                            self.assertIn("slug=original ", result.stdout, marker)
+                finally:
+                    if unreadable.exists():
+                        unreadable.chmod(0o600)
 
     def _verification_selection(self, *, cancel: bool) -> None:
         marker = "CANCEL_LOST_TASK" if cancel else "OLDER_VERIFY_RETARGETED_TASK"
@@ -446,7 +493,7 @@ class WorkflowHookTests(HookHarness):
             process.communicate(timeout=10)
             result = subprocess.run(
                 [sys.executable, str(ROOT / "hooks/skill-discipline-rearm.py")], cwd=main, env=self.env,
-                input=json.dumps({"cwd": str(main), "session_id": SESSION}), capture_output=True, text=True,
+                input=json.dumps({"cwd": str(main), "session_id": SESSION}), capture_output=True, text=True, timeout=15,
             )
             selected = "task" if cancel else "new-main"
             self.assertIn(f"slug={selected} ", result.stdout, marker + result.stdout)

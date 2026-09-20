@@ -200,11 +200,14 @@ def bind_session_worktree(session: str, identity: RepoIdentity) -> None:
 def session_worktree(session: str) -> RepoIdentity | None:
     """Read explicit routing separately from the historical association set."""
     path = _session_dir(session) / "active-worktree.json"
+    if path.is_symlink():
+        raise ValueError(f"unreadable task worktree binding for session {session}")
     if not path.exists():
         return None
     value = read_json(path)
     repo = value.get("worktree") if value else None
-    if (not isinstance(repo, dict) or not isinstance(repo.get("root"), str)
+    if (not value or type(value.get("schemaVersion")) is not int or value["schemaVersion"] != 1
+            or not isinstance(repo, dict) or not isinstance(repo.get("root"), str)
             or not isinstance(repo.get("key"), str)):
         raise ValueError(f"unreadable task worktree binding for session {session}")
     return RepoIdentity(CanonicalRoot(repo["root"]), repo["key"])

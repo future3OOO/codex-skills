@@ -11,6 +11,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from ._workflow_db import LedgerError, history
+from .hook_input import session_key
 from .preflight_document import validated_document
 from .command_runner import emit_json as _emit_json, print_output as _print_output, run as _run, run_entry as _run_entry
 from .repo_identity import RepoIdentity, RepoIdentityError, resolve_repo_identity
@@ -246,8 +247,8 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
     state = bound_state(identity, safe_slug(args.slug))
     slug = str(state["slug"])
     workflow_id = _workflow_id(state)
-    if session := os.environ.get("CODEX_THREAD_ID"):
-        bind_session_worktree(safe_slug(session)[:40], identity)
+    if session := session_key({"session_id": os.environ.get("CODEX_THREAD_ID")}):
+        bind_session_worktree(session, identity)
 
     # The tree this run's result will describe. The recorder compares it with
     # the tree at commit; a run that could not sample it is recorded invalid.
@@ -396,9 +397,8 @@ def _dispatch(args: argparse.Namespace) -> int:
     identity = resolve_repo_identity(args.repo)
     if args.command == "begin":
         intent = _intent(args)
-        if session := os.environ.get("CODEX_THREAD_ID"):
-            bind_session_worktree(safe_slug(session)[:40], identity)
-        state = begin(identity, args.slug, intent)
+        session = session_key({"session_id": os.environ.get("CODEX_THREAD_ID")})
+        state = begin(identity, args.slug, intent, session=session)
         # The caller just supplied the intent; the receipt names the pass, never echoes it.
         _emit_json(public_status(state, fields={"schemaVersion", "workflowId", "slug", "activeCandidateTree", "phase", "nextAction"}))
     elif args.command == "status":
