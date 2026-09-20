@@ -6,6 +6,16 @@ Issue bodies own implementation scope; this record preserves decisions and their
 status. New decisions supersede earlier ones explicitly; observations and open
 acceptance gaps are not completed delivery.
 
+## 2026-09-20 — Installer excludes harness-owned system skills
+
+**Decision:** Exclude `.system/` from installation rsync; the harness owns it.
+An ignored source tree reproduced exit 23 under concurrent directory removal.
+The one-line exclusion completed installation with identical non-system outputs
+and preserved `.system`. Maintainer directed a targeted fix without a full pass.
+
+**Status:** [PR #72](https://github.com/future3OOO/codex-skills/pull/72).
+Real N/N+1 installer probes passed; no new tests or shared installation.
+
 ## 2026-09-20 — Workflow-first instructions and real attack probes
 
 **Decision:** Put Production Repo Workflow first in AGENTS.md; use named sections
@@ -26,9 +36,9 @@ execution for both a new CLI operation and an existing filesystem operation.
 This is bounded interpretation evidence, not proof of a product implementation
 or universal agent compliance.
 
-**Status:** [PR #71](https://github.com/future3OOO/codex-skills/pull/71),
-`docs/agents-workflow-first`. Independent instruction review passed.
-Documentation only. No runtime changes, merge, or shared installation.
+**Status:** [PR #71](https://github.com/future3OOO/codex-skills/pull/71)
+merged as `6cd2955`; maintainer reports estate installation verified. Removed
+its clean local worktree and branch after confirming tree equality with main.
 
 ## 2026-09-20 — Triage briefs follow the repository workflow
 
