@@ -26,7 +26,7 @@ Resolve contradictory instructions instead of layering another policy over them.
    necessary to establish the outcome; state why it is necessary.
 
 Include another issue only for a concrete dependency, shared interface or needed
-piece of evidence. Historical examples are regressions, not implementation templates.
+piece of evidence. Use historical examples as regression cases, not implementation templates.
 Resolve material unknowns before `ready-for-agent`; ask only what cannot be discovered.
 
 ## Match proof to the claim
