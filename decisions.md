@@ -6,6 +6,21 @@ Issue bodies own implementation scope; this record preserves decisions and their
 status. New decisions supersede earlier ones explicitly; observations and open
 acceptance gaps are not completed delivery.
 
+## 2026-09-20 — Task worktrees own dispatch and recovery
+
+**Decision:** Correct PR #50's aggregation of session-associated worktrees.
+Validated workflow begin/verify select the explicit task checkout before execution
+in the existing session-state area. Dispatch and re-arm share that selection;
+read-only queries and completed or cancelled verification cannot retarget it.
+Readiness still comes from that checkout's actual workflow evidence. Reviewers
+must launch in the task checkout; a shell workdir does not relocate native tools.
+
+**Scope:** Emergency runtime isolation portion of #78 only. Its general skill
+instruction repairs remain separate. No shared-estate edits or acceptance waivers.
+
+**Delivery:** Source change on `fix/task-workflow-isolation`, linked to #78.
+Shared installation remains unchanged; integration is through the emergency PR.
+
 ## 2026-09-20 — Hook merge reconciles managed entries
 
 **Decision:** The installer's hooks.json merge now removes every installed
