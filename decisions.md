@@ -12,8 +12,8 @@ acceptance gaps are not completed delivery.
 and proof, leave methods to the implementer unless necessary, and reject invented
 or contradictory obligations. Keep user restrictions scoped and one authoritative
 brief. This supersedes copying a separate delivery condition into every brief.
-Efficiency still means improvement over the stated baseline at equivalent correct
-outcomes. Existing execution and review owners retain their authority.
+Efficiency means improvement over the stated baseline at equivalent correct outcomes.
+AGENTS.md requires less ceremony and net code reduction in review follow-up commits.
 
 **Delivery:** `fix/triage-workflow-boundaries`; documentation-only follow-up to PR #40.
 No runtime, issue #64/#65, or installed-estate changes.

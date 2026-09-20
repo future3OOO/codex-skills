@@ -2,15 +2,13 @@
 
 Write one compact, authoritative contract for issues and `ready-for-agent` briefs.
 Reconcile the request, body and comments; replace superseded instructions.
-Preserve the requested behavior, scope and proof without adding obligations.
+Preserve requested outcomes and proof while removing unnecessary workflow ceremony.
 
-Read the applicable `AGENTS.md` and link to its workflow. It owns execution;
-triage starts no implementation pass and invents no phase order, approval gates,
-review rounds, budgets or stopping rules. Keep user restrictions at their stated
-scope: a benchmark restriction does not govern delivery reviews. Assigning repair
-work and requesting completed-code review are distinct; keep their prerequisites
-with the existing workflow. Resolve conflicting instructions instead of adding
-a third policy.
+Link to the applicable `AGENTS.md`; it owns execution and review corrections.
+Triage starts no pass and invents no phases, approvals, reviews, budgets or stopping
+rules. Keep user restrictions scoped: benchmark restrictions do not govern delivery
+reviews. Distinguish repair from completed-code review under the existing workflow.
+Resolve contradictory instructions instead of layering another policy over them.
 
 ## Establish the contract
 
@@ -65,8 +63,7 @@ Follow the applicable `AGENTS.md` for execution.
 - [ ] [Another independently failing outcome, only if needed.]
 ```
 
-Scale detail to genuine ambiguity; remove repeated objectives, workflow
-boilerplate and unrelated issue history. For `ready-for-agent`, use `## Agent Brief`
-and retain the category/state and required AI disclaimer.
-A handover normally needs only the issue link and applicable workflow/worktree
-instruction; add a task-specific exception only when necessary.
+Remove repeated objectives, workflow boilerplate and unrelated history. Retain
+`## Agent Brief`, category/state and the AI disclaimer for `ready-for-agent`.
+Handovers need only the issue link and workflow/worktree instruction unless a
+task-specific exception is necessary.

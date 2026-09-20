@@ -69,9 +69,10 @@ and branch/PR alignment is verified, unless the user or workflow says otherwise.
 - Assume your first implementation is bloated. Keep the least production code
   that fully meets the objective and preserves affected behavior. Retain real
   attack probes; cut redundant scaffolding and mocked unit-test bloat from this change.
-- Never weaken requirements, desired behavior, affected preservation, or
-  necessary proof to reduce lines or meet a review budget.
-- Every changed line must serve the request or cleanup caused by it.
+- Every change must remove unnecessary workflow ceremony. Reviewer-requested
+  follow-up commits must reduce net lines of code.
+- Preserve required behavior and proof when reducing lines or meeting the review
+  budget. Every changed line must serve the request or cleanup caused by it.
 
 ## Surgical Changes
 
