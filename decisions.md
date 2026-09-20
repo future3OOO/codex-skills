@@ -14,7 +14,8 @@ behavior probes and retain necessary attacks while removing redundant test code.
 Drive existing Seams after runtime setup; when creating a Seam, return to drive
 its actual behavior. Absence alone never proves it. This supersedes the earlier
 proof-gap stopping instruction. Condense reviewer handling around measured
-findings, current-head closure, and task acceptance; remove PRD requirements.
+findings, current-head closure, task acceptance, and linked-issue closure after merge;
+remove PRD requirements.
 README owns codex-skills installation policy; replace its duplication in reusable
 instructions with one codex-skills-only link that resolves from checkout and estate.
 AGENTS.md owns isolation before workflow invocation or state creation; the skill

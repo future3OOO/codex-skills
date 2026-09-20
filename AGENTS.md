@@ -152,6 +152,7 @@ merge state, and unresolved non-outdated threads. Older-head output is stale.
 Do not declare completion or switch tasks until task acceptance is reconciled,
 legitimate findings are fixed or rejected with evidence, no unresolved
 non-outdated threads remain, and required checks pass. Unrelated failures are blockers.
+Link related issues in the PR description; after merge, close them and verify closure.
 
 ## Codex-Skills Only
 
