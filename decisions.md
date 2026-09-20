@@ -8,7 +8,8 @@ acceptance gaps are not completed delivery.
 
 ## 2026-09-20 — Installer excludes harness-owned system skills
 
-**Decision:** Exclude `.system/` from installation rsync; the harness owns it.
+**Decision:** Exclude harness-owned `.system/` and WSL `*:Zone.Identifier` artifacts
+from installation rsync.
 An ignored source tree reproduced exit 23 under concurrent directory removal.
 The one-line exclusion completed installation with identical non-system outputs
 and preserved `.system`. Maintainer directed a targeted fix without a full pass.

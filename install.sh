@@ -7,7 +7,7 @@ SRC="$(cd "$(dirname "$0")" && pwd -P)"
 DEST="${CODEX_HOME:-$HOME/.codex}"
 BACKUP="$HOME/.codex-backups/$(date +%Y%m%d-%H%M%S)"
 EXCLUDES=(--exclude='.system/' --exclude='tests/' --exclude='test_*.py' --exclude='test-*.sh' \
-  --exclude='__pycache__' --exclude='*.pyc')
+  --exclude='__pycache__' --exclude='*.pyc' --exclude='*:Zone.Identifier')
 
 mkdir -p "$DEST" "$BACKUP"
 for path in AGENTS.md hooks.json hooks skills; do
