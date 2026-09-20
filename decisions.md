@@ -17,6 +17,19 @@ legitimate P3 on PR #72 and deferred to this follow-up.
 stale artifacts under dest skills/ and hooks/ removed, source artifact not
 copied, install exits 0.
 
+## 2026-09-20 — Critique delegate inherits the parent's model
+
+**Decision:** `execution-planning` critique spawn uses `agent_type=default`.
+The `router_deepseek_deepseek_v4_flash` pin (ported Sep 12) resolves only
+under the codex-router provider; under a ChatGPT-account session the spawn
+400s with "model is not supported." `default` inherits the parent model —
+still deepseek under codexd, codex-family otherwise. Provider-conditional
+model pins are banned from skill text.
+
+**Status:** pending PR. Reproduction: rollout record shows the errored
+spawn (`design_critique`, 400 invalid_request_error); the same call with
+`default` cannot hit the provider check.
+
 ## 2026-09-20 — Installer excludes harness-owned system skills
 
 **Decision:** Exclude harness-owned `.system/` and WSL `*:Zone.Identifier` artifacts
