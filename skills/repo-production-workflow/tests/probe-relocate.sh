@@ -3,7 +3,7 @@
 # Usage: probe-relocate.sh <self|guards|flags|ws> <script> [loop-file]
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-CASE="$1"; SCRIPT="$2"; LOOP="${3:-$HERE/codex-reloc-loop.bashrc}"
+CASE="$1"; SCRIPT="$2"; LOOP="${3:-$HERE/../scripts/codex-reloc-loop.bashrc}"
 fail=0
 say() { printf '%s\n' "$*"; }
 stubdir=""; mkstub() {
