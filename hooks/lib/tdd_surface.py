@@ -13,6 +13,7 @@ import argparse
 import ast
 import hashlib
 import json
+import os
 import re
 import shlex
 from collections.abc import Mapping, Sequence
@@ -295,10 +296,8 @@ def repository_resolution(surface: Mapping[str, object], root: object) -> str | 
 
 def input_evidence(surface: Mapping[str, object], root: Path, inputs: list[object],
                    test_id: str | None = None) -> dict[str, object]:
-    """Represent declared values at the selected input surface, never infer reach.
-
-    Policy is typed JSON equality. The existing Python runner formats supply
-    bounded source selection; opaque selections report a limit, not an absence.
+    """Represent selected inputs by typed JSON equality, never infer reach.
+    Python runners bound source selection; opaque selections report limits, not absence.
     """
     values: list[object] = []
     sources: dict[str, str] = {}
@@ -338,7 +337,7 @@ def input_evidence(surface: Mapping[str, object], root: Path, inputs: list[objec
             file, *names = target.split("::")
             path = root / file
         try:
-            if not path.resolve().is_relative_to(root.resolve()) or not path.is_file():
+            if not Path(os.path.abspath(path)).is_relative_to(root) or not path.resolve().is_relative_to(root.resolve()) or not path.is_file():
                 limits.append(f"unresolved selected source: {target}")
                 continue
             with path.open("rb") as handle:
@@ -353,7 +352,7 @@ def input_evidence(surface: Mapping[str, object], root: Path, inputs: list[objec
         except (OSError, SyntaxError, UnicodeError) as exc:
             limits.append(f"selected source unavailable: {target}: {exc}")
             continue
-        sources[str(path.relative_to(root))] = hashlib.sha256(data).hexdigest()
+        sources[str(path.resolve().relative_to(root.resolve()))] = hashlib.sha256(data).hexdigest()
         selected: list[ast.AST] = [tree]
         case_id = None
         for name in names:
