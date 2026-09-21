@@ -36,10 +36,8 @@ class WS:
             if not chunk: raise RuntimeError("ws handshake EOF")
             buf += chunk
         if b"101" not in buf.split(b"\r\n")[0]: raise RuntimeError("ws handshake failed")
-        expect = base64.b64encode(hashlib.sha1(
-            (key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()).decode()
-        if ("sec-websocket-accept: " + expect).lower().encode() not in buf.lower():
-            raise RuntimeError("ws accept mismatch")
+        expect = base64.b64encode(hashlib.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest())
+        if expect not in buf: raise RuntimeError("ws accept mismatch")
         self.buf = buf.split(b"\r\n\r\n", 1)[1]
         self.s.settimeout(0.5)
     def send(self, payload):
@@ -74,7 +72,7 @@ class WS:
                 b0 = self.buf[0]; b1 = self.buf[1]; n = b1 & 0x7F; off = 2
                 if n == 126: n = struct.unpack("!H", self.buf[2:4])[0]; off = 4
                 elif n == 127: n = struct.unpack("!Q", self.buf[2:10])[0]; off = 10
-                fin = bool(b0 & 0x80); op = b0 & 0x0F
+                op = b0 & 0x0F
                 payload = self.buf[off:off+n]; self.buf = self.buf[off+n:]
                 if op == 9:
                     mask = os.urandom(4)
@@ -82,12 +80,9 @@ class WS:
                                    + bytes(b ^ mask[i % 4] for i, b in enumerate(payload)))
                     continue
                 if op == 8: raise ConnectionError("closed")
-                if op == 2: raise ConnectionError("unexpected binary frame")
-                if op in (1, 0):
+                if op in (0, 1):
                     frags += payload
-                    if fin:
-                        out = bytes(frags); frags.clear()
-                        return out.decode()
+                    if b0 & 0x80: return bytes(frags).decode()
                 continue
             self._fill()
         return None
@@ -147,26 +142,21 @@ def main():
     if tid != "self" and any(c.isspace() for c in tid):
         sys.exit(f"thread id must not contain whitespace: {tid}")
     mycwd = os.getcwd()
-    # A caller launched through the pane wrapper relocates via its own resume
-    # loop — never consult sockets, so a same-cwd hosted thread can't be hit.
+    # Pane-wrapped sessions use their own resume loop — never the socket scan,
+    # so a same-cwd hosted thread can't be hit.
     if tid == "self" and os.environ.get("CODEX_RELOC_LOOP") == "1":
-        self_hosted(cwd, tid, "pane session: using its own resume loop")
-        return
+        return self_hosted(cwd, tid, "pane session: using its own resume loop")
     last_err = "no app-server socket found — session is not remote-hosted"
     for path in sockets():
         try:
             ws = init_ws(path)
             found = find_thread(ws, tid, mycwd)
-            if not found:
-                last_err = f"{path}: thread {tid} not loaded"; continue
+            if not found: last_err = f"{path}: thread {tid} not loaded"; continue
             try:
                 r = rpc(ws, "turn/start", {"threadId": found, "cwd": cwd,
                                            "input": [{"type": "text", "text": note}]}, 99)
             except Exception as e:
-                # turn/start may have landed server-side; do not fall back to
-                # a kill path that could double-relocate or orphan the thread.
-                sys.exit(f"turn/start outcome unconfirmed on {path} ({e}) — "
-                         f"not retrying or self-killing; verify the thread state")
+                sys.exit(f"turn/start outcome unconfirmed on {path} ({e}); verify the thread state")
             if "error" in r:
                 last_err = f"{path}: turn/start: {r['error']}"; continue
             print(f"relocation accepted: thread {found} -> {cwd} (via {path})")
