@@ -4,6 +4,7 @@
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 CASE="$1"; SCRIPT="$(readlink -f "$2")"; LOOP="${3:-$HERE/../scripts/codex-reloc-loop.bashrc}"
+case "$CASE" in self|guards|flags|ws) ;; *) echo "unknown case: $CASE" >&2; exit 2 ;; esac
 WTD="$(mktemp -d /tmp/reloc-probe.XXXXXX)"
 fail=0
 say() { printf '%s\n' "$*"; }
@@ -61,6 +62,20 @@ flags)
     codexs-high resume oldtid' 2>&1)
   echo "$res" | grep -qE "CODEX-INVOKED: --profile codexs -m swe-2-high resume -C /tmp/wtF newtid" \
     || { say "RESUME-FLAGS-BROKEN RELOC_GUARD_MISSING: $res"; fail=1; }
+  res=$(STUBDIR="$stubdir" LOOPFILE="$LOOP" bash -c '
+    export PATH="$STUBDIR:$PATH"; source "$LOOPFILE"
+    printf "/tmp/wtF newtid %s\n" "$(date +%s)" > ~/.codex/reloc/$$
+    codex mcp list; [ -f ~/.codex/reloc/$$ ] && echo "MARKER-KEPT"' 2>&1)
+  echo "$res" | grep -q "CODEX-INVOKED: mcp list" || { say "MCP-CMD-BROKEN: $res"; fail=1; }
+  echo "$res" | grep -q "resume -C" && { say "MARKER-EATEN RELOC_GUARD_MISSING: $res"; fail=1; }
+  echo "$res" | grep -q "MARKER-KEPT" || { say "MARKER-LOST RELOC_GUARD_MISSING: $res"; fail=1; }
+  res=$(STUBDIR="$stubdir" LOOPFILE="$LOOP" bash -c '
+    export PATH="$STUBDIR:$PATH"; source "$LOOPFILE"
+    printf "/tmp/wtF newtid %s\n" "$(date +%s)" > ~/.codex/reloc/$$
+    codex resume --help; [ -f ~/.codex/reloc/$$ ] && echo "MARKER-KEPT"' 2>&1)
+  echo "$res" | grep -q "CODEX-INVOKED: resume --help" || { say "RESUME-HELP-BROKEN: $res"; fail=1; }
+  echo "$res" | grep -q "resume -C" && { say "MARKER-EATEN RELOC_GUARD_MISSING: $res"; fail=1; }
+  echo "$res" | grep -q "MARKER-KEPT" || { say "MARKER-LOST RELOC_GUARD_MISSING: $res"; fail=1; }
   [ "$fail" -eq 0 ] && say "RESUME-FLAGS-OK" || say "RESUME-FLAGS-BROKEN"
   ;;
 ws)
@@ -72,6 +87,8 @@ ws)
   echo "$out" | grep -q "whitespace" || { say "TID-WS-ACCEPTED RELOC_GUARD_MISSING: $out"; fail=1; }
   echo "$out" | grep -q '"sigterm_delivered_to_host": false' || { say "TID-WS-KILLED: $out"; fail=1; }
   echo "$out" | grep -q '"marker_exists": false' || { say "TID-WS-MARKER: $out"; fail=1; }
+  out=$(chain wtA stubtid flag)
+  echo "$out" | grep -q "must be absolute" || { say "REL-ACCEPTED RELOC_GUARD_MISSING: $out"; fail=1; }
   ;;
 *) echo "unknown case: $CASE" >&2; exit 2 ;;
 esac

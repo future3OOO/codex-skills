@@ -17,6 +17,8 @@ import os, sys, time, signal, shlex
 def main():
     cwd = sys.argv[1]
     tid = sys.argv[2] if len(sys.argv) > 2 else os.environ.get("CODEX_THREAD_ID", "self")
+    if not os.path.isabs(cwd):
+        sys.exit(f"worktree path must be absolute: {cwd}")
     if not os.path.isdir(cwd):
         sys.exit(f"not a directory: {cwd}")
     if any(c.isspace() for c in cwd):
@@ -62,7 +64,7 @@ def self_hosted(cwd, tid):
             prof = cmdl[cmdl.index("--profile") + 1] if "--profile" in cmdl else None
         except (OSError, ValueError, IndexError):
             prof = None
-        hint = f"codex --profile {prof} resume -C {shlex.quote(cwd)} {shlex.quote(tid)}" if prof \
+        hint = f"codex --profile {shlex.quote(prof)} resume -C {shlex.quote(cwd)} {shlex.quote(tid)}" if prof \
                else f"codex resume -C {shlex.quote(cwd)} {shlex.quote(tid)}"
         sys.exit(f"this session's shell has no resume loop. "
                  f"From THIS pane run: {hint}")

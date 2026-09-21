@@ -20,26 +20,37 @@ _codex_reloc_loop() {
     CODEX_RELOC_LOOP=1 command codex "$@" resume -C "$wt" "$tid"
   done
 }
-codex() {
-  local a; for a in "$@"; do
+# Interactive TUI launches only: bare `codex`/`codexs`, flags, and `resume`.
+# Any other bare token is a non-TUI subcommand (exec, mcp, review, apply,
+# app-server, ...) that must never consume a relocation marker; --remote
+# sessions can't self-relocate either. Unknown flags-with-values fail safe:
+# their value scans as a bare token and bypasses rather than arming.
+_codex_is_tui() {
+  local a expect_value=0 seen_resume=0
+  for a in "$@"; do
+    if [ "$expect_value" = 1 ]; then expect_value=0; continue; fi
     case "$a" in
-      exec|app-server|completion|login|logout|sandbox|import|agents|debug|-h|--help|-V|--version|--remote|--remote=*)
-        command codex "$@"; return ;;
+      --remote|--remote=*) return 1 ;;
+      -h|--help|-V|--version) return 1 ;;
+      -m|--model|-p|--profile|-C|--cd|-c|--config|-s|--sandbox|-a|--ask-for-approval|-i|--image|--add-dir|--enable|--disable|--remote-auth-token-env)
+        expect_value=1 ;;
+      --*|-*) ;;
+      resume) seen_resume=1 ;;
+      *) [ "$seen_resume" = 1 ] || return 1 ;;
     esac
   done
-  local rargs=(); for a in "$@"; do [ "$a" = "resume" ] && break; rargs+=("$a"); done
+  return 0
+}
+codex() {
+  _codex_is_tui "$@" || { command codex "$@"; return; }
+  local rargs=() a; for a in "$@"; do [ "$a" = "resume" ] && break; rargs+=("$a"); done
   CODEX_RELOC_LOOP=1 command codex "$@"
   local rc=$?
   _codex_reloc_loop "${rargs[@]}"
   return $rc
 }
 _codexs_run() {
-  local a; for a in "$@"; do
-    case "$a" in
-      exec|app-server|completion|login|logout|sandbox|import|agents|debug|-h|--help|-V|--version|--remote|--remote=*)
-        command codex --profile codexs "$@"; return ;;
-    esac
-  done
+  _codex_is_tui "$@" || { command codex --profile codexs "$@"; return; }
   local rargs=(--profile codexs)
   for a in "$@"; do [ "$a" = "resume" ] && break; rargs+=("$a"); done
   CODEX_RELOC_LOOP=1 command codex --profile codexs "$@"
