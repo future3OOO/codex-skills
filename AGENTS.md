@@ -6,7 +6,9 @@ weaken them.
 ## Production Repo Workflow
 
 For repository changes, create or reuse a task-owned Git worktree and enter it
-before invoking `$repo-production-workflow`, creating its slug/state, or editing.
+before invoking `$repo-production-workflow`, creating its slug/state, or
+editing. Enter it yourself by running, as the turn's last action:
+`python3 "$HOME/.codex/skills/repo-production-workflow/scripts/codex-relocate" <absolute whitespace-free worktree>`
 Never edit the main/shared checkout or clobber another agent's state or files.
 
 Invoke `$repo-production-workflow` first, only when production changes are required
