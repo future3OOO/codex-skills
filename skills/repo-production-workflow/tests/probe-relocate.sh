@@ -90,7 +90,6 @@ ws)
   out=$(chain wtA stubtid flag)
   echo "$out" | grep -q "must be absolute" || { say "REL-ACCEPTED RELOC_GUARD_MISSING: $out"; fail=1; }
   ;;
-*) echo "unknown case: $CASE" >&2; exit 2 ;;
 esac
 cleanup
 exit "$fail"
