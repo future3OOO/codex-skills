@@ -21,7 +21,7 @@ whose cwd matches the current directory). Socket auto-discovers
 ~/.codex/app-server-*.sock and ~/.codex/app-server-control/*.sock;
 override with CODEX_APP_SERVER_SOCK.
 """
-import socket, base64, os, struct, json, sys, time, glob, signal, shlex
+import socket, base64, hashlib, os, struct, json, sys, time, glob, signal, shlex
 
 class WS:
     def __init__(self, path):
@@ -36,6 +36,10 @@ class WS:
             if not chunk: raise RuntimeError("ws handshake EOF")
             buf += chunk
         if b"101" not in buf.split(b"\r\n")[0]: raise RuntimeError("ws handshake failed")
+        expect = base64.b64encode(hashlib.sha1(
+            (key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()).decode()
+        if ("sec-websocket-accept: " + expect).lower().encode() not in buf.lower():
+            raise RuntimeError("ws accept mismatch")
         self.buf = buf.split(b"\r\n\r\n", 1)[1]
         self.s.settimeout(0.5)
     def send(self, payload):
@@ -64,20 +68,26 @@ class WS:
         return len(self.buf) >= off + n
     def recv(self, wait=10):
         t = time.time() + wait
+        frags = bytearray()
         while time.time() < t:
             if self._ready():
-                b1 = self.buf[1]; n = b1 & 0x7F; off = 2
+                b0 = self.buf[0]; b1 = self.buf[1]; n = b1 & 0x7F; off = 2
                 if n == 126: n = struct.unpack("!H", self.buf[2:4])[0]; off = 4
                 elif n == 127: n = struct.unpack("!Q", self.buf[2:10])[0]; off = 10
-                op = self.buf[0] & 0x0F
+                fin = bool(b0 & 0x80); op = b0 & 0x0F
                 payload = self.buf[off:off+n]; self.buf = self.buf[off+n:]
                 if op == 9:
                     mask = os.urandom(4)
                     self.s.sendall(struct.pack("!BB", 0x8A, 0x80 | len(payload)) + mask
                                    + bytes(b ^ mask[i % 4] for i, b in enumerate(payload)))
                     continue
-                if op == 1: return payload.decode()
                 if op == 8: raise ConnectionError("closed")
+                if op == 2: raise ConnectionError("unexpected binary frame")
+                if op in (1, 0):
+                    frags += payload
+                    if fin:
+                        out = bytes(frags); frags.clear()
+                        return out.decode()
                 continue
             self._fill()
         return None
@@ -88,7 +98,8 @@ def rpc(ws, method, params, rid, wait=15):
     while time.time() < t:
         m = ws.recv(wait=2)
         if m is None: continue
-        msg = json.loads(m)
+        try: msg = json.loads(m)
+        except ValueError: raise ConnectionError("malformed frame payload")
         if msg.get("id") == rid: return msg
     return {"error": {"message": f"timeout: {method}"}}
 
@@ -136,14 +147,26 @@ def main():
     if tid != "self" and any(c.isspace() for c in tid):
         sys.exit(f"thread id must not contain whitespace: {tid}")
     mycwd = os.getcwd()
+    # A caller launched through the pane wrapper relocates via its own resume
+    # loop — never consult sockets, so a same-cwd hosted thread can't be hit.
+    if tid == "self" and os.environ.get("CODEX_RELOC_LOOP") == "1":
+        self_hosted(cwd, tid, "pane session: using its own resume loop")
+        return
     last_err = "no app-server socket found — session is not remote-hosted"
     for path in sockets():
         try:
             ws = init_ws(path)
             found = find_thread(ws, tid, mycwd)
-            if not found: continue
-            r = rpc(ws, "turn/start", {"threadId": found, "cwd": cwd,
-                                       "input": [{"type": "text", "text": note}]}, 99)
+            if not found:
+                last_err = f"{path}: thread {tid} not loaded"; continue
+            try:
+                r = rpc(ws, "turn/start", {"threadId": found, "cwd": cwd,
+                                           "input": [{"type": "text", "text": note}]}, 99)
+            except Exception as e:
+                # turn/start may have landed server-side; do not fall back to
+                # a kill path that could double-relocate or orphan the thread.
+                sys.exit(f"turn/start outcome unconfirmed on {path} ({e}) — "
+                         f"not retrying or self-killing; verify the thread state")
             if "error" in r:
                 last_err = f"{path}: turn/start: {r['error']}"; continue
             print(f"relocation accepted: thread {found} -> {cwd} (via {path})")
@@ -207,7 +230,7 @@ def self_hosted(cwd, tid, why):
     with open(os.path.join(d, str(shell)), "w") as f:
         f.write(f"{cwd} {tid} {int(time.time())}\n")
     print(f"relocation armed: killing host TUI pid {host}; shell pid {shell} "
-          f"will resume thread {tid} at {cwd}")
+          f"will resume thread {tid} at {cwd}", flush=True)
     os.kill(host, signal.SIGTERM)
 
 if __name__ == "__main__":
