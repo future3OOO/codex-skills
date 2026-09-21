@@ -11,6 +11,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from ._workflow_db import LedgerError, history
+from .behavior_map import interpretation_pending
 from .preflight_document import validated_document
 from .command_runner import emit_json as _emit_json, print_output as _print_output, run as _run, run_entry as _run_entry
 from .repo_identity import RepoIdentity, RepoIdentityError, resolve_repo_identity
@@ -376,14 +377,19 @@ def _record_phase(args: argparse.Namespace, identity: RepoIdentity, phase: str, 
         key: value,
         "recordedAt": utc_timestamp(),
     }
-    state, evidence_id = commit_evidence_phase(identity, slug, args.workflow_id, phase, document)
-    recorded = {"evidenceId": evidence_id, "status": "passed"}
+    pending = phase == "preflight" and any(
+        interpretation_pending(item)
+        for item in value.get("behaviorMap", [])
+    )
+    status = "pending" if pending else "passed"
+    state, evidence_id = commit_evidence_phase(identity, slug, args.workflow_id, phase, document, status=status)
+    recorded = {"evidenceId": evidence_id, "status": status}
     if phase == "preflight":
         # The plan-commit gate re-presents the contract: the builder reads the recorded
         # task text back here instead of building the rest of the pass from recall.
         recorded["intent"] = state.get("intent")
     _emit_json(recorded)
-    return 0
+    return 2 if pending else 0
 
 
 def _dispatch(args: argparse.Namespace) -> int:

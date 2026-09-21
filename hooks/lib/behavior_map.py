@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import re
 from typing import Iterable
 
@@ -20,6 +21,8 @@ REQUIRED_FIELDS = frozenset({
 OPTIONAL_FIELDS = frozenset({
     "evidence", "supersededBy", "sourceRefs", "proofCommand", "baselineProof", "supersededFrom",
     "redCommand", "redProof", "revalidationRequired",
+    "boundaryInputs", "interpretations", "interpretation", "authority",
+    "proofBinding",
 })
 IDENTIFIER = re.compile(r"^[A-Z][A-Z0-9_-]{1,63}$")
 # The producer stamps a baseline's command in `evidence`; supersession moves it
@@ -152,6 +155,30 @@ def _source_refs(value: object, identifier: str) -> list[JsonObject] | None:
     return result
 
 
+def interpretation_fields(raw: JsonObject, identifier: str) -> JsonObject:
+    """Validate a material choice without interpreting its application semantics."""
+    fields = {key: raw[key] for key in ("boundaryInputs", "interpretations", "interpretation", "authority") if key in raw}
+    if not fields:
+        return fields
+    inputs, readings = fields.get("boundaryInputs"), fields.get("interpretations")
+    if not isinstance(inputs, list) or not inputs:
+        raise ValueError(f"behavior {identifier} requires non-empty boundaryInputs")
+    try:
+        json.dumps(inputs, allow_nan=False)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"behavior {identifier} boundaryInputs must be concrete JSON values") from exc
+    if not isinstance(readings, list) or len(readings) < 2 or any(_text(value) is None for value in readings):
+        raise ValueError(f"behavior {identifier} interpretations requires competing readings")
+    if "interpretation" in fields or "authority" in fields:
+        for key in ("interpretation", "authority"):
+            fields[key] = _required(fields, key, identifier)
+    return copy.deepcopy(fields)
+
+
+def interpretation_pending(entry: JsonObject) -> bool:
+    return bool(entry.get("interpretations")) and not (entry.get("interpretation") and entry.get("authority"))
+
+
 def validate_items(
     value: object,
     *,
@@ -222,6 +249,7 @@ def validate_items(
             "redFailure": _validate_red_failure(raw.get("redFailure"), identifier),
             "status": status,
             **({"sourceRefs": refs} if refs is not None else {}),
+            **interpretation_fields(raw, identifier),
         }
         if "evidence" in raw and not isinstance(raw.get("evidence"), str):
             raise ValueError(f"behavior {identifier} evidence must be text")
@@ -241,9 +269,13 @@ def validate_items(
         # an already-satisfied item carrying it is producer-backed in every
         # lineage; evidence text proves nothing.
         if "revalidationRequired" in raw:
-            if not allow_runtime or kind != "preservation" or raw["revalidationRequired"] is not True:
-                raise ValueError(f"behavior {identifier} revalidationRequired is producer-owned preservation state")
+            if not allow_runtime or raw["revalidationRequired"] is not True:
+                raise ValueError(f"behavior {identifier} revalidationRequired is producer-owned state")
             item["revalidationRequired"] = True
+        if "proofBinding" in raw:
+            if not allow_runtime or not isinstance(raw["proofBinding"], dict):
+                raise ValueError(f"behavior {identifier} proofBinding is producer-owned")
+            item["proofBinding"] = raw["proofBinding"]
         if "baselineProof" in raw:
             if not allow_runtime or not isinstance(raw.get("baselineProof"), dict):
                 raise ValueError(_BASELINE_PROOF_RESERVED.format(identifier))
@@ -334,6 +366,12 @@ def terminal_items(items: list[JsonObject]) -> dict[str, JsonObject]:
                 raise ValueError(f"behavior id is not in the recorded map: {target}")
             entry = by_id[target]
         terminal = resolved.get(str(entry["id"]), entry)
+        if origin.get("status") == "superseded" and origin.get("boundaryInputs"):
+            required = {json.dumps(value, sort_keys=True) for value in origin["boundaryInputs"]}
+            carried = {json.dumps(value, sort_keys=True) for value in terminal.get("boundaryInputs", [])}
+            if not required <= carried or (interpretation_pending(origin) and not
+                    set(origin["interpretations"]) <= set(terminal.get("interpretations", []))):
+                raise ValueError(f"behavior {origin['id']} supersession must retain boundaryInputs and unsettled readings")
         if origin.get("status") == "superseded" and terminal.get("status") in NEVER_GREEN:
             raise ValueError(f"behavior {terminal['id']} is {terminal['status']} and can never be GREEN; "
                              "it cannot replace a superseded item")
@@ -359,7 +397,8 @@ def apply_dispositions(
     for position, raw in enumerate(value, 1):
         if not isinstance(raw, dict):
             raise ValueError(f"TDD map disposition {position} must be an object")
-        unknown = sorted(set(raw) - {"id", "status", "evidence", "supersededBy", "sourceRefs", "revalidate"})
+        metadata = {"boundaryInputs", "interpretations", "interpretation", "authority"}
+        unknown = sorted(set(raw) - {"id", "status", "evidence", "supersededBy", "sourceRefs", "revalidate"} - metadata)
         if unknown:
             raise ValueError(f"TDD map disposition {position} has unknown fields: {', '.join(unknown)}")
         identifier = _text(raw.get("id"))
@@ -367,6 +406,19 @@ def apply_dispositions(
             raise ValueError("TDD map dispositions require unique behavior ids")
         seen.add(identifier)
         mapped = item(items, identifier)
+        if metadata & raw.keys():
+            proposal = {**mapped, **{key: raw[key] for key in metadata & raw.keys()}}
+            if "interpretations" in raw and raw["interpretations"] != mapped.get("interpretations") and "interpretation" not in raw:
+                proposal.pop("interpretation", None)
+                proposal.pop("authority", None)
+            fields = interpretation_fields(proposal, identifier)
+            removed = {json.dumps(value, sort_keys=True) for value in mapped.get("boundaryInputs", [])} - {
+                json.dumps(value, sort_keys=True) for value in fields["boundaryInputs"]}
+            if removed and not _text(raw.get("evidence")):
+                raise ValueError(f"behavior {identifier} removing boundaryInputs requires governing evidence")
+            for key in metadata:
+                mapped.pop(key, None)
+            mapped.update(fields)
         if "sourceRefs" in raw:
             refs = _source_refs(raw["sourceRefs"], identifier)
             if refs is None:
@@ -382,7 +434,7 @@ def apply_dispositions(
         if revalidate and (raw["revalidate"] is not True or "status" in raw):
             raise ValueError("revalidate must be true and is mutually exclusive with status")
         if not revalidate and "status" not in raw:
-            if set(raw) - {"id", "sourceRefs"} or "sourceRefs" not in raw:
+            if set(raw) - {"id", "sourceRefs", "evidence"} - metadata or not ({"sourceRefs"} | metadata) & raw.keys():
                 raise ValueError(f"behavior {identifier} disposition requires status, revalidate or sourceRefs")
             continue
         evidence = _text(raw.get("evidence"))
@@ -392,15 +444,15 @@ def apply_dispositions(
             raise ValueError(f"behavior {identifier} disposition {status} cannot carry supersededBy")
         previous = mapped.get("status")
         if revalidate or status == "pending":
-            if status == "pending" and mapped.get("kind") == "contract" and previous == "red":
+            if status == "pending" and mapped.get("kind") == "contract" and previous in {"red", "green"}:
                 mapped["status"] = "pending"
-                for field in ("redCommand", "proofCommand"):
+                for field in ("redCommand", "proofCommand", "proofBinding"):
                     mapped.pop(field, None)
                 continue
             permitted = {"pending", "green", *DISPOSITION_STATUSES} if revalidate else DISPOSITION_STATUSES
             if revalidate and mapped.get("revalidationRequired") and previous == "red":
                 permitted = permitted | {"red"}
-            if mapped.get("kind") != "preservation" or previous not in permitted or (
+            if (mapped.get("kind") != "preservation" and not revalidate) or previous not in permitted or (
                 revalidate and previous == "pending" and not mapped.get("revalidationRequired")
             ):
                 raise ValueError(f"behavior {identifier} is a {mapped.get('kind')} item at {previous}; "
@@ -559,7 +611,7 @@ def green_through_red(entry: JsonObject) -> bool:
 
 def producer_proved(entry: JsonObject) -> bool:
     """Proof statuses come only from the producer; already-satisfied counts only with its recorded proof."""
-    return not entry.get("revalidationRequired") and (
+    return not interpretation_pending(entry) and not entry.get("revalidationRequired") and (
         entry.get("status") in PROOF_STATUSES or (
             entry.get("status") == "already-satisfied" and isinstance(entry.get("baselineProof"), dict)
         )
@@ -574,7 +626,8 @@ def unresolved(
     return [
         str(entry["id"])
         for entry in items
-        if entry.get("status") in {"pending", "red"}
+        if (interpretation_pending(entry) and entry.get("status") != "superseded")
+        or entry.get("status") in {"pending", "red"}
         # Prose already-satisfied is a settlement no producer observed (issue #54).
         or (entry.get("status") == "already-satisfied" and not producer_proved(entry))
         or (entry.get("revalidationRequired") and entry.get("status") not in {"omitted", "superseded"})

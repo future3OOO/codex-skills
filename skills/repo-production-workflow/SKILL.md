@@ -146,7 +146,10 @@ The recorded preflight owns the initial Behavior Map; read the tdd skill's [Reco
 
 Record a completed preflight only through its recorder, which demands the
 skill's structured document (thirteen non-empty text sections plus a non-empty
-`behaviorMap`, with `openQuestions` exactly `none`) and refuses without mutating state:
+`behaviorMap`). The [preflight owner](../production-preflight/SKILL.md#behaviormap)
+retains structurally valid unsettled interpretations as pending evidence; passing
+still requires `openQuestions` exactly `none` and settled choices. Other malformed
+documents refuse without mutating state:
 
 ```bash
 python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" \

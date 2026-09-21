@@ -72,6 +72,13 @@ expected/observed results under those same verification rules.
 
 ## 5. Review both axes
 
+Derive discriminating inputs independently of the lead's `boundaryInputs`.
+Check omitted competing readings, unresolved authority, and the sensitivity of
+represented cases against the governing contract. The recorder's input screen
+establishes representation only: a represented but semantically inadequate case,
+or a falsely claimed extraction result, is a Spec finding. Reuse applicable proof;
+do not require new naming, metadata-only reruns or a second coverage inventory.
+
 Run **Standards** and **Spec** independently:
 
 - Standards: documented-standard violations, smell judgements, hard-invariant

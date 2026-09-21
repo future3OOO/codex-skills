@@ -54,6 +54,13 @@ Affected preservation uses producer-owned `revalidationRequired: true`, never au
 
 Select one pending contract ID and write its RED before the production edit that satisfies it. Settle each preservation item by baselining it through `tdd --phase red` or dispositioning it through `tdd-map`, early enough that a later RED on it means a regression.
 
+Use [preflight's operational definitions](../production-preflight/SKILL.md#authoritativecontract)
+and governing authority to set the expected result, then drive its discriminating
+input through the real Seam. Inputs on which competing readings agree cannot
+prove the chosen distinction. If the expected result merely repeats an undefined
+predicate, return to that investigation and reassess the same map item before
+dependent code; do not derive the oracle from the planned implementation.
+
 **RED**
 
 - Write one test for that atomic behavior through its recorded Seam.
@@ -75,6 +82,27 @@ Each contract item's RED belongs on the tree before the production edit that sat
 Several assertions may jointly prove one behavior; every assertion participating in that joint proof carries the same behavior-specific `redFailure` marker, so whichever guarantee breaks first still names the mapped failure. State after success or failure must match the complete observable contract.
 
 ## 3. Update the Map When a Proof Changes It
+
+For a material interpretation choice, use preflight's optional `boundaryInputs`,
+`interpretations`, `interpretation` and `authority` on the same item through
+`tdd-map` dispositions. New readings without a selected interpretation retain a
+hold even when their inputs are represented. Removing inputs requires governing
+`evidence`; supersession must retain their obligations. Sufficient current proof
+is reused without another execution. Missing or stale input proof revalidates only
+the affected item; an applicable RED remains usable. A changed obligation or
+surface returns to pending and ordinary RED, never a manufactured failure.
+
+Normal GREEN/baseline admission, including receipt reuse, screens declared inputs
+against the selected execution-bound surface. `inputEvidence` distinguishes
+represented values, confirmed missing values (refused immediately), and unresolved
+extraction with its limits. Source inspection is bounded to supported selected
+operations and literal data; comments, expected-only values and unselected tests
+are not input evidence. Representation proves neither execution of each branch nor
+assertion sensitivity. Resolve real omissions and assess indirect inputs from
+available bound evidence before review. Unsupported extraction alone does not
+justify renaming tests, splitting batches, instrumentation or repeating sufficient
+proof. Unambiguous items do no extraction. Existing review challenges semantic
+adequacy and the mandatory final advisor still applies.
 
 GREEN exposes implementation consequences. Inspect what the implementation actually chose - value conversions, callees, shared writers, hooks and mutation paths, and every operation whose effects could erase a rule before it is judged - and classify each material risk against the contract as needing a real probe, having reusable proof, or being unreachable. When one reveals a new load-bearing mechanism, a touched-Seam preservation or interaction behavior, or a defect, add the item before the next production edit; when it reveals nothing, record the classification and nothing else. The map advisory raises impacted-test candidates; review challenges the decisions and the omissions. Pass the document on stdin instead of a scratch file:
 

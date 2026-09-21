@@ -396,6 +396,16 @@ def _baseline_refusal(binding: dict[str, object], kind: object) -> str:
             "or narrow the obligation with governing evidence")
 
 
+def _input_admission(mapped: JsonObject, surface: JsonObject, root: Path,
+                     test_id: str | None = None) -> tuple[JsonObject | None, str]:
+    if not mapped.get("boundaryInputs"):
+        return None, ""
+    evidence = tdd_surface.input_evidence(surface, root, mapped["boundaryInputs"], test_id)
+    error = (f"missing discriminating input(s) {evidence['missing']!r} in selected input evidence "
+             f"{evidence['sources'] or surface}") if evidence["missing"] else ""
+    return evidence, error
+
+
 def _run_tdd(values: list[str]) -> int:
     """Run the one mapped-or-imported-legacy candidate-cycle lifecycle."""
     dash = values.index("--") if "--" in values else None
@@ -626,6 +636,14 @@ def _run_tdd(values: list[str]) -> int:
         }
     if baseline and (refusal := _baseline_refusal(binding, mapped.get("kind"))):
         proof, proof_error, baseline = None, refusal, False
+    input_check = None
+    input_error = ""
+    if not legacy and proof is not None and (baseline or phase == "green") and mapped.get("boundaryInputs"):
+        input_check, input_error = _input_admission(mapped, surface, Path(identity.root), args.test_id)
+        if input_error:
+            proof, proof_error, baseline = None, input_error, False
+        else:
+            proof = {**proof, "inputEvidence": input_check}
     if baseline and receipt is not None:
         # The stored execution already settled another item: its run recorded a
         # baseline for that item's own id. Re-attributing the same observed
@@ -726,6 +744,9 @@ def _run_tdd(values: list[str]) -> int:
         # Every mapped run is retained, a refused attempt with its reason.
         updated = behavior_map.clone(items)
         updated_item = behavior_map.item(updated, args.behavior_id)
+        if baseline or (phase == "green" and valid):
+            updated_item["proofBinding"] = {"candidateTree": binding["candidateTree"],
+                                             "command": command_text, "testId": args.test_id}
         doc_kind = "cycle"
         if baseline:
             updated_item["status"] = "already-satisfied"
@@ -815,6 +836,8 @@ def _run_tdd(values: list[str]) -> int:
     }
     if not legacy:
         payload["behaviorId"] = args.behavior_id
+    if input_check is not None:
+        payload["inputEvidence"] = input_check
     if baseline:
         payload["status"] = "already-satisfied"
     _emit_json(payload)
@@ -825,6 +848,13 @@ def _run_tdd(values: list[str]) -> int:
             "RED must fail for the expected reason."
             if phase == "red"
             else "GREEN must pass after a valid RED for the same command, behavior, and Seam.",
+            file=sys.stderr,
+        )
+    elif input_error and proof_error == input_error:
+        print(
+            input_error + ". Select actual proof supplying these inputs; reuse an applicable "
+            "verification receipt with --from-evidence and --test-id. Passing preservation "
+            "proof can establish a baseline without a failing RED.",
             file=sys.stderr,
         )
     elif phase == "red":
@@ -1056,6 +1086,26 @@ def _map_update(values: list[str]) -> int:
     if additions:
         added_items = behavior_map.added_items(additions, updated)
         updated.extend(added_items)
+    input_checks = {}
+    for entry in updated:
+        previous = next((item for item in items if item["id"] == entry["id"]), None)
+        if not previous or (
+            json.dumps(entry.get("boundaryInputs"), sort_keys=True)
+            == json.dumps(previous.get("boundaryInputs"), sort_keys=True)
+        ):
+            continue
+        proof_binding = entry.get("proofBinding")
+        if isinstance(proof_binding, dict) and proof_binding.get("candidateTree") == _active_candidate_tree(identity):
+            check, error = _input_admission(entry, tdd_surface.identify(shlex.split(proof_binding["command"])),
+                                             Path(identity.root), proof_binding.get("testId"))
+            input_checks[entry["id"]] = check
+            if not error and not check["unresolved"]:
+                continue
+        else:
+            input_checks[entry["id"]] = {"limits": ["no current execution binding for input reassessment"]}
+        if entry.get("status") in {"green", "already-satisfied"}:
+            behavior_map.apply_dispositions(updated, [{"id": entry["id"], "revalidate": True,
+                                                      "evidence": "interpretation input proof requires reassessment"}])
     # Supersession is judged over the merged map, so a replacement added in
     # this same update is legal and a broken graph refuses before any commit.
     unresolved = behavior_map.unresolved(updated)
@@ -1065,12 +1115,14 @@ def _map_update(values: list[str]) -> int:
     reassessed = frozenset(str(entry["id"]).strip() for entry in [*added_items, *dispositions])
     if source is not None:
         reassessed |= {str(source)}
-    if updated != items or reassessed:
+    if reassessed or json.dumps(updated, sort_keys=True) != json.dumps(items, sort_keys=True):
         document = {**(current or _map_doc(
             slug=str(state["slug"]), workflow_id=str(state["workflowId"]),
             items=items, status=status, kind="map",
         )), "behaviorMap": updated, "status": status, "reassessment": reassessment.strip(),
             "sourceBehaviorId": source, "updatedAt": utc_timestamp()}
+        if input_checks:
+            document["inputEvidence"] = input_checks
         active = document.get("activeBehaviorId")
         if active is not None and behavior_map.item(updated, str(active))["status"] == "pending":
             document.update(kind="map", activeBehaviorId=None)
@@ -1085,7 +1137,11 @@ def _map_update(values: list[str]) -> int:
             for entries in (items, updated)
         )
         review_changed = before != after or any(entry.get("status") == "superseded" for entry in dispositions)
-        if before == after and not review_changed:
+        interpretation_progress = any(
+            set(entry) & {"boundaryInputs", "interpretations", "interpretation", "authority"}
+            for entry in dispositions
+        ) and set(behavior_map.unresolved(items)) != set(unresolved)
+        if before == after and not review_changed and not interpretation_progress:
             _, evidence_id = annotate_tdd_evidence(
                 identity, str(state["slug"]), str(state["workflowId"]), document,
                 expected_evidence_id=current_evidence_id, reassessed=reassessed,
@@ -1103,6 +1159,7 @@ def _map_update(values: list[str]) -> int:
             "status": status,
             "pending": unresolved,
             "added": [entry["id"] for entry in added_items],
+            **({"inputEvidence": input_checks} if input_checks else {}),
         }
     )
     return 0

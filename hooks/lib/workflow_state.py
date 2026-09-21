@@ -2222,6 +2222,10 @@ def ready_for_edit(identity: RepoIdentity, path: str) -> tuple[bool, list[str]]:
     ]
     if not is_test_path(path) and state.get("tdd") not in {"in-progress", "passed", "not-required"}:
         missing.append("TDD RED or a recorded not-required decision (test-like edits stay open)")
+    held = [str(item["id"]) for item in _recorded_items(identity, state)
+            if item.get("status") != "superseded" and behavior_map.interpretation_pending(item)]
+    if held and not is_test_path(path):
+        missing.append("unsettled interpretation: " + ", ".join(held))
     return not missing, missing
 
 
@@ -2418,7 +2422,7 @@ def summary(identity: RepoIdentity, limit: int = 3000) -> str:
         f"candidate={state.get('activeCandidateTree')} phase={state.get('phase')} next={state.get('nextAction')}. "
         + (f"Binding: {gate_drift}. " if gate_drift else "")
         + " ".join(f"{field}={state[field]}" for field in (
-            "tddEvidence", "verificationLatestEvidence", "qualityGateManifestId") if state.get(field)) + ". "
+            "preflightLatestEvidence", "tddEvidence", "verificationLatestEvidence", "qualityGateManifestId") if state.get(field)) + ". "
         # Evidence-aware, not the raw status: a compacted session reads this line, and
         # a legacy pass that claims the phase without producer evidence is pending
         # everywhere else in the workflow.
