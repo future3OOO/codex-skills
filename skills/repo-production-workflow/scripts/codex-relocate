@@ -1,0 +1,226 @@
+#!/usr/bin/env python3
+"""Relocate the calling agent's session root to a new working directory.
+
+Usage: codex-relocate <abs-path> [thread-id] [note]
+
+Remote-hosted sessions (app-server socket): turn/start moves the canonical
+root (cwd + workspace roots) immediately; the injected continuation turn
+still runs on the OLD environment, and the turn AFTER that lands in the
+new root — a one-turn lag. Pass workdir=<abs-path> on exec calls during
+the gap turn, or verify with pwd on the following turn.
+
+Self-hosted sessions (any profile): no socket exists, so this arms the
+resume loop in the launching shell (CODEX_RELOC_LOOP must be set — the
+codex/codexs wrappers export it), writes ~/.codex/reloc/<shell-pid>, and
+kills the host TUI. The wrapper resumes the same thread at <abs-path>
+in the SAME pane. Run this as the LAST action of a turn — the kill ends
+the session.
+
+thread-id defaults to $CODEX_THREAD_ID, else 'self' (the loaded thread
+whose cwd matches the current directory). Socket auto-discovers
+~/.codex/app-server-*.sock and ~/.codex/app-server-control/*.sock;
+override with CODEX_APP_SERVER_SOCK.
+"""
+import socket, base64, hashlib, os, struct, json, sys, time, glob, signal, shlex
+
+class WS:
+    def __init__(self, path):
+        self.s = socket.socket(socket.AF_UNIX); self.s.settimeout(3); self.s.connect(path)
+        key = base64.b64encode(os.urandom(16)).decode()
+        self.s.sendall((f"GET / HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\n"
+                        f"Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\n"
+                        f"Sec-WebSocket-Version: 13\r\n\r\n").encode())
+        buf = b""
+        while b"\r\n\r\n" not in buf:
+            chunk = self.s.recv(4096)
+            if not chunk: raise RuntimeError("ws handshake EOF")
+            buf += chunk
+        if b"101" not in buf.split(b"\r\n")[0]: raise RuntimeError("ws handshake failed")
+        expect = base64.b64encode(hashlib.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest())
+        if expect not in buf: raise RuntimeError("ws accept mismatch")
+        self.buf = buf.split(b"\r\n\r\n", 1)[1]
+        self.s.settimeout(0.5)
+        self.frag = bytearray()
+    def send(self, payload):
+        data = payload.encode(); mask = os.urandom(4); n = len(data)
+        if n < 126: hdr = struct.pack("!BB", 0x81, 0x80 | n)
+        elif n < 65536: hdr = struct.pack("!BBH", 0x81, 0x80 | 126, n)
+        else: hdr = struct.pack("!BBQ", 0x81, 0x80 | 127, n)
+        self.s.sendall(hdr + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(data)))
+    def _fill(self):
+        try:
+            while True:
+                c = self.s.recv(65536)
+                if not c: raise ConnectionError("closed")
+                self.buf += c
+                if self._ready(): return
+        except socket.timeout: pass
+    def _ready(self):
+        if len(self.buf) < 2: return False
+        n = self.buf[1] & 0x7F; off = 2
+        if n == 126:
+            if len(self.buf) < 4: return False
+            n = struct.unpack("!H", self.buf[2:4])[0]; off = 4
+        elif n == 127:
+            if len(self.buf) < 10: return False
+            n = struct.unpack("!Q", self.buf[2:10])[0]; off = 10
+        return len(self.buf) >= off + n
+    def recv(self, wait=10):
+        t = time.time() + wait
+        while time.time() < t:
+            if self._ready():
+                b0 = self.buf[0]; b1 = self.buf[1]; n = b1 & 0x7F; off = 2
+                if n == 126: n = struct.unpack("!H", self.buf[2:4])[0]; off = 4
+                elif n == 127: n = struct.unpack("!Q", self.buf[2:10])[0]; off = 10
+                op = b0 & 0x0F
+                payload = self.buf[off:off+n]; self.buf = self.buf[off+n:]
+                if op == 9:
+                    mask = os.urandom(4)
+                    self.s.sendall(struct.pack("!BB", 0x8A, 0x80 | len(payload)) + mask
+                                   + bytes(b ^ mask[i % 4] for i, b in enumerate(payload)))
+                    continue
+                if op == 8: raise ConnectionError("closed")
+                if op in (0, 1):
+                    self.frag += payload
+                    if b0 & 0x80:
+                        msg, self.frag = bytes(self.frag), bytearray()
+                        return msg.decode()
+                continue
+            self._fill()
+        return None
+
+def rpc(ws, method, params, rid, wait=15):
+    ws.send(json.dumps({"jsonrpc": "2.0", "id": rid, "method": method, "params": params}))
+    t = time.time() + wait
+    while time.time() < t:
+        m = ws.recv(wait=2)
+        if m is None: continue
+        try: msg = json.loads(m)
+        except ValueError: raise ConnectionError("malformed frame payload")
+        if msg.get("id") == rid: return msg
+    raise TimeoutError(f"timeout: {method}")
+
+def sockets():
+    env = os.environ.get("CODEX_APP_SERVER_SOCK")
+    if env: return [env]
+    return sorted(set(glob.glob(os.path.expanduser("~/.codex/*.sock"))
+                    + glob.glob(os.path.expanduser("~/.codex/app-server-control/*.sock"))))
+
+def init_ws(path):
+    ws = WS(path)
+    r = rpc(ws, "initialize", {"clientInfo": {"name": "codex-relocate", "version": "0"}}, 1)
+    if "error" in r: raise RuntimeError(f"init failed on {path}: {r['error']}")
+    ws.send(json.dumps({"jsonrpc": "2.0", "method": "initialized", "params": {}}))
+    return ws
+
+def find_thread(ws, tid, mycwd):
+    """tid explicit -> verify loaded; 'self' -> match loaded thread by cwd."""
+    r = rpc(ws, "thread/loaded/list", {}, 2)
+    loaded = r.get("result", {}).get("data", [])
+    if tid != "self":
+        return tid if tid in loaded else None
+    hits = []
+    for i, t in enumerate(loaded):
+        rr = rpc(ws, "thread/read", {"threadId": t}, 10 + i)
+        th = rr.get("result", {}).get("thread", {})
+        envs = th.get("environments") or []
+        cwds = [e.get("cwd") for e in envs] or [th.get("cwd")]
+        if any(c and os.path.realpath(c) == os.path.realpath(mycwd) for c in cwds):
+            hits.append(t)
+    return hits[0] if len(hits) == 1 else None
+
+def main():
+    if len(sys.argv) < 2:
+        sys.exit(__doc__.strip().split("\n")[2])
+    cwd = sys.argv[1]
+    tid = sys.argv[2] if len(sys.argv) > 2 else os.environ.get("CODEX_THREAD_ID", "self")
+    note = sys.argv[3] if len(sys.argv) > 3 else f"continue from {cwd}"
+    if not os.path.isabs(cwd):
+        sys.exit(f"worktree path must be absolute: {cwd}")
+    if not os.path.isdir(cwd):
+        sys.exit(f"not a directory: {cwd}")
+    if any(c.isspace() for c in cwd):
+        sys.exit(f"worktree path must not contain whitespace: {cwd}")
+    if tid != "self" and any(c.isspace() for c in tid):
+        sys.exit(f"thread id must not contain whitespace: {tid}")
+    mycwd = os.getcwd()
+    if tid == "self" and os.environ.get("CODEX_RELOC_LOOP") == "1":
+        return self_hosted(cwd, tid, "pane session: using its own resume loop")
+    last_err = "no app-server socket found — session is not remote-hosted"
+    for path in sockets():
+        try:
+            ws = init_ws(path)
+            found = find_thread(ws, tid, mycwd)
+            if not found: last_err = f"{path}: thread {tid} not loaded"; continue
+            try:
+                r = rpc(ws, "turn/start", {"threadId": found, "cwd": cwd,
+                                           "input": [{"type": "text", "text": note}]}, 99)
+            except Exception as e:
+                sys.exit(f"turn/start outcome unconfirmed on {path} ({e}); verify the thread state")
+            if "error" in r: sys.exit(f"turn/start rejected on {path}: {r['error']}")
+            print(f"relocation accepted: thread {found} -> {cwd} (via {path})")
+            return
+        except Exception as e:
+            last_err = f"{path}: {e}"; continue
+    self_hosted(cwd, tid, last_err)
+
+def self_hosted(cwd, tid, why):
+    """Fallback for self-hosted TUI sessions: arm the resume loop in the
+    launching shell and kill this host so the pane resumes the thread at
+    the new root."""
+    if tid == "self":
+        tid = os.environ.get("CODEX_THREAD_ID", "")
+    if any(c.isspace() for c in tid):
+        sys.exit(f"thread id must not contain whitespace: {tid}")
+    host = shell = None
+    p = str(os.getppid())
+    while p and p != "1":
+        try:
+            comm = open(f"/proc/{p}/comm").read().strip()
+        except OSError:
+            break
+        if host is None:
+            if comm == "codex":
+                host = int(p)
+        elif comm in ("bash", "zsh", "fish", "sh"):
+            shell = int(p); break
+        try:
+            p = open(f"/proc/{p}/stat").read().rsplit(")", 1)[1].split()[1]
+        except (OSError, IndexError):
+            break
+    if not host or not shell:
+        sys.exit(f"thread not reachable on any socket ({why}); "
+                 f"and no codex host + interactive shell found in ancestors — "
+                 f"cannot self-relocate")
+    try:
+        shell_cwd = os.path.realpath(f"/proc/{shell}/cwd")
+    except OSError:
+        shell_cwd = None
+    if shell_cwd == os.path.realpath(cwd):
+        sys.exit(f"session already rooted at {cwd}")
+    if not tid:
+        sys.exit("no thread id (pass it or export CODEX_THREAD_ID)")
+    # The wrapper exports CODEX_RELOC_LOOP into the codex session env, which
+    # every tool call (and this script) inherits. The shell's /proc environ is
+    # exec-time only and never carries invocation-scoped vars.
+    if os.environ.get("CODEX_RELOC_LOOP") != "1":
+        prof = None
+        try:
+            cmdl = open(f"/proc/{host}/cmdline", "rb").read().decode(errors="replace").split("\0")
+            prof = cmdl[cmdl.index("--profile") + 1] if "--profile" in cmdl else None
+        except (OSError, ValueError, IndexError):
+            prof = None
+        hint = f"codex --profile {shlex.quote(prof)} resume -C {shlex.quote(cwd)} {shlex.quote(tid)}" if prof \
+               else f"codex resume -C {shlex.quote(cwd)} {shlex.quote(tid)}"
+        sys.exit(f"thread not reachable on any socket ({why}); this session's "
+                 f"shell has no resume loop. From THIS pane run: {hint}")
+    d = os.path.expanduser("~/.codex/reloc")
+    os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, str(shell)), "w") as f:
+        f.write(f"{cwd} {tid} {int(time.time())}\n")
+    print(f"relocation armed: killing host TUI pid {host}; shell pid {shell} "
+          f"will resume thread {tid} at {cwd}", flush=True)
+    os.kill(host, signal.SIGTERM)
+
+if __name__ == "__main__":
+    main()

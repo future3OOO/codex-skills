@@ -6,6 +6,33 @@ Issue bodies own implementation scope; this record preserves decisions and their
 status. New decisions supersede earlier ones explicitly; observations and open
 acceptance gaps are not completed delivery.
 
+## 2026-09-21 — Session relocation via marker, kill, and resume
+
+**Decision:** [#83](https://github.com/future3OOO/codex-skills/issues/83) is
+implemented by a script-plus-shell-loop mechanism, not a protocol handoff.
+`codex-relocate` moves a running session's root to the task worktree: it
+writes `~/.codex/reloc/<shell-pid>` (worktree, thread, epoch) and
+SIGTERM the host TUI, and the `codex`/`codexs` wrapper resumes the same
+thread at the worktree in the same pane. Guards: the script refuses when the
+launching shell lacks `CODEX_RELOC_LOOP` (prints the profile-correct manual
+`resume -C` command, never kills), when the session is already rooted at the
+target, when the worktree path or thread id contains whitespace (the loop
+reads marker fields space-separated), and the loop ignores markers older
+than 900s or missing an epoch.
+Verified live end-to-end on a herdr-hosted codexs session and by stub-chain
+probes on the shipped files. Sessions launched outside the shell wrappers
+(e.g., `herdr agent start`) keep the manual-command path. Scope: the owner
+descoped remote-hosted relocation mid-pass (recorded on issue #83) — the
+immutable pass intent predates that amendment and names it only as history.
+
+**Scope:** Ships `skills/repo-production-workflow/scripts/codex-relocate`,
+the `codex-reloc-loop.bashrc` snippet, the SKILL.md before-`begin`
+instruction, and an AGENTS.md clause. `install.sh` unchanged — the snippet is
+sourced by the user once; the script path is stable post-install.
+
+**Delivery:** Pass `session-relocate` on `feat/session-relocate`, linked to
+#83.
+
 ## 2026-09-20 — Native checkout owns hook routing
 
 **Decision:** Supersedes [PR #79](https://github.com/future3OOO/codex-skills/pull/79)'s
@@ -23,6 +50,21 @@ parent/child evidence establishes checkout inheritance, not universal agent beha
 
 **Delivery:** Candidate on `fix/native-checkout-routing`; review and PR pending.
 Shared installation unchanged.
+
+## 2026-09-20 — Task worktrees own dispatch and recovery
+
+**Decision:** Correct PR #50's aggregation of session-associated worktrees.
+Validated workflow begin/verify select the explicit task checkout before execution
+in the existing session-state area. Dispatch and re-arm share that selection;
+read-only queries and completed or cancelled verification cannot retarget it.
+Readiness still comes from that checkout's actual workflow evidence. Reviewers
+must launch in the task checkout; a shell workdir does not relocate native tools.
+
+**Scope:** Emergency runtime isolation portion of #78 only. Its general skill
+instruction repairs remain separate. No shared-estate edits or acceptance waivers.
+
+**Delivery:** Source change on `fix/task-workflow-isolation`, linked to #78.
+Shared installation remains unchanged; integration is through the emergency PR.
 
 ## 2026-09-20 — Hook merge reconciles managed entries
 
