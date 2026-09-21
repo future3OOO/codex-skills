@@ -27,11 +27,11 @@ if want_flag: env["CODEX_RELOC_LOOP"] = "1"
 got_sigterm = []
 signal.signal(signal.SIGTERM, lambda *a: got_sigterm.append(1))
 
+ctypes.CDLL(None).prctl(15, b"codex", 0, 0, 0)
 pid = os.fork()
 if pid == 0:
     os.execve(sys.executable, [sys.executable, script, wt, tid], env)
     os._exit(1)
-ctypes.CDLL(None).prctl(15, b"codex", 0, 0, 0)
 
 deadline = time.time() + 20
 status = None

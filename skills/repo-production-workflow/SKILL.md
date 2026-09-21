@@ -31,9 +31,11 @@ rooted session gives delegates, hooks, and advisors the same checkout:
 python3 "$HOME/.codex/skills/repo-production-workflow/scripts/codex-relocate" "<task-worktree>"
 ```
 
-The script arms the launching shell's resume loop and kills the TUI — run
-it as the turn's last action; the same thread resumes at the worktree in
-the same pane (requires the `codex`/`codexs` resume loop from
+The `<task-worktree>` must be an absolute, whitespace-free path. The script
+arms the launching shell's resume loop and kills the TUI — run it as the
+turn's last action; the same thread resumes at the worktree in the same
+pane, and the workflow (`begin` and later steps) continues in the resumed
+session's next turn (requires the `codex`/`codexs` resume loop from
 `scripts/codex-reloc-loop.bashrc`; without it the script prints the manual
 `resume -C` command instead). Remote-hosted (app-server) sessions can't
 self-relocate — launch them rooted at the worktree instead.

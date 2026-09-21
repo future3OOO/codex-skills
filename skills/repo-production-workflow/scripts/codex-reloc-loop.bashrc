@@ -21,20 +21,31 @@ _codex_reloc_loop() {
   done
 }
 codex() {
-  case "${1:-}" in
-    exec|app-server|completion|login|logout|sandbox|import|agents|debug|-h|--help|-V|--version)
-      command codex "$@"; return ;;
-  esac
-  local a; for a in "$@"; do [ "$a" = "--remote" ] && { command codex "$@"; return; }; done
+  local a; for a in "$@"; do
+    case "$a" in
+      exec|app-server|completion|login|logout|sandbox|import|agents|debug|-h|--help|-V|--version|--remote|--remote=*)
+        command codex "$@"; return ;;
+    esac
+  done
   local rargs=(); for a in "$@"; do [ "$a" = "resume" ] && break; rargs+=("$a"); done
   CODEX_RELOC_LOOP=1 command codex "$@"
+  local rc=$?
   _codex_reloc_loop "${rargs[@]}"
+  return $rc
 }
 _codexs_run() {
-  local rargs=(--profile codexs) a
+  local a; for a in "$@"; do
+    case "$a" in
+      exec|app-server|completion|login|logout|sandbox|import|agents|debug|-h|--help|-V|--version|--remote|--remote=*)
+        command codex --profile codexs "$@"; return ;;
+    esac
+  done
+  local rargs=(--profile codexs)
   for a in "$@"; do [ "$a" = "resume" ] && break; rargs+=("$a"); done
   CODEX_RELOC_LOOP=1 command codex --profile codexs "$@"
+  local rc=$?
   _codex_reloc_loop "${rargs[@]}"
+  return $rc
 }
 codexs()        { _codexs_run "$@"; }
 codexs-high()   { _codexs_run -m swe-2-high "$@"; }

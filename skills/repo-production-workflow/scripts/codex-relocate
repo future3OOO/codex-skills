@@ -11,7 +11,7 @@ the session.
 
 thread-id defaults to $CODEX_THREAD_ID.
 """
-import os, sys, time, signal
+import os, sys, time, signal, shlex
 
 
 def main():
@@ -62,8 +62,8 @@ def self_hosted(cwd, tid):
             prof = cmdl[cmdl.index("--profile") + 1] if "--profile" in cmdl else None
         except (OSError, ValueError, IndexError):
             prof = None
-        hint = f"codex --profile {prof} resume -C {cwd} {tid}" if prof \
-               else f"codex resume -C {cwd} {tid}"
+        hint = f"codex --profile {prof} resume -C {shlex.quote(cwd)} {shlex.quote(tid)}" if prof \
+               else f"codex resume -C {shlex.quote(cwd)} {shlex.quote(tid)}"
         sys.exit(f"this session's shell has no resume loop. "
                  f"From THIS pane run: {hint}")
     d = os.path.expanduser("~/.codex/reloc")
