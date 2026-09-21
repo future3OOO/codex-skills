@@ -143,6 +143,20 @@ Diverged files (manual merge — sync will not overwrite):
 - `skills/production-code/scripts/test_code_quality_gate.py` — captured historical
   calibration literals must retain their original spelling and pinned digests
 
+## Session relocation
+
+`~/.codex/skills/repo-production-workflow/scripts/codex-relocate <worktree>`
+moves the running session's root into a task worktree. Run it as the turn's
+last action; the mechanism depends on session type:
+
+- Remote-hosted sessions (served by a Codex app-server) are repointed via
+  `turn/start` on the session's socket. The continuation turn still runs on
+  the old root; the turn after lands in the worktree — a one-turn lag.
+- Self-hosted sessions arm the launching shell's resume loop and kill the
+  TUI, resuming the same thread at the worktree in the same pane. Requires
+  the `codex`/`codexs` wrapper from `codex-reloc-loop.bashrc` (same scripts
+  directory); without it the script prints the manual `resume -C` command.
+
 ## Hook event map (Codex)
 
 Codex fires the full Claude event set with the same payload contract
