@@ -23,6 +23,22 @@ bindings current and report unavailable comparisons under
 ## One stable workflow
 
 Follow [AGENTS.md](../../AGENTS.md#production-repo-workflow) for isolation and pass reuse.
+After creating or selecting the task worktree, move this session's root into
+it before `begin` — the session checkout is the pass's `--repo`, and only a
+rooted session gives delegates, hooks, and advisors the same checkout:
+
+```bash
+python3 "$HOME/.codex/skills/repo-production-workflow/scripts/codex-relocate" "<task-worktree>"
+```
+
+The `<task-worktree>` must be an absolute, whitespace-free path. The script
+arms the launching shell's resume loop and kills the TUI — run it as the
+turn's last action; the same thread resumes at the worktree in the same
+pane, and the workflow (`begin` and later steps) continues in the resumed
+session's next turn (requires the `codex`/`codexs` resume loop from
+`scripts/codex-reloc-loop.bashrc`; without it the script prints the manual
+`resume -C` command instead). Remote-hosted (app-server) sessions can't
+self-relocate — launch them rooted at the worktree instead.
 For a new task, choose one short slug; `begin` creates and activates its state
 for that worktree before bootstrap:
 

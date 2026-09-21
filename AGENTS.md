@@ -5,12 +5,13 @@ weaken them.
 
 ## Production Repo Workflow
 
-Use a native session rooted in a task-owned worktree. New task:
-`codex --enable worktrees --worktree -C <repo>`; existing task:
-`codex resume -C <worktree> <session-id>` — the picker lists sessions with
-their roots, `git worktree list` the paths. Select a task branch before workflow state or edits.
-Shell `workdir` does not relocate the session. Lead, native delegates and advisors
-must use that checkout. Never edit main or clobber another task's state or files.
+For repository changes, create or reuse a task-owned Git worktree and enter it
+before invoking `$repo-production-workflow`, creating its slug/state, or
+editing. Enter it yourself by running, as the turn's last action:
+`python3 "$HOME/.codex/skills/repo-production-workflow/scripts/codex-relocate" <absolute whitespace-free worktree>`
+Select a task branch before workflow state or edits; shell `workdir` does not
+relocate the session. Never edit the main/shared checkout or clobber another
+agent's state or files.
 
 Invoke `$repo-production-workflow` first, only when production changes are required
 (code, config, runtime, deploy, generated source, or production behavior). It owns
