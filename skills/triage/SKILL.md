@@ -23,7 +23,8 @@ Every comment or issue posted to the issue tracker during triage **must** start 
 Read [AGENT-BRIEF.md](AGENT-BRIEF.md) and use its compact contract for every
 issue or brief, including quick overrides and revisions. Inspect existing
 behavior before specifying the smallest sufficient change and its proof.
-Triage prepares the handoff; it does not start an implementation workflow.
+Triage specifies the task, not a replacement execution workflow. The reference
+owns constraint scope, verified prerequisites and concise handovers.
 
 ## Roles
 
@@ -40,11 +41,11 @@ Five **state** roles:
 - `ready-for-human` — needs human implementation
 - `wontfix` — will not be actioned
 
-Every triaged issue should carry exactly one category role and one state role. If state roles conflict, flag it and ask the maintainer before doing anything else.
+Every triaged issue carries one category and one state role. Reconcile conflicts to the maintainer's explicit target; ask only when that target is unknown.
 
 These are canonical role names — the actual label strings used in the issue tracker may differ. The mapping should have been provided to you - run `/setup-matt-pocock-skills` if not.
 
-State transitions: an unlabeled issue normally goes to `needs-triage` first; from there it moves to `needs-info`, `ready-for-agent`, `ready-for-human`, or `wontfix`. `needs-info` returns to `needs-triage` once the reporter replies. The maintainer can override at any time — flag transitions that look unusual and ask before proceeding.
+State transitions normally go from unlabeled to `needs-triage`, then `needs-info`, `ready-for-agent`, `ready-for-human`, or `wontfix`. Reporter replies return `needs-info` to `needs-triage`. Honor explicit maintainer overrides; ask before proposing an unusual transition without authorization.
 
 ## Invocation
 
@@ -69,14 +70,14 @@ Show counts and a one-line summary per issue. Let the maintainer pick.
 
 1. **Gather context.** Read the full issue (body, comments, labels, reporter, dates); for an explicitly requested PR, inspect its diff and verify its claimed behavior too. Parse any prior triage notes so you don't re-ask resolved questions. Explore the codebase using the project's domain glossary, respecting ADRs in the area. Read `.out-of-scope/*.md` and surface any prior rejection that resembles this issue.
 
-2. **Recommend.** Tell the maintainer your category and state recommendation with reasoning, plus a brief codebase summary relevant to the issue. Wait for direction.
+2. **Recommend.** Give the category/state recommendation and decisive evidence. If the maintainer already authorized the issue update, apply it; otherwise wait for direction. Do not ask again for existing authorization.
 
 3. **Reproduce (bugs only).** Before any grilling, attempt reproduction: read the reporter's steps, trace the relevant code, run tests or commands. Report what happened — successful repro with code path, failed repro, or insufficient detail (a strong `needs-info` signal). A confirmed repro makes a much stronger agent brief.
 
 4. **Grill (if needed).** If the issue needs fleshing out, run a `/grill-with-docs` session.
 
 5. **Apply the outcome:**
-   - `ready-for-agent` — post an agent brief comment ([AGENT-BRIEF.md](AGENT-BRIEF.md)).
+   - `ready-for-agent` — reconcile the authoritative brief ([AGENT-BRIEF.md](AGENT-BRIEF.md)); do not append a competing version.
    - `ready-for-human` — same structure as an agent brief, but note why it can't be delegated (judgment calls, external access, design decisions, manual testing).
    - `needs-info` — post triage notes (template below).
    - `wontfix` (bug) — polite explanation, then close.

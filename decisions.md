@@ -66,6 +66,17 @@ instruction repairs remain separate. No shared-estate edits or acceptance waiver
 **Delivery:** Source change on `fix/task-workflow-isolation`, linked to #78.
 Shared installation remains unchanged; integration is through the emergency PR.
 
+## 2026-09-20 — Triage preserves outcomes without prescribing ceremony
+
+**Decision:** Tighten [PR #40](https://github.com/future3OOO/codex-skills/pull/40)'s shared brief contract: preserve requested behavior
+and proof, leave methods to the implementer unless necessary, and reject invented
+or contradictory obligations. Keep user restrictions scoped and one authoritative
+brief. This supersedes copying a separate delivery condition into every brief.
+Efficiency means improvement over the stated baseline at equivalent correct outcomes.
+AGENTS.md requires less ceremony and net code reduction in review follow-up commits.
+
+**Status:** [PR #80](https://github.com/future3OOO/codex-skills/pull/80) open; documentation only.
+
 ## 2026-09-20 — Hook merge reconciles managed entries
 
 **Decision:** The installer's hooks.json merge now removes every installed

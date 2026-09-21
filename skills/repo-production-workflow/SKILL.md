@@ -276,13 +276,7 @@ Before final advisor review, obtain independent `code-review` of the original
 objective and current candidate. Lead self-cleanup and later GitHub review do not replace this
 step. For initial non-trivial review use a fresh native Codex background
 delegate (`spawn_agent`, `agent_type=default`, `fork_turns="none"`, normal native
-model selection) only when its inherited native working root is this checkout.
-If the lead session was launched elsewhere, use a fresh native `codex exec -C
-"<task-worktree>"` review context instead; a shell command’s `workdir` does not
-change the reviewer tool’s inherited root. Confirm the returned session root
-against the lead’s task checkout before accepting the review. Both advisor
-checkpoints use that same checkout through the existing wrapper’s `--cwd`.
-Supply the target, original contract, correction
+model selection) in the lead's native task checkout. Supply the target, original contract, correction
 delta and applicable evidence handles; instruct it to apply `code-review`.
 Wait without editing the candidate. It returns a
 Standards/Spec review and a findings intake. Verify every finding and
@@ -293,8 +287,8 @@ callers, tests, or another active authority. In this governed workflow `workflow
 workflow it stays optional. For a genuinely trivial change, record
 `set-phase --phase code-review --status not-required --findings none`.
 
-Retain its agent and intake IDs. Resume it via `followup_task` or, for the CLI fallback,
-`codex exec -C "<task-worktree>" resume <id>` with the delta, finding IDs and changed/missing evidence.
+Retain its agent and intake IDs. Resume it via `followup_task` with the correction
+delta, finding IDs and changed/missing evidence.
 Do not reload unchanged skills or repeat execution solely for handoff. Keep the
 reviewer read-only and assign each needed operation once; the lead owns repairs,
 TDD/verification recording and dispositions. Use a fresh reviewer when context is

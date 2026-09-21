@@ -9,7 +9,8 @@ For repository changes, create or reuse a task-owned Git worktree and enter it
 before invoking `$repo-production-workflow`, creating its slug/state, or
 editing. Enter it yourself by running, as the turn's last action:
 `python3 "$HOME/.codex/skills/repo-production-workflow/scripts/codex-relocate" <absolute whitespace-free worktree>`
-Never edit the main/shared checkout or clobber another agent's state or files.
+Select a task branch before workflow state or edits. Never edit the
+main/shared checkout or clobber another agent's state or files.
 
 Invoke `$repo-production-workflow` first, only when production changes are required
 (code, config, runtime, deploy, generated source, or production behavior). It owns
@@ -71,9 +72,10 @@ and branch/PR alignment is verified, unless the user or workflow says otherwise.
 - Assume your first implementation is bloated. Keep the least production code
   that fully meets the objective and preserves affected behavior. Retain real
   attack probes; cut redundant scaffolding and mocked unit-test bloat from this change.
-- Never weaken requirements, desired behavior, affected preservation, or
-  necessary proof to reduce lines or meet a review budget.
-- Every changed line must serve the request or cleanup caused by it.
+- Every change must remove unnecessary workflow ceremony. Reviewer-requested
+  follow-up commits must reduce net lines of code.
+- Preserve required behavior and proof when reducing lines or meeting the review
+  budget. Every changed line must serve the request or cleanup caused by it.
 
 ## Surgical Changes
 
