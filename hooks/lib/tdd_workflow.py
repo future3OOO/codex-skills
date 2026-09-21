@@ -1110,8 +1110,7 @@ def _map_update(values: list[str]) -> int:
     # this same update is legal and a broken graph refuses before any commit.
     unresolved = behavior_map.unresolved(updated)
     status = "pending" if unresolved else "passed"
-    current_evidence_id = state.get("tddEvidence")
-    evidence_id = current_evidence_id
+    evidence_id = current_evidence_id = state.get("tddEvidence")
     reassessed = frozenset(str(entry["id"]).strip() for entry in [*added_items, *dispositions])
     if source is not None:
         reassessed |= {str(source)}
@@ -1119,7 +1118,7 @@ def _map_update(values: list[str]) -> int:
         document = {**(current or _map_doc(
             slug=str(state["slug"]), workflow_id=str(state["workflowId"]),
             items=items, status=status, kind="map",
-        )), "behaviorMap": updated, "status": status, "reassessment": reassessment.strip(),
+        )), "behaviorMap": updated, "status": status, "reassessment": reassessment.strip(), "dispositions": dispositions,
             "sourceBehaviorId": source, "updatedAt": utc_timestamp()}
         if input_checks:
             document["inputEvidence"] = input_checks
