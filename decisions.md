@@ -33,6 +33,24 @@ sourced by the user once; the script path is stable post-install.
 **Delivery:** Pass `session-relocate` on `feat/session-relocate`, linked to
 #83.
 
+## 2026-09-20 — Native checkout owns hook routing
+
+**Decision:** Supersedes [PR #79](https://github.com/future3OOO/codex-skills/pull/79)'s
+session worktree binding. Dispatch and recovery resolve the native hook cwd
+through existing canonical Git identity. Remove binding writes/readers and the
+unused historical routing reader; retain checkout-local readiness and edit-marker
+pruning. Old binding files are inert; no migration or shared-state edit is needed.
+[PR #80](https://github.com/future3OOO/codex-skills/pull/80) owns native startup
+guidance and removal of the CLI-review workaround.
+
+**Evidence:** Real hook/CLI attacks reproduce wrong-task dispatch and recovery on
+PR79; the candidate uses the current checkout despite stale/corrupt binding data,
+keeps readiness checks, and no longer borrows a task outside Git. Retained native
+parent/child evidence establishes checkout inheritance, not universal agent behavior.
+
+**Delivery:** Candidate on `fix/native-checkout-routing`; review and PR pending.
+Shared installation unchanged.
+
 ## 2026-09-20 — Task worktrees own dispatch and recovery
 
 **Decision:** Correct PR #50's aggregation of session-associated worktrees.

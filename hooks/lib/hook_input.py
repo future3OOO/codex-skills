@@ -9,9 +9,7 @@ import sys
 from contextlib import closing
 from pathlib import Path
 
-from .workflow_state import read_workflow, safe_slug
-from .repo_identity import RepoIdentity, RepoIdentityError, resolve_repo_identity, try_resolve_repo_identity
-from .state_store import session_associations, session_worktree
+from .workflow_state import safe_slug
 
 _PATCH_PATH = re.compile(
     r"^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$", re.MULTILINE
@@ -73,26 +71,6 @@ def working_directory(payload: dict[str, object]) -> str:
             return value
     env = os.environ.get("CODEX_PROJECT_DIR")
     return env if env else os.getcwd()
-
-
-def workflow_identity(payload: dict[str, object]) -> RepoIdentity | None:
-    """Resolve one task, not every worktree visited by a native session."""
-    session = session_key(payload)
-    selected = session_worktree(session) if session else None
-    if selected is not None:
-        current = resolve_repo_identity(selected.root)
-        if current != selected:
-            raise RepoIdentityError(f"stale task worktree binding: {selected.root}")
-        if read_workflow(current) is None:
-            raise RepoIdentityError(f"selected task has no active workflow: {current.root}")
-        return current
-    current = try_resolve_repo_identity(working_directory(payload))
-    if current is not None:
-        return current
-    associated = session_associations(session) if session else []
-    if len(associated) > 1:
-        raise RepoIdentityError("ambiguous task worktree: " + ", ".join(str(item.root) for item in associated))
-    return resolve_repo_identity(associated[0].root) if associated else None
 
 
 def is_explorer_continuation(payload: dict[str, object]) -> bool:

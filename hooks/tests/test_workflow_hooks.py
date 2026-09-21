@@ -254,7 +254,7 @@ class HookHarness(unittest.TestCase):
 
 class WorkflowHookTests(HookHarness):
     def test_dispatch_isolated_to_task_worktree(self) -> None:
-        marker = "UNRELATED_WORKFLOW_BLOCKED_TASK"
+        marker = "DISPATCH_WRONG_CHECKOUT"
         main = self.repo
         self.env["CODEX_THREAD_ID"] = SESSION
         self.assertEqual(self.state("begin", "--slug", "unrelated-main").returncode, 0)
@@ -263,252 +263,103 @@ class WorkflowHookTests(HookHarness):
         self.git("worktree", "add", "-q", "-b", "task", str(task))
         self.repo = task
         self.complete_workflow("task", finish=False)
+        # Retained PR79 state must not override the native session's checkout.
+        binding = self.tmp / "state" / "sessions" / SESSION / "active-worktree.json"
+        binding.parent.mkdir(parents=True, exist_ok=True)
+        binding.write_text(json.dumps({"schemaVersion": 1, "worktree": resolve_repo_identity(task).as_dict()}))
         histories = {str(p): self.state("history", repo=p).stdout for p in (main, task)}
-        for cwd in (main, task, self.tmp):
+        nested = task / "nested"
+        nested.mkdir()
+        alias = self.tmp / "alias"
+        alias.symlink_to(task, target_is_directory=True)
+        for cwd, denied in ((main, True), (task, False), (nested, False), (alias, False)):
             for tool in ("spawn_agent", "collaborationfollowup_task", "send_message"):
                 with self.subTest(cwd=cwd, tool=tool):
                     result = self.hook_output(INTAKE, cwd, tool=tool)
-                    self.assertNotEqual(json.loads(result or "{}").get("hookSpecificOutput", {}).get("permissionDecision"), "deny", marker + result)
+                    decision = json.loads(result or "{}").get("hookSpecificOutput", {}).get("permissionDecision")
+                    self.assertEqual(decision == "deny", denied, marker + result)
+        binding.write_text("{")
+        self.assertEqual(self.hook_output(INTAKE, task), "", marker)
+        binding.unlink()
+        binding.symlink_to(self.tmp / "missing")
+        self.assertEqual(self.hook_output(INTAKE, task), "", marker)
         for p in (main, task):
             self.assertEqual(self.state("history", repo=p).stdout, histories[str(p)])
-        print(f"target={ROOT} task-worktrees=2 dispatches=9 per-hook-limit=15s unrelated-history=unchanged")
+        print(f"target={ROOT} task-worktrees=2 dispatches=14 per-hook-limit=15s histories=unchanged")
 
-    def test_binding_errors_never_select_another_workflow(self) -> None:
-        marker = "INVALID_BINDING_SELECTED_WORKFLOW"
+    def test_rearm_uses_native_checkout(self) -> None:
+        marker = "RECOVERY_WRONG_CHECKOUT"
+        self.env["CODEX_THREAD_ID"] = SESSION
+        self.assertEqual(self.state("begin", "--slug", "current").returncode, 0)
+        other = self.tmp / "other"
+        self.git("worktree", "add", "-q", "-b", "other", str(other))
+        self.assertEqual(self.state("begin", "--slug", "other", repo=other).returncode, 0)
+        binding = self.tmp / "state" / "sessions" / SESSION / "active-worktree.json"
+        binding.parent.mkdir(parents=True, exist_ok=True)
+        binding.write_text(json.dumps({"schemaVersion": 1, "worktree": resolve_repo_identity(other).as_dict()}))
+        for contents in (binding.read_text(), "{"):
+            binding.write_text(contents)
+            result = self.hook_output(ROOT / "hooks/skill-discipline-rearm.py", self.repo)
+            self.assertIn("slug=current ", result, marker + result)
+            self.assertNotIn("slug=other ", result, marker)
+
+    def test_begin_and_verify_do_not_write_routing_state(self) -> None:
         self.env["CODEX_THREAD_ID"] = SESSION
         self.assertEqual(self.state("begin", "--slug", "task").returncode, 0)
-        binding = Path(self.env["CODEX_WORKFLOW_STATE_ROOT"]) / "sessions" / SESSION / "active-worktree.json"
-        original = binding.read_bytes()
-        invalid = [b"{", b'{"schemaVersion":1,"worktree":{"root":"/missing-task-worktree","key":"1"}}', None]
-        invalid.extend(json.dumps({**json.loads(original), "schemaVersion": version}).encode()
-                       for version in (None, 0, 2, "1", True))
-        for malformed in invalid:
-            binding.unlink(missing_ok=True)
-            if malformed is None:
-                binding.symlink_to(self.tmp / "absent-binding")
-            else:
-                binding.write_bytes(malformed)
-            for hook in (INTAKE, ROOT / "hooks/skill-discipline-rearm.py"):
-                with self.subTest(malformed=malformed, hook=hook.name):
-                    result = self.hook_output(hook, self.repo)
-                    output = json.loads(result)["hookSpecificOutput"]
-                    self.assertTrue(output.get("permissionDecision") == "deny" or "unresolved" in output.get("additionalContext", ""))
-                    self.assertNotIn("slug=task", result, marker)
-                    self.assertNotIn("[task/", result, marker)
-        binding.unlink()
-        binding.write_bytes(original)
-        before = self.state("history").stdout
-        result = self.hook_output(INTAKE, self.repo)
-        self.assertIn(str(self.repo), result)
-        self.assertIn("[task/", result)
-        self.assertIn("verification", result)
-        self.assertEqual(self.state("history").stdout, before)
-
-    def test_rearm_uses_bound_task_from_launch_checkout(self) -> None:
-        marker = "REARM_SELECTED_LAUNCH_WORKFLOW"
-        main = self.repo
-        self.env["CODEX_THREAD_ID"] = SESSION
-        self.assertEqual(self.state("begin", "--slug", "unrelated-main").returncode, 0)
-        task = self.tmp / "task"
-        self.git("worktree", "add", "-q", "-b", "task", str(task))
-        self.assertEqual(self.state("begin", "--slug", "task", repo=task).returncode, 0)
-        # Observing another workflow must not switch the session's task.
-        self.assertEqual(self.state("status", repo=main).returncode, 0)
-        result = self.hook_output(ROOT / "hooks/skill-discipline-rearm.py", main)
-        self.assertIn("slug=task ", result, marker + result)
-        self.assertNotIn("slug=unrelated-main", result, marker)
-
-    def test_failed_verification_keeps_task_selected(self) -> None:
-        marker = "FAILED_VERIFY_LOST_TASK"
-        main = self.repo
-        self.env["CODEX_THREAD_ID"] = SESSION
-        self.complete_workflow("main", finish=False)
-        task = self.tmp / "task"
-        self.git("worktree", "add", "-q", "-b", "task", str(task))
-        self.repo = task
-        self.env["CODEX_THREAD_ID"] = "setup-owner"
-        self.complete_workflow("task", finish=False)
-        self.env["CODEX_THREAD_ID"] = SESSION
-        self.assertEqual(json.loads(self.state("status").stdout)["verification"], "passed")
-        failed = subprocess.run(
-            [sys.executable, str(WORKFLOW), "verify", "--repo", str(task), "--slug", "task",
-             "--", sys.executable, "-c", "raise SystemExit(1)"],
-            cwd=main, env=self.env, capture_output=True, text=True, timeout=15,
-        )
-        self.assertNotEqual(failed.returncode, 0)
-        for hook in (INTAKE, ROOT / "hooks/skill-discipline-rearm.py"):
-            result = self.hook_output(hook, main)
-            self.assertIn(str(task), result, marker + result)
-            if hook == INTAKE:
-                self.assertEqual(json.loads(result)["hookSpecificOutput"]["permissionDecision"], "deny", marker)
-                self.assertIn("verification", result, marker)
-            else:
-                self.assertIn("slug=task ", result, marker)
-                self.assertIn("verification=pending", result, marker)
-
-    def test_failed_begin_preserves_selected_task(self) -> None:
-        marker = "FAILED_BEGIN_RETARGETED_TASK"
-        self.env["CODEX_THREAD_ID"] = SESSION
-        self.assertEqual(self.state("begin", "--slug", "original").returncode, 0)
-        other = self.tmp / "other"
-        self.git("worktree", "add", "-q", "-b", "other", str(other))
-        failed = self.state("begin", "--slug", "other", "--intent-file", str(self.tmp / "absent"), repo=other)
-        self.assertNotEqual(failed.returncode, 0)
-        for hook in (INTAKE, ROOT / "hooks/skill-discipline-rearm.py"):
-            result = self.hook_output(hook, other)
-            self.assertIn(str(self.repo), result, marker + result)
-            if hook == INTAKE:
-                self.assertEqual(json.loads(result)["hookSpecificOutput"]["permissionDecision"], "deny", marker)
-            else:
-                self.assertIn("slug=original ", result, marker)
-
-    def test_interrupted_begin_does_not_admit_workflow_free_target(self) -> None:
-        import fcntl
-        import signal
-        import time
-        marker = "INTERRUPTED_BEGIN_ADMITTED_UNPROVED_TARGET"
-        self.env["CODEX_THREAD_ID"] = SESSION
-        self.assertEqual(self.state("begin", "--slug", "original").returncode, 0)
-        other = self.tmp / "other"
-        self.git("worktree", "add", "-q", "-b", "other", str(other))
-        directory = Path(self.env["CODEX_WORKFLOW_STATE_ROOT"]) / resolve_repo_identity(other).key
-        directory.mkdir(parents=True, exist_ok=True)
-        with (directory / ".workflow.lock").open("w") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
-            process = subprocess.Popen(
-                [sys.executable, str(WORKFLOW), "begin", "--repo", str(other), "--slug", "other"],
-                cwd=self.repo, env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True, start_new_session=True,
+        for code in ("print('executed')", "raise SystemExit(1)"):
+            result = subprocess.run(
+                [sys.executable, str(WORKFLOW), "verify", "--repo", str(self.repo), "--slug", "task",
+                 "--", sys.executable, "-c", code], env=self.env, capture_output=True, text=True, timeout=15,
             )
-            try:
-                binding = Path(self.env["CODEX_WORKFLOW_STATE_ROOT"]) / "sessions" / SESSION / "active-worktree.json"
-                deadline = time.monotonic() + 10
-                while json.loads(binding.read_text())["worktree"]["root"] != str(other) and time.monotonic() < deadline:
-                    time.sleep(0.01)
-                self.assertEqual(json.loads(binding.read_text())["worktree"]["root"], str(other))
-                os.killpg(process.pid, signal.SIGTERM)
-                process.communicate(timeout=10)
-            finally:
-                if process.poll() is None:
-                    os.killpg(process.pid, signal.SIGTERM)
-                process.communicate(timeout=10)
-        for hook in (INTAKE, ROOT / "hooks/skill-discipline-rearm.py"):
-            result = self.hook_output(hook, self.repo)
-            self.assertIn("no active workflow", result, marker + result)
-            self.assertIn(str(other), result, marker)
-            if hook == INTAKE:
-                self.assertEqual(json.loads(result)["hookSpecificOutput"]["permissionDecision"], "deny", marker)
+            self.assertEqual(result.returncode == 0, code.startswith("print"), result.stderr)
+        self.assertFalse(list((self.tmp / "state").rglob("active-worktree.json")), "CLI_CREATED_ROUTING_STATE")
 
-    def test_rejected_begin_preserves_selected_task(self) -> None:
-        marker = "REJECTED_BEGIN_RETARGETED_TASK"
+    def test_failed_verification_keeps_task_pending(self) -> None:
         self.env["CODEX_THREAD_ID"] = SESSION
-        other = self.second_repo("other")
-        unborn = self.tmp / "unborn"
-        unborn.mkdir()
-        self.git("init", "-q", repo=unborn)
-        for target, slug, diagnostic in ((other, "", "non-empty slug"),
-                                          (unborn, "other", "HEAD^{commit}"),
-                                          (other, "other", "candidate capture failed")):
-            with self.subTest(diagnostic=diagnostic):
-                self.assertEqual(self.state("begin", "--slug", "original").returncode, 0)
-                if diagnostic == "candidate capture failed":
-                    self.git("init", "-q", str(other / "unborn-nested"))
-                failed = self.state("begin", "--slug", slug, repo=target)
-                self.assertNotEqual(failed.returncode, 0)
-                self.assertIn(diagnostic, failed.stderr)
-                for hook in (INTAKE, ROOT / "hooks/skill-discipline-rearm.py"):
-                    result = self.hook_output(hook, target)
-                    self.assertIn(str(self.repo), result, marker + result)
-                    if hook == INTAKE:
-                        self.assertEqual(json.loads(result)["hookSpecificOutput"]["permissionDecision"], "deny", marker)
-                    else:
-                        self.assertIn("slug=original ", result, marker)
-
-    def test_rejected_verify_preserves_selected_task(self) -> None:
-        marker = "REJECTED_VERIFY_RETARGETED_TASK"
-        other = self.second_repo("other")
-        self.env["CODEX_THREAD_ID"] = "setup-owner"
-        self.assertEqual(self.state("begin", "--slug", "other", repo=other).returncode, 0)
-        self.env["CODEX_THREAD_ID"] = SESSION
-        cases = ((["--kind", "quality-gate"], "requires --base-ref"),
-                 (["--kind", "quality-gate", "--base-ref", "HEAD", "--", "true"], "accepts no command"),
-                 (["--base-ref", "HEAD"], "belongs to --kind quality-gate"),
-                 ([], "a command is required"))
-        for args, diagnostic in cases:
-            with self.subTest(diagnostic=diagnostic):
-                self.assertEqual(self.state("begin", "--slug", "original").returncode, 0)
-                failed = subprocess.run(
-                    [sys.executable, str(WORKFLOW), "verify", "--repo", str(other), "--slug", "other", *args],
-                    cwd=other, env=self.env, text=True, capture_output=True, timeout=15,
-                )
-                self.assertNotEqual(failed.returncode, 0)
-                self.assertIn(diagnostic, failed.stderr)
-                for hook in (INTAKE, ROOT / "hooks/skill-discipline-rearm.py"):
-                    self.assertIn(str(self.repo), self.hook_output(hook, other), marker)
-
-    def _verification_selection(self, *, cancel: bool) -> None:
-        marker = "CANCEL_LOST_TASK" if cancel else "OLDER_VERIFY_RETARGETED_TASK"
-        main = self.repo
-        self.env["CODEX_THREAD_ID"] = SESSION
-        self.assertEqual(self.state("begin", "--slug", "main").returncode, 0)
-        task = self.tmp / "task"
-        self.git("worktree", "add", "-q", "-b", "task", str(task))
-        self.env["CODEX_THREAD_ID"] = "setup-owner"
-        self.assertEqual(self.state("begin", "--slug", "task", repo=task).returncode, 0)
-        self.env["CODEX_THREAD_ID"] = SESSION
-        started, release = self.tmp / "started", self.tmp / "release"
-        command = ("from pathlib import Path; import time; "
-                   f"Path({str(started)!r}).touch(); "
-                   f"p=Path({str(release)!r}); "
-                   "exec('while not p.exists(): time.sleep(0.01)')")
-        process = subprocess.Popen(
-            [sys.executable, str(WORKFLOW), "verify", "--repo", str(task), "--slug", "task",
-             "--", sys.executable, "-c", command], cwd=main, env=self.env,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True,
+        self.complete_workflow("task", finish=False)
+        failed = subprocess.run(
+            [sys.executable, str(WORKFLOW), "verify", "--repo", str(self.repo), "--slug", "task",
+             "--", sys.executable, "-c", "raise SystemExit(1)"],
+            env=self.env, capture_output=True, text=True, timeout=15,
         )
-        try:
-            import time
-            deadline = time.monotonic() + 10
-            while not started.exists() and process.poll() is None and time.monotonic() < deadline:
-                time.sleep(0.01)
-            self.assertTrue(started.exists(), "verification command did not start")
-            if cancel:
-                import signal
-                os.killpg(process.pid, signal.SIGTERM)
-            else:
-                self.assertEqual(self.state("begin", "--slug", "new-main", repo=main).returncode, 0)
-                release.touch()
-            process.communicate(timeout=10)
-            result = self.hook_output(ROOT / "hooks/skill-discipline-rearm.py", main)
-            selected = "task" if cancel else "new-main"
-            self.assertIn(f"slug={selected} ", result, marker + result)
-        finally:
-            if process.poll() is None:
-                import signal
-                os.killpg(process.pid, signal.SIGTERM)
-            process.communicate(timeout=10)
+        self.assertNotEqual(failed.returncode, 0)
+        result = self.hook_output(INTAKE, self.repo)
+        self.assertEqual(json.loads(result)["hookSpecificOutput"]["permissionDecision"], "deny")
+        self.assertIn("verification", result)
+        result = self.hook_output(ROOT / "hooks/skill-discipline-rearm.py", self.repo)
+        self.assertIn("slug=task ", result)
+        self.assertIn("verification=pending", result)
 
-    def test_older_verification_cannot_retarget_session(self) -> None:
-        self._verification_selection(cancel=False)
-
-    def test_cancelled_verification_keeps_selected_task(self) -> None:
-        self._verification_selection(cancel=True)
-
-    def test_associated_dispatch_outside_git_requires_lead_proof(self) -> None:
-        self.assertEqual(self.state("begin", "--slug", "outside").returncode, 0)
+    def test_outside_git_does_not_borrow_previous_task(self) -> None:
+        self.env.pop("CODEX_THREAD_ID", None)
+        self.assertEqual(self.state("begin", "--slug", "previous").returncode, 0)
         self.post_edit("app.py")
         before = self.state("history").stdout
-        for tool in ("collaborationspawn_agent", "collaborationfollowup_task", "send_message"):
-            with self.subTest(tool=tool):
-                result = subprocess.run(
-                    [sys.executable, str(INTAKE)], cwd=self.tmp, env=self.env, text=True,
-                    input=json.dumps({"tool_name": tool, "cwd": str(self.tmp),
-                                      "session_id": SESSION, "tool_input": {"agent_type": "default"}}),
-                    capture_output=True, check=False,
-                )
-                decision = json.loads(result.stdout or "{}").get("hookSpecificOutput", {})
-                self.assertEqual(decision.get("permissionDecision"), "deny", "OUTSIDE_GIT_REVIEW_ADMITTED")
+        self.assertEqual(self.hook_output(INTAKE, self.tmp), "", "OUTSIDE_GIT_SELECTED_TASK")
+        result = self.hook_output(ROOT / "hooks/skill-discipline-rearm.py", self.tmp)
+        self.assertIn("Workflow state unavailable", result, "OUTSIDE_GIT_SELECTED_TASK")
+        self.assertNotIn("slug=previous", result, "OUTSIDE_GIT_SELECTED_TASK")
         self.assertEqual(self.state("history").stdout, before)
+
+    def test_post_edit_associations_prune_before_native_recovery(self) -> None:
+        self.env.pop("CODEX_THREAD_ID", None)
+        self.assertEqual(self.state("begin", "--slug", "live").returncode, 0)
+        dead = self.tmp / "dead"
+        self.git("worktree", "add", "-q", "-b", "dead", str(dead))
+        self.assertEqual(self.state("begin", "--slug", "dead", repo=dead).returncode, 0)
+        identities = [resolve_repo_identity(p) for p in (self.repo, dead)]
+        for p in (self.repo, dead):
+            self.assertEqual(self.post_edit("app.py", repo=p).returncode, 0)
+        self.git("worktree", "remove", "--force", str(dead))
+        result = subprocess.run([sys.executable, str(WORKFLOW), "prune", "--apply"],
+                                env=self.env, capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        fates = {entry["path"]: entry["decision"] for entry in json.loads(result.stdout)["sessions"]}
+        for identity, fate in zip(identities, ("retained", "removed")):
+            self.assertEqual(fates[f"{SESSION}/{identity.key}.json"], fate, "ASSOCIATION_PRUNING_REGRESSED")
+        result = self.hook_output(ROOT / "hooks/skill-discipline-rearm.py", self.repo)
+        self.assertIn("slug=live ", result, "ASSOCIATION_PRUNING_REGRESSED")
+        self.assertFalse(list((self.tmp / "state").rglob("active-worktree.json")))
 
     def test_unrelated_corrupt_association_does_not_block_dispatch(self) -> None:
         self.assertEqual(self.state("begin", "--slug", "unrelated").returncode, 0)

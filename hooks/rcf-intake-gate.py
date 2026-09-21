@@ -18,8 +18,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from hooks.lib._workflow_db import LedgerError  # noqa: E402
-from hooks.lib.hook_input import edited_path, is_explorer_continuation, read_hook_payload, workflow_identity  # noqa: E402
-from hooks.lib.repo_identity import RepoIdentityError, resolve_repo_identity  # noqa: E402
+from hooks.lib.hook_input import edited_path, is_explorer_continuation, read_hook_payload, working_directory  # noqa: E402
+from hooks.lib.repo_identity import RepoIdentityError, resolve_repo_identity, try_resolve_repo_identity  # noqa: E402
 from hooks.lib.state_store import is_reviewable_path, is_test_path  # noqa: E402
 from hooks.lib.tdd_workflow import edit_blockers  # noqa: E402
 from hooks.lib.workflow_state import (  # noqa: E402
@@ -41,7 +41,7 @@ def main() -> int:
     if tool_name in {"Agent", "spawn_agent", "followup_task", "send_input", "send_message", "resume_agent"}:
         missing: list[str] = []
         try:
-            identity = workflow_identity(payload)
+            identity = try_resolve_repo_identity(working_directory(payload))
             if identity is not None:
                 state = read_workflow(identity)
                 if state is None or state.get("phase") == "complete" and not state.get("revalidation"):
