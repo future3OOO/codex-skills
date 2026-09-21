@@ -33,16 +33,23 @@ sourced by the user once; the script path is stable post-install.
 **Delivery:** Pass `session-relocate` on `feat/session-relocate`, linked to
 #83.
 
-## 2026-09-20 — Triage preserves outcomes without prescribing ceremony
+## 2026-09-20 — Native checkout owns hook routing
 
-**Decision:** Tighten [PR #40](https://github.com/future3OOO/codex-skills/pull/40)'s shared brief contract: preserve requested behavior
-and proof, leave methods to the implementer unless necessary, and reject invented
-or contradictory obligations. Keep user restrictions scoped and one authoritative
-brief. This supersedes copying a separate delivery condition into every brief.
-Efficiency means improvement over the stated baseline at equivalent correct outcomes.
-AGENTS.md requires less ceremony and net code reduction in review follow-up commits.
+**Decision:** Supersedes [PR #79](https://github.com/future3OOO/codex-skills/pull/79)'s
+session worktree binding. Dispatch and recovery resolve the native hook cwd
+through existing canonical Git identity. Remove binding writes/readers and the
+unused historical routing reader; retain checkout-local readiness and edit-marker
+pruning. Old binding files are inert; no migration or shared-state edit is needed.
+[PR #80](https://github.com/future3OOO/codex-skills/pull/80) owns native startup
+guidance and removal of the CLI-review workaround.
 
-**Status:** [PR #80](https://github.com/future3OOO/codex-skills/pull/80) open; documentation only.
+**Evidence:** Real hook/CLI attacks reproduce wrong-task dispatch and recovery on
+PR79; the candidate uses the current checkout despite stale/corrupt binding data,
+keeps readiness checks, and no longer borrows a task outside Git. Retained native
+parent/child evidence establishes checkout inheritance, not universal agent behavior.
+
+**Delivery:** Candidate on `fix/native-checkout-routing`; review and PR pending.
+Shared installation unchanged.
 
 ## 2026-09-20 — Task worktrees own dispatch and recovery
 
@@ -58,6 +65,17 @@ instruction repairs remain separate. No shared-estate edits or acceptance waiver
 
 **Delivery:** Source change on `fix/task-workflow-isolation`, linked to #78.
 Shared installation remains unchanged; integration is through the emergency PR.
+
+## 2026-09-20 — Triage preserves outcomes without prescribing ceremony
+
+**Decision:** Tighten [PR #40](https://github.com/future3OOO/codex-skills/pull/40)'s shared brief contract: preserve requested behavior
+and proof, leave methods to the implementer unless necessary, and reject invented
+or contradictory obligations. Keep user restrictions scoped and one authoritative
+brief. This supersedes copying a separate delivery condition into every brief.
+Efficiency means improvement over the stated baseline at equivalent correct outcomes.
+AGENTS.md requires less ceremony and net code reduction in review follow-up commits.
+
+**Status:** [PR #80](https://github.com/future3OOO/codex-skills/pull/80) open; documentation only.
 
 ## 2026-09-20 — Hook merge reconciles managed entries
 
