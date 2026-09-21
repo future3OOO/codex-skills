@@ -40,6 +40,7 @@ class WS:
         if expect not in buf: raise RuntimeError("ws accept mismatch")
         self.buf = buf.split(b"\r\n\r\n", 1)[1]
         self.s.settimeout(0.5)
+        self.frag = bytearray()
     def send(self, payload):
         data = payload.encode(); mask = os.urandom(4); n = len(data)
         if n < 126: hdr = struct.pack("!BB", 0x81, 0x80 | n)
@@ -66,7 +67,6 @@ class WS:
         return len(self.buf) >= off + n
     def recv(self, wait=10):
         t = time.time() + wait
-        frags = bytearray()
         while time.time() < t:
             if self._ready():
                 b0 = self.buf[0]; b1 = self.buf[1]; n = b1 & 0x7F; off = 2
@@ -81,8 +81,10 @@ class WS:
                     continue
                 if op == 8: raise ConnectionError("closed")
                 if op in (0, 1):
-                    frags += payload
-                    if b0 & 0x80: return bytes(frags).decode()
+                    self.frag += payload
+                    if b0 & 0x80:
+                        msg, self.frag = bytes(self.frag), bytearray()
+                        return msg.decode()
                 continue
             self._fill()
         return None
@@ -96,7 +98,7 @@ def rpc(ws, method, params, rid, wait=15):
         try: msg = json.loads(m)
         except ValueError: raise ConnectionError("malformed frame payload")
         if msg.get("id") == rid: return msg
-    return {"error": {"message": f"timeout: {method}"}}
+    raise TimeoutError(f"timeout: {method}")
 
 def sockets():
     env = os.environ.get("CODEX_APP_SERVER_SOCK")
@@ -142,8 +144,6 @@ def main():
     if tid != "self" and any(c.isspace() for c in tid):
         sys.exit(f"thread id must not contain whitespace: {tid}")
     mycwd = os.getcwd()
-    # Pane-wrapped sessions use their own resume loop — never the socket scan,
-    # so a same-cwd hosted thread can't be hit.
     if tid == "self" and os.environ.get("CODEX_RELOC_LOOP") == "1":
         return self_hosted(cwd, tid, "pane session: using its own resume loop")
     last_err = "no app-server socket found — session is not remote-hosted"
@@ -157,8 +157,7 @@ def main():
                                            "input": [{"type": "text", "text": note}]}, 99)
             except Exception as e:
                 sys.exit(f"turn/start outcome unconfirmed on {path} ({e}); verify the thread state")
-            if "error" in r:
-                last_err = f"{path}: turn/start: {r['error']}"; continue
+            if "error" in r: sys.exit(f"turn/start rejected on {path}: {r['error']}")
             print(f"relocation accepted: thread {found} -> {cwd} (via {path})")
             return
         except Exception as e:
