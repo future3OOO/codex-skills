@@ -1,0 +1,81 @@
+#!/usr/bin/env python3
+"""Relocate the calling agent's session root to a new working directory.
+
+Usage: codex-relocate <abs-path> [thread-id]
+
+Arms the resume loop in the launching shell (CODEX_RELOC_LOOP must be set —
+the codex/codexs wrappers export it), writes ~/.codex/reloc/<shell-pid>,
+and kills the host TUI. The wrapper resumes the same thread at <abs-path>
+in the SAME pane. Run this as the LAST action of a turn — the kill ends
+the session.
+
+thread-id defaults to $CODEX_THREAD_ID.
+"""
+import os, sys, time, signal
+
+
+def main():
+    cwd = sys.argv[1]
+    tid = sys.argv[2] if len(sys.argv) > 2 else os.environ.get("CODEX_THREAD_ID", "self")
+    if not os.path.isdir(cwd):
+        sys.exit(f"not a directory: {cwd}")
+    if any(c.isspace() for c in cwd):
+        sys.exit(f"target path must not contain whitespace: {cwd}")
+    self_hosted(cwd, tid)
+
+
+def self_hosted(cwd, tid):
+    if tid == "self":
+        tid = os.environ.get("CODEX_THREAD_ID", "")
+    if any(c.isspace() for c in tid):
+        sys.exit(f"thread id must not contain whitespace: {tid}")
+    host = shell = None
+    p = str(os.getppid())
+    while p and p != "1":
+        try:
+            comm = open(f"/proc/{p}/comm").read().strip()
+        except OSError:
+            break
+        if host is None:
+            if comm == "codex":
+                host = int(p)
+        elif comm in ("bash", "zsh", "fish", "sh"):
+            shell = int(p); break
+        try:
+            p = open(f"/proc/{p}/stat").read().rsplit(")", 1)[1].split()[1]
+        except (OSError, IndexError):
+            break
+    if not host or not shell:
+        sys.exit("no codex host + interactive shell found in ancestors — "
+                 "cannot self-relocate")
+    try:
+        shell_cwd = os.path.realpath(f"/proc/{shell}/cwd")
+    except OSError:
+        shell_cwd = None
+    if shell_cwd == os.path.realpath(cwd):
+        sys.exit(f"session already rooted at {cwd}")
+    if not tid:
+        sys.exit("no thread id (pass it or export CODEX_THREAD_ID)")
+    if not (os.environ.get("CODEX_RELOC_LOOP") or os.environ.get("CODEXS_RELOC_LOOP")):
+        try:
+            cmdl = open(f"/proc/{host}/cmdline", "rb").read().decode(errors="replace").split("\0")
+            prof = cmdl[cmdl.index("--profile") + 1] if "--profile" in cmdl else None
+        except (OSError, ValueError, IndexError):
+            prof = None
+        hint = f"codex --profile {prof} resume -C {cwd} {tid}" if prof \
+               else f"codex resume -C {cwd} {tid}"
+        sys.exit(f"this session's shell has no resume loop. "
+                 f"From THIS pane run: {hint}")
+    d = os.path.expanduser("~/.codex/reloc")
+    os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, str(shell)), "w") as f:
+        f.write(f"{cwd} {tid} {int(time.time())}\n")
+    print(f"relocation armed: killing host TUI pid {host}; shell pid {shell} "
+          f"resumes thread {tid} rooted at {cwd} in this pane", flush=True)
+    os.kill(host, signal.SIGTERM)
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        sys.exit(__doc__)
+    main()
