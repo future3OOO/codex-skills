@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import time
@@ -55,7 +56,7 @@ class MappedTddPolicyGateTests(unittest.TestCase):
         recorded = h.cli("evidence", "--repo", str(h.repo), "--evidence-id", evidence_id)
         self.assertEqual(recorded.returncode, 0, recorded.stderr)
         retained = json.loads(recorded.stdout)["document"]["document"]["behaviorMap"][0]
-        self.assertEqual({key: retained[key] for key in choice}, choice)
+        self.assertEqual(json.dumps({key: retained[key] for key in choice}), json.dumps(choice))
 
     def test_nonrunner_baseline_preserves_observation_and_silence_refusal(self) -> None:
         h = self.harness
@@ -268,12 +269,20 @@ class MappedTddPolicyGateTests(unittest.TestCase):
         self.assertEqual(settled.returncode, 0, settled.stdout + settled.stderr)
         self.assertEqual(behavior_map.unresolved(h.evidence()["behaviorMap"]), [])
         self.assertEqual(h.evidence()["runs"], before["runs"])
+        reopened = h.update_map(slug, workflow_id, dict(reassessment="original interpretation is inadequate", dispositions=[
+            dict(id="BM_ORIGIN", status="pending", evidence="replace the inadequate obligation with its corrected contract")]))
+        self.assertEqual(reopened.returncode, 0, reopened.stdout + reopened.stderr)
         replacement = pending_behavior("BM_REPLACEMENT")
         replacement.update(boundaryInputs=["value"], interpretations=["one", "two"],
                            interpretation="two", authority="replacement contract")
         moved = h.update_map(slug, workflow_id, dict(reassessment="adjudicated replacement", items=[replacement],
             dispositions=[dict(id="BM_ORIGIN", status="superseded", supersededBy="BM_REPLACEMENT", evidence="same obligation", boundaryInputs=["value"], interpretations=["one", "two"])]))
-        self.assertEqual(moved.returncode, 0, moved.stdout + moved.stderr)
+        self.assertEqual(moved.returncode, 0, "REOPENED_SUPERSESSION_REFUSED: " + moved.stdout + moved.stderr)
+        carried = h.evidence()["behaviorMap"]
+        self.assertEqual(carried[0]["supersededFrom"], "pending")
+        self.assertEqual(carried[0]["redProof"], before["behaviorMap"][0]["redProof"])
+        self.assertFalse(behavior_map.producer_proved(carried[0]))
+        self.assertIn("BM_REPLACEMENT", behavior_map.unresolved(carried))
         command = h.write_unittest(3, "VALUE_NOT_TWO")
         test = h.repo / "test_app.py"
         test.write_text(test.read_text().replace("app.value", "getattr(app, 'value')"))
@@ -308,16 +317,20 @@ class MappedTddPolicyGateTests(unittest.TestCase):
                     interpretation="ignore verbosity", authority="tdd_surface Interface")
         slug, workflow_id = h.begin_with_map([item])
         path = h.repo / "test_fixture.py"
-        path.write_text(
-            f"import sys\nsys.path.insert(0, {str(ROOT)!r})\nimport pytest\n"
-            "from hooks.lib.tdd_surface import identify\n"
-            "@pytest.fixture\ndef flags():\n    return ['pytest', '--quiet', 'test_a.py']\n"
-            "def test_selected(flags):\n    assert identify(flags)['runner'] == 'pytest'\n")
-        result = h.tdd(slug, "red", "BM_FIXTURE", (*PYTEST_COMMAND, "-q", "test_fixture.py::test_selected"))
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        evidence = json.loads(result.stdout.splitlines()[-1])["inputEvidence"]
-        self.assertEqual(evidence["represented"], ["--quiet"], "INPUT_REPRESENTATION_FALSE_CLAIM")
-        self.assertEqual(evidence["unresolved"], [])
+        for decorator in ("", "()"):
+            path.write_text(
+                f"import sys\nsys.path.insert(0, {str(ROOT)!r})\nimport pytest\n"
+                "from hooks.lib.tdd_surface import identify\n"
+                f"@pytest.fixture{decorator}\ndef flags():\n    return ['pytest', '--quiet', 'test_a.py']\n"
+                "def test_selected(flags):\n    assert identify(flags)['runner'] == 'pytest'\n")
+            result = h.tdd(slug, "red", "BM_FIXTURE", (*PYTEST_COMMAND, "-q", "test_fixture.py::test_selected"))
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            evidence = json.loads(result.stdout.splitlines()[-1])["inputEvidence"]
+            self.assertEqual(evidence["represented"], ["--quiet"], "INPUT_REPRESENTATION_FALSE_CLAIM")
+            self.assertEqual(evidence["unresolved"], [])
+            reassessed = h.update_map(slug, workflow_id, dict(reassessment="equivalent fixture spelling", dispositions=[
+                dict(id="BM_FIXTURE", revalidate=True, evidence="changed selected fixture source")]))
+            self.assertEqual(reassessed.returncode, 0, reassessed.stdout + reassessed.stderr)
         path.write_text(
             f"import sys\nsys.path.insert(0, {str(ROOT)!r})\nimport pytest\n"
             "from hooks.lib.tdd_surface import identify\n"
@@ -330,6 +343,21 @@ class MappedTddPolicyGateTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         evidence = json.loads(result.stdout.splitlines()[-1])["inputEvidence"]
         self.assertEqual(evidence["represented"], ["--quiet"], "INPUT_REPRESENTATION_FALSE_CLAIM")
+
+    def test_mixed_key_input_reports_extraction_limit(self) -> None:
+        h = self.harness
+        item = pending_behavior("BM_MIXED")
+        item.update(boundaryInputs=["absent"], interpretations=["mapping input", "output text"],
+                    interpretation="mapping input", authority="JSON serialization Interface")
+        slug, _ = h.begin_with_map([item])
+        (h.repo / "test_mixed.py").write_text(
+            "import json\ndef test_selected():\n"
+            "    assert json.loads(json.dumps({1: 'a', 'x': 'b'}))['1'] == 'a'\n")
+        result = h.tdd(slug, "red", "BM_MIXED", (*PYTEST_COMMAND, "-q", "test_mixed.py::test_selected"))
+        self.assertEqual(result.returncode, 0, "MIXED_INPUT_CRASH: " + result.stdout + result.stderr)
+        evidence = json.loads(result.stdout.splitlines()[-1])["inputEvidence"]
+        self.assertEqual(evidence["unresolved"], ["absent"], "MIXED_INPUT_CRASH")
+        self.assertEqual(evidence["represented"], [])
 
     def test_unsettled_preflight_is_recoverable(self) -> None:
         h = self.harness
@@ -349,6 +377,10 @@ class MappedTddPolicyGateTests(unittest.TestCase):
         self.assertIn(state["preflightLatestEvidence"], summary.stdout)
         stored = h.cli("evidence", "--repo", str(h.repo), "--evidence-id", state["preflightLatestEvidence"])
         self.assertEqual(json.loads(stored.stdout)["document"]["document"], document)
+        from hooks.lib.workflow_state import ready_for_edit
+        ready, missing = ready_for_edit(resolve_repo_identity(h.repo), "app.py")
+        self.assertFalse(ready)
+        self.assertIn("unsettled interpretation: BM_CHOICE", missing, "PENDING_CHOICE_DIAGNOSIS_LOST")
 
     def test_late_inputs_reuse_or_reopen_baseline(self) -> None:
         h = self.harness
@@ -428,19 +460,30 @@ class MappedTddPolicyGateTests(unittest.TestCase):
         command = [sys.executable, str(tdd_repairs.WORKFLOW), "tdd-map", "--repo", str(h.repo),
                    "--slug", slug, "--workflow-id", workflow_id, "--input", str(path)]
         before = h.evidence()
-        process = subprocess.Popen(command, cwd=h.repo, env=h.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        deadline = time.monotonic() + 5
-        while process.poll() is None and time.monotonic() < deadline:
-            descriptors = Path(f"/proc/{process.pid}/fd")
-            try:
-                opened = any(os.readlink(fd).endswith("workflow.sqlite3") for fd in descriptors.iterdir())
-            except FileNotFoundError:
-                opened = False
-            if opened:
-                process.kill()
-                break
-        process.communicate(timeout=10)
-        self.assertEqual(process.returncode, -9, "cancellation did not reach the open ledger")
+        # Hold a real competing writer so cancellation observes an open ledger,
+        # rather than racing a complete transaction between /proc observations.
+        database = next((h.tmp / "state").rglob("workflow.sqlite3"))
+        connection = sqlite3.connect(database)
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            process = subprocess.Popen(command, cwd=h.repo, env=h.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            deadline = time.monotonic() + 2
+            opened = False
+            while process.poll() is None and time.monotonic() < deadline:
+                descriptors = Path(f"/proc/{process.pid}/fd")
+                try:
+                    opened = any(os.readlink(fd).endswith("workflow.sqlite3") for fd in descriptors.iterdir())
+                except FileNotFoundError:
+                    opened = False
+                if opened:
+                    break
+                time.sleep(0.01)
+            process.kill()
+            process.communicate(timeout=10)
+            self.assertTrue(opened, "cancellation did not reach the open ledger")
+            self.assertEqual(process.returncode, -9)
+        finally:
+            connection.close()
         recovered = h.evidence()
         self.assertEqual(recovered["runs"], before["runs"])
         # Drop the response pipe: persistence must survive the real broken pipe.
@@ -474,7 +517,7 @@ class MappedTddPolicyGateTests(unittest.TestCase):
         for argv, process in zip(commands, processes):
             stdout, stderr = process.communicate(timeout=10)
             if process.returncode:
-                self.assertIn(b"stale", stderr.lower(), stdout + stderr)
+                self.assertIn(b"tdd evidence changed during the run", stderr.lower(), stdout + stderr)
                 retry = subprocess.run(argv, cwd=h.repo, env=h.env, capture_output=True, timeout=10)
                 self.assertEqual(retry.returncode, 0, retry.stdout + retry.stderr)
         item = h.evidence()["behaviorMap"][0]

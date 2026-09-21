@@ -93,123 +93,48 @@ install complete, second run idempotent.
 
 ## 2026-09-20 — Interpretation evidence stays with the Behavior Map
 
-**Decision:** For [issue #65](https://github.com/future3OOO/codex-skills/issues/65),
-retain material readings, concrete inputs and authority on the canonical item.
-Deepen the existing selected-source reader and normal proof admission; do not add
-an inventory, command, checker Module or semantic classifier. Bounded extraction
-reports represented, missing or unresolved inputs. Reassessment preserves
-applicable proof and immutable history; unsettled preflight remains recoverable.
-Finding mechanism and recurrence policy remain owned by #64.
+**Decision:** [Issue #65](https://github.com/future3OOO/codex-skills/issues/65)
+retains material readings, concrete inputs and governing authority on the existing
+map item. The existing selected-source reader and proof admission own bounded
+input extraction: represented, missing or unresolved. No separate inventory,
+command, checker Module or semantic classifier. Insufficient GREEN proof is
+editable through ordinary reassessment; pending carries no current settlement
+authority. Reuse sufficient proof and preserve immutable history. Finding policy
+remains with #64.
 
-**Observed:** 94 affected checks pass, including selected input refusal, fixture
-and receipt reuse, supersession, linked-finding closure, cancellation and concurrent
-reassessment. Fresh paired native codex-skills sessions both surfaced the open
-choice and corrected the seed's weak assertion. The candidate additionally
-retained pending preflight and reported an honest indirect-input limit. On the
-user's instruction, both runs stopped at their first changed-behavior GREEN,
-before review or task completion. Total tokens were 1,710,315 versus 2,111,452;
-elapsed time was 418 versus 441 seconds. The short segment does not establish
-full-task efficiency and misses the declared 10% token saving / 5% timing tolerance.
+**Observed:** Retained real-CLI probes exercise missing-input refusal, proof reuse,
+affected-only reassessment, pending interpretation recovery and linked closure.
+These establish recorder capabilities, not independent semantic discovery or
+completed-task efficiency.
 
-**Follow-up decision:** Reuse the captured transcripts and real CLI evidence;
-launch no further replay without an approved aggregate budget. The candidate lead
-had 27 recorded usage updates versus 25. Its two metadata-schema source reads
-and full pending-document reload motivate explicit field types and correction
-instructions in the owning preflight skill. Existing repeated skill reads, packet
-output size and differing advisor findings are separate run/workflow costs.
-Retained CLI probes preserve pending-preflight correction, proof reuse and printed
-nested inputs. Targeted checks and captured native sources preserve the supported
-literal domain; opaque callable lookup now makes cached SQL variables unresolved,
-while direct literal SQL arguments retain automatic refusal and admission.
-An isolated actual lead subsequently recovered from automatic refusal by selecting
-applicable proof and reusing its original receipt. It also ran the three-test check
-once unnecessarily; this remains measured overhead. Actual independent sensitivity
-detection is retained. Completed-task efficiency remains unproved.
+**Status:** [PR #84](https://github.com/future3OOO/codex-skills/pull/84) is open
+as a normal PR at the user's request, with acceptance gaps disclosed. The local
+restriction forbidding direct GREEN-to-pending was reverted before push; it was
+an incorrect interpretation of the objective. Current-head review corrections
+and final advice remain pending. No merge or shared installation is authorized.
 
-**Status:** User-authorized normal PR for review; discovery and efficiency
-acceptance remain pending.
-Comparison agents may use only codexs under an approved bounded comparison;
-paid advisor routes and child fallbacks remain prohibited within benchmarks.
-The user superseded the earlier implementation-advisor deferral: independent
-implementation review and mandatory higher-reasoning final advice are authorized.
-Review reproduced stale mutable-input claims, omitted loop-else input flow and
-type-distinct metadata corrections lost to Python equality. Narrow repairs mark
-unsupported extraction unresolved and compare metadata as typed JSON. These
-component repairs alone do not establish agent outcomes or completed-task efficiency.
-The user assigned the recurring SPEC-1 repair to the retained reviewer, with the
-lead reviewing its work before final advice. Earlier fixed dispositions were
-incomplete repairs of one stale-binding mechanism, not newly introduced defects.
-The repair now expires cached input knowledge at opaque effects and respects
-initialization/evaluation order; unsupported definition-time data remains unresolved.
-Independent return review confirms the original actual-agent observation domain
-is now satisfied; efficiency acceptance remains pending. PR #79 is integrated,
-preserving task routing and the interpretation patch. Workflow commands, hooks and
-advisor use one task-local candidate runtime with the existing ledger and advisor
-session; shared hooks are unchanged. Final advice awaits current readiness.
-No delivery or shared installation is claimed.
+## 2026-09-21 — Investigate decisions within the existing preflight
 
-**Discovery correction:** The acceptance audit supersedes any implication above
-that efficiency is the only remaining gap. Recording a recognized choice does not
-make a lead discover it. Ordinary preflight investigation must define each
-behavioral predicate and use TDD's differential proof method to compare plausible
-readings before choosing code or tests. The same map item supplies the expected
-outcome, authority and discriminating input to TDD; an undefined predicate returns
-to investigation and reassessment. Runtime difference alone does not choose the
-governing interpretation. This extends the existing owners without another stage,
-inventory, quota or domain-specific detector; recording machinery is preserved.
+**Decision:** Keep the user-approved reachable-domain and deciding-operation
+investigation in `production-preflight`'s `authoritativeContract`, linked by TDD.
+Challenge conventional wording and establish authority or expose uncertainty
+before dependent implementation. This supersedes retaining the earlier wording
+unchanged and the discarded schema-document split. No new document, field, table,
+quota or stage. Existing interpretation metadata carries divergent readings.
 
-**Observed status:** Repeated native continuations have not established reliable
-independent discovery and authority resolution. Some surfaced divergent values;
-others silently chose semantics. Resumed runs and transport-interrupted runs do
-not establish fresh-session acceptance. Earlier replay estates also exposed later
-Git objects; corrected estates contain only the original base ancestry. These
-limitations remain attached to the retained evidence.
+**Observed:** The cold-start lead omitted the value-domain investigation. Its
+later prompted analysis is not independent discovery proof. Wording review found
+no new material issue; behavioral verification of the refinement remains open.
+The earlier partial comparison used baseline 1,710,315 tokens / 418 seconds and
+candidate 2,111,452 tokens / 441 seconds: increases of 23.45% and 5.50%, not savings.
+Neither arm reached a complete correct endpoint, so it proves no end-to-end gain.
 
-**Decision:** Remove the unproved schema-document split. Keep the general
-investigation rule in `authoritativeContract` and TDD's link to that owner, without
-additional ceremony or benchmark-specific examples. Freeze that instruction for
-fresh-session evaluation from the original checkpoint and varied task evaluation.
-The checkpoint includes historical investigation and advice, so it is a fresh
-continuation, not a task-only cold start. Never supply prior trial answers.
-The user's removal of Codex S token/time caps supersedes earlier budget limits;
-benchmark advisors and paid fallback remain prohibited. Completed-task efficiency,
-discovery acceptance, current independent review, mandatory final advice and PR
-delivery remain pending.
-
-
-**Diagnostic review:** Fresh independent reviewer and authorized advisor reconsult
-agree that the general instruction already requires discovery; trial10 demonstrates
-selective execution, not a proven need for stronger wording. The initial decision
-to retain the instruction unchanged is superseded by the user-approved refinement
-below. A controlled comparison with and without historical
-preparation can test that hypothesis; it has not been run. Any subsequent correction
-needs frozen, predeclared evaluation including a structurally different task and an
-unambiguous control. No recorder change is justified by this omission.
-
-**Approved refinement:** Establish reachable values from actual producer
-Interfaces and state the deciding operation before treating a predicate as
-defined. Challenge conventional wording too; obtaining a value does not establish
-how it is judged. Replace the existing steps and completion criterion in
-`authoritativeContract`, preserving the governing-authority requirement and TDD
-link. This requires concise contract prose, not a new field, table, inventory or
-stage. The user approved this wording after inspecting the cold-start arm's
-preflight and tests; that arm still omitted the value-domain investigation, and
-its later prompted self-assessment is not independent behavioral proof. This
-instruction refinement passed independent wording review with no new material
-finding; fresh behavioral evaluation remains pending.
-
-**Current evidence:** Review intake `evidence-b2ee528c153248cc8e3841396d0a5d43`
-keeps SPEC-4 efficiency open and adds SPEC-6 discovery. Advisor reconsult completed
-and independently retains both concerns; it is diagnostic advice, not final delivery
-approval. Current candidate verification and typed gate passed before this status
-update. Independent report and advisor output are retained in
-`/home/prop_/issue-65-evidence/discovery-review-report.md` and
-`/home/prop_/issue-65-evidence/discovery-advisor.out`. Independent return review
-of the approved wording found no new material issue; its empty new-findings intake
-does not close SPEC-4 or SPEC-6. The user explicitly requests a normal PR now for
-review with these proof gaps disclosed, superseding delivery deferral but not
-acceptance requirements. No merge, issue completion or shared installation is
-authorized. Required current-head checks and review findings remain tracked.
+**Status:** SPEC-4 efficiency and SPEC-6 independent discovery remain unresolved.
+The user's removal of Codex S time/token caps supersedes earlier budget limits;
+benchmark advisor and paid fallback restrictions remain. Implementation review
+and mandatory final advisor are authorized, but no component check or PR delivery
+waives missing acceptance. Detailed retained evidence is in the issue65 evidence
+directory and the PR; it is not a second governing contract.
 
 ## 2026-09-20 — Installer cleans previously-leaked artifacts
 

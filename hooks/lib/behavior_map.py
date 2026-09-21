@@ -262,7 +262,7 @@ def validate_items(
         if "redCommand" in raw or "redProof" in raw:
             if not allow_runtime or not isinstance(raw.get("redProof"), dict):
                 raise ValueError(f"behavior {identifier} redCommand and redProof are recorded only by tdd --phase red")
-            if "redCommand" in raw or (status != "pending" and "baselineProof" not in raw):
+            if "redCommand" in raw or (raw.get("supersededFrom", status) != "pending" and "baselineProof" not in raw):
                 item["redCommand"] = _required(raw, "redCommand", identifier)
             item["redProof"] = raw["redProof"]
         # The producer records its baseline proof here and prose never may, so
@@ -283,7 +283,7 @@ def validate_items(
         # Supersession keeps the proof kind it retired, so a post-edit pass
         # cannot be laundered into a GREEN through RED by being superseded.
         if "supersededFrom" in raw:
-            if not allow_runtime or raw.get("supersededFrom") not in PROOF_STATUSES | {"already-satisfied"}:
+            if not allow_runtime or raw.get("supersededFrom") not in PROOF_STATUSES | {"already-satisfied", "pending"}:
                 raise ValueError(f"behavior {identifier} supersededFrom is recorded only by a tdd-map supersession")
             item["supersededFrom"] = raw["supersededFrom"]
         evidence = _text(raw.get("evidence"))
@@ -469,8 +469,11 @@ def apply_dispositions(
             raise ValueError(f"behavior {identifier} disposition must be one of: "
                              + ", ".join(sorted(EVIDENCED_STATUSES | {"pending"})))
         if status == "superseded":
-            if previous not in PROOF_STATUSES and not (previous == "already-satisfied" and producer_proved(mapped)):
-                raise ValueError(f"behavior {identifier} is {previous}; only a GREEN item can be superseded")
+            if previous not in PROOF_STATUSES and not (
+                (previous == "already-satisfied" and producer_proved(mapped))
+                or (previous == "pending" and "redProof" in mapped)
+            ):
+                raise ValueError(f"behavior {identifier} is {previous}; only proved or reopened attacked items can be superseded")
             if previous == "already-satisfied":
                 mapped["baselineProof"]["command"] = executed_commands(mapped).get("baseline")
             mapped["supersededBy"] = _required(raw, "supersededBy", identifier)

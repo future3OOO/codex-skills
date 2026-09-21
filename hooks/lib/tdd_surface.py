@@ -373,10 +373,11 @@ def input_evidence(surface: Mapping[str, object], root: Path, inputs: list[objec
                 if node.returns is not None:
                     _source_inputs(node.returns, bindings, [], [])
                 bindings.pop(node.name, None)
-                if (len(node.decorator_list) == 1 and len(node.body) == 1 and isinstance(node.body[0], ast.Return) and any(
-                    isinstance(decorator, ast.Attribute) and decorator.attr == "fixture"
-                    for decorator in node.decorator_list
-                )):
+                decorator = node.decorator_list[0] if len(node.decorator_list) == 1 else None
+                if isinstance(decorator, ast.Call) and not decorator.args and not decorator.keywords:
+                    decorator = decorator.func
+                if (len(node.body) == 1 and isinstance(node.body[0], ast.Return)
+                        and isinstance(decorator, ast.Attribute) and decorator.attr == "fixture"):
                     fixtures.add(node.name)
                     bindings[node.name] = _input_literals(node.body[0].value, {})
                 elif node.decorator_list:
@@ -431,7 +432,7 @@ def _input_literals(node: ast.AST, bindings: dict[str, list[object]]) -> list[ob
             return []
     try:
         value = ast.literal_eval(node)
-        json.dumps(value, allow_nan=False)
+        json.dumps(value, sort_keys=True, allow_nan=False)
     except (ValueError, TypeError, SyntaxError):
         return []
     return [value]

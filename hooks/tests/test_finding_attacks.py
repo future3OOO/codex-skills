@@ -25,6 +25,7 @@ WORKFLOW = ROOT / "skills" / "repo-production-workflow" / "scripts" / "workflow.
 QUALITY_GATE = ROOT / "skills" / "production-code" / "scripts" / "code_quality_gate.py"
 
 from hooks.lib.repo_identity import resolve_repo_identity  # noqa: E402
+from hooks.lib import behavior_map  # noqa: E402
 from hooks.lib.state_store import _active_candidate_tree  # noqa: E402
 from hooks.tests.support import build_document, record_context_forge  # noqa: E402
 
@@ -1570,7 +1571,10 @@ class MapCorrectionAttacks(AttackHarness):
         self.repair_order()
         green = self.mapped_tdd(slug, "green", correct)
         self.assertEqual(green.returncode, 0, marker + ": " + green.stderr)
-        self.refused_unchanged(marker, lambda: self.correct_red(slug))
+        reopened = self.correct_red(slug)
+        self.assertEqual(reopened.returncode, 0, reopened.stderr)
+        self.assertEqual(self.map_items()["BM_ATTACK"]["status"], "pending")
+        self.refused_unchanged(marker, lambda: self.mapped_tdd(slug, "green", correct))
 
     def test_corrected_red_cannot_be_withdrawn(self) -> None:
         marker = "CORRECTED_RED_WITHDRAWN"
@@ -2264,7 +2268,7 @@ class MapCorrectionAttacks(AttackHarness):
         self.assertEqual(closed.returncode, 0, marker + ": " + closed.stdout + closed.stderr)
         self.assertEqual(json.loads(closed.stdout)["findingStates"][0]["status"], "fixed", marker)
 
-    def test_reopen_refusals(self) -> None:
+    def test_pending_reopen_refuses_but_green_can_be_reassessed(self) -> None:
         marker = "REOPEN_REFUSAL_MISSING"
         slug = "reopen-refusals"
         also = {**self.KEEP_OMITTED, "id": "BM_ALSO", "status": "pending"}
@@ -2276,8 +2280,15 @@ class MapCorrectionAttacks(AttackHarness):
         self.assertEqual(self.map_update(slug, dispositions=[
             {"id": "BM_ALSO", "status": "omitted", "evidence": "settled"}]).returncode, 0)
         self.drive_attack_green(slug, marker)
-        refused = self.refused_unchanged(marker, lambda: self.reopen(slug, "BM_ATTACK"))
-        self.assertIn("reopened", refused.stderr, marker)
+        evidence_id = self.status()["tddEvidence"]
+        historical = self.ok("evidence", "--evidence-id", evidence_id)
+        reopened = self.map_update(slug, dispositions=[{
+            "id": "BM_ATTACK", "status": "pending", "evidence": "GREEN lacks sufficient behavioral proof"}])
+        self.assertEqual(reopened.returncode, 0, reopened.stderr)
+        current = self.map_items()["BM_ATTACK"]
+        self.assertEqual(current["status"], "pending")
+        self.assertFalse(behavior_map.producer_proved(current))
+        self.assertEqual(self.ok("evidence", "--evidence-id", evidence_id), historical)
 
     def keep_probe(self, value: int) -> None:
         (self.repo / "test_keep_probe.py").write_text(
@@ -2408,7 +2419,7 @@ class MapCorrectionAttacks(AttackHarness):
         refused = self.refused_unchanged(marker, lambda: self.map_update(slug, dispositions=[{
             "id": "BM_EXTRA", "status": "superseded", "supersededBy": "BM_ATTACK",
             "evidence": "a withdrawn item owns nothing to hand over"}]))
-        self.assertIn("GREEN", refused.stderr, marker)
+        self.assertIn("withdrawn", refused.stderr, marker)
 
 
 class ReportOnlyProofAttacks(AttackHarness):

@@ -1930,7 +1930,8 @@ def _recorded_items(
     identity: RepoIdentity, state: JsonObject, *, terminals: dict[str, JsonObject] | None = None,
 ) -> list[JsonObject]:
     """Read the current map, falling back only when absent, not when corrupt."""
-    for field in ("tddEvidence", "preflightEvidence"):
+    fields = ("preflightLatestEvidence",) if state.get("preflight") == "pending" else ()
+    for field in (*fields, "tddEvidence", "preflightEvidence"):
         evidence_id = state.get(field)
         items = _map_items(evidence_document(identity, evidence_id if isinstance(evidence_id, str) else None),
                            terminals=terminals)

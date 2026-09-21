@@ -144,12 +144,10 @@ block on every material unknown. For transaction-sensitive work, load the
 
 The recorded preflight owns the initial Behavior Map; read the tdd skill's [Record the Behavior Map in Preflight](../tdd/SKILL.md) section before writing it. It is authoritative for proof obligations, not architecture selection; a plan may reference it but is not a second proof owner.
 
-Record a completed preflight only through its recorder, which demands the
-skill's structured document (thirteen non-empty text sections plus a non-empty
-`behaviorMap`). The [preflight owner](../production-preflight/SKILL.md#behaviormap)
-retains structurally valid unsettled interpretations as pending evidence; passing
-still requires `openQuestions` exactly `none` and settled choices. Other malformed
-documents refuse without mutating state:
+Record preflight through its recorder using the structured document owned by
+[production-preflight](../production-preflight/SKILL.md#recording). Passing requires
+`openQuestions` exactly `none` and settled choices; that owner defines pending
+evidence and refusal behavior.
 
 ```bash
 python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" \
