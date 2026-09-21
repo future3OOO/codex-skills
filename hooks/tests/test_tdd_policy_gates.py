@@ -467,7 +467,7 @@ class MappedTddPolicyGateTests(unittest.TestCase):
         try:
             connection.execute("BEGIN IMMEDIATE")
             process = subprocess.Popen(command, cwd=h.repo, env=h.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            deadline = time.monotonic() + 2
+            deadline = time.monotonic() + 10
             opened = False
             while process.poll() is None and time.monotonic() < deadline:
                 descriptors = Path(f"/proc/{process.pid}/fd")

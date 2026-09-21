@@ -100,7 +100,9 @@ input extraction: represented, missing or unresolved. No separate inventory,
 command, checker Module or semantic classifier. Insufficient GREEN proof is
 editable through ordinary reassessment; pending carries no current settlement
 authority. Reuse sufficient proof and preserve immutable history. Finding policy
-remains with #64.
+remains with #64. Recording a current review refreshes its tree binding even
+while findings remain open; freshness does not imply approval or require a
+separate acknowledgement.
 
 **Observed:** Retained real-CLI probes exercise missing-input refusal, proof reuse,
 affected-only reassessment, pending interpretation recovery and linked closure.
@@ -131,7 +133,9 @@ Neither arm reached a complete correct endpoint, so it proves no end-to-end gain
 
 **Status:** SPEC-4 efficiency and SPEC-6 independent discovery remain unresolved.
 The user's removal of Codex S time/token caps supersedes earlier budget limits;
-benchmark advisor and paid fallback restrictions remain. Implementation review
+comparisons use only codexs, with each arm's skills/runtime frozen and no prior
+trial answers supplied. Benchmark advisor and paid fallback restrictions remain.
+Implementation review
 and mandatory final advisor are authorized, but no component check or PR delivery
 waives missing acceptance. Detailed retained evidence is in the issue65 evidence
 directory and the PR; it is not a second governing contract.
