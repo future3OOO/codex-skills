@@ -6,7 +6,7 @@ weaken them.
 ## Production Repo Workflow
 
 For repository changes, create or reuse a task-owned Git worktree and enter it
-(run `codex-relocate <absolute whitespace-free worktree>` yourself as the
+(run `python3 "$HOME/.codex/skills/repo-production-workflow/scripts/codex-relocate" <absolute whitespace-free worktree>` yourself as the
 turn's last action to move the session root) before invoking
 `$repo-production-workflow`, creating its slug/state, or editing. Never edit
 the main/shared checkout or clobber another agent's state or files.
