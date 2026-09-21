@@ -25,13 +25,16 @@ import socket, base64, os, struct, json, sys, time, glob, signal, shlex
 
 class WS:
     def __init__(self, path):
-        self.s = socket.socket(socket.AF_UNIX); self.s.connect(path)
+        self.s = socket.socket(socket.AF_UNIX); self.s.settimeout(3); self.s.connect(path)
         key = base64.b64encode(os.urandom(16)).decode()
         self.s.sendall((f"GET / HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\n"
                         f"Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\n"
                         f"Sec-WebSocket-Version: 13\r\n\r\n").encode())
         buf = b""
-        while b"\r\n\r\n" not in buf: buf += self.s.recv(4096)
+        while b"\r\n\r\n" not in buf:
+            chunk = self.s.recv(4096)
+            if not chunk: raise RuntimeError("ws handshake EOF")
+            buf += chunk
         if b"101" not in buf.split(b"\r\n")[0]: raise RuntimeError("ws handshake failed")
         self.buf = buf.split(b"\r\n\r\n", 1)[1]
         self.s.settimeout(0.5)
@@ -112,9 +115,10 @@ def find_thread(ws, tid, mycwd):
     for i, t in enumerate(loaded):
         rr = rpc(ws, "thread/read", {"threadId": t}, 10 + i)
         th = rr.get("result", {}).get("thread", {})
-        for env in th.get("environments") or []:
-            if env.get("cwd") == mycwd:
-                hits.append(t); break
+        envs = th.get("environments") or []
+        cwds = [e.get("cwd") for e in envs] or [th.get("cwd")]
+        if any(c and os.path.realpath(c) == os.path.realpath(mycwd) for c in cwds):
+            hits.append(t)
     return hits[0] if len(hits) == 1 else None
 
 def main():
@@ -136,16 +140,16 @@ def main():
     for path in sockets():
         try:
             ws = init_ws(path)
+            found = find_thread(ws, tid, mycwd)
+            if not found: continue
+            r = rpc(ws, "turn/start", {"threadId": found, "cwd": cwd,
+                                       "input": [{"type": "text", "text": note}]}, 99)
+            if "error" in r:
+                last_err = f"{path}: turn/start: {r['error']}"; continue
+            print(f"relocation accepted: thread {found} -> {cwd} (via {path})")
+            return
         except Exception as e:
             last_err = f"{path}: {e}"; continue
-        found = find_thread(ws, tid, mycwd)
-        if not found: continue
-        r = rpc(ws, "turn/start", {"threadId": found, "cwd": cwd,
-                                   "input": [{"type": "text", "text": note}]}, 99)
-        if "error" in r:
-            sys.exit(f"turn/start refused on {path}: {r['error']}")
-        print(f"relocation accepted: thread {found} -> {cwd} (via {path})")
-        return
     self_hosted(cwd, tid, last_err)
 
 def self_hosted(cwd, tid, why):
@@ -201,7 +205,7 @@ def self_hosted(cwd, tid, why):
     d = os.path.expanduser("~/.codex/reloc")
     os.makedirs(d, exist_ok=True)
     with open(os.path.join(d, str(shell)), "w") as f:
-        f.write(f"{cwd} {tid} {int(time.time())}")
+        f.write(f"{cwd} {tid} {int(time.time())}\n")
     print(f"relocation armed: killing host TUI pid {host}; shell pid {shell} "
           f"will resume thread {tid} at {cwd}")
     os.kill(host, signal.SIGTERM)
