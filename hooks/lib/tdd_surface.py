@@ -361,6 +361,13 @@ def input_evidence(surface: Mapping[str, object], root: Path, inputs: list[objec
                 case_id = case.removesuffix("]")
             selected = [child for parent in selected for child in getattr(parent, "body", [])
                         if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and child.name == name]
+        classes = [node for node in selected if isinstance(node, ast.ClassDef)]
+        if any(ast.unparse(base) not in {"unittest.TestCase", "object"} for node in classes for base in node.bases):
+            limits.append("inherited test bodies were not inspected")
+        selected = [child for node in selected for child in (
+            [member for member in node.body if isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef))
+             and (member.name.startswith("test") or member.name in {"setUp", "tearDown", "setUpClass", "tearDownClass", "setup_method", "teardown_method", "setup_class", "teardown_class"})]
+            if isinstance(node, ast.ClassDef) else [node])]
         if not selected:
             limits.append(f"selected definition unavailable: {target}")
             continue
@@ -368,9 +375,8 @@ def input_evidence(surface: Mapping[str, object], root: Path, inputs: list[objec
         fixtures: set[str] = set()
         for node in tree.body if runner != "exact" else []:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                _source_inputs(node.args, bindings, [], [])
-                if node.returns is not None:
-                    _source_inputs(node.returns, bindings, [], [])
+                for expression in [node.args, *([node.returns] if node.returns else [])]:
+                    _source_inputs(expression, bindings, [], [])
                 bindings.pop(node.name, None)
                 decorator = node.decorator_list[0] if len(node.decorator_list) == 1 else None
                 if isinstance(decorator, ast.Call) and not decorator.args and not decorator.keywords:
@@ -393,7 +399,7 @@ def input_evidence(surface: Mapping[str, object], root: Path, inputs: list[objec
             if isinstance(node, ast.Module) and runner != "exact":
                 limits.append(f"whole-file runner selection lacks case attribution: {target}")
                 continue
-            local = dict(bindings)
+            local = {} if classes else dict(bindings)
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 defaults = {arg.arg for arg in node.args.args[-len(node.args.defaults):]} if node.args.defaults else set()
                 defaults.update(arg.arg for arg, default in zip(node.args.kwonlyargs, node.args.kw_defaults) if default is not None)
@@ -441,10 +447,19 @@ def _source_inputs(node: ast.AST, bindings: dict[str, list[object]],
                    values: list[object], limits: list[str], *, case_id: str | None = None,
                    selected: bool = False) -> None:
     """Inspect literal call inputs and local literal tables, not arbitrary dataflow."""
-    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and (
-        not selected or isinstance(node, ast.ClassDef)
-    ):
-        bindings.clear()
+    if isinstance(node, ast.ClassDef):
+        bindings.pop(node.name, None)
+        if node.decorator_list or node.keywords or any(isinstance(part, ast.Call) for base in node.bases for part in ast.walk(base)):
+            bindings.clear()
+        for statement in node.body:
+            _source_inputs(statement.value if isinstance(statement, ast.Assign) else statement, bindings, [], [])
+        return
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and not selected:
+        bindings.pop(node.name, None)
+        for expression in [node.args, *([node.returns] if node.returns else [])]:
+            _source_inputs(expression, bindings, [], limits)
+        if node.decorator_list:
+            bindings.clear()
         limits.append("unselected callable bodies were not inspected")
         return
     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -509,52 +524,36 @@ def _source_inputs(node: ast.AST, bindings: dict[str, list[object]],
         bindings.clear()
         return
     if isinstance(node, (ast.Import, ast.ImportFrom)):
-        bindings.clear()
+        names = {alias.asname or alias.name.split(".")[0] for alias in node.names}
+        for name in list(bindings) if "*" in names else names:
+            bindings.pop(name, None)
         return
-    if isinstance(node, ast.Assert):
-        _source_inputs(node.test, bindings, values, limits)
-        bindings.clear()
-        return
-    if isinstance(node, ast.Compare):
-        _source_inputs(node.left, bindings, values, limits)
-        if any(isinstance(child, ast.Call) for operand in node.comparators for child in ast.walk(operand)):
+    if isinstance(node, (ast.Assert, ast.Compare)):
+        _source_inputs(node.test if isinstance(node, ast.Assert) else node.left, bindings, values, limits)
+        if isinstance(node, ast.Compare) and any(isinstance(child, ast.Call) for operand in node.comparators for child in ast.walk(operand)):
             limits.append("comparison has an ambiguous input/expected operand")
         bindings.clear()
         return
     if isinstance(node, ast.Call):
-        if isinstance(node.func, ast.Name) and node.func.id in {"print", "repr"}:
-            for argument in [*node.args, *(kw.value for kw in node.keywords)]:
-                _source_inputs(argument, bindings, values, limits)
-            bindings.clear()
-            return
-        if (isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name)
-                and node.func.value.id == "self" and node.func.attr.startswith("assert")):
-            if node.args:
-                _source_inputs(node.args[0], bindings, values, limits)
-            if any(isinstance(child, ast.Call) for argument in node.args[1:] for child in ast.walk(argument)):
-                limits.append("assertion has an ambiguous input/expected operand")
-            bindings.clear()
-            return
-        if not node.args and not node.keywords and not (
-            isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Call)
-        ):
-            limits.append("zero-argument helper has no inspected input data")
-        _source_inputs(node.func, bindings, values, limits)
+        arguments = [*node.args, *(kw.value for kw in node.keywords)]
+        assertion = (isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name)
+                     and node.func.value.id == "self" and node.func.attr.startswith("assert"))
+        output = isinstance(node.func, ast.Name) and node.func.id in {"print", "repr"}
+        if not (assertion or output):
+            _source_inputs(node.func, bindings, values, limits)
         # Later arguments can mutate aliases evaluated earlier. Resolve cached
         # values only after all argument effects, then expire call-owned state.
-        for argument in [*node.args, *(kw.value for kw in node.keywords)]:
+        for argument in node.args[:1] if assertion else arguments:
             _source_inputs(argument, bindings, values, limits)
-        if any(kw.arg is None for kw in node.keywords):
-            bindings.clear()
-            limits.append("opaque keyword expansion")
-        for argument in [*node.args, *(kw.value for kw in node.keywords if kw.arg is not None)]:
+        ambiguous = any(kw.arg is None for kw in node.keywords) or any(
+            isinstance(part, ast.Call) for argument in (node.args[1:] if assertion else arguments) for part in ast.walk(argument))
+        if not output and (ambiguous or (not arguments and not (isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Call)))):
+            limits.append("call argument roles are ambiguous")
+        for argument in [] if assertion or output or ambiguous else arguments:
             concrete = _input_literals(argument, bindings)
             if not concrete:
                 limits.append("dynamic call input")
-            for value in concrete:
-                values.append(value)
-                if isinstance(value, (list, tuple)):
-                    values.extend(value)
+            values.extend(part for value in concrete for part in ([value, *value] if isinstance(value, (list, tuple)) else [value]))
         bindings.clear()
         return
     # These wrappers have ordered children, not alternative execution paths.
@@ -572,7 +571,7 @@ def _source_inputs(node: ast.AST, bindings: dict[str, list[object]],
         bindings.clear()
         limits.append("opaque mapping construction")
         return
-    if not isinstance(node, (ast.Module, ast.Expr, ast.Return, ast.arguments, ast.arg,
+    if not isinstance(node, (ast.Module, ast.Expr, ast.Return, ast.Pass, ast.arguments, ast.arg,
                              ast.List, ast.Tuple, ast.Dict,
                              ast.Name, ast.Load)):
         bindings.clear()
