@@ -1403,3 +1403,33 @@ now supersedes the stale "open, not merged" statuses; the installed-probe
 note records the verified per-item status grouping; the #62 delivery names
 the >8 MiB `size:mtime_ns` digest representation; the dropped 350-command
 fixture is no longer described as committed and pinned.
+
+## 2026-09-22 — Issue 90 decided-view gate and filtered candidate capture
+
+**Decision:** [#90](https://github.com/future3OOO/codex-skills/issues/90) is
+implemented by splitting "decided" from "resolved" at the advisor boundary.
+`_checkpoint_allows` now answers checkpoint/record readiness — a stage whose
+open findings are all dispositioned `accepted-follow-up` counts as decided —
+while `_allows_next`, `commit_review` status semantics, `_finding_unresolved`,
+and `complete()` keep the strict resolved view unchanged. The same decided
+view drives `_derive_next_action`, `correction_blockers(undecided_only=True)`,
+and the `code-review` edge of `_require_predecessor`, so the consult a ready
+checkpoint issues can actually be recorded (independent review caught the
+dead-end before this edge was relaxed). `_write_candidate_tree` captures the
+HEAD-seeded temp index filtered to `is_reviewable_path or is_governance_path`,
+so docs/scratch-only edits stop drifting the candidate; the OID stays a real
+git tree `advisor_diff` diffs directly.
+
+**Scope:** Ships `hooks/lib/state_store.py` and `hooks/lib/workflow_state.py`
+(+115/−18). Proof is the retained real-CLI probe
+(`env ISSUE90_SRC=$PWD python3 .scratch/issue90/probe.py`): deferred-state
+checkpoint issues the projection with the ledger marked, AFP/pending refusals
+preserved at either materiality, `advisor-result --stage final` records on a
+decided code-review, capture isolation verified under held locks, concurrency,
+SIGKILL and re-entry, and the advisor wrapper hands the marked ledger to the
+provider sha256-verbatim. Preflight (two intakes, 9 findings), code-review
+(1 finding), and final-review (Claude advisor, 4 findings) all dispositioned
+fixed with measurements. Note: the installed RCF producer embeds the pre-fix
+unfiltered capture, so its `expectedCandidateTree` diverges while untracked
+docs/scratch exist in the worktree — a producer-side update outside this
+repo's source.

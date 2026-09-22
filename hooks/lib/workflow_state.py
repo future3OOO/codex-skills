@@ -8,6 +8,7 @@ import shlex
 import subprocess
 import sys
 import uuid
+from collections.abc import Callable
 from typing import Sequence
 
 from . import behavior_map, tdd_surface
@@ -167,6 +168,58 @@ def _allows_next(state: JsonObject, phase: str) -> bool:
     return False
 
 
+def _finding_undecided(entry: JsonObject) -> bool:
+    """A finding with no recorded disposition, or one awaiting its appeal response.
+
+    Any `pending`/`accepted-for-proof` finding is undecided regardless of
+    materiality — the material qualifiers belong to `_finding_unresolved`,
+    which decides what completion still owes, not what the checkpoint may show.
+    """
+    return (
+        entry.get("status") in {"pending", "accepted-for-proof"}
+        or entry.get("appealStatus") == "pending"
+    )
+
+
+def _stage_findings_decided(state: JsonObject, stage: str) -> bool:
+    """No finding of this stage still awaits a decision.
+
+    `accepted-follow-up` stays open in the ledger by design — deferred to a
+    follow-up — but it is decided, so it does not gate the final-review
+    projection.
+    """
+    states = state.get("findingStates")
+    return isinstance(states, list) and not any(
+        isinstance(entry, dict) and entry.get("stage") == stage and _finding_undecided(entry)
+        for entry in states
+    )
+
+
+def _checkpoint_allows(state: JsonObject, phase: str) -> bool:
+    """Phase readiness for the advisor checkpoint: decided findings still count.
+
+    `commit_review` and `advisor_disposition` keep a review pending while any of
+    its findings stays unresolved — including `accepted-follow-up`, which
+    `complete` must keep refusing. The checkpoint instead asks whether anything
+    remains undecided: a stage whose open findings are all deferred follow-ups
+    is done deciding, and the ledger carries them to the advisor marked.
+    """
+    if _allows_next(state, phase):
+        return True
+    if phase == "code-review":
+        return bool(state.get("codeReviewEvidence")) and _stage_findings_decided(state, "code-review")
+    if phase == "final-review":
+        review = state.get("finalReview")
+        return (
+            isinstance(review, dict)
+            and review.get("source") in REVIEW_SOURCES
+            and review.get("status") in {"commit-ready", "fix-before-commit"}
+            and (review.get("status") == "commit-ready" or bool(review.get("intakeEvidence")))
+            and _stage_findings_decided(state, "final")
+        )
+    return False
+
+
 def _preflight_finding_states(state: JsonObject) -> list[JsonObject]:
     states = state.get("findingStates")
     if not isinstance(states, list):
@@ -185,13 +238,20 @@ def _require_predecessor(state: JsonObject, phase: str) -> None:
     if phase == "code-review" and not _allows_next(state, "tdd"):
         raise WorkflowIncomplete("code-review requires tdd")
     position = WORKFLOW_SEQUENCE.index(phase)
-    if position and not _allows_next(state, WORKFLOW_SEQUENCE[position - 1]):
-        raise WorkflowIncomplete(f"{phase} requires {WORKFLOW_SEQUENCE[position - 1]}")
+    if position:
+        predecessor = WORKFLOW_SEQUENCE[position - 1]
+        # The code-review edge counts decided findings as done, the same view
+        # the checkpoint takes — a consult must be recordable when it issued.
+        allows = _checkpoint_allows if predecessor == "code-review" else _allows_next
+        if not allows(state, predecessor):
+            raise WorkflowIncomplete(f"{phase} requires {predecessor}")
 
 
-def _next_incomplete_phase(state: JsonObject) -> str:
+def _next_incomplete_phase(
+    state: JsonObject, allows: Callable[[JsonObject, str], bool] = _allows_next,
+) -> str:
     return next(
-        (phase for phase in WORKFLOW_SEQUENCE if not _allows_next(state, phase)),
+        (phase for phase in WORKFLOW_SEQUENCE if not allows(state, phase)),
         "complete-workflow",
     )
 
@@ -210,13 +270,13 @@ def _derive_next_action(state: JsonObject, tdd_document: JsonObject | None = Non
         entry.get("status") == "accepted-follow-up" and entry.get("material") is True
         for entry in correction
     )
-    if accepted:
-        if state.get("tdd") == "in-progress":
-            return "run-mapped-tdd"
-        return "close-current-findings"
+    if accepted and state.get("tdd") == "in-progress":
+        return "run-mapped-tdd"
     if any(entry.get("appealStatus") == "pending" for entry in correction):
         return "appeal-final-review"
-    phase = _next_incomplete_phase(state)
+    phase = _next_incomplete_phase(state, allows=_checkpoint_allows)
+    if accepted and phase == "complete-workflow":
+        return "close-current-findings"
     if phase == "final-review":
         review = state.get("finalReview")
         if isinstance(review, dict) and review.get("status") not in {None, "pending"}:
@@ -1378,12 +1438,15 @@ def _behavioral_finding_closure(
         )
 
 
-def _finding_state_blockers(state: JsonObject) -> list[str]:
+def _finding_state_blockers(state: JsonObject, *, undecided_only: bool = False) -> list[str]:
     states = state.get("findingStates", [])
     if not isinstance(states, list):
         return ["finding lifecycle evidence is corrupt"]
+    # The checkpoint asks what is still undecided; completion asks what stays
+    # unresolved — a superset that includes deferred material findings.
+    open_finding = _finding_undecided if undecided_only else _finding_unresolved
     unresolved = [f"{entry.get('stage')}:{entry.get('findingId')}" for entry in states
-                  if isinstance(entry, dict) and _finding_unresolved(entry)]
+                  if isinstance(entry, dict) and open_finding(entry)]
     result: list[str] = []
     if state.get("finalReviewContextMismatchEvidence"):
         result.append("final-review context mismatch requires re-consultation")
@@ -1394,7 +1457,7 @@ def _finding_state_blockers(state: JsonObject) -> list[str]:
 
 def correction_blockers(
     identity: RepoIdentity, state: JsonObject, *, items: list[JsonObject] | None = None,
-    terminals: dict[str, JsonObject] | None = None,
+    terminals: dict[str, JsonObject] | None = None, undecided_only: bool = False,
 ) -> list[str]:
     if terminals is None:
         terminals = {}
@@ -1405,12 +1468,14 @@ def correction_blockers(
     pending = behavior_map.unresolved(items, terminals=terminals)
     return (["unresolved Behavior Map items: " + ", ".join(pending)] if pending else []) + _finding_completion_blockers(
         None, state, items=items, terminals=terminals, pending=set(pending),
+        undecided_only=undecided_only,
     )
 
 
 def _finding_completion_blockers(
     transaction: LedgerMutation | None, state: JsonObject, *, items: list[JsonObject] | None = None,
     terminals: dict[str, JsonObject] | None = None, pending: set[str] | None = None,
+    undecided_only: bool = False,
 ) -> list[str]:
     states = state.get("findingStates", [])
     if not isinstance(states, list):
@@ -1437,7 +1502,7 @@ def _finding_completion_blockers(
                 )
             except WorkflowError as exc:
                 blockers.append(str(exc))
-    return blockers + _finding_state_blockers(state)
+    return blockers + _finding_state_blockers(state, undecided_only=undecided_only)
 
 
 def _disposition_evidence(
@@ -1823,7 +1888,7 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False) -
             else (
                 ("verification evidence", _evidence_ready(state, "verification")),
                 ("quality-gate verification", bool(state.get("qualityGateEvidence"))),
-                ("code-review", _allows_next(state, "code-review")),
+                ("code-review", _checkpoint_allows(state, "code-review")),
             )
         ),
     )
@@ -1862,7 +1927,8 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False) -
     items = _recorded_items(identity, state, terminals=terminals)
     if phase == "final-review":
         missing.extend(() if state.get("nextAction") in ("appeal-final-review", "re-consult-final-review")
-                       else correction_blockers(identity, state, items=items, terminals=terminals))
+                       else correction_blockers(identity, state, items=items, terminals=terminals,
+                                                undecided_only=True))
         if drift := _binding_drift(identity, state, "review"):
             missing.append(drift)
         if drift := _binding_drift(identity, state, "quality-gate"):
