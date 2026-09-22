@@ -380,7 +380,7 @@ class MappedTddPolicyGateTests(unittest.TestCase):
         from hooks.lib.workflow_state import ready_for_edit
         ready, missing = ready_for_edit(resolve_repo_identity(h.repo), "app.py")
         self.assertFalse(ready)
-        self.assertIn("unsettled interpretation: BM_CHOICE", missing, "PENDING_CHOICE_DIAGNOSIS_LOST")
+        self.assertIn("production preflight", missing, "PENDING_PREFLIGHT_DIAGNOSIS_LOST")
 
     def test_late_inputs_reuse_or_reopen_baseline(self) -> None:
         h = self.harness

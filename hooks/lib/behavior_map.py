@@ -167,7 +167,7 @@ def interpretation_fields(raw: JsonObject, identifier: str) -> JsonObject:
         json.dumps(inputs, allow_nan=False)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"behavior {identifier} boundaryInputs must be concrete JSON values") from exc
-    if not isinstance(readings, list) or len(readings) < 2 or any(_text(value) is None for value in readings):
+    if not isinstance(readings, list) or any(_text(value) is None for value in readings) or len({value.strip() for value in readings}) < 2:
         raise ValueError(f"behavior {identifier} interpretations requires competing readings")
     if "interpretation" in fields or "authority" in fields:
         for key in ("interpretation", "authority"):
@@ -409,8 +409,8 @@ def apply_dispositions(
         if metadata & raw.keys():
             proposal = {**mapped, **{key: raw[key] for key in metadata & raw.keys()}}
             if "interpretations" in raw and raw["interpretations"] != mapped.get("interpretations") and "interpretation" not in raw:
-                proposal.pop("interpretation", None)
-                proposal.pop("authority", None)
+                for key in {"interpretation", "authority"} - raw.keys():
+                    proposal.pop(key, None)
             fields = interpretation_fields(proposal, identifier)
             removed = {json.dumps(value, sort_keys=True) for value in mapped.get("boundaryInputs", [])} - {
                 json.dumps(value, sort_keys=True) for value in fields["boundaryInputs"]}

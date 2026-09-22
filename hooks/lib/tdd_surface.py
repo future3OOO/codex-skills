@@ -538,7 +538,8 @@ def _source_inputs(node: ast.AST, bindings: dict[str, list[object]],
         arguments = [*node.args, *(kw.value for kw in node.keywords)]
         assertion = (isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name)
                      and node.func.value.id == "self" and node.func.attr.startswith("assert"))
-        output = isinstance(node.func, ast.Name) and node.func.id in {"print", "repr"}
+        output = (isinstance(node.func, ast.Name) and node.func.id in {"print", "repr"}) or (
+            isinstance(node.func, ast.Attribute) and node.func.attr == "write" and ast.unparse(node.func.value) in {"sys.stdout", "sys.stderr"})
         if not (assertion or output):
             _source_inputs(node.func, bindings, values, limits)
         # Later arguments can mutate aliases evaluated earlier. Resolve cached

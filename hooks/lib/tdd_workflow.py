@@ -396,14 +396,13 @@ def _baseline_refusal(binding: dict[str, object], kind: object) -> str:
             "or narrow the obligation with governing evidence")
 
 
-def _input_admission(mapped: JsonObject, surface: JsonObject, root: Path,
-                     test_id: str | None = None) -> tuple[JsonObject | None, str]:
-    if not mapped.get("boundaryInputs"):
-        return None, ""
+def _input_admission(mapped: JsonObject, surface: JsonObject, root: Path, source_tree: dict[str, str],
+                     test_id: str | None = None) -> tuple[JsonObject, str]:
     evidence = tdd_surface.input_evidence(surface, root, mapped["boundaryInputs"], test_id)
-    error = (f"missing discriminating input(s) {evidence['missing']!r} in selected input evidence "
-             f"{evidence['sources'] or surface}") if evidence["missing"] else ""
-    return evidence, error
+    if evidence["sources"].keys() - source_tree.keys():
+        evidence.update(represented=[], missing=[], unresolved=mapped["boundaryInputs"],
+                        limits=[*evidence["limits"], "selected source lacks execution-tree binding"])
+    return evidence, f"missing discriminating input(s) {evidence['missing']!r} in {evidence['sources'] or surface}" if evidence["missing"] else ""
 
 
 def _run_tdd(values: list[str]) -> int:
@@ -639,7 +638,7 @@ def _run_tdd(values: list[str]) -> int:
     input_check = None
     input_error = ""
     if not legacy and proof is not None and (baseline or phase == "green") and mapped.get("boundaryInputs"):
-        input_check, input_error = _input_admission(mapped, surface, Path(identity.root), args.test_id)
+        input_check, input_error = _input_admission(mapped, surface, Path(identity.root), tree_before, args.test_id)
         if input_error:
             proof, proof_error, baseline = None, input_error, False
         else:
@@ -1087,17 +1086,16 @@ def _map_update(values: list[str]) -> int:
         added_items = behavior_map.added_items(additions, updated)
         updated.extend(added_items)
     input_checks = {}
-    for entry in updated:
-        previous = next((item for item in items if item["id"] == entry["id"]), None)
-        if not previous or (
-            json.dumps(entry.get("boundaryInputs"), sort_keys=True)
-            == json.dumps(previous.get("boundaryInputs"), sort_keys=True)
-        ):
+    candidate_tree = None
+    source_tree = None
+    for previous, entry in zip(items, updated):
+        if json.dumps(entry.get("boundaryInputs"), sort_keys=True) == json.dumps(previous.get("boundaryInputs"), sort_keys=True):
             continue
         proof_binding = entry.get("proofBinding")
-        if isinstance(proof_binding, dict) and proof_binding.get("candidateTree") == _active_candidate_tree(identity):
+        if isinstance(proof_binding, dict) and proof_binding.get("candidateTree") == (candidate_tree := candidate_tree or _active_candidate_tree(identity)):
+            source_tree = tree_manifest(identity) if source_tree is None else source_tree
             check, error = _input_admission(entry, tdd_surface.identify(shlex.split(proof_binding["command"])),
-                                             Path(identity.root), proof_binding.get("testId"))
+                                           Path(identity.root), source_tree, proof_binding.get("testId"))
             input_checks[entry["id"]] = check
             if not error and not check["unresolved"]:
                 continue
