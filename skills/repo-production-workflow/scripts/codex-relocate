@@ -11,10 +11,11 @@ the gap turn, or verify with pwd on the following turn.
 
 Self-hosted sessions (any profile): no socket exists, so this arms the
 resume loop in the launching shell (CODEX_RELOC_LOOP must be set — the
-codex/codexs wrappers export it), writes ~/.codex/reloc/<shell-pid>, and
-kills the host TUI. The wrapper resumes the same thread at <abs-path>
-in the SAME pane. Run this as the LAST action of a turn — the kill ends
-the session.
+codex/codexs wrappers export it), persists directory trust in
+~/.codex/config.toml, writes ~/.codex/reloc/<shell-pid>, and terminates
+the host TUI ~10s later. The wrapper resumes the same thread at
+<abs-path> in the SAME pane. Run this as the LAST action of a turn —
+the kill ends the session.
 
 thread-id defaults to $CODEX_THREAD_ID, else 'self' (the loaded thread
 whose cwd matches the current directory). Socket auto-discovers
@@ -172,12 +173,10 @@ def main():
 
 def _trust_dir(cwd):
     """Persist trust for the relocate target in ~/.codex/config.toml so the
-    resume-loop's `codex resume -C <dir>` does not stop at the interactive
-    directory-trust prompt (the same write answering "Yes, continue" makes).
-    Never leaves the file worse than it found it: the candidate content is
-    written only after tomllib proves the target's trust_level is "trusted",
-    and a second [projects."<cwd>"] table is never appended — a duplicate
-    table header would invalidate the TOML for every codex launch."""
+    resume-loop's `codex resume -C <dir>` skips the interactive trust prompt.
+    Writes only a tomllib-validated candidate that proves the target's
+    trust_level="trusted", and never appends a duplicate [projects."<cwd>"]
+    table — a duplicate header invalidates the TOML for every launch."""
     if '"' in cwd or "\\" in cwd:
         print(f"warning: cannot persist trust for unquotable path: {cwd}", flush=True)
         return
@@ -254,10 +253,8 @@ def _trust_dir(cwd):
         with open(cfg, "w", encoding="utf-8") as f:
             f.write(candidate)
     except Exception as e:
-        # Outer backstop: trust persistence is best-effort — any residual
-        # failure (OSError on write, RecursionError from tomllib on
-        # pathological input, whatever else) degrades to warn + continue
-        # rather than aborting the relocation.
+        # Outer backstop: trust persistence is best-effort — residual
+        # failures degrade to warn + continue rather than abort relocation.
         print(f"warning: could not persist trust for {cwd}: {e}", flush=True)
 
 def self_hosted(cwd, tid, note, why):
@@ -317,20 +314,20 @@ def self_hosted(cwd, tid, note, why):
                  f"shell has no resume loop. From THIS pane run: {hint}")
     d = os.path.expanduser("~/.codex/reloc")
     os.makedirs(d, exist_ok=True)
-    with open(os.path.join(d, str(shell)), "w") as f:
-        # Line 1 keeps the original 3-field format: older in-memory copies of
-        # _codex_reloc_loop read only this line (`read wt tid epoch` would
-        # otherwise swallow the note into `epoch` and break the age check).
-        # The note lives on line 2+ where only the updated loop looks.
+    # UTF-8 + surrogateescape: under a non-UTF-8 locale argv decodes to
+    # surrogates; the note must write back byte-identical, never crash.
+    with open(os.path.join(d, str(shell)), "w", encoding="utf-8",
+              errors="surrogateescape") as f:
+        # Line 1 keeps the original 3-field format — older in-memory loops
+        # read only it (`read wt tid epoch` would swallow the note into
+        # `epoch`); the note lives on line 2+ where the updated loop looks.
         f.write(f"{cwd} {tid} {int(time.time())}\n{str(note).strip()}\n")
     print(f"relocation armed: host TUI pid {host} will be terminated after "
           f"this turn closes; shell pid {shell} will resume thread {tid} "
           f"at {cwd}", flush=True)
-    # Defer the kill so this tool call returns and the current turn can close
-    # cleanly — an instant SIGTERM records the turn as interrupted and the
-    # resumed pane opens on a spurious "Conversation interrupted" banner.
-    # If the turn is still running when the delay expires the kill lands the
-    # same as before; nothing is lost either way.
+    # Defer the kill so this tool call returns and the turn closes cleanly —
+    # an instant SIGTERM records the turn as interrupted and the resumed
+    # pane opens on a spurious "Conversation interrupted" banner.
     try:
         subprocess.Popen(["bash", "-c", f"sleep 10; kill -TERM {host}"],
                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,

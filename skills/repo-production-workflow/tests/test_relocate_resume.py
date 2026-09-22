@@ -22,6 +22,8 @@ EPOCH_CRASH = "loop exits without resuming the thread, or crashes mid-loop leavi
 TRUST_CORRUPT = "config.toml corrupted or trust silently missing — codex launches break or the prompt blocks the resume"
 TRUST_ROBUST = "relocation aborts on an unusual but valid config, or silently destroys config content"
 STUCK_RESUME = "stuck marker re-resumes the same thread forever — pane storms duplicate sessions"
+MARKER_UTF8 = "relocation aborts with UnicodeEncodeError; marker unwritten, pane stays put"
+EPOCH_WRAP = "oversized epoch wraps bash int64 — invalid marker resumes a dead thread"
 
 # The parser carried by panes that sourced the loop before this change.
 # Kept verbatim so the compat contract is tested against the actual old code,
@@ -48,12 +50,7 @@ def _loop_snippet(path=LOOP):
 def _run_loop(marker_text, snippet=None):
     """Run _codex_reloc_loop against marker_text; return (stdout, stderr)."""
     with tempfile.TemporaryDirectory() as td:
-        fakebin = os.path.join(td, "bin")
-        os.makedirs(os.path.join(fakebin)); os.makedirs(os.path.join(td, ".codex", "reloc"))
-        stub = os.path.join(fakebin, "codex")
-        with open(stub, "w") as _f:
-            _f.write('#!/usr/bin/env bash\nprintf "RESUME_ARGV:%s\\n" "$*"\n')
-        os.chmod(stub, 0o755)
+        _fake_codex(td, '#!/usr/bin/env bash\nprintf "RESUME_ARGV:%s\\n" "$*"\n')
         body = (
             'export PATH="$1/bin:$PATH"; export HOME="$1"; shift\n'
             'mkdir -p "$HOME/.codex/reloc"\n'
@@ -66,6 +63,16 @@ def _run_loop(marker_text, snippet=None):
                            input=snippet or _loop_snippet(), capture_output=True,
                            text=True, env=env)
         return r.stdout, r.stderr
+
+
+def _fake_codex(td, script):
+    """Install a fake `codex` executable on td/bin and the reloc dir."""
+    fakebin = os.path.join(td, "bin")
+    os.makedirs(fakebin); os.makedirs(os.path.join(td, ".codex", "reloc"))
+    stub = os.path.join(fakebin, "codex")
+    with open(stub, "w") as _f:
+        _f.write(script)
+    os.chmod(stub, 0o755)
 
 
 def _reloc_module():
@@ -94,6 +101,12 @@ class LoopResume(unittest.TestCase):
         out, err = _run_loop("/tmp/wtx T4 garbage\n")
         self.assertNotIn("RESUME_ARGV", out, out + err)
 
+    def test_oversized_epoch_never_resumes(self):
+        """Oversized epochs wrap int64 — bogus marker resumed (measured)."""
+        for epoch in ("99999999999999999999", "9223372036854775807"):
+            out, err = _run_loop("/tmp/wtx T8 %s\n" % epoch)
+            self.assertNotIn("RESUME_ARGV", out, f"{EPOCH_WRAP}\n{epoch}\n{out}{err}")
+
     def test_leading_zero_epoch_resumes(self):
         out, err = _run_loop("/tmp/wtx T5 0%d\n" % int(__import__("time").time()))
         self.assertIn("resume -C /tmp/wtx T5", out, f"{EPOCH_CRASH}\n{out}{err}")
@@ -116,17 +129,13 @@ class LoopResume(unittest.TestCase):
         self.assertIn("resume -C /tmp/wtx T7", out, out + err)
         self.assertNotIn("syntax error", err)
 
+    @unittest.skipIf(os.geteuid() == 0, "chmod cannot deny rm to root")
     def test_stuck_marker_resumes_once(self):
         """rm-denied marker: resume once, then stop — never storm
         re-resumes of the same thread (advisor-demonstrated: 1376
         duplicate `codex resume` launches in 4s before the fix)."""
         with tempfile.TemporaryDirectory() as td:
-            fakebin = os.path.join(td, "bin")
-            os.makedirs(fakebin); os.makedirs(os.path.join(td, ".codex", "reloc"))
-            stub = os.path.join(fakebin, "codex")
-            with open(stub, "w") as _f:
-                _f.write('#!/usr/bin/env bash\nprintf "RESUME_ARGV:%s\\n" "$*"\n')
-            os.chmod(stub, 0o755)
+            _fake_codex(td, '#!/usr/bin/env bash\nprintf "RESUME_ARGV:%s\\n" "$*"\n')
             body = (
                 'export PATH="$1/bin:$PATH"; export HOME="$1"; shift\n'
                 'source /dev/stdin\n'
@@ -148,13 +157,8 @@ class LoopResume(unittest.TestCase):
         """Lines 2+ of the marker are one continuation note: they must reach
         `codex resume` as a single PROMPT argv after `--`, not split args."""
         with tempfile.TemporaryDirectory() as td:
-            fakebin = os.path.join(td, "bin")
-            os.makedirs(fakebin); os.makedirs(os.path.join(td, ".codex", "reloc"))
-            stub = os.path.join(fakebin, "codex")
-            with open(stub, "w") as _f:
-                _f.write('#!/usr/bin/env bash\n'
-                         'for a in "$@"; do printf "ARGV_BEGIN%sARGV_END\\n" "$a"; done\n')
-            os.chmod(stub, 0o755)
+            _fake_codex(td, '#!/usr/bin/env bash\n'
+                        'for a in "$@"; do printf "ARGV_BEGIN%sARGV_END\\n" "$a"; done\n')
             body = (
                 'export PATH="$1/bin:$PATH"; export HOME="$1"; shift\n'
                 'source /dev/stdin\n'
@@ -282,6 +286,7 @@ class TrustDir(unittest.TestCase):
                 self.fail(f"{TRUST_ROBUST}\n{body!r} -> {e!r}")
             self.assertEqual(body, self._read(), TRUST_CORRUPT)
 
+    @unittest.skipIf(os.geteuid() == 0, "chmod cannot deny reads to root")
     def test_unreadable_config_untouched(self):
         """A read failure is not an empty file: an unreadable config must be
         left alone — never wiped to just the new table."""
@@ -396,27 +401,43 @@ class _FakeAppServer(threading.Thread):
 
 
 class DeferredKill(unittest.TestCase):
-    def test_host_kill_is_deferred_detached(self):
-        """The instant os.kill(SIGTERM) mid-turn leaves an interrupted banner.
-        The deferral is measured on the real process chain: the host stub
-        receives SIGTERM well after the relocating process exits."""
+    def _stubchain(self, tag, extra_env=None, extra_argv=()):
+        """Run the real process chain; return its JSON report."""
         with tempfile.TemporaryDirectory() as td:
-            wt = os.path.join(td, "wtA"); home = os.path.join(td, "home")
+            wt = os.path.join(td, "wt" + tag); home = os.path.join(td, "home")
             os.makedirs(wt); os.makedirs(os.path.join(home, ".codex", "reloc"))
-            env = dict(os.environ, HOME=home)
+            env = dict(os.environ, HOME=home, **(extra_env or {}))
             r = subprocess.run(
                 # A persistent bash wrapper is the designed "interactive shell"
                 # ancestor: a bare `bash -c 'python3 ...'` execs away, so the
                 # trailing `exit $?` keeps bash alive as the marker's shell pid.
                 ["bash", "-c", 'python3 "$@"; exit $? ', "_",
-                 os.path.join(HERE, "reloc-stubchain.py"), RELOC, wt, "tid-1", "flag"],
+                 os.path.join(HERE, "reloc-stubchain.py"), RELOC, wt, "tid-1",
+                 "flag", *extra_argv],
                 capture_output=True, text=True, timeout=40, env=env)
             reports = [l for l in r.stdout.splitlines() if l.startswith("{")]
             self.assertTrue(reports, r.stdout + r.stderr)
-            rep = json.loads(reports[-1])
-            self.assertTrue(rep["sigterm_delivered_to_host"], INTERRUPT_BANNER)
-            self.assertIsNotNone(rep["sigterm_delay"], INTERRUPT_BANNER)
-            self.assertGreaterEqual(rep["sigterm_delay"], 5, INTERRUPT_BANNER)
+            return json.loads(reports[-1])
+
+    def test_host_kill_is_deferred_detached(self):
+        """The instant os.kill(SIGTERM) mid-turn leaves an interrupted banner.
+        The deferral is measured on the real process chain: the host stub
+        receives SIGTERM well after the relocating process exits."""
+        rep = self._stubchain("A")
+        self.assertTrue(rep["sigterm_delivered_to_host"], INTERRUPT_BANNER)
+        self.assertIsNotNone(rep["sigterm_delay"], INTERRUPT_BANNER)
+        self.assertGreaterEqual(rep["sigterm_delay"], 5, INTERRUPT_BANNER)
+
+    def test_unicode_note_marker_arms_utf8(self):
+        """The note is arbitrary user text; a non-UTF-8 locale must not turn
+        the arm into an uncaught UnicodeEncodeError — pre-fix the locale-
+        default open() died on the surrogates the child decodes from argv."""
+        rep = self._stubchain("U", {"PYTHONUTF8": "0", "LC_ALL": "C"},
+                              ["finish \u20ac \u00f1"])
+        self.assertEqual(0, rep["exit_code"], MARKER_UTF8)
+        self.assertTrue(rep["sigterm_delivered_to_host"], MARKER_UTF8)
+        self.assertTrue(rep["marker_exists"], MARKER_UTF8)
+        self.assertIn("wtU tid-1", rep["marker_content"], MARKER_UTF8)
 
 
 class SocketPathPreserved(unittest.TestCase):

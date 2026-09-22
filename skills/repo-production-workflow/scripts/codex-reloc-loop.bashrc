@@ -21,14 +21,14 @@ _codex_reloc_loop() {
     rm -f "$m" || stuck=1
     note="${note%$'\n'}"
     [ -n "$wt" ] && [ -n "$tid" ] || break
-    # A marker that cannot be removed is processed exactly once — resume it
-    # if actionable, then stop; looping would re-resume it forever (measured:
-    # 1300+ duplicate `codex resume` launches in 4s).
-    # 10# forces base-10: bare "$epoch" arithmetic rejects leading zeros
-    # ("value too great for base"), which would crash the check itself.
+    # An un-removable marker is processed exactly once — resume if
+    # actionable, then stop; looping re-resumed it 1300+ times in 4s.
+    # 10# forces base-10 (leading zeros crash arithmetic); {1,18} stays
+    # under int64 — wider digits wrap and a bogus marker resumes
+    # (measured: 99999999999999999999 resumed).
     # "--" keeps a flag-shaped note (e.g. "--help") from being parsed as an
     # option — confirmed eaten without it, which drops the pane to a shell.
-    [[ "$epoch" =~ ^[0-9]+$ ]] && [ $(( $(date +%s) - 10#$epoch )) -le 900 ] &&
+    [[ "$epoch" =~ ^[0-9]{1,18}$ ]] && [ $(( $(date +%s) - 10#$epoch )) -le 900 ] &&
       CODEX_RELOC_LOOP=1 command codex "$@" resume -C "$wt" "$tid" ${note:+-- "$note"}
     [ "$stuck" = 1 ] && break
   done
