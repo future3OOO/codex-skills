@@ -99,7 +99,7 @@ GENERIC_RED_PHRASES = (
 
 
 def _text(value: object) -> str | None:
-    return value.strip() if isinstance(value, str) and value.strip() else None
+    return (value.strip() or None) if isinstance(value, str) else None
 
 
 def _words(value: str) -> list[str]:
@@ -370,7 +370,7 @@ def terminal_items(items: list[JsonObject]) -> dict[str, JsonObject]:
             required = {json.dumps(value, sort_keys=True) for value in origin["boundaryInputs"]}
             carried = {json.dumps(value, sort_keys=True) for value in terminal.get("boundaryInputs", [])}
             if not required <= carried or (interpretation_pending(origin) and not
-                    set(origin["interpretations"]) <= set(terminal.get("interpretations", []))):
+                    set(map(_text, origin["interpretations"])) <= set(map(_text, terminal.get("interpretations", [])))):
                 raise ValueError(f"behavior {origin['id']} supersession must retain boundaryInputs and unsettled readings")
         if origin.get("status") == "superseded" and terminal.get("status") in NEVER_GREEN:
             raise ValueError(f"behavior {terminal['id']} is {terminal['status']} and can never be GREEN; "
@@ -408,7 +408,8 @@ def apply_dispositions(
         mapped = item(items, identifier)
         if metadata & raw.keys():
             proposal = {**mapped, **{key: raw[key] for key in metadata & raw.keys()}}
-            if "interpretations" in raw and raw["interpretations"] != mapped.get("interpretations") and "interpretation" not in raw:
+            if isinstance(raw.get("interpretations"), list) and "interpretation" not in raw and (
+                    list(map(_text, raw["interpretations"])) != list(map(_text, mapped.get("interpretations", [])))):
                 for key in {"interpretation", "authority"} - raw.keys():
                     proposal.pop(key, None)
             fields = interpretation_fields(proposal, identifier)

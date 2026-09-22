@@ -1081,10 +1081,8 @@ def _map_update(values: list[str]) -> int:
     updated = behavior_map.clone(items)
     if dispositions:
         behavior_map.apply_dispositions(updated, dispositions, settled_findings=settled_findings)
-    added_items: list[JsonObject] = []
-    if additions:
-        added_items = behavior_map.added_items(additions, updated)
-        updated.extend(added_items)
+    added_items = behavior_map.added_items(additions, updated) if additions else []
+    updated.extend(added_items)
     input_checks = {}
     candidate_tree = None
     source_tree = None
