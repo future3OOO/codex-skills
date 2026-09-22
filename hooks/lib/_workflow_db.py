@@ -619,18 +619,6 @@ class LedgerMutation:
             return None
         value = json.loads(str(row["document_json"]))
         return value if isinstance(value, dict) else None
-    def evidence_precedes(self, earlier: str | None, later: str, finding_index: int) -> bool:
-        """Compare disposition order with the particular finding's first recorded occurrence."""
-        rows = self.connection.execute(
-            """SELECT evidence_id, MIN(event_id) AS ordinal FROM event_evidence
-               JOIN workflow_events USING (event_id)
-               WHERE workflow_id = ? AND evidence_id IN (?, ?)
-                 AND (evidence_id != ? OR json_array_length(state_json, '$.findingStates') > ?)
-               GROUP BY evidence_id""",
-            (self.state["workflowId"], earlier, later, later, finding_index),
-        ).fetchall()
-        order = {row["evidence_id"]: row["ordinal"] for row in rows}
-        return earlier in order and later in order and order[earlier] < order[later]
     def manifest(self, manifest_id: str | None) -> dict[str, str] | None:
         return _manifest_from(self.connection, manifest_id)
 @contextlib.contextmanager

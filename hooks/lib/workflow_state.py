@@ -230,7 +230,7 @@ def _derive_next_action(state: JsonObject, tdd_document: JsonObject | None = Non
         if state.get("tdd") == "in-progress":
             return "run-mapped-tdd"
         return "close-current-findings"
-    if any(entry.get("appealStatus") == "pending" for entry in correction):
+    if any(entry.get("appealStatus") == "pending" for entry in finding_states):
         return "appeal-final-review"
     phase = _next_incomplete_phase(state)
     if phase == "final-review":
@@ -699,10 +699,10 @@ def _finding_unresolved(entry: JsonObject) -> bool:
     )
 
 
-def _stage_unresolved(state: JsonObject, stage: str, source: str) -> bool:
+def _stage_unresolved(state: JsonObject, stage: str, source: str, excluded: Sequence[JsonObject] = ()) -> bool:
     """Whether any registered finding of this stage and producer is still open."""
     return any(
-        isinstance(entry, dict) and _finding_unresolved(entry)
+        isinstance(entry, dict) and entry not in excluded and _finding_unresolved(entry)
         and ((entry.get("stage") == stage and entry.get("producer") == source)
              or any(ref.get("stage") == stage and ref.get("producer") == source
                     for ref in entry.get("observations", [])))
@@ -1126,7 +1126,7 @@ def _register_finding_intake(
     # Read immutable observations once; the state carries only their identities.
     observed: list[tuple[JsonObject, JsonObject, JsonObject, JsonObject]] = []
     latest: dict[tuple[str, str], JsonObject] = {}
-    for finding_index, entry in enumerate(finding_states):
+    for entry in finding_states:
         # Nonbehavioral settled findings cannot match a behavioral signature.
         # Skip unrelated namespaces/IDs before reading their immutable intakes.
         if (entry.get("kind") != "behavioral" and not entry.get("observations")
@@ -1150,23 +1150,6 @@ def _register_finding_intake(
             document = intakes[reference]
             for finding in document["findings"]:
                 if finding["id"] == ref["id"]:
-                    # Historical producers did not bind canonical identity. Recover
-                    # fixed -> re-intake from event order, never timestamp guesses.
-                    if "canonicalFinding" not in entry and ref == refs[0]:
-                        roots = {(str(old_root["evidenceId"]), str(old_root["id"]))
-                                 for old_root, _, old_doc, old_finding in observed
-                                 if (finding["id"] == old_finding["id"]
-                                     and all(document.get(k) == old_doc.get(k) for k in ("producer", "stage")))
-                                 or (finding["kind"] == old_finding["kind"] == "behavioral"
-                                     and str(finding["claim"]).strip() == str(old_finding["claim"]).strip())}
-                        if len(roots) == 1:
-                            prior = latest[next(iter(roots))]
-                            if (prior.get("status") == "fixed" and transaction.evidence_precedes(
-                                    prior.get("dispositionEvidenceId"), reference, finding_index)):
-                                old_root = next(iter(roots))
-                                root = {"evidenceId": old_root[0], "id": old_root[1]}
-                                entry["canonicalFinding"] = root
-                                entry["recurrence"] = int(prior.get("recurrence", 0)) + (finding["kind"] == "behavioral")
                     observed.append((root, ref, document, finding))
                     break
         latest[(str(root["evidenceId"]), str(root["id"]))] = entry
@@ -1194,10 +1177,7 @@ def _register_finding_intake(
             raise WorkflowError("a material behavioral finding requires a measured disposition, not demotion")
         if prior and prior.get("status") in {"pending", "accepted-for-proof", "accepted-follow-up"}:
             reference = str(prior["intakeEvidenceId"])
-            shared_reference = any(other is not prior
-                                   and other["intakeEvidenceId"] == reference
-                                   and other["findingId"] == prior["findingId"] for other in finding_states)
-            if (shared_reference or prior["findingId"] != item["id"]
+            if (prior["findingId"] != item["id"]
                     or any(prior.get(k) != intake.get(k) for k in ("producer", "stage"))
                     or not any(finding["id"] == item["id"] and finding["kind"] == item["kind"]
                                for finding in intakes[reference]["findings"])):
@@ -1219,11 +1199,11 @@ def _register_finding_intake(
             if prior:
                 root = next(iter(matches))
                 entry["canonicalFinding"] = {"evidenceId": root[0], "id": root[1]}
-                entry["recurrence"] = int(prior.get("recurrence", 0)) + (prior.get("kind") == "behavioral" and prior.get("status") == "fixed")
-                if prior.get("mechanismEvidence"):
-                    entry["mechanismEvidence"] = prior["mechanismEvidence"]
-                if prior.get("repairOwner"):
-                    entry["repairOwner"] = prior["repairOwner"]
+                if item["kind"] == "behavioral":
+                    entry["recurrence"] = int(prior.get("recurrence", 0)) + (prior.get("kind") == "behavioral" and prior.get("status") == "fixed")
+                    for field in ("mechanismEvidence", "repairOwner"):
+                        if prior.get(field):
+                            entry[field] = prior[field]
             finding_states.append(entry)
         current = prior if prior and prior.get("status") in {"pending", "accepted-for-proof", "accepted-follow-up"} else entry
         root = current.get("canonicalFinding") or {
@@ -1363,8 +1343,6 @@ def record_advisor_result(
                 rejected = [
                     entry for entry in finding_states
                     if isinstance(entry, dict)
-                    and entry.get("stage") == "final"
-                    and entry.get("producer") == source
                     and entry.get("status") == "rejected-with-evidence"
                     and entry.get("appealStatus") == "pending"
                 ]
@@ -1372,9 +1350,7 @@ def record_advisor_result(
                     rejected or isinstance(record, dict) and record.get("status") != "pending"
                 ):
                     raise WorkflowError("final appeal already consumed")
-                correction = any(isinstance(entry, dict) and entry.get("stage") == "final"
-                                 and entry.get("producer") == source and _finding_unresolved(entry)
-                                 and entry not in rejected for entry in finding_states)
+                correction = _stage_unresolved(state, stage, source, rejected)
                 if rejected and correction:
                     raise WorkflowError("final appeal is blocked by unresolved final-review work")
                 legacy_recovery = isinstance(record, dict) and record.get("source") == source and (
@@ -1389,9 +1365,9 @@ def record_advisor_result(
                     appeal_write = evidence_write(str(state["workflowId"]), "finding-appeal-final", intake)
                     writes.append(appeal_write)
                     responses = {str(item["id"]): item for item in intake["findings"]}
-                    rejected_ids = {str(entry["findingId"]) for entry in rejected}
+                    rejected_ids = {str(entry["dispositionFindingId"]) for entry in rejected}
                     for entry in rejected:
-                        response = responses.get(str(entry["findingId"]))
+                        response = responses.get(str(entry["dispositionFindingId"]))
                         if response is not None and response.get("material") is True:
                             # A material re-raise carries a new measurement: the
                             # finding reopens for one more lead disposition, and
@@ -1423,18 +1399,15 @@ def record_advisor_result(
                         )
                     if not isinstance(record, dict):
                         raise WorkflowError("final appeal review state is corrupt")
-                    reference = str(rejected[0]["intakeEvidenceId"])
+                    disposition = transaction.evidence(rejected[0]["dispositionEvidenceId"])
+                    reference = str(disposition["intakeEvidenceId"])
                     original = intakes[reference] if reference in intakes else transaction.evidence(reference)
                     if not isinstance(original, dict): raise WorkflowError("final appeal intake is corrupt")
-                    record.update({"source": source, "status": original["verdict"], "intakeEvidence": rejected[0]["intakeEvidenceId"],
+                    record.update({"source": source, "status": original["verdict"], "intakeEvidence": reference,
                                    "appealEvidence": appeal_write.evidence_id, "appealVerdict": verdict})
                     if intake_write is not None:
                         record["intakeEvidence"] = intake_reference
-                    record["findings"] = "pending" if any(
-                        isinstance(entry, dict) and entry.get("stage") == "final"
-                        and entry.get("producer") == source and _finding_unresolved(entry)
-                        for entry in finding_states
-                    ) else "addressed"
+                    record["findings"] = "pending" if _stage_unresolved(state, stage, source) else "addressed"
                     state["finalAppealConsumed"] = True
                 else:
                     if intake is not None:
@@ -1670,10 +1643,7 @@ def _linked_disposition_document(
     prior = {
         evidence_id
         for disposition in document["dispositions"]
-        for finding_state in states
-        if isinstance(finding_state, dict)
-        and finding_state.get("intakeEvidenceId") == intake_id
-        and finding_state.get("findingId") == disposition["finding_id"]
+        if (finding_state := _finding_state(state, intake_id, disposition["finding_id"])) is not None
         and finding_state.get("status") != "pending"
         and (evidence_id := _disposition_evidence(state, finding_state, stage, producer))
     }
@@ -1699,9 +1669,6 @@ def _resolve_disposition_receipts(identity: RepoIdentity, transaction: LedgerMut
     intake = transaction.evidence(document.get("intakeEvidenceId"))
     if not isinstance(intake, dict) or intake.get("workflowId") != state["workflowId"]:
         raise WorkflowError("receipt disposition requires an owned immutable intake")
-    # A resumed historical pass may disposition without another intake first.
-    _register_finding_intake(transaction, state, str(document["intakeEvidenceId"]),
-                             {**intake, "findings": []}, {})
     findings = {item["id"]: item for item in intake.get("findings", [])}
     receipts: dict[str, JsonObject] = {}
     for item in document["dispositions"]:
@@ -1920,8 +1887,7 @@ def advisor_disposition(
         states = state.get("findingStates", [])
         if not isinstance(states, list):
             raise WorkflowError("recorded finding states are corrupt")
-        unresolved = any(isinstance(entry, dict) and entry.get("stage") == stage and
-                         entry.get("producer") == source and _finding_unresolved(entry) for entry in states)
+        unresolved = _stage_unresolved(state, stage, str(source))
         if findings == "none" and unresolved:
             raise WorkflowError("findings none conflicts with an undispositioned finding intake")
         if not historical:
