@@ -210,13 +210,49 @@ def _write_candidate_tree(identity: RepoIdentity) -> str:
             else:
                 raise
         step = "add"
-        _git(identity, "add", "-A", ".", env=env)
+        paths = _candidate_staging_paths(identity, env)
+        if paths:
+            _git(
+                identity, "add", "-A", "--pathspec-from-file=-", "--pathspec-file-nul",
+                stdin=b"\0".join(os.fsencode(path) for path in paths),
+                env={**env, "GIT_LITERAL_PATHSPECS": "1"},
+            )
         step = "write-tree"
         return _git(identity, "write-tree", env=env).decode("utf-8").strip()
     except RuntimeError as exc:
         raise OSError(f"candidate capture failed at git {step}: {exc}") from exc
     finally:
         Path(handle.name).unlink(missing_ok=True)
+
+
+def _candidate_path(path: str) -> bool:
+    """The candidate tree's path policy: reviewable surfaces plus governance docs.
+
+    `is_reviewable_path` excludes docs and scratch, but governance documents
+    change agent behaviour and must keep drifting the candidate — the same pair
+    `invalidate_after_edit` consults when deciding whether an edit resets
+    downstream evidence.
+    """
+    normalized = path.replace("\\", "/")
+    return is_reviewable_path(normalized) or is_governance_path(normalized)
+
+
+def _candidate_staging_paths(identity: RepoIdentity, env: dict[str, str]) -> list[str]:
+    """Worktree paths the candidate overlays on its HEAD seed, filtered by policy.
+
+    `ls-files` over the seeded temp index names every path the seed knows —
+    including staged and unstaged deletions, which keep a seed entry — and
+    `untracked_paths` adds what Git does not track yet. Offering that whole set
+    to `add -A` lets the same filtered staging decide every overlay: matched
+    deletions land, matched modifications take worktree content, and
+    non-qualifying paths keep their seeded HEAD entries. Both reads run inside
+    the temp index and hash nothing, so the capture never dirties the caller's
+    real index and no clean filter runs before the `add` step itself.
+    """
+    seeded = _paths(identity, "ls-files", "-z", env=env)
+    return sorted(
+        {path for path in (*seeded, *untracked_paths(identity, env=env)) if _candidate_path(path)}
+    )
 
 
 def _active_candidate_tree(identity: RepoIdentity) -> str:
@@ -230,12 +266,12 @@ def _active_candidate_tree(identity: RepoIdentity) -> str:
     return first
 
 
-def _paths(identity: RepoIdentity, *args: str) -> list[str]:
-    return sorted(os.fsdecode(item) for item in _git(identity, *args).split(b"\0") if item)
+def _paths(identity: RepoIdentity, *args: str, env: dict[str, str] | None = None) -> list[str]:
+    return sorted(os.fsdecode(item) for item in _git(identity, *args, env=env).split(b"\0") if item)
 
 
-def untracked_paths(identity: RepoIdentity) -> list[str]:
-    return _paths(identity, "ls-files", "--others", "--exclude-standard", "-z")
+def untracked_paths(identity: RepoIdentity, env: dict[str, str] | None = None) -> list[str]:
+    return _paths(identity, "ls-files", "--others", "--exclude-standard", "-z", env=env)
 
 
 def production_changes(identity: RepoIdentity, base: str) -> list[str]:
