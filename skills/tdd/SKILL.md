@@ -44,7 +44,7 @@ Map:
 
 Each item has a stable ID and a `kind`: `contract` for the requested behavior, `preservation` for everything the change must keep true. A behavior-changing map has at least one contract item. Every applicable category above must be accounted for before the first RED. Use one item per independently failing outcome, not per input spelling or finding. Parameterized cases may share an operation; independently missing guarantees remain visible. Finding closure may claim only the domain its owning attacks executed.
 
-**Statuses.** Items start `pending`; the producer records `red`, then `green` through that RED. A passing pytest/unittest RED instead records a baseline, `already-satisfied`, without a cycle. For a contract item that route closes once any production path changed in the pass: a candidate-only pass after the behavior landed describes the candidate, not the baseline, so the run is retained as a refused attempt and the item stays pending - prove it through a real failure at its Seam, observe it on the pass-start tree, or narrow the obligation with governing evidence; do not manufacture RED or hide the sensitivity gap. A preservation item's candidate observation remains its evidence: its late baseline is admitted and labelled late. A baseline is executed preservation evidence, not proof of a repaired defect: baseline alone never owns `fixed`. A pending non-runner exit-zero baselines a pending item under the same conditions - bounded observation and site recorded, reach unresolved for review to establish, one observed outcome settles one item - while a silent exit 0 is refused like an empty selector, and a contract item after production changed stays refused as above. `already-satisfied` is producer-recorded: a preservation item authored or dispositioned `already-satisfied` by prose carries no observation and stays unresolved until an executed passing run records its baseline (revalidate it, then run RED); governing `omitted` remains the settlement route; contract items are never omitted. A never-attacked contract with no open/fixed ownership may be `withdrawn`. A GREEN may be `superseded`, but its terminal replacement needs currently proved GREEN, not a baseline. Retired `post-edit-passed` map state is refused; historical documents are not rewritten.
+**Statuses.** Items start `pending`; the producer records `red`, then `green` through that RED. A passing pytest/unittest RED instead records a baseline, `already-satisfied`, without a cycle. For a contract item that route closes once any production path changed in the pass: a candidate-only pass after the behavior landed describes the candidate, not the baseline, so the run is retained as a refused attempt and the item stays pending - prove it through a real failure at its Seam, observe it on the pass-start tree, or narrow the obligation with governing evidence; do not manufacture RED or hide the sensitivity gap. A preservation item's candidate observation remains its evidence: its late baseline is admitted and labelled late. A baseline is executed preservation evidence, not proof of a repaired defect: baseline alone never owns `fixed`. A pending non-runner exit-zero baselines a pending item under the same conditions - bounded observation and site recorded, reach unresolved for review to establish, one observed outcome settles one item - while a silent exit 0 is refused like an empty selector, and a contract item after production changed stays refused as above. `already-satisfied` is producer-recorded: a preservation item authored or dispositioned `already-satisfied` by prose carries no observation and stays unresolved until an executed passing run records its baseline (revalidate it, then run RED); governing `omitted` remains the settlement route; contract items are never omitted. A never-attacked contract with no open/fixed ownership may be `withdrawn`. A GREEN, producer-baselined, or reopened attacked item may be `superseded`, but its terminal replacement needs currently proved GREEN, not a baseline. Retired `post-edit-passed` map state is refused; historical documents are not rewritten.
 
 A retained real-Seam probe that passes can disprove a suspected defect or support a measured rejection; it never waives RED/GREEN for a claimed repair. Reuse its actual command and assertions, not an invented failure.
 
@@ -53,6 +53,13 @@ Affected preservation uses producer-owned `revalidationRequired: true`, never au
 ## 2. Drive One Mapped Vertical Slice
 
 Select one pending contract ID and write its RED before the production edit that satisfies it. Settle each preservation item by baselining it through `tdd --phase red` or dispositioning it through `tdd-map`, early enough that a later RED on it means a regression.
+
+Use [preflight's operational definitions](../production-preflight/SKILL.md#authoritativecontract)
+and governing authority to set the expected result, then drive its discriminating
+input through the real Seam. Inputs on which competing readings agree cannot
+prove the chosen distinction. If the expected result merely repeats an undefined
+predicate, return to that investigation and reassess the same map item before
+dependent code; do not derive the oracle from the planned implementation.
 
 **RED**
 
@@ -75,6 +82,27 @@ Each contract item's RED belongs on the tree before the production edit that sat
 Several assertions may jointly prove one behavior; every assertion participating in that joint proof carries the same behavior-specific `redFailure` marker, so whichever guarantee breaks first still names the mapped failure. State after success or failure must match the complete observable contract.
 
 ## 3. Update the Map When a Proof Changes It
+
+For a material interpretation choice, use preflight's optional `boundaryInputs`,
+`interpretations`, `interpretation` and `authority` on the same item through
+`tdd-map` dispositions. Unsettled readings keep applicable items unresolved even
+when their inputs are represented. Removing inputs requires governing
+`evidence`; supersession must retain their obligations. Sufficient current proof
+is reused without another execution. Missing or stale input proof revalidates only
+the affected item; an applicable RED remains usable. A changed obligation or
+surface returns to pending and ordinary RED, never a manufactured failure.
+
+Normal GREEN/baseline admission, including receipt reuse, screens declared inputs
+against the selected execution-bound surface. `inputEvidence` distinguishes
+represented values, confirmed missing values (refused immediately), and unresolved
+extraction with its limits. Source inspection is bounded to supported selected
+operations and literal data; comments, expected-only values and unselected tests
+are not input evidence. Representation proves neither execution of each branch nor
+assertion sensitivity. Resolve real omissions and assess indirect inputs from
+available bound evidence before review. Unsupported extraction alone does not
+justify renaming tests, splitting batches, instrumentation or repeating sufficient
+proof. Unambiguous items do no extraction. Existing review challenges semantic
+adequacy and the mandatory final advisor still applies.
 
 GREEN exposes implementation consequences. Inspect what the implementation actually chose - value conversions, callees, shared writers, hooks and mutation paths, and every operation whose effects could erase a rule before it is judged - and classify each material risk against the contract as needing a real probe, having reusable proof, or being unreachable. When one reveals a new load-bearing mechanism, a touched-Seam preservation or interaction behavior, or a defect, add the item before the next production edit; when it reveals nothing, record the classification and nothing else. The map advisory raises impacted-test candidates; review challenges the decisions and the omissions. Pass the document on stdin instead of a scratch file:
 

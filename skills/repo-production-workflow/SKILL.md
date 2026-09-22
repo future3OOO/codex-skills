@@ -144,9 +144,10 @@ block on every material unknown. For transaction-sensitive work, load the
 
 The recorded preflight owns the initial Behavior Map; read the tdd skill's [Record the Behavior Map in Preflight](../tdd/SKILL.md) section before writing it. It is authoritative for proof obligations, not architecture selection; a plan may reference it but is not a second proof owner.
 
-Record a completed preflight only through its recorder, which demands the
-skill's structured document (thirteen non-empty text sections plus a non-empty
-`behaviorMap`, with `openQuestions` exactly `none`) and refuses without mutating state:
+Record preflight through its recorder using the structured document owned by
+[production-preflight](../production-preflight/SKILL.md#recording). Passing requires
+`openQuestions` exactly `none` and settled choices; that owner defines pending
+evidence and refusal behavior.
 
 ```bash
 python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" \
@@ -336,6 +337,43 @@ behavioral finding is fixed by owning it: add the attack item with its finding
 `fixed` with the zero-count complete-domain occurrence; nonbehavioral
 corrections record their current-tree evidence directly. A later map update
 that would leave a fixed finding without its owning attack refuses.
+
+#### Recurring behavioral repairs
+
+Before another repair, explain the missed cause, affected inputs/paths, invariants,
+class-wide correction and latest counterexample; include reachable states/shared
+writers where relevant. Record once in diagnosis, linked `tdd-map` reassessment,
+or disposition `mechanism` prose/reference (`{"evidenceId":"...","id":"..."}`).
+References preserve workflow/finding ownership. Review requires an adequate
+explanation and current owning attacks; instance-only repairs remain
+`accepted-follow-up` with the in-pass obligation open.
+
+Both intake paths reconcile retained namespace/ID and exact behavioral claims
+(outer whitespace only). Changed wording/identity can use an owned
+`priorFinding: {"evidenceId":"...","id":"..."}`; ambiguous matches require one.
+Distinct findings need distinct IDs. Pending retries preserve progress; only `fixed` → re-intake increments
+recurrence. Observations, dispositions, mechanism evidence and proof stay immutable.
+
+At recurrence two or later, the retained reviewer implements and the lead reviews. This
+exception overrides step 10's read-only and repair-before-dispatch rules: continue
+its recorded context, without a fresh/nested reviewer or interim advisor. Certify
+through `record-review` using the actual lead context and `implementationContextId`
+for the repair author. Require current-candidate, independent certification and
+product verification, then the mandatory final advisor. Ordinary assessment without
+`implementationContextId` may proceed while ownership is pending; it neither
+certifies the repair nor changes owners.
+
+For unusable/wrong-checkout contexts, follow step 10's rooted fallback. Record
+authorized succession in the lead-review intake as
+`repairSuccession: {context, findings, previousOwner, evidence}`: current
+workflow/candidate, affected `{evidenceId, id}` references, exact previous
+implementer/reviewer pair, and authorization/native-checkout evidence. Author/reviewer
+fields name actual successors. Only named pending recurring repairs transfer;
+predecessor history remains and self-certification is forbidden.
+
+After compaction, recover mechanism references and ownership from summary/checkpoint;
+retrieve long evidence with `workflow evidence`. Report missing evidence; prove
+resumed-agent use, not merely availability.
 
 ### 11. Final Codex Advisor review
 

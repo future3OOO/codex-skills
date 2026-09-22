@@ -91,6 +91,55 @@ removal; foreign entries (gitnexus) survive untouched.
 matcher updated, wrong-event copy removed, foreign hook preserved, fresh
 install complete, second run idempotent.
 
+## 2026-09-20 — Interpretation evidence stays with the Behavior Map
+
+**Decision:** [Issue #65](https://github.com/future3OOO/codex-skills/issues/65)
+retains material readings, concrete inputs and governing authority on the existing
+map item. The existing selected-source reader and proof admission own bounded
+input extraction: represented, missing or unresolved. No separate inventory,
+command, checker Module or semantic classifier. Insufficient GREEN proof is
+editable through ordinary reassessment; pending carries no current settlement
+authority. Reuse sufficient proof and preserve immutable history. Finding policy
+remains with #64. Recording a current review refreshes its tree binding even
+while findings remain open; freshness does not imply approval or require a
+separate acknowledgement.
+
+**Observed:** Retained real-CLI probes exercise missing-input refusal, proof reuse,
+affected-only reassessment, pending interpretation recovery and linked closure.
+These establish recorder capabilities, not independent semantic discovery or
+completed-task efficiency.
+
+**Status:** [PR #84](https://github.com/future3OOO/codex-skills/pull/84) is open
+as a normal PR at the user's request, with acceptance gaps disclosed. The local
+restriction forbidding direct GREEN-to-pending was reverted before push; it was
+an incorrect interpretation of the objective. Current-head review corrections
+and final advice remain pending. No merge or shared installation is authorized.
+
+## 2026-09-21 — Investigate decisions within the existing preflight
+
+**Decision:** Keep the user-approved reachable-domain and deciding-operation
+investigation in `production-preflight`'s `authoritativeContract`, linked by TDD.
+Challenge conventional wording and establish authority or expose uncertainty
+before dependent implementation. This supersedes retaining the earlier wording
+unchanged and the discarded schema-document split. No new document, field, table,
+quota or stage. Existing interpretation metadata carries divergent readings.
+
+**Observed:** The cold-start lead omitted the value-domain investigation. Its
+later prompted analysis is not independent discovery proof. Wording review found
+no new material issue; behavioral verification of the refinement remains open.
+The earlier partial comparison used baseline 1,710,315 tokens / 418 seconds and
+candidate 2,111,452 tokens / 441 seconds: increases of 23.45% and 5.50%, not savings.
+Neither arm reached a complete correct endpoint, so it proves no end-to-end gain.
+
+**Status:** SPEC-4 efficiency and SPEC-6 independent discovery remain unresolved.
+The user's removal of Codex S time/token caps supersedes earlier budget limits;
+comparisons use only codexs, with each arm's skills/runtime frozen and no prior
+trial answers supplied. Benchmark advisor and paid fallback restrictions remain.
+Implementation review
+and mandatory final advisor are authorized, but no component check or PR delivery
+waives missing acceptance. Detailed retained evidence is in the issue65 evidence
+directory and the PR; it is not a second governing contract.
+
 ## 2026-09-20 — Installer cleans previously-leaked artifacts
 
 **Decision:** Extend the installer's already-live cleanup `find` with
@@ -1435,3 +1484,231 @@ atomic config writes, PID-reuse guards, TOML key-spelling scanners, and the
 `set -e` loop tail are theoretical-only triggers rejected on the PR with
 their measurements; quoted-key and multiline-`[` inputs fail closed through
 candidate validation (config left untouched, verified).
+
+## 2026-09-20 — Recurring behavioral repairs retain their mechanism
+
+**Decision:** [Issue #64](https://github.com/future3OOO/codex-skills/issues/64)
+extends the existing intake/disposition ledger: retained namespace/ID or exact
+outer-trimmed behavioral claim identifies a finding; an owned prior reference
+resolves ambiguity. Bind and reuse diagnosis from explicitly submitted reassessment
+or repair disposition, scoped to changed/source map owners; ordinary TDD runs
+cannot reattribute carried explanation text. At recurrence two the
+retained reviewer implements and the lead reviews that implementer's repairs,
+preserving other implementers' pending obligations, followed by mandatory final advice. Existing owning-map proof
+still decides closure. No additional store, command, stage or coverage policy;
+[#65](https://github.com/future3OOO/codex-skills/issues/65) owns input coverage.
+Historical fixed/re-intake chains use committed event order, preserving old
+immutable evidence rather than guessing from timestamps. Already-pending upgraded
+recurrences receive the same retained repair ownership as newly observed ones,
+including unrelated and empty intake. Empty review that first recovers ownership
+does not certify the repair; a properly attributed lead review is still required.
+
+**Observed:** Targeted public-CLI probes pass for identity, both mechanism
+forms, ownership recording, receipt reuse and reassessment. Replaying 35
+captured CX3 finding values produced zero unintended identity changes and
+preserved all nine original intake documents. These component observations do
+not establish actual reviewer takeover or native compaction recovery.
+
+**Earlier delivery checkpoint (superseded by current status below):** Work was
+then uncommitted; no shared installation. The original bounded replay arms stopped at compaction timeouts;
+their accepted requests did not establish completed compaction. A later native
+run completed compaction; its helper incorrectly waited for a different event
+and timed out after completion. The native `compacted` record, not that helper's
+exit status, establishes completion. Existing evidence is preserved outside the
+checkout in `/home/prop_/issue-64-evidence` and the private issue64 replay estate.
+At that checkpoint the user authorized further testing through `codexs` on
+SWE-2. Normal independent implementation review and mandatory higher-reasoning
+final advice remain required; production advisor policy is unchanged.
+
+A retained native lead continued on `swe-2-max`, recorded ordinary mechanism
+reassessment, and repaired the observation/disposition defect in the actual
+codex-skills seed. Nine targeted product probes passed before its time limit
+interrupted verification bookkeeping. Independent CLI RED/GREEN replay of the
+actual pre-repair and repaired product confirms mixed-observation closure and
+preserved refusal after owning-proof reassessment. This settles product-repair
+TDD, not actual reviewer takeover or efficiency. Independent implementation review
+found a nonbehavioral-to-behavioral promotion that allowed closure with old proof;
+the current projection now controls closure while immutable observations remain
+unchanged. Targeted CLI RED/GREEN and return review confirm the correction.
+Lead review also corrected lost nonmaterial-to-material escalation in both intake paths.
+
+**Recovery decision and observation:** A resumed SWE-2 agent received a working
+mechanism reference but reconstructed source in 21 commands without retrieving it.
+Expose at most 600 characters of the existing reassessment in the existing bounded
+summary, alongside its full reference. Reusing the same completed-compaction prefix
+and request, the agent retrieved the full evidence (over the summary limit), selected
+the existing counterexample probe, and used the retained diagnosis to identify the
+repair in four commands. The explanation itself was 756 characters. Independent
+return review accepts this bounded native recovery observation; it is not an
+equivalent-work efficiency measurement. In this implementation pass, SPEC-7 returned
+after two recorded fixes; the retained native reviewer implemented the third repair
+and the lead inspected it. This is actual task work, not the cheap comparison replay.
+Final advice and equivalent-correct-work efficiency still govern acceptance.
+At that checkpoint final advice had not run and delivery had not occurred;
+current delivery status below supersedes this observation.
+
+**Assessment decision:** Restore the existing rule that findings prevent completion
+but not required review. The inherited final checkpoint conflated a completed
+independent assessment with resolved findings. Bind pending assessments to their
+reviewed tree and admit final evaluation with current TDD and verification;
+retain finding/proof completion checks, freshness, duplicate-result refusal and
+appeal rules. Real CLI RED/GREEN and affected lifecycle probes cover this correction.
+It adds no advisor stage or transport and preserves mandatory higher-reasoning advice.
+
+**Isolation integration:** Resumed the same pass on `94044a0`, including
+[PR #79](https://github.com/future3OOO/codex-skills/pull/79). Preserve its
+single-task routing and diagnostics alongside recurrence-two dispatch ownership.
+An ordinary installed CLI verification bound the current session explicitly to
+this worktree; status and shell working directories are not routing authority.
+The original reviewer native checkout is main, so the installed workflow's
+explicitly rooted CLI fallback owns the new independent assessment. Historical
+reviewer/lead identities remain unchanged; no shared hooks were rewritten.
+
+**Observed:** Four integrated isolation/ownership checks and 35 affected
+finding/review checks pass. Direct historical disposition refuses unsupported
+closure in both forms. Native recovery and the corpus evidence above are reused.
+**Historical authorization:** Equivalent-completed-work efficiency was unproved.
+The subsequent authorization superseded the earlier blanket replay restriction:
+reuse the smallest bounded SWE-2 comparison, without benchmark advisor calls.
+No delivery or acceptance waiver follows from component results.
+
+**Assessment correction:** The rooted fallback exposed a recurring-repair admission
+failure: ordinary independent review was required to name a repair implementer.
+Require that identity only for explicit repair certification. A real CLI RED/GREEN
+probe preserves pending ownership, denies unknown explicit authors and leaves
+completion blocked. The existing ownership attack also retains this distinction;
+no new command, actor replacement or completion exception is introduced.
+
+
+**Reassessment and historical review correction:** The first attributed review
+must normalize historical recurrence before selecting the repair owner; failed
+identity checks still roll back. Explicit map dispositions, items and the existing
+source behavior identify reassessment targets even when map structure is unchanged.
+A revised diagnosis is retained for those owners, while identical repeats remain
+no-ops and ordinary carried prose cannot bind unrelated owners. This supersedes
+the earlier implementation choice to target changed map items only. Both reproduced attacks and the
+affected no-op, multiple-owner and historical-disposition preservation pass.
+The explicitly rooted replacement reviewer implemented these corrections; the
+continuing lead independently reviewed the actual delta. Historical actor records
+are preserved, and the replacement is not presented as the original reviewer.
+
+
+**Ownership continuity and diagnosis reuse:** The authorized rooted fallback
+exposed a real recording gap: the old actor pair could not be replaced honestly.
+Record finding-scoped succession within the existing independent review, with
+current workflow/candidate context, exact predecessor and supporting evidence.
+Retain predecessor history and immutable authorship; stale, foreign, self and
+unselected transfers cannot certify a repair. This is exceptional continuity,
+not another stage or an authorization system.
+
+Diagnosis equality is judged against each selected owner's bound explanation,
+including disposition references, rather than the last map document's text.
+This supersedes the earlier implementation choice to compare diagnosis text globally. Equal prose can update a different
+owner while already-applicable explanations remain no-ops. Both corrections were
+implemented by the rooted reviewer and independently inspected by the continuing
+lead; real CLI attacks and affected preservation pass. Efficiency acceptance
+and delivery remain pending until their actual results are reconciled.
+
+**Final assessment and delivery status:** The current final advisor observed the
+actual rooted reviewer → continuing lead → final advisor sequence. It retained
+efficiency acceptance: aggregate measured tokens fell 8.4% and elapsed time 7.3%,
+but candidate reporting was interrupted and full equivalent completion is unproved.
+No further benchmark agents will run under the user's cost instruction. The
+assessment also identified missing collision/race preservation probes and a
+reachable certification conflict after findings acquire different reviewers for
+one implementer. These remain active repair/proof obligations. The user-requested
+draft PR exposes the reviewed implementation and open findings; it does not close
+#64, authorize integration, or complete the workflow.
+
+**Draft PR #82 correction:** The scoped-succession conflict was reproduced and
+corrected by selecting ordinary certifications with the existing implementer and
+reviewer pair. Distinct leads now certify their own repairs without changing the
+other finding's ownership or history. The owning RED/GREEN and eighteen retained
+succession attacks pass. New real CLI probes cover both collision-selection paths
+and the bounded closure/re-intake, interruption, restart and completion sequence;
+independent return review accepts their stated scope. CI then exposed two test
+setup errors: the missing-mechanism case had recorded a reassessment, and the
+ownership-hook case inherited a native session ID. Explicitly omit reassessment
+only for the absence attack and supply a declared recorder actor input; retain
+all refusal assertions. Both cases pass in the isolated CI runner without a
+parent session ID. Efficiency acceptance remains open; #82 remains a draft.
+
+**PR #82 ownership edge cases:** Automated review reproduced recurrence before
+any reviewer exists creating an unusable partial owner, and exact actor comparison
+incorrectly using a filesystem-normalized session key. Keep ownership unassigned
+until both distinct identities are available; normalize previously derived
+incomplete ownership through existing intake reconciliation. Until then, initial
+review follows the ordinary verified dispatch path. A retained older runtime
+produced the partial owner and the candidate recovered it through real CLI review
+without changing the immutable intake. Continuation compares raw actor identity;
+filesystem-safe keys remain unchanged for routing. Counterexamples, normalized-key
+collision refusal, captured native ID preservation and affected succession pass.
+The remaining CI receipt-attribution test now supplies the required explanation
+for its independent label repair; executed receipt counts and skip refusals stay
+unchanged. These corrections remain in the same pass and draft PR.
+The first independent review binds its available context during that same ordinary
+intake; it does not require a subsequent intake to activate retained-reviewer
+ownership. The lead reproduced and corrected that follow-on case before review.
+
+Retain that newly learned independent reviewer in the existing workflow reviewer
+field when assigning the first recurring owner. Without that shared retention,
+subsequent lead certification hid the reviewer from a later unrelated recurrence.
+The full A repair/certification/closure → B recurrence-two sequence reproduced
+and now preserves the same reviewer and denies replacement dispatch.
+
+**#64 skill pruning:** Keep recurring-repair policy authoritative in the workflow;
+review, advisor and diagnosis skills carry conditional pointers. Remove repeated
+policy and recorder narration while preserving identity, mechanism/proof, repair
+ownership, authorized succession and recovery requirements. This wording-only
+correction stays in PR #82, open for review per user instruction; it does not
+establish estate efficiency.
+
+**#64 final-review evidence correction:** Resolve checkpoint attack owners through
+the existing observation links and canonical finding, without changing closure
+authority. Real recurrence lost owners only in this projection; the retained map
+was intact. Both advisor prompt phases now admit the already-supported optional
+`priorFinding`. These fixes require fresh verification and review; efficiency
+acceptance remains open.
+
+
+**Current #64 delivery status:** PR #82 is open for review, not draft; this
+supersedes all earlier no-delivery/draft statements above. Mandatory independent
+and final reviews continue for corrections; efficiency acceptance remains
+unproved, so neither the issue nor workflow is complete. No further benchmarks
+are authorized by the current user instruction.
+
+Accepted map disposition IDs must use the same trimmed spelling when selecting
+diagnosis owners. Optional null mechanism input reuses existing diagnosis like
+omission; nonempty supplied prose/references retain their validation and ownership.
+Both boundary failures reproduced through the CLI; no new fields or stages.
+Legacy evidence can be attached more than once. Recover order from the event
+where that finding first exists, not the evidence ID's first/latest attachment.
+When historical lifecycle entries share a reference, ordinary intake returns its
+fresh observation alias so the pending repair can close without rewriting history.
+Lead certification is finding-scoped: unrelated review observations do not block
+a selected repair, while re-raising that repair revokes its prior certificate.
+Real closure probes demonstrated both former failures; actor/tree and overall
+completion checks retain authority.
+
+**2026-09-22 benchmark qualification ([PR #82](https://github.com/future3OOO/codex-skills/pull/82)):**
+The completed pair measured supervised repairs, not estate acceptance: both arms
+started after compaction with candidate-specific guidance and externally managed
+reviewers. Its comparative conclusions are superseded; the PR states this limit.
+A valid pair starts before the first source edit on `9aecc46a`, with equivalent
+history, native leads/reviewers and all retries counted; preflight/final advisors
+are excluded. The user authorized one pair: 30 aggregate minutes and 8 million
+tokens, split equally. That pair consumed 1,573,316 tokens and 1,336.8 aggregate
+seconds. Baseline reached its elapsed-time cap; candidate was interrupted for
+rebase. Neither edited source or launched a reviewer. Both inspected installed
+code; baseline fetched the live issue. Correctness and efficiency remain unproved.
+
+**Current delivery and private development:** Rebase `43c5bc3` is pushed with green
+CI, preserving main `86abf9b` native checkout routing and #64 exact actor checks.
+Uncommitted returned-reference repairs select a batch intake containing each
+observed ID, namespace and immutable kind, registering all pending aliases.
+The retained reviewer repaired repeated promotion; its real closure probe and
+lead's independent repeat pass. Certification and final advice remain required.
+Develop with the complete refreshed private N+1 estate; CLI checks and workflow
+state use its Bubblewrap bindings. The hosted chat remains global; the separate
+private continuation was stopped. No shared install or hook override occurred.
+PR #82 and #64 remain open with efficiency acceptance pending.

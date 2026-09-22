@@ -5,6 +5,9 @@ description: Review a diff since a fixed point along independent Standards and S
 
 # Code review
 
+For recurring behavioral findings, apply the workflow's
+[repair contract](../repo-production-workflow/SKILL.md#recurring-behavioral-repairs).
+
 Initial review uses a fresh native context in the lead's checkout; return review
 continues that context when usable. You own review, not implementation: read source and run tests or attacks, but never
 edit candidate source, rewrite the contract, mutate the active workflow ledger,
@@ -68,6 +71,13 @@ and diagnosis before reporting. Retain useful passing and failing operations wit
 expected/observed results under those same verification rules.
 
 ## 5. Review both axes
+
+Derive discriminating inputs independently of the lead's `boundaryInputs`.
+Check omitted competing readings, unresolved authority, and the sensitivity of
+represented cases against the governing contract. The recorder's input screen
+establishes representation only: a represented but semantically inadequate case,
+or a falsely claimed extraction result, is a Spec finding. Reuse applicable proof;
+do not require new naming, metadata-only reruns or a second coverage inventory.
 
 Run **Standards** and **Spec** independently:
 

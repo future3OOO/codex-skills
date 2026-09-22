@@ -10,6 +10,10 @@ promise. The workflow ledger is continuity, not an attestation system.
 from __future__ import annotations
 
 import argparse
+import ast
+import hashlib
+import json
+import os
 import re
 import shlex
 from collections.abc import Mapping, Sequence
@@ -288,6 +292,294 @@ def repository_resolution(surface: Mapping[str, object], root: object) -> str | 
     if unresolved:
         return "proof target(s) do not resolve under the repository root: " + ", ".join(sorted(set(unresolved)))
     return None
+
+
+def input_evidence(surface: Mapping[str, object], root: Path, inputs: list[object],
+                   test_id: str | None = None) -> dict[str, object]:
+    """Represent selected inputs by typed JSON equality, never infer reach.
+    Python runners bound source selection; opaque selections report limits, not absence.
+    """
+    values: list[object] = []
+    sources: dict[str, str] = {}
+    limits: list[str] = []
+    runner = surface.get("runner")
+    targets, discover, ambiguous, unresolved = proof_targets(surface, root)
+    if runner == "exact":
+        args = list(surface.get("arguments", []))
+        if args and INTERPRETER.fullmatch(Path(str(args[0])).name):
+            if len(args) > 1 and str(args[1]).endswith(".py"):
+                targets = [str(args[1])]
+                values.extend(args[2:])
+                unresolved = None
+            else:
+                targets, unresolved = [], "inline/module execution has no selected source binding"
+        else:
+            # argv is the concrete process Interface, independent of its language.
+            values.extend(args[1:])
+            targets, unresolved = [], None
+    if test_id:
+        targets, discover, ambiguous, unresolved = [test_id], False, [], None
+    if discover or ambiguous or unresolved or len(targets) > 32:
+        limits.append(unresolved or "selection is too coarse or exceeds 32 files")
+        targets = []
+    for target in targets:
+        if runner == "unittest":
+            parts = target.split(".")
+            path = root / target
+            names: list[str] = []
+            if not path.is_file():
+                while parts:
+                    path = root.joinpath(*parts).with_suffix(".py")
+                    if path.is_file():
+                        break
+                    names.insert(0, parts.pop())
+        else:
+            file, *names = target.split("::")
+            path = root / file
+        try:
+            if not Path(os.path.abspath(path)).is_relative_to(root) or not path.resolve().is_relative_to(root.resolve()) or not path.is_file():
+                limits.append(f"unresolved selected source: {target}")
+                continue
+            with path.open("rb") as handle:
+                data = handle.read(262145)
+            if len(data) > 262144:
+                limits.append(f"selected source exceeds 256 KiB: {target}")
+                continue
+            tree = ast.parse(data, filename=str(path))
+            if sum(1 for _ in ast.walk(tree)) > 10000:
+                limits.append(f"selected source exceeds 10000 nodes: {target}")
+                continue
+        except (OSError, SyntaxError, UnicodeError) as exc:
+            limits.append(f"selected source unavailable: {target}: {exc}")
+            continue
+        sources[str(path.resolve().relative_to(root.resolve()))] = hashlib.sha256(data).hexdigest()
+        selected: list[ast.AST] = [tree]
+        case_id = None
+        for name in names:
+            if "[" in name:
+                name, _, case = name.partition("[")
+                case_id = case.removesuffix("]")
+            selected = [child for parent in selected for child in getattr(parent, "body", [])
+                        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and child.name == name]
+        classes = [node for node in selected if isinstance(node, ast.ClassDef)]
+        if any(ast.unparse(base) not in {"unittest.TestCase", "object"} for node in classes for base in node.bases):
+            limits.append("inherited test bodies were not inspected")
+        selected = [child for node in selected for child in (
+            [member for member in node.body if isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef))
+             and (member.name.startswith("test") or member.name in {"setUp", "tearDown", "setUpClass", "tearDownClass", "setup_method", "teardown_method", "setup_class", "teardown_class"})]
+            if isinstance(node, ast.ClassDef) else [node])]
+        if not selected:
+            limits.append(f"selected definition unavailable: {target}")
+            continue
+        bindings: dict[str, list[object]] = {}
+        fixtures: set[str] = set()
+        for node in tree.body if runner != "exact" else []:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                for expression in [node.args, *([node.returns] if node.returns else [])]:
+                    _source_inputs(expression, bindings, [], [])
+                bindings.pop(node.name, None)
+                decorator = node.decorator_list[0] if len(node.decorator_list) == 1 else None
+                if isinstance(decorator, ast.Call) and not decorator.args and not decorator.keywords:
+                    decorator = decorator.func
+                if (len(node.body) == 1 and isinstance(node.body[0], ast.Return)
+                        and isinstance(decorator, ast.Attribute) and decorator.attr == "fixture"):
+                    fixtures.add(node.name)
+                    bindings[node.name] = _input_literals(node.body[0].value, {})
+                elif node.decorator_list:
+                    for decorator in node.decorator_list:
+                        if not (isinstance(decorator, ast.Call) and isinstance(decorator.func, ast.Attribute)
+                                and decorator.func.attr == "parametrize"):
+                            bindings.clear()
+                        else:
+                            for expression in [*decorator.args, *(kw.value for kw in decorator.keywords)]:
+                                _source_inputs(expression, bindings, [], [])
+            else:
+                _source_inputs(node, bindings, [], [])
+        for node in selected:
+            if isinstance(node, ast.Module) and runner != "exact":
+                limits.append(f"whole-file runner selection lacks case attribution: {target}")
+                continue
+            local = {} if classes else dict(bindings)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                defaults = {arg.arg for arg in node.args.args[-len(node.args.defaults):]} if node.args.defaults else set()
+                defaults.update(arg.arg for arg, default in zip(node.args.kwonlyargs, node.args.kw_defaults) if default is not None)
+                for arg in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs, node.args.vararg, node.args.kwarg):
+                    if arg is not None and (arg.arg not in fixtures or arg.arg in defaults):
+                        local.pop(arg.arg, None)
+            _source_inputs(node, local, values, limits, case_id=case_id, selected=True)
+    keys = {json.dumps(value, sort_keys=True, allow_nan=False) for value in values}
+    represented = [value for value in inputs if json.dumps(value, sort_keys=True, allow_nan=False) in keys]
+    absent = [value for value in inputs if json.dumps(value, sort_keys=True, allow_nan=False) not in keys]
+    return {"represented": represented, "missing": [] if limits else absent,
+            "unresolved": absent if limits else [], "limits": sorted(set(limits)), "sources": sources}
+
+
+def _input_literals(node: ast.AST, bindings: dict[str, list[object]]) -> list[object]:
+    if isinstance(node, ast.Name):
+        return bindings.get(node.id, [])
+    if isinstance(node, (ast.List, ast.Tuple)):
+        parts = [_input_literals(part, bindings) for part in node.elts]
+        if all(len(part) == 1 for part in parts):
+            return [[part[0] for part in parts]]
+        varying = {part.id for part in ast.walk(node) if isinstance(part, ast.Name)
+                   and len(bindings.get(part.id, [])) > 1}
+        if len(varying) == 1:
+            name = varying.pop()
+            return [value for candidate in bindings[name]
+                    for value in _input_literals(node, {**bindings, name: [candidate]})]
+        return []
+    if isinstance(node, ast.Subscript):
+        try:
+            key = ast.literal_eval(node.slice)
+            return [value[key] for value in _input_literals(node.value, bindings)
+                    if isinstance(value, (dict, list, tuple))]
+        except (ValueError, TypeError, KeyError, IndexError):
+            return []
+    try:
+        value = ast.literal_eval(node)
+        json.dumps(value, sort_keys=True, allow_nan=False)
+    except (ValueError, TypeError, SyntaxError):
+        return []
+    return [value]
+
+
+def _source_inputs(node: ast.AST, bindings: dict[str, list[object]],
+                   values: list[object], limits: list[str], *, case_id: str | None = None,
+                   selected: bool = False) -> None:
+    """Inspect literal call inputs and local literal tables, not arbitrary dataflow."""
+    if isinstance(node, ast.ClassDef):
+        bindings.pop(node.name, None)
+        if node.decorator_list or node.keywords or any(isinstance(part, ast.Call) for base in node.bases for part in ast.walk(base)):
+            bindings.clear()
+        for statement in node.body:
+            _source_inputs(statement.value if isinstance(statement, ast.Assign) else statement, bindings, [], [])
+        return
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and not selected:
+        bindings.pop(node.name, None)
+        for expression in [node.args, *([node.returns] if node.returns else [])]:
+            _source_inputs(expression, bindings, [], limits)
+        if node.decorator_list:
+            bindings.clear()
+        limits.append("unselected callable bodies were not inspected")
+        return
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        bindings = dict(bindings)
+        for decorator in node.decorator_list:
+            if (isinstance(decorator, ast.Call) and isinstance(decorator.func, ast.Attribute)
+                    and decorator.func.attr == "parametrize" and len(decorator.args) >= 2):
+                # Decorators ran at definition time, not with the function's
+                # current globals. Only literal case data is known here.
+                names = _input_literals(decorator.args[0], {})
+                rows = _input_literals(decorator.args[1], {})
+                if len(names) == len(rows) == 1 and isinstance(names[0], str) and isinstance(rows[0], (list, tuple)):
+                    cases = rows[0]
+                    if case_id is not None:
+                        ids = next((kw.value for kw in decorator.keywords if kw.arg == "ids"), None)
+                        labels = _input_literals(ids, {}) if ids is not None else []
+                        if len(labels) != 1 or not isinstance(labels[0], (list, tuple)) or labels[0].count(case_id) != 1:
+                            limits.append("parameter subset lacks concrete attributed case data")
+                            continue
+                        cases = [cases[labels[0].index(case_id)]]
+                    fields = [name.strip() for name in names[0].split(",")]
+                    if any(kw.arg == "indirect" and not (isinstance(kw.value, ast.Constant) and kw.value.value is False)
+                           for kw in decorator.keywords) or any(
+                           len(fields) > 1 and (not isinstance(row, (list, tuple)) or len(row) != len(fields)) for row in cases):
+                        limits.append("indirect parameter data")
+                        continue
+                    bindings.update({name: [row[index] for row in cases] if len(fields) > 1 else list(cases) for index, name in enumerate(fields)})
+                else:
+                    limits.append("indirect parameter data")
+            else:
+                limits.append("opaque decorator")
+        for statement in node.body:
+            _source_inputs(statement, bindings, values, limits)
+        return
+    if isinstance(node, ast.Assign) and all(isinstance(target, ast.Name) for target in node.targets):
+        _source_inputs(node.value, bindings, values, limits)
+        for name in node.targets:
+            bindings[name.id] = _input_literals(node.value, bindings)
+        return
+    if isinstance(node, ast.For):
+        if node.orelse:
+            bindings.clear()
+            limits.append("loop else input flow was not inspected")
+            return
+        rows = _input_literals(node.iter, bindings)
+        if len(rows) == 1 and isinstance(rows[0], (list, tuple)):
+            local = dict(bindings)
+            if isinstance(node.target, ast.Name):
+                local[node.target.id] = list(rows[0])
+            elif isinstance(node.target, (ast.Tuple, ast.List)) and all(isinstance(n, ast.Name) for n in node.target.elts):
+                try:
+                    for index, name in enumerate(node.target.elts):
+                        local[name.id] = [row[index] for row in rows[0]]
+                except (IndexError, TypeError):
+                    limits.append("indirect loop data")
+            else:
+                limits.append("indirect loop target")
+            for statement in node.body:
+                _source_inputs(statement, local, values, limits)
+        else:
+            limits.append("indirect loop data")
+        bindings.clear()
+        return
+    if isinstance(node, (ast.Import, ast.ImportFrom)):
+        names = {alias.asname or alias.name.split(".")[0] for alias in node.names}
+        for name in list(bindings) if "*" in names else names:
+            bindings.pop(name, None)
+        return
+    if isinstance(node, (ast.Assert, ast.Compare)):
+        _source_inputs(node.test if isinstance(node, ast.Assert) else node.left, bindings, values, limits)
+        if isinstance(node, ast.Compare) and any(isinstance(child, ast.Call) for operand in node.comparators for child in ast.walk(operand)):
+            limits.append("comparison has an ambiguous input/expected operand")
+        bindings.clear()
+        return
+    if isinstance(node, ast.Call):
+        arguments = [*node.args, *(kw.value for kw in node.keywords)]
+        assertion = (isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name)
+                     and node.func.value.id == "self" and node.func.attr.startswith("assert"))
+        output = (isinstance(node.func, ast.Name) and node.func.id in {"print", "repr"}) or (
+            isinstance(node.func, ast.Attribute) and node.func.attr == "write" and ast.unparse(node.func.value) in {"sys.stdout", "sys.stderr"})
+        if not (assertion or output):
+            _source_inputs(node.func, bindings, values, limits)
+        # Later arguments can mutate aliases evaluated earlier. Resolve cached
+        # values only after all argument effects, then expire call-owned state.
+        for argument in node.args[:1] if assertion else arguments:
+            _source_inputs(argument, bindings, values, limits)
+        ambiguous = (assertion and getattr(node.func, "attr", "").startswith(("assertRaises", "assertWarns"))) or any(kw.arg is None for kw in node.keywords) or any(
+            isinstance(part, ast.Call) for argument in (node.args[1:] if assertion else arguments) for part in ast.walk(argument))
+        if not output and (ambiguous or (not arguments and not (isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Call)))):
+            limits.append("call argument roles are ambiguous")
+        for argument in [] if assertion or output or ambiguous else arguments:
+            concrete = _input_literals(argument, bindings)
+            if not concrete:
+                limits.append("dynamic call input")
+            values.extend(part for value in concrete for part in ([value, *value] if isinstance(value, (list, tuple)) else [value]))
+        bindings.clear()
+        return
+    # These wrappers have ordered children, not alternative execution paths.
+    # Unhandled syntax must not restore knowledge by walking competing branches.
+    if _input_literals(node, {}):
+        return
+    if isinstance(node, (ast.Attribute, ast.Subscript)):
+        concrete = _input_literals(node.value if isinstance(node, ast.Attribute) else node, bindings)
+        for child in ast.iter_child_nodes(node):
+            _source_inputs(child, bindings, values, limits)
+        if not concrete:
+            bindings.clear()
+        return
+    if isinstance(node, ast.Dict) and any(key is None or not _input_literals(key, bindings) for key in node.keys):
+        bindings.clear()
+        limits.append("opaque mapping construction")
+        return
+    if not isinstance(node, (ast.Module, ast.Expr, ast.Return, ast.Pass, ast.arguments, ast.arg,
+                             ast.List, ast.Tuple, ast.Dict,
+                             ast.Name, ast.Load)):
+        bindings.clear()
+        limits.append("conditional or indirect input flow")
+        return
+    for child in ast.iter_child_nodes(node):
+        _source_inputs(child, bindings, values, limits)
 
 
 def differences(

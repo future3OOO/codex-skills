@@ -63,6 +63,9 @@ gap; see [recovery](#recovery-and-reassessment) when accepted proof is still nee
 
 ## Map updates
 
+Interpretation reassessment and the automatic selected-input diagnostics are
+owned by [SKILL.md](SKILL.md#3-update-the-map-when-a-proof-changes-it).
+
 Add uncovered outcomes or change obligations with `tdd-map`; no-ops write nothing.
 Pass the document on stdin:
 

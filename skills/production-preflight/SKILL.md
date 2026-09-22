@@ -117,9 +117,32 @@ For transaction-sensitive work, these sections must be explicit enough to govern
 
 ### `authoritativeContract`
 
-- State the rule that must remain true after the change.
-- If more than one rule matters, list the small set that actually governs the surface.
-- Do not hide the contract inside general prose about files or implementation shape.
+Before choosing an implementation or writing tests, investigate each behavioral
+predicate that decides an outcome:
+
+1. **Define the decision over its reachable values.** Inspect the actual producer
+   Interfaces and trace the values reaching the deciding consumer, including
+   relevant types, representations and conversions. State the deciding operation
+   and how it treats those values. Task examples and convenient fixtures do not
+   bound the input domain. Describing how a value is obtained, or repeating the
+   predicate's label, does not define how it is judged.
+2. **Challenge the rule, even when it seems conventional.** Compare it with the
+   task contract and the rules used by other Modules on the same path. Could a
+   supported value receive different decisions under plausible readings? Apply
+   [TDD's differential proof](../tdd/tests.md#what-a-slice-must-prove): derive a
+   concrete counterexample, evaluate the competing rules on it, and compare the
+   outcomes. Test the proposed meaning, not an implementation chosen in advance.
+3. **Resolve from governing authority or expose the uncertainty.** The authority
+   must distinguish the readings. Their shared wording, your proposed consumer,
+   and a runtime difference do not authorize a choice. If both readings remain
+   compatible with the governing evidence, keep the choice unsettled before
+   dependent code.
+
+State the reachable values and decision rules concisely in this contract and the
+existing `behaviorMap`; where readings diverge, use its interpretation fields and
+concrete discriminating inputs below. Investigation is complete when each
+decision's meaning is established over its reachable values or its uncertainty
+is explicit. Unambiguous predicates need no additional fields or inventory.
 
 ### `invariants`
 
@@ -211,6 +234,18 @@ Do not pause for ceremonial approval after evidence has resolved the decision.
 
 ### `behaviorMap`
 
+When plausible readings produce different behavior, put concrete discriminating
+values in the owning item's optional, non-empty `boundaryInputs` JSON array.
+`interpretations` is an array of at least two non-empty strings; `interpretation`
+and `authority` are non-empty strings, supplied together once settled and both
+omitted while unsettled. Preserve material types in the concrete input values
+and their meaning in the existing explanation. Unambiguous items omit these fields; no case names or second
+coverage inventory are required. Initial unsettled readings and inputs are retained
+as pending preflight evidence, recoverable through the normal summary/evidence
+commands. Resolve `openQuestions` through existing user communication or authorized
+advice before dependent implementation; recording a choice does not prove behavior.
+After preflight, use the same item's [TDD reassessment](../tdd/SKILL.md), not a new preflight.
+
 Record a non-empty JSON array. Every item has these eight required fields:
 
 ```json
@@ -251,8 +286,15 @@ Record a non-empty JSON array. Every item has these eight required fields:
 
 In the governed workflow this preflight records only through
 `python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" record-preflight --repo "$PWD" --slug "<task>" --workflow-id "<active-workflowId>" --input "/path/to/preflight.json"`, which demands the full thirteen text sections plus `behaviorMap`
-as JSON (every text section non-empty, `openQuestions` exactly `none`) and refuses
-without mutating state. Write the document to a file and pass it with
+as JSON (every text section non-empty). Structurally valid unsettled interpretations
+record pending evidence; all other malformed documents refuse without mutation.
+Passing preflight still requires `openQuestions` exactly `none` and settled choices.
+Pending recording returns exit 2 with `status:pending` and an `evidenceId`.
+When initial authority arrives, update the retained JSON's affected sections,
+item choice/authority and `openQuestions`, then record that corrected document.
+Reuse its unchanged sections and retained context; no full-document model reload,
+validator-source lookup or additional summary call is needed for this correction.
+Write the document to a file and pass it with
 `--input`; response prose is not evidence.
 
 ## Output Shape
