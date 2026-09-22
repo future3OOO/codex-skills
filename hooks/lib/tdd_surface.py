@@ -480,13 +480,13 @@ def _source_inputs(node: ast.AST, bindings: dict[str, list[object]],
                             limits.append("parameter subset lacks concrete attributed case data")
                             continue
                         cases = [cases[labels[0].index(case_id)]]
+                    fields = [name.strip() for name in names[0].split(",")]
                     if any(kw.arg == "indirect" and not (isinstance(kw.value, ast.Constant) and kw.value.value is False)
-                           for kw in decorator.keywords):
+                           for kw in decorator.keywords) or any(
+                           len(fields) > 1 and (not isinstance(row, (list, tuple)) or len(row) != len(fields)) for row in cases):
                         limits.append("indirect parameter data")
                         continue
-                    fields = [name.strip() for name in names[0].split(",")]
-                    for index, name in enumerate(fields):
-                        bindings[name] = ([row[index] for row in cases] if len(fields) > 1 else list(cases))
+                    bindings.update({name: [row[index] for row in cases] if len(fields) > 1 else list(cases) for index, name in enumerate(fields)})
                 else:
                     limits.append("indirect parameter data")
             else:
@@ -545,7 +545,7 @@ def _source_inputs(node: ast.AST, bindings: dict[str, list[object]],
         # values only after all argument effects, then expire call-owned state.
         for argument in node.args[:1] if assertion else arguments:
             _source_inputs(argument, bindings, values, limits)
-        ambiguous = any(kw.arg is None for kw in node.keywords) or any(
+        ambiguous = (assertion and getattr(node.func, "attr", "").startswith(("assertRaises", "assertWarns"))) or any(kw.arg is None for kw in node.keywords) or any(
             isinstance(part, ast.Call) for argument in (node.args[1:] if assertion else arguments) for part in ast.walk(argument))
         if not output and (ambiguous or (not arguments and not (isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Call)))):
             limits.append("call argument roles are ambiguous")

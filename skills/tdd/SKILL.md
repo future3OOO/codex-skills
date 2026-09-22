@@ -85,8 +85,8 @@ Several assertions may jointly prove one behavior; every assertion participating
 
 For a material interpretation choice, use preflight's optional `boundaryInputs`,
 `interpretations`, `interpretation` and `authority` on the same item through
-`tdd-map` dispositions. New readings without a selected interpretation retain a
-hold even when their inputs are represented. Removing inputs requires governing
+`tdd-map` dispositions. Unsettled readings keep applicable items unresolved even
+when their inputs are represented. Removing inputs requires governing
 `evidence`; supersession must retain their obligations. Sufficient current proof
 is reused without another execution. Missing or stale input proof revalidates only
 the affected item; an applicable RED remains usable. A changed obligation or

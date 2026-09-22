@@ -2224,7 +2224,7 @@ def ready_for_edit(identity: RepoIdentity, path: str) -> tuple[bool, list[str]]:
     if not is_test_path(path) and state.get("tdd") not in {"in-progress", "passed", "not-required"}:
         missing.append("TDD RED or a recorded not-required decision (test-like edits stay open)")
     held = [str(item["id"]) for item in _recorded_items(identity, state)
-            if item.get("status") != "superseded" and behavior_map.interpretation_pending(item)]
+            if item.get("status") not in {"superseded", "omitted", "withdrawn"} and behavior_map.interpretation_pending(item)]
     if held and not is_test_path(path):
         missing.append("unsettled interpretation: " + ", ".join(held))
     return not missing, missing

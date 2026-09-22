@@ -624,12 +624,11 @@ def producer_proved(entry: JsonObject) -> bool:
 def unresolved(
     items: list[JsonObject], *, terminals: dict[str, JsonObject] | None = None,
 ) -> list[str]:
-    if terminals is None:
-        terminals = terminal_items(items)
+    terminals = terminal_items(items) if terminals is None else terminals
     return [
         str(entry["id"])
         for entry in items
-        if (interpretation_pending(entry) and entry.get("status") != "superseded")
+        if (interpretation_pending(entry) and entry.get("status") not in {"superseded", "omitted", "withdrawn"})
         or entry.get("status") in {"pending", "red"}
         # Prose already-satisfied is a settlement no producer observed (issue #54).
         or (entry.get("status") == "already-satisfied" and not producer_proved(entry))
