@@ -260,10 +260,11 @@ class PendingAdvisorRetries(AttackHarness):
         self.assertEqual(self.record_preflight("pending-retry", wid,
                          self.owned_map(old, marker="VALUE_NOT_TWO")).returncode, 0)
         self.drive_attack_green("pending-retry", "VALUE_NOT_TWO")
-        self.accept(wid, [{**finding, "kind": "behavioral"}])
-        entry = self.status()["findingStates"][0]
-        current = entry["observations"][-1]["evidenceId"]
-        evidence = self.status()["tddEvidence"]
+        for _ in range(2):
+            state = self.accept(wid, [{**finding, "kind": "behavioral"}])
+        entry = state["findingStates"][0]
+        current = state["advisorPreflight"]["intakeEvidence"]
+        evidence = state["tddEvidence"]
         runs = self.ok("evidence", "--evidence-id", evidence)["document"]["runs"]
         receipt = f"{evidence}:{next(i for i, run in enumerate(runs) if run.get('phase') == 'green')}"
         for reference in (old, current):
@@ -291,7 +292,9 @@ class PendingAdvisorRetries(AttackHarness):
         for finding in (changed, {**changed, "id": "RENAMED", "claim": "  " + changed["claim"] + "  "}):
             state = self.accept(wid, [finding])
             self.assertEqual(len(state["findingStates"]), 1, marker)
-            self.assertEqual(state["advisorPreflight"]["intakeEvidence"], original, marker)
+            self.assertEqual(state["findingStates"][0]["intakeEvidenceId"], original, marker)
+        closed = self.close_finding(wid, state["advisorPreflight"]["intakeEvidence"], finding)
+        self.assertEqual(closed.returncode, 0, "SAME_STAGE_ALIAS_RETURN_REFUSED: " + closed.stderr)
         distinct = {**changed, "id": "DISTINCT", "claim": changed["claim"].replace("'  x  '", "' x '")}
         self.assertEqual(len(self.accept(wid, [distinct])["findingStates"]), 2, marker)
 
@@ -571,22 +574,21 @@ class PendingAdvisorRetries(AttackHarness):
         self.assertEqual(closed.returncode, 0, marker + closed.stdout + closed.stderr)
         self.ok("complete")
 
-    def test_mixed_retry_uses_only_canonical_dispositions(self) -> None:
+    def test_mixed_retry_preserves_identity_and_returns_usable_intake(self) -> None:
         marker = "DUPLICATE_MIXED_OBLIGATION"
         wid = self.begin("pending-retry")
         a = {**self.CAPTURED, "kind": "nonbehavioral"}
         b = {**a, "id": "NEW-B"}
         first = self.accept(wid, [a])
-        original = first["advisorPreflight"]["intakeEvidence"]
         mixed = self.accept(wid, [a, b])
         current = mixed["advisorPreflight"]["intakeEvidence"]
         self.assertEqual(len(mixed["findingStates"]), 2, marker)
-        self.assertEqual(mixed["findingStates"][0], first["findingStates"][0], marker)
-        self.refused_unchanged(marker, lambda: self.close_finding(wid, current, a))
+        self.assertEqual(mixed["findingStates"][0], {**first["findingStates"][0], "observations": [
+            {"evidenceId": current, "id": a["id"], "producer": "codex-advisor", "stage": "preflight"}]}, marker)
         closed = self.close_finding(wid, current, b)
         self.assertEqual(closed.returncode, 0, marker + closed.stdout + closed.stderr)
         self.assertEqual(self.status()["findingStates"][0]["status"], "pending", marker)
-        closed = self.close_finding(wid, original, a)
+        closed = self.close_finding(wid, current, a)
         self.assertEqual(closed.returncode, 0, marker + closed.stdout + closed.stderr)
         self.assertEqual(self.status()["advisorPreflight"]["findings"], "addressed", marker)
 
@@ -624,8 +626,7 @@ class PendingAdvisorRetries(AttackHarness):
         self.ready(other)
         across_stage = self.accept(other, [self.CAPTURED], stage="final")
         self.assertEqual(len(across_stage["findingStates"]), 1, marker)
-        observed = across_stage["findingStates"][0]["observations"]
-        self.assertEqual(len(observed), 1, marker)
+        self.assertEqual(len(across_stage["findingStates"][0]["observations"]), 1, marker)
         review = self.json_file("cross-producer.json", {"findings": [{**self.CAPTURED,
             "id": "REVIEW-ALIAS", "axis": "Spec", "severity": "high", "location": "app.py",
             "evidence": "recorder input, not a native review", "consequence": "same unresolved obligation",
@@ -636,6 +637,9 @@ class PendingAdvisorRetries(AttackHarness):
         cross = self.status()
         self.assertEqual(len(cross["findingStates"]), 1, marker)
         self.assertEqual(cross["codeReview"]["findings"], "pending", marker)
+        returned = self.accept(other, [self.CAPTURED], stage="final")["finalReview"]["intakeEvidence"]
+        closed = self.close_finding(other, returned, self.CAPTURED, stage="final")
+        self.assertEqual(closed.returncode, 0, "CROSS_STAGE_RETURN_CLOSURE_REFUSED: " + closed.stderr)
         final_wid = self.start_final()
         note = {**self.CAPTURED, "material": False, "kind": "nonbehavioral"}
         self.accept(final_wid, [note], stage="final")
@@ -747,7 +751,9 @@ class PendingAdvisorRetries(AttackHarness):
         self.assertEqual(states[0]["intakeEvidenceId"], original)
         self.assertEqual(states[0]["appealStatus"], "disagreement")
         if shared:
-            self.assertEqual(states[1], first["findingStates"][1])
+            self.assertEqual(states[1], {**first["findingStates"][1], "observations": [
+                {"evidenceId": json.loads(result.stdout)["finalReview"]["intakeEvidence"],
+                 "id": "B", "producer": "codex-advisor", "stage": "final"}]})
             self.assertNotEqual(states[2]["intakeEvidenceId"], original)
         print(f"target=workflow.py advisor-result final_appeal pending_findings={len(states)} original_intake_read_limit=1 observed={count}")
 

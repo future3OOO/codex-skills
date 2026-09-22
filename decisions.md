@@ -1609,33 +1609,25 @@ a selected repair, while re-raising that repair revokes its prior certificate.
 Real closure probes demonstrated both former failures; actor/tree and overall
 completion checks retain authority.
 
+**2026-09-22 benchmark qualification ([PR #82](https://github.com/future3OOO/codex-skills/pull/82)):**
+The completed pair measured supervised repairs, not estate acceptance: both arms
+started after compaction with candidate-specific guidance and externally managed
+reviewers. Its comparative conclusions are superseded; the PR states this limit.
+A valid pair starts before the first source edit on `9aecc46a`, with equivalent
+history, native leads/reviewers and all retries counted; preflight/final advisors
+are excluded. The user authorized one pair: 30 aggregate minutes and 8 million
+tokens, split equally. That pair consumed 1,573,316 tokens and 1,336.8 aggregate
+seconds. Baseline reached its elapsed-time cap; candidate was interrupted for
+rebase. Neither edited source or launched a reviewer. Both inspected installed
+code; baseline fetched the live issue. Correctness and efficiency remain unproved.
 
-**2026-09-22 benchmark qualification:** The completed-pair measurements remain
-observations of supervised repairs, not estate-level behavioral or efficiency
-acceptance. Both arms began after compaction with candidate-specific guidance;
-native delegation was prohibited and reviewer continuations were orchestrated
-externally. This supersedes comparative conclusions from that pair.
-[PR #82](https://github.com/future3OOO/codex-skills/pull/82) now states the limitation.
-
-The retained lead rollout locates the first defect-producing source edit at
-2026-09-20T03:05:49.976Z, line 285, on base `9aecc46a`. Start the corrected pair
-before that edit, using equivalent task history and each estate's native
-lead/reviewer execution; count every repair and retry. Exclude preflight and
-final advisors from both comparison arms, preserving the implementation pass's
-mandatory reviews. The current continuation authorizes preparation and supersedes
-the earlier blanket benchmark prohibition. The user authorized one pair capped at
-30 aggregate minutes and 8 million total tokens, including both leads, native
-reviewers and retries; each arm receives half. #64 and its existing pass remain open.
-
-The task-start pair consumed 1,573,316 recorded tokens and 1,336.8 aggregate
-elapsed seconds. Baseline reached its cap; candidate was interrupted for the
-user-directed rebase. Neither edited source or launched a reviewer. Both inspected
-installed implementation code, and baseline fetched the live parent issue.
-These incomplete observations establish neither correctness nor efficiency.
-
-**Latest-main integration:** Rebase PR #82 onto `86abf9b`, preserving main's native
-checkout routing and #64's exact actor/recurring-repair checks. Only dispatch-hook
-imports conflicted. Global installed production files match that main commit;
-no shared installation was performed. Affected CLI/hook checks and independent
-integration review found no rebase regression. Delivery remains through the
-existing open PR; the original efficiency findings remain unresolved.
+**Current delivery and private development:** Rebase `43c5bc3` is pushed with green
+CI, preserving main `86abf9b` native checkout routing and #64 exact actor checks.
+Uncommitted returned-reference repairs select a batch intake containing each
+observed ID, namespace and immutable kind, registering all pending aliases.
+The retained reviewer repaired repeated promotion; its real closure probe and
+lead's independent repeat pass. Certification and final advice remain required.
+Develop with the complete refreshed private N+1 estate; CLI checks and workflow
+state use its Bubblewrap bindings. The hosted chat remains global; the separate
+private continuation was stopped. No shared install or hook override occurred.
+PR #82 and #64 remain open with efficiency acceptance pending.

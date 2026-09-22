@@ -1170,7 +1170,8 @@ def _register_finding_intake(
                     observed.append((root, ref, document, finding))
                     break
         latest[(str(root["evidenceId"]), str(root["id"]))] = entry
-    references: list[str] = []
+    references: set[str] = set()
+    pending: list[tuple[JsonObject, JsonObject, bool]] = []
     for item in intake["findings"]:
         explicit = item.get("priorFinding")
         matches: set[tuple[str, str]] = set()
@@ -1196,19 +1197,18 @@ def _register_finding_intake(
             shared_reference = any(other is not prior
                                    and other["intakeEvidenceId"] == reference
                                    and other["findingId"] == prior["findingId"] for other in finding_states)
-            if shared_reference:
+            if (shared_reference or prior["findingId"] != item["id"]
+                    or any(prior.get(k) != intake.get(k) for k in ("producer", "stage"))
+                    or not any(finding["id"] == item["id"] and finding["kind"] == item["kind"]
+                               for finding in intakes[reference]["findings"])):
                 reference = intake_id
             prior["material"] = prior["material"] or item["material"]
             if item["kind"] == "behavioral":
                 prior["kind"] = "behavioral"
-            # Review callers consume the fresh summaryId, including exact retries.
-            # Advisor callers already receive the canonical intake reference.
-            if shared_reference or intake["producer"] == "code-review" or not any(all(finding.get(k) == item.get(k) for k in ("id", "claim", "kind", "material"))
+            pending.append((prior, item, any(all(finding.get(k) == item.get(k) for k in ("id", "claim", "kind", "material"))
                        and all(document.get(k) == intake.get(k) for k in ("producer", "stage"))
                        for root, ref, document, finding in observed
-                       if (str(root["evidenceId"]), str(root["id"])) in matches):
-                prior.setdefault("observations", []).append({"evidenceId": intake_id, "id": item["id"],
-                                                            "producer": intake["producer"], "stage": intake["stage"]})
+                       if (str(root["evidenceId"]), str(root["id"])) in matches)))
         else:
             reference = intake_id
             entry = {
@@ -1231,7 +1231,12 @@ def _register_finding_intake(
         }
         latest[(str(root["evidenceId"]), str(root["id"]))] = current
         observed.append((root, {"evidenceId": intake_id, "id": item["id"]}, intake, item))
-        references.append(reference)
+        references.add(reference)
+    reference = next(iter(references)) if len(references) == 1 else intake_id
+    for prior, item, unchanged in pending:
+        if reference == intake_id or intake["producer"] == "code-review" or not unchanged:
+            prior.setdefault("observations", []).append({"evidenceId": intake_id, "id": item["id"],
+                                                        "producer": intake["producer"], "stage": intake["stage"]})
     for current in latest.values():
         owner = current.get("repairOwner", {})
         if (_finding_unresolved(current) and int(current.get("recurrence", 0)) >= 2
@@ -1250,7 +1255,7 @@ def _register_finding_intake(
                 current["repairOwner"] = {
                     "implementerContextId": reviewer, "reviewerContextId": lead,
                 }
-    return intake_id if intake_id in references or not references else references[0]
+    return reference
 
 
 def record_advisor_result(
