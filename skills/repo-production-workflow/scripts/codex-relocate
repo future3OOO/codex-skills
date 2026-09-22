@@ -11,17 +11,18 @@ the gap turn, or verify with pwd on the following turn.
 
 Self-hosted sessions (any profile): no socket exists, so this arms the
 resume loop in the launching shell (CODEX_RELOC_LOOP must be set — the
-codex/codexs wrappers export it), writes ~/.codex/reloc/<shell-pid>, and
-kills the host TUI. The wrapper resumes the same thread at <abs-path>
-in the SAME pane. Run this as the LAST action of a turn — the kill ends
-the session.
+codex/codexs wrappers export it), persists directory trust in
+~/.codex/config.toml, writes ~/.codex/reloc/<shell-pid>, and terminates
+the host TUI ~10s later. The wrapper resumes the same thread at
+<abs-path> in the SAME pane. Run this as the LAST action of a turn —
+the kill ends the session.
 
 thread-id defaults to $CODEX_THREAD_ID, else 'self' (the loaded thread
 whose cwd matches the current directory). Socket auto-discovers
 ~/.codex/app-server-*.sock and ~/.codex/app-server-control/*.sock;
 override with CODEX_APP_SERVER_SOCK.
 """
-import socket, base64, hashlib, os, struct, json, sys, time, glob, signal, shlex
+import socket, base64, hashlib, os, struct, json, sys, time, glob, signal, shlex, subprocess, tomllib
 
 class WS:
     def __init__(self, path):
@@ -41,6 +42,8 @@ class WS:
         self.buf = buf.split(b"\r\n\r\n", 1)[1]
         self.s.settimeout(0.5)
         self.frag = bytearray()
+    def close(self):
+        self.s.close()
     def send(self, payload):
         data = payload.encode(); mask = os.urandom(4); n = len(data)
         if n < 126: hdr = struct.pack("!BB", 0x81, 0x80 | n)
@@ -145,9 +148,10 @@ def main():
         sys.exit(f"thread id must not contain whitespace: {tid}")
     mycwd = os.getcwd()
     if tid == "self" and os.environ.get("CODEX_RELOC_LOOP") == "1":
-        return self_hosted(cwd, tid, "pane session: using its own resume loop")
+        return self_hosted(cwd, tid, note, "pane session: using its own resume loop")
     last_err = "no app-server socket found — session is not remote-hosted"
     for path in sockets():
+        ws = None
         try:
             ws = init_ws(path)
             found = find_thread(ws, tid, mycwd)
@@ -162,12 +166,106 @@ def main():
             return
         except Exception as e:
             last_err = f"{path}: {e}"; continue
-    self_hosted(cwd, tid, last_err)
+        finally:
+            if ws is not None:
+                ws.close()
+    self_hosted(cwd, tid, note, last_err)
 
-def self_hosted(cwd, tid, why):
+def _trust_dir(cwd):
+    """Persist trust for the relocate target in ~/.codex/config.toml so the
+    resume-loop's `codex resume -C <dir>` skips the interactive trust prompt.
+    Writes only a tomllib-validated candidate that proves the target's
+    trust_level="trusted", and never appends a duplicate [projects."<cwd>"]
+    table — a duplicate header invalidates the TOML for every launch."""
+    if '"' in cwd or "\\" in cwd:
+        print(f"warning: cannot persist trust for unquotable path: {cwd}", flush=True)
+        return
+    cfg = os.path.expanduser("~/.codex/config.toml")
+    header = f'[projects."{cwd}"]'
+    try:
+        try:
+            # Explicit UTF-8: the TOML grammar is Unicode and the user's
+            # locale encoding is not guaranteed to be.
+            with open(cfg, encoding="utf-8") as f:
+                text = f.read()
+        except FileNotFoundError:
+            text = ""
+        except (OSError, UnicodeDecodeError) as e:
+            # An unreadable existing file is not an empty file — writing the
+            # composed candidate would silently wipe its contents.
+            print(f"warning: cannot read {cfg} ({e}); not modifying", flush=True)
+            return
+        try:
+            parsed = tomllib.loads(text) if text.strip() else {}
+        except tomllib.TOMLDecodeError:
+            print(f"warning: {cfg} does not parse; not modifying", flush=True)
+            return
+        # Non-table shapes are legal TOML: never .get() before isinstance.
+        projects = parsed.get("projects")
+        entry = projects.get(cwd) if isinstance(projects, dict) else None
+        # The parsed value, not a substring, decides whether anything is
+        # needed — every valid TOML spelling of the same table counts.
+        if isinstance(entry, dict) and entry.get("trust_level") == "trusted":
+            return
+        lines = text.splitlines(keepends=True)
+        if isinstance(entry, dict):
+            # Only the canonical spelling can be surgically corrected; a
+            # differently-spelled existing table must be edited by hand —
+            # appending here would write a duplicate table.
+            for i, line in enumerate(lines):
+                if line.strip() != header:
+                    continue
+                j = i + 1
+                while j < len(lines) and not lines[j].lstrip().startswith("["):
+                    if lines[j].split("=")[0].strip() == "trust_level":
+                        lines[j] = 'trust_level = "trusted"\n'
+                        break
+                    j += 1
+                else:
+                    if j and not lines[j - 1].endswith("\n"):
+                        lines[j - 1] += "\n"
+                    lines.insert(j, 'trust_level = "trusted"\n')
+                break
+            else:
+                print(f"warning: projects entry for {cwd} exists under a "
+                      f"non-canonical spelling; set trust_level manually "
+                      f"(not modifying {cfg})", flush=True)
+                return
+        elif projects is None or isinstance(projects, dict):
+            if lines and not lines[-1].endswith("\n"):
+                lines[-1] += "\n"
+            lines.extend([f"{header}\n", 'trust_level = "trusted"\n'])
+        else:
+            # [[projects]], projects = [...], scalar entry: not a simple
+            # mapping — leave it alone rather than guess where trust belongs.
+            print(f"warning: projects table in {cfg} is not a simple mapping; "
+                  f"not modifying", flush=True)
+            return
+        candidate = "".join(lines)
+        try:
+            cand = tomllib.loads(candidate).get("projects")
+            if not (isinstance(cand, dict) and isinstance(cand.get(cwd), dict)
+                    and cand[cwd].get("trust_level") == "trusted"):
+                raise ValueError("trust_level not trusted in composed config")
+        except (tomllib.TOMLDecodeError, ValueError) as e:
+            print(f"warning: refusing unvalidated trust write for {cwd}: {e}", flush=True)
+            return
+        with open(cfg, "w", encoding="utf-8") as f:
+            f.write(candidate)
+    except Exception as e:
+        # Outer backstop: trust persistence is best-effort — residual
+        # failures degrade to warn + continue rather than abort relocation.
+        print(f"warning: could not persist trust for {cwd}: {e}", flush=True)
+
+def self_hosted(cwd, tid, note, why):
     """Fallback for self-hosted TUI sessions: arm the resume loop in the
     launching shell and kill this host so the pane resumes the thread at
     the new root."""
+    _trust_dir(cwd)
+    # codex may canonicalize -C before its trust lookup — cover both spellings.
+    real = os.path.realpath(cwd)
+    if real != cwd:
+        _trust_dir(real)
     if tid == "self":
         tid = os.environ.get("CODEX_THREAD_ID", "")
     if any(c.isspace() for c in tid):
@@ -216,11 +314,26 @@ def self_hosted(cwd, tid, why):
                  f"shell has no resume loop. From THIS pane run: {hint}")
     d = os.path.expanduser("~/.codex/reloc")
     os.makedirs(d, exist_ok=True)
-    with open(os.path.join(d, str(shell)), "w") as f:
-        f.write(f"{cwd} {tid} {int(time.time())}\n")
-    print(f"relocation armed: killing host TUI pid {host}; shell pid {shell} "
-          f"will resume thread {tid} at {cwd}", flush=True)
-    os.kill(host, signal.SIGTERM)
+    # UTF-8 + surrogateescape: under a non-UTF-8 locale argv decodes to
+    # surrogates; the note must write back byte-identical, never crash.
+    with open(os.path.join(d, str(shell)), "w", encoding="utf-8",
+              errors="surrogateescape") as f:
+        # Line 1 keeps the original 3-field format — older in-memory loops
+        # read only it (`read wt tid epoch` would swallow the note into
+        # `epoch`); the note lives on line 2+ where the updated loop looks.
+        f.write(f"{cwd} {tid} {int(time.time())}\n{str(note).strip()}\n")
+    print(f"relocation armed: host TUI pid {host} will be terminated after "
+          f"this turn closes; shell pid {shell} will resume thread {tid} "
+          f"at {cwd}", flush=True)
+    # Defer the kill so this tool call returns and the turn closes cleanly —
+    # an instant SIGTERM records the turn as interrupted and the resumed
+    # pane opens on a spurious "Conversation interrupted" banner.
+    try:
+        subprocess.Popen(["bash", "-c", f"sleep 10; kill -TERM {host}"],
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError:
+        os.kill(host, signal.SIGTERM)
 
 if __name__ == "__main__":
     main()

@@ -6,6 +6,10 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 CASE="$1"; SCRIPT="$(readlink -f "$2")"; LOOP="${3:-$HERE/../scripts/codex-reloc-loop.bashrc}"
 case "$CASE" in self|guards|flags|ws) ;; *) echo "unknown case: $CASE" >&2; exit 2 ;; esac
 WTD="$(mktemp -d /tmp/reloc-probe.XXXXXX)"
+mkdir -p "$WTD/home/.codex/reloc"
+# Isolate HOME: _trust_dir now persists trust into ~/.codex/config.toml —
+# probes must never write trust entries into the real user config.
+export HOME="$WTD/home"
 fail=0
 say() { printf '%s\n' "$*"; }
 stubdir=""; mkstub() {
@@ -22,6 +26,10 @@ self)
   mkdir -p "$WTD/wtA"
   out=$(chain "$WTD/wtA" stubtid flag)
   echo "$out" | grep -q '"sigterm_delivered_to_host": true' || { say "NO-KILL: $out"; fail=1; }
+  # Deferral is behavioral, not textual: the SIGTERM must land well after the
+  # relocating process exits so its turn closes first (immediate kill = bug).
+  echo "$out" | python3 -c "import sys,json; d=json.loads([l for l in sys.stdin if l.startswith('{')][-1])['sigterm_delay']; sys.exit(0 if d is not None and d >= 5 else 1)" \
+    || { say "KILL-NOT-DEFERRED: $out"; fail=1; }
   echo "$out" | grep -q '"marker_exists": true' || { say "NO-MARKER: $out"; fail=1; }
   mc=$(echo "$out" | python3 -c "import sys,json; print(json.loads([l for l in sys.stdin if l.startswith('{')][-1])['marker_content'])" 2>/dev/null)
   echo "$mc" | grep -qE "^$WTD/wtA stubtid [0-9]+$" || { say "MARKER-CONTENT-BAD: '$mc'"; fail=1; }
