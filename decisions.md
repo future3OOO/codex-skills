@@ -1403,3 +1403,27 @@ now supersedes the stale "open, not merged" statuses; the installed-probe
 note records the verified per-item status grouping; the #62 delivery names
 the >8 MiB `size:mtime_ns` digest representation; the dropped 350-command
 fixture is no longer described as committed and pinned.
+
+**codexs self-hosted relocation repair (2026-09-22, pending PR):** The
+self-hosted path is fixed by keeping the marker's line-1 contract
+(`cwd tid epoch`) byte-stable for stale in-memory loops and carrying the
+continuation note on line 2+, which the updated loop appends as
+`codex resume ... -- <note>` so flag-shaped notes cannot be parsed as
+options. `codex-relocate` now persists directory trust via a parse-first,
+validate-before-write `_trust_dir` (a malformed trust write was shown to
+invalidate the entire config), and defers the host SIGTERM ~10s through a
+detached timer so the relocating turn closes instead of recording an
+interruption banner. Decision: prefer fail-closed trust warnings over a
+general TOML writer — only the canonical `[projects."<cwd>"]` spelling is
+corrected in place; other valid spellings are left for manual edit rather
+than risk a duplicate table. Probe/review lesson retained: test harnesses
+must isolate HOME now that the script writes real trust state.
+Follow-up review found two structural fixes worth recording: `_trust_dir`
+kept leaking new uncaught exception types per site (AttributeError,
+UnicodeDecodeError, RecursionError), so the outer catch is now a single
+`except Exception` warn-and-continue backstop with specific inner catches
+kept for precise warnings — enumerating types was rejected as
+whack-a-mole. And `codex-reloc-loop.bashrc` once stormed: an un-removable
+marker re-resumed the same thread 1300+ times in 4s, so the loop now
+processes each marker exactly once (resume if actionable) and breaks when
+`rm` fails — resume-once semantics preserved without the infinite loop.

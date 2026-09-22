@@ -11,13 +11,26 @@
 # the launch args (profile/model flags). CODEX_RELOC_LOOP is exported into the
 # session env so the agent can tell the loop is armed before killing.
 _codex_reloc_loop() {
-  local m="$HOME/.codex/reloc/$$" wt tid epoch
+  local m="$HOME/.codex/reloc/$$" wt tid epoch note stuck=0
   while [ -f "$m" ]; do
-    { read -r wt tid epoch < "$m" && rm -f "$m"; } || break
+    # Marker line 1 is the stable "<cwd> <tid> <epoch>" contract — panes whose
+    # shells sourced an older copy read exactly that and nothing else. The
+    # continuation note lives on line 2+ (optional; absent under old scripts).
+    note=""
+    { read -r wt tid epoch && { IFS= read -r -d '' note || true; } } < "$m" || break
+    rm -f "$m" || stuck=1
+    note="${note%$'\n'}"
     [ -n "$wt" ] && [ -n "$tid" ] || break
-    [ -z "${epoch:-}" ] && continue
-    [ $(( $(date +%s) - epoch )) -gt 900 ] && continue
-    CODEX_RELOC_LOOP=1 command codex "$@" resume -C "$wt" "$tid"
+    # A marker that cannot be removed is processed exactly once — resume it
+    # if actionable, then stop; looping would re-resume it forever (measured:
+    # 1300+ duplicate `codex resume` launches in 4s).
+    # 10# forces base-10: bare "$epoch" arithmetic rejects leading zeros
+    # ("value too great for base"), which would crash the check itself.
+    # "--" keeps a flag-shaped note (e.g. "--help") from being parsed as an
+    # option — confirmed eaten without it, which drops the pane to a shell.
+    [[ "$epoch" =~ ^[0-9]+$ ]] && [ $(( $(date +%s) - 10#$epoch )) -le 900 ] &&
+      CODEX_RELOC_LOOP=1 command codex "$@" resume -C "$wt" "$tid" ${note:+-- "$note"}
+    [ "$stuck" = 1 ] && break
   done
 }
 # Interactive TUI launches only: bare `codex`/`codexs`, flags, and `resume`.
