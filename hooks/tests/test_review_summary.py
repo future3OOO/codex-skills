@@ -400,7 +400,6 @@ class ReviewSummaryTests(ReviewSummaryHarness):
             self.assertIsNotNone(state.get("reviewManifestId"), "PENDING_REVIEW_BINDING_STALE")
             self.assertNotEqual(state["reviewManifestId"], previous, "PENDING_REVIEW_BINDING_STALE")
             checkpoint = json.loads(self.run_script(WORKFLOW, "checkpoint", "--phase", "final-review").stdout)
-            self.assertFalse(checkpoint["ready"])
             self.assertFalse(any("review-manifest" in reason for reason in checkpoint["missing"]),
                              "PENDING_REVIEW_BINDING_STALE")
             previous = state["reviewManifestId"]

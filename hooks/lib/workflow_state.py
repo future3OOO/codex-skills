@@ -610,7 +610,7 @@ def commit_tdd(
             previous = _map_items(transaction.evidence(expected_evidence_id))
             if previous is None:
                 previous = _map_items(transaction.evidence(state.get("preflightEvidence")))
-            if action is None and items == previous and not mechanism_updates:
+            if action is None and json.dumps(items, sort_keys=True) == json.dumps(previous, sort_keys=True) and not mechanism_updates:
                 return state, expected_evidence_id
         writes: list[EvidenceWrite] = []
         manifests: list[ManifestWrite] = []
