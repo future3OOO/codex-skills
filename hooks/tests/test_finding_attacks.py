@@ -875,6 +875,9 @@ class FixedRequiresGreenAttack(AttackHarness):
         retained = self.cli("record", "map", "--slug", slug, "--workflow-id", wid,
                             "--input", str(unrelated))
         self.assertEqual(retained.returncode, 0, "FINDING_SUBSET_LOST " + retained.stdout + retained.stderr)
+        self.assertEqual(self.status()["findingStates"][0]["status"], "fixed", "FINDING_SUBSET_LOST")
+        current = self.ok("evidence", "--full", "--evidence-id", self.status()["tddEvidence"])["document"]
+        self.assertIn("BM_ATTACK", {item["id"] for item in current["behaviorMap"]}, "FINDING_SUBSET_LOST")
 
     def test_behavioral_fixed_requires_an_owning_green_through_red(self) -> None:
         marker = "FIXED_CLOSED_WITHOUT_GREEN_ATTACK"
@@ -2008,8 +2011,8 @@ class MapCorrectionAttacks(AttackHarness):
         repeated = self.cli("record", "map", "--slug", slug, "--workflow-id", wid,
                             "--input", str(update_path))
         self.assertEqual(repeated.returncode, 0, repeated.stderr)
-        self.assertEqual(self.status(), after)
-        self.assertEqual(self.ok_text("history"), events)
+        self.assertEqual(self.status(), after, "test_reassessment_preserves_interleaved_cycles_and_reference_identity")
+        self.assertEqual(self.ok_text("history"), events, "test_reassessment_preserves_interleaved_cycles_and_reference_identity")
         self.refused_unchanged("FOREIGN_REFERENCE_ACCEPTED", lambda: self.map_update(slug, dispositions=[
             {"id": "BM_DIRECT", "sourceRefs": refs},
             {"id": "BM_KEEP", "sourceRefs": [{"type": "finding", "evidenceId": foreign, "id": "SPEC-1"}]},

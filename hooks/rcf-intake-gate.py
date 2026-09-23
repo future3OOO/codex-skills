@@ -43,7 +43,7 @@ def observed_test(payload: dict[str, object]) -> None:
         return
     if not re.match(r"^\s*(?:\S*/)?(?:pytest|py\.test|python[\d.]*\s+-m\s+(?:pytest|unittest))(?=\s|$)", command):
         return
-    if re.search(r"(?:^|\s)(?:--help|--version|-h|-V)(?=\s|$)", command):
+    if re.search(r"(?:^|\s)(?:--help|--version|-h|-V|--(?:co(?:llect-only)?|fixtures(?:-per-test)?|markers|setup-(?:plan|only)))(?=\s|$)", command):
         return
     cwd = inputs.get("workdir") or working_directory(payload)
     if not isinstance(cwd, str):

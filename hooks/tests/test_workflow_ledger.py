@@ -545,12 +545,9 @@ class WorkflowLedgerTests(unittest.TestCase):
         with sqlite3.connect(self.database) as connection:
             for field in ("runsRevision", "behaviorMapRevision"):
                 with self.subTest(field=field):
-                    try:
+                    with self.assertRaises(LedgerError, msg="RESERVED_ROOT_ACCEPTED " + field):
                         _insert_evidence(connection, [evidence_write(wid, "preflight", {field: "caller"})])
-                    except LedgerError:
-                        pass
-                    else:
-                        self.fail("RESERVED_ROOT_ACCEPTED " + field)
+                    self.assertEqual(connection.execute("SELECT COUNT(*) FROM evidence").fetchone()[0], 0, "RESERVED_ROOT_STORED " + field)
 
     def test_observed_runs_in_different_directories_do_not_merge(self) -> None:
         from hooks.lib._workflow_db import read_evidence

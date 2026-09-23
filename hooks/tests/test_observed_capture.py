@@ -128,12 +128,13 @@ class ObservedCaptureTests(unittest.TestCase):
         self.assertEqual(len(json.loads(history.stdout)["events"]), 1,
                          "CAPTURE_PASSTHROUGH_CHANGED")
 
-    def test_help_and_version_are_not_recorded_as_tests(self) -> None:
-        for command in ("pytest --help", "pytest --version", "python3 -m unittest --help"):
+    def test_nonexecuting_modes_are_not_recorded_as_tests(self) -> None:
+        for command in ("pytest --help", "pytest --version", "python3 -m unittest --help",
+                        "pytest --collect-only -q", "pytest --co -q", "pytest --fixtures",
+                        "pytest --fixtures-per-test", "pytest --markers", "python3 -m pytest --setup-plan", "pytest --setup-only -q"):
             with self.subTest(command=command):
                 self.assertIsNone(self.hook(command), "HELP_CAPTURE_FALSE_RUN")
-        self.assertEqual(len(json.loads(self.cli("history").stdout)["events"]), 1,
-                         "HELP_CAPTURE_FALSE_RUN")
+        self.assertEqual(len(json.loads(self.cli("history").stdout)["events"]), 1, "HELP_CAPTURE_FALSE_RUN")
 
     def test_unreadable_ledger_does_not_block_the_shell_command(self) -> None:
         database, = Path(self.env["CODEX_WORKFLOW_STATE_ROOT"]).rglob("workflow.sqlite3")

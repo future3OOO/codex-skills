@@ -604,12 +604,10 @@ def commit_tdd(
                         terminals=terminals, pending=pending,
                     )
         mechanism_updates: list[JsonObject] = []
-        if reassessed and summary_doc is not None and summary_doc.get("reassessment") is not None:
-            affected = _linked_finding_items(transaction, items=items)
+        if reassessed and summary_doc is not None:
             mechanism_updates = [entry for entry in state.get("findingStates", [])
-                if entry.get("kind") == "behavioral" and _finding_unresolved(entry)
-                and (str(entry["intakeEvidenceId"]), str(entry["findingId"])) in affected
-                and reassessed.intersection(affected[str(entry["intakeEvidenceId"]), str(entry["findingId"])])
+                if summary_doc.get("reassessment") is not None and entry.get("kind") == "behavioral" and _finding_unresolved(entry)
+                and reassessed.intersection(owned.get((str(entry["intakeEvidenceId"]), str(entry["findingId"])), set()))
                 and _mechanism_explanation(entry.get("mechanismEvidence"), transaction.evidence,
                                            state["workflowId"]) != summary_doc.get("reassessment")]
             previous = _map_items(transaction.evidence(expected_evidence_id))
