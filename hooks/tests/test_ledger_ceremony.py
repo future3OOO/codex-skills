@@ -59,6 +59,10 @@ mode = os.environ.get("STUB_MODE", "big")
 sys.stderr.write("session id: 11111111-2222-3333-4444-555555555555\n" + "provider noise line\n" * 4000)
 if mode == "fail":
     sys.exit(1)
+if mode in ("completed", "commit-ready", "context-mismatch", "fix-before-commit"):
+    print(json.dumps({"schemaVersion": 1, "verdict": mode, "findings": [{"id": "F-1", "claim": "fixture finding",
+        "material": True, "kind": "nonbehavioral"}] if mode == "fix-before-commit" else []}))
+    sys.exit(0)
 if mode == "garbage":
     print("GARBAGE_ANSWER " + "g" * 3000)
     sys.exit(0)
@@ -140,7 +144,7 @@ class Ceremony(unittest.TestCase):
             tables = [row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")]
             return {table: connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] for table in tables}
 
-    def wrapper(self, mode: str, *extra: str) -> tuple[subprocess.CompletedProcess[str], str]:
+    def wrapper(self, mode: str, *extra: str, phase: str = "preflight-advice") -> tuple[subprocess.CompletedProcess[str], str]:
         bin_dir = self.tmp / "bin"
         bin_dir.mkdir(exist_ok=True)
         stub = bin_dir / "codex"
@@ -148,7 +152,7 @@ class Ceremony(unittest.TestCase):
         stub.chmod(0o755)
         prompt = self.tmp / f"prompt-{mode}.txt"
         env = {**self.env, "PATH": f"{bin_dir}:{self.env['PATH']}", "STUB_MODE": mode, "STUB_PROMPT": str(prompt)}
-        result = subprocess.run(["bash", str(WRAPPER), "--slug", "ceremony", "--phase", "preflight-advice",
+        result = subprocess.run(["bash", str(WRAPPER), "--slug", "ceremony", "--phase", phase,
                                  "--cwd", str(self.repo), "--design-absent", "fixture has no design", *extra,
                                  "--", "scope question"], env=env, capture_output=True, text=True)
         return result, prompt.read_text(encoding="utf-8") if prompt.exists() else ""
@@ -205,16 +209,64 @@ class AdvisorDiffBounded(Ceremony):
                        + "".join(f"        pad_{i} = {i}\n" for i in range(40)) + "        self.assertTrue(True)\n")
         (self.repo / "gone.py").write_text("".join(f"line_{i} = {i}  # DELETED-BODY\n" for i in range(50)), encoding="utf-8")
         (self.repo / "test_far.py").write_text(test_module, encoding="utf-8")
+        (self.repo / "config").write_text("old = 1\n", encoding="utf-8")
         self.git(self.repo, "add", ".")
         self.git(self.repo, "commit", "-q", "-m", "fixtures")
         self.begin()
         (self.repo / "gone.py").unlink()
         (self.repo / "test_far.py").write_text(test_module + "        self.assertFalse(False)  # ADDED\n", encoding="utf-8")
+        (self.repo / "config").unlink()
+        (self.repo / "config").mkdir()
+        (self.repo / "config" / "default.yaml").write_text("replaced: 2\n", encoding="utf-8")
         diff = checkpoint_channels(self.repo, self.env, "preflight-advice")["diff"]
         self.assertIn("diff --git a/gone.py b/gone.py\ndeleted file: 50 lines\n", diff, f"{marker}: {diff[:600]}")
         self.assertNotIn("DELETED-BODY", diff, f"{marker}: a deleted file's body was sent")
         self.assertIn("+        self.assertFalse(False)  # ADDED", diff, marker)
         self.assertNotIn("ENCLOSING-DEF", diff, f"{marker}: a test hunk carried its whole definition")
+        self.assertIn("+replaced: 2", diff, f"REPLACEMENT_ADDITION_HIDDEN: {diff[-600:]}")
+
+    def test_a_resumed_final_is_sent_only_the_change_since_its_commit_verdict(self) -> None:
+        marker = "RESUMED_BASE_NOT_APPROVED"
+        (self.repo / "app.py").write_text("value = 1\nother = 1\nJUDGED = 1\n", encoding="utf-8")
+        wid, identity = self.begin(), resolve_repo_identity(self.repo)
+
+        def final(mode: str, change: str) -> str:
+            (self.repo / "test_app.py").write_text(TEST_APP + change, encoding="utf-8")
+            invalidate_after_edit(identity, "test_app.py")
+            record_context_forge(self.repo, self.tmp)
+            self.ok("verify", "--", sys.executable, "-c", "pass")
+            self.ok("verify", "--kind", "quality-gate", "--base-ref", "HEAD")
+            set_phase(identity, "code-review", "passed", findings="none")
+            result, prompt = self.wrapper(mode, phase="final-review")
+            self.assertEqual(result.returncode, 0, result.stderr[-600:])
+            self.assertIn("--- original request: the completeness oracle", prompt, f"{marker}: a channel lost its heading")
+            return "".join(line for line in prompt.splitlines(keepends=True) if line.startswith("diff> "))
+
+        self.assertEqual(self.wrapper("completed")[0].returncode, 0, marker)  # a preflight answer judges no commit
+        advisor_disposition(identity, "ceremony", wid, "preflight", "none")
+        commit_evidence_phase(identity, "ceremony", wid, "preflight", {
+            "schemaVersion": 1, "slug": "ceremony", "workflowId": wid, "document": {"authoritativeContract": "c",
+                "behaviorMap": [item("BM_NONE", "NONE", kind="preservation", status="omitted", evidence="e", basis="b")]}})
+        set_phase(identity, "tdd", "not-required")
+        self.assertIn("JUDGED = 1", final("fix-before-commit", "# FIRST\n"), f"{marker}: a preflight advanced the judged tree")
+        self.ok("record", "advisor-disposition", "--stage", "final", "--finding", "F-1", "--fixed",
+                "--evidence-ref", f"{self.state()['verificationLatestEvidence']}:0")
+        mismatch = final("context-mismatch", "# SECOND\n")
+        self.assertNotIn("JUDGED = 1", mismatch, f"REJUDGED_WHOLE_PASS: {mismatch[:600]}")
+        self.assertIn("diff> 1\t0\tapp.py\n", mismatch, f"RESUMED_PASS_UNLISTED: {mismatch[:600]}")
+        retry = final("commit-ready", "# SECOND\n")
+        self.assertIn("+# SECOND", retry, f"{marker}: a context-mismatch advanced the judged tree")
+        self.assertNotIn("JUDGED = 1", retry, f"{marker}: the approved base was lost")
+        for pointer in (self.tmp / "state" / "_advisor-sessions").glob("*.sid"):
+            pointer.unlink()  # a new advisor session: the judged tree is the ledger's, not the session's
+        fresh = final("commit-ready", "# THIRD\n")
+        self.assertNotIn("JUDGED = 1", fresh, f"APPROVAL_NOT_FROM_LEDGER: {fresh[:600]}")
+        self.assertIn("+# THIRD", fresh, "APPROVAL_NOT_FROM_LEDGER")
+        self.assertIn("+# FLAGGED", final("fix-before-commit", "# FLAGGED\n"), marker)
+        self.ok("record", "advisor-disposition", "--stage", "final", "--finding", "F-1", "--rejected", "--reason", "r",
+                "--evidence-ref", f"{self.state()['verificationLatestEvidence']}:0")
+        appeal = self.wrapper("commit-ready", phase="final-review")[1]
+        self.assertIn("diff> +# FLAGGED", appeal, f"APPEAL_WITHOUT_DISPUTED_CODE: {appeal[-600:]}")
 
     def test_an_oversized_prompt_is_refused_before_the_provider(self) -> None:
         marker = "OVERSIZED_PROMPT_SENT"
@@ -535,6 +587,7 @@ class RecordSeam(Ceremony):
         before = self.rows()
         checked = self.cli("record", "preflight", "--check", "--input", "-", input=json.dumps(document))
         self.assertEqual(checked.returncode, 0, f"{marker}: {checked.stderr[-300:]}")
+        self.assertEqual(json.loads(checked.stdout), {"status": "passed", "checked": True}, "CHECK_RECEIPT_PHANTOM_ID")
         self.assertEqual(self.rows(), before, f"{marker}: --check persisted")
         self.assertEqual(self.state()["preflight"], "pending", marker)
         for kind, expected in (("preflight", "authoritativeContract"), ("review", "claim"),
@@ -737,6 +790,9 @@ class AdvisoryDedup(Ceremony):
         self.assertEqual(self.advise(REARM, "dedup-session", hook_event_name="PostCompact", trigger="auto"), "", marker)
         self.assertEqual(self.edit(PRE_TOOL), changed, f"{marker}: compaction did not restore the advice")
         self.assertIn("undefined_name", self.advise(POST_TOOL, "dedup-session", **post), f"{marker}: lint lost")
+        shutil.rmtree(self.tmp / "state" / "_advisories")
+        (self.tmp / "state" / "_advisories").write_text("", encoding="utf-8")  # every record write now fails
+        self.assertEqual([self.edit(PRE_TOOL), self.edit(PRE_TOOL)], [changed] * 2, "ADVISORY_LOST_ON_RECORD_FAILURE")
 
 
 class ObservedCapture(Ceremony):

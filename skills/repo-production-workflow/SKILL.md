@@ -189,7 +189,7 @@ python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" tdd \
   -- <same test surface>
 ```
 
-Use Production Code's **Minimum Implementation Decision** for repair completion and TDD's [map-update and reassessment rules](../tdd/recorder.md). Batch affected preservation and additive finding ownership in the existing call:
+Use Production Code's **Minimum Implementation Decision** for repair completion and TDD's [map-update and reassessment rules](../tdd/recorder.md). Batch affected preservation in the existing call:
 
 ```bash
 python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" record tdd-map --input - <<'JSON'
@@ -275,7 +275,7 @@ Pass `--review-context-id <agent-id>` with the delegate's review: a second
 recurrence hands its repair to the first reviewer a review names.
 
 ```bash
-python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" record review --input <review.json>
+python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" record review --input <review.json> --review-context-id <agent-id>
 ```
 
 A no-finding intake binds the reviewed tree and passes immediately. A finding

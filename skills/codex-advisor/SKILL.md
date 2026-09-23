@@ -144,7 +144,8 @@ For a long question, drop the `--` argument and feed it on stdin:
 and `CODEX_ADVISOR_EFFORT` or `--codex-effort` override model and effort. The
 first consult persists the session; later consults on the same slug resume it
 with `codex exec resume`, so the final review keeps the preflight session's
-full history.
+history. After a recorded final verdict, the next final gets the whole pass's file list
+and only the diff since the tree that verdict judged.
 
 `--provider claude` selects the `claude -p` transport through the claudex
 alias env (`ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`,
@@ -164,7 +165,7 @@ assembled prompt reports `codex_advisor_prompt bytes_total`. A phased consult
 records the whole envelope, then prints a digest of at most ~2KB (verdict,
 finding ids and claims, intake evidence id); `workflow.py evidence --full
 --evidence-id <intake>` reads the envelope back. If recording refuses, the whole
-answer prints and the wrapper exits 2. Provider stderr is shown as a 2000-byte tail. With `--provider claude`, the claudex
+answer prints and the wrapper exits 2. Codex provider stderr is shown as a 2000-byte tail. With `--provider claude`, the claudex
 window knobs (`CLAUDE_CODE_MAX_CONTEXT_TOKENS`, `CLAUDE_CODE_AUTO_COMPACT_WINDOW`,
 `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`) pass through to the delegate exactly when
 the alias block configures them.

@@ -219,8 +219,8 @@ Every hook advisory is keyed per session and emitted only when its text changed
 since that session last heard it in the current compaction epoch; identical repeats
 emit nothing.
 
-There is no Git hook, command classifier, protected-path parser, candidate-tree
-gate, approval marker, nonce, or evidence graph.
+There is no Git hook, protected-path parser, candidate-tree gate, approval marker,
+nonce, or evidence graph.
 
 ## Ordinary summaries
 

@@ -381,9 +381,11 @@ class PendingAdvisorRetries(AttackHarness):
         marker = "ACTIVE_MECHANISM_LOST"
         wid = self.begin("pending-retry")
         finding = {**self.CAPTURED, "id": "SPEC-1"}
-        ref = self.accept(wid, [finding])["advisorPreflight"]["intakeEvidence"]
-        self.assertEqual(self.record_preflight("pending-retry", wid,
-                         self.owned_map(ref, marker="VALUE_NOT_TWO")).returncode, 0)
+        ref = self.accept(wid, [finding, {**finding, "id": "SPEC-2", "claim": "A second read is wrong"}])[
+            "advisorPreflight"]["intakeEvidence"]
+        owns = [{"type": "finding", "evidenceId": ref, "id": spec} for spec in ("SPEC-1", "SPEC-2")]
+        self.assertEqual(self.record_preflight("pending-retry", wid, [
+            {**self.owned_map(ref, marker="VALUE_NOT_TWO")[0], "sourceRefs": owns}]).returncode, 0)
         explanation = "Fresh imports share the incorrect initializer. " * 100 + "Distinct final diagnosis."
         update = self.json_file("diagnosis.json", {"reassessment": explanation,
             "items": [{**self.owned_map(ref, marker="FRESH_READ_WRONG")[0], "id": "BM_FRESH"}]})
@@ -396,6 +398,10 @@ class PendingAdvisorRetries(AttackHarness):
         self.assertEqual(reference, {"evidenceId": recorded["summaryId"], "id": "SPEC-1"}, marker)
         recovered = self.ok("evidence", "--full", "--evidence-id", reference["evidenceId"])["document"]
         self.assertEqual(recovered["reassessment"], explanation, marker)
+        self.ok("record", "tdd-map", "--slug", "pending-retry", "--workflow-id", wid, "--input", str(self.json_file(
+            "no-diagnosis.json", {"items": [{**self.owned_map(ref, marker="MORE")[0], "id": "BM_MORE", "sourceRefs": owns}]})))
+        self.assertEqual([state.get("mechanismEvidence") for state in self.status()["findingStates"]], [reference, None],
+                         "STALE_DIAGNOSIS_BOUND")
 
     def test_second_recurrence_requires_reviewer_repair_and_lead_review(self) -> None:
         marker = "REPAIR_OWNERSHIP_BYPASSED"
@@ -1820,7 +1826,7 @@ class MapCorrectionAttacks(AttackHarness):
 
     def test_annotation_keeps_its_admission_without_waiving_transition_prerequisites(self) -> None:
         from hooks.lib.workflow_state import (
-            WorkflowError, annotate_tdd_evidence, commit_tdd, pause,
+            WorkflowError, commit_tdd, pause,
         )
 
         slug = "annotation-admission"
@@ -1833,7 +1839,7 @@ class MapCorrectionAttacks(AttackHarness):
         with self.assertRaises(WorkflowError):
             commit_tdd(identity, slug, wid, document, "in-progress")
         self.assertEqual(self.status(), before)
-        _, eid = annotate_tdd_evidence(identity, slug, wid, document)
+        _, eid = commit_tdd(identity, slug, wid, document, None)
         after = self.status()
         ignored = {"tddEvidence", "updatedAt", "nextAction"}
         self.assertEqual({k: v for k, v in after.items() if k not in ignored},
@@ -1843,8 +1849,7 @@ class MapCorrectionAttacks(AttackHarness):
         for supplied_wid, expected in (("stale-instance", eid), (wid, None)):
             with self.subTest(workflow=supplied_wid, evidence=expected):
                 with self.assertRaises(WorkflowError):
-                    annotate_tdd_evidence(identity, slug, supplied_wid, document,
-                                          expected_evidence_id=expected)
+                    commit_tdd(identity, slug, supplied_wid, document, None, expected_evidence_id=expected)
                 self.assertEqual(self.status(), after)
                 self.assertEqual(self.ok_text("history"), history)
         self.refused_unchanged("ANNOTATION_ADMITTED_EXECUTION", lambda: self.tdd(
@@ -1852,7 +1857,7 @@ class MapCorrectionAttacks(AttackHarness):
 
     def test_retired_map_state_is_refused_without_rewriting_history(self) -> None:
         from hooks.lib import behavior_map
-        from hooks.lib.workflow_state import WorkflowError, annotate_tdd_evidence
+        from hooks.lib.workflow_state import WorkflowError, commit_tdd
 
         slug = "retired-map-state"
         wid = self.open_pass(slug, [self.contract("VALUE_NOT_TWO")])
@@ -1863,8 +1868,7 @@ class MapCorrectionAttacks(AttackHarness):
         document = behavior_map.clone([original])[0]
         document["behaviorMap"][0]["status"] = "post-edit-passed"
         with self.assertRaises((ValueError, WorkflowError)):
-            annotate_tdd_evidence(resolve_repo_identity(self.repo), slug, wid, document,
-                                  expected_evidence_id=eid)
+            commit_tdd(resolve_repo_identity(self.repo), slug, wid, document, None, expected_evidence_id=eid)
         self.assertEqual(self.status(), before)
         self.assertEqual(self.ok_text("history"), history)
         self.assertEqual(self.ok("evidence", "--full", "--evidence-id", eid)["document"], original)

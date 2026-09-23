@@ -100,7 +100,7 @@ class AdvisorDirectMeasurementTest(unittest.TestCase):
             repo = temporary / "repo"
             repo.mkdir()
             env = os.environ | {
-                "CLAUDE_WORKFLOW_STATE_ROOT": str(temporary / "state"),
+                "CODEX_WORKFLOW_STATE_ROOT": str(temporary / "state"),
                 "PYTHONPYCACHEPREFIX": str(temporary / "pycache"),
             }
             for command in (
@@ -201,7 +201,7 @@ class AdvisorDirectMeasurementTest(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, marker + "\n" + result.stdout + result.stderr)
             sid = next(
-                (Path(env["CLAUDE_WORKFLOW_STATE_ROOT"]) / "_advisor-sessions").glob("*.sid")
+                (Path(env["CODEX_WORKFLOW_STATE_ROOT"]) / "_advisor-sessions").glob("*.sid")
             ).read_text(encoding="utf-8").strip()
             transcript = next(
                 (Path(env["HOME"]) / ".claude" / "projects").rglob(f"{sid}.jsonl")
@@ -241,7 +241,7 @@ class AdvisorSecurityBoundaryTest(unittest.TestCase):
             repo = temporary / "repo"
             repo.mkdir()
             env = os.environ | {
-                "CLAUDE_WORKFLOW_STATE_ROOT": str(temporary / "state"),
+                "CODEX_WORKFLOW_STATE_ROOT": str(temporary / "state"),
                 "PYTHONPYCACHEPREFIX": str(temporary / "pycache"),
             }
             for command in (
@@ -306,7 +306,7 @@ class AdvisorSecurityBoundaryTest(unittest.TestCase):
                 cwd=repo, env=env,
             )
             sid = next(
-                (Path(env["CLAUDE_WORKFLOW_STATE_ROOT"]) / "_advisor-sessions").glob("*.sid")
+                (Path(env["CODEX_WORKFLOW_STATE_ROOT"]) / "_advisor-sessions").glob("*.sid")
             ).read_text(encoding="utf-8").strip()
             tools = advisor_tool_names(env, sid) if result.returncode == 0 else []
             return result, tools, hook_marker.exists()
@@ -319,7 +319,7 @@ class AdvisorSecurityBoundaryTest(unittest.TestCase):
             repo = temporary / "repo"
             repo.mkdir()
             env = os.environ | {
-                "CLAUDE_WORKFLOW_STATE_ROOT": str(temporary / "state"),
+                "CODEX_WORKFLOW_STATE_ROOT": str(temporary / "state"),
                 "PYTHONPYCACHEPREFIX": str(temporary / "pycache"),
             }
             for command in (
@@ -421,7 +421,7 @@ class AdvisorSecurityBoundaryTest(unittest.TestCase):
                 cwd=repo, env=env,
             )
             sid = next(
-                (Path(env["CLAUDE_WORKFLOW_STATE_ROOT"]) / "_advisor-sessions").glob("*.sid")
+                (Path(env["CODEX_WORKFLOW_STATE_ROOT"]) / "_advisor-sessions").glob("*.sid")
             ).read_text(encoding="utf-8").strip()
             transcript = next(
                 (Path(env["HOME"]) / ".claude" / "projects").rglob(f"{sid}.jsonl")
@@ -549,7 +549,7 @@ class AdvisorSecurityBoundaryTest(unittest.TestCase):
             repo = Path(directory) / "repo"
             repo.mkdir()
             env = os.environ | {
-                "CLAUDE_WORKFLOW_STATE_ROOT": str(Path(directory) / "state"),
+                "CODEX_WORKFLOW_STATE_ROOT": str(Path(directory) / "state"),
                 "PYTHONPYCACHEPREFIX": str(Path(directory) / "pycache"),
             }
             run_checked(["git", "init", "-q"], cwd=repo, env=env)
@@ -563,7 +563,7 @@ class AdvisorSecurityBoundaryTest(unittest.TestCase):
                 cwd=repo, env=env,
             )
             sid = next(
-                (Path(env["CLAUDE_WORKFLOW_STATE_ROOT"]) / "_advisor-sessions").glob("*.sid")
+                (Path(env["CODEX_WORKFLOW_STATE_ROOT"]) / "_advisor-sessions").glob("*.sid")
             ).read_text(encoding="utf-8").strip()
             tools = advisor_tool_names(env, sid)
         self.assertEqual(result.returncode, 0, marker + result.stdout + result.stderr)
@@ -580,7 +580,7 @@ class AdvisorConcurrentSessionTest(unittest.TestCase):
             repo = temporary / "repo"
             repo.mkdir()
             env = os.environ | {
-                "CLAUDE_WORKFLOW_STATE_ROOT": str(temporary / "state"),
+                "CODEX_WORKFLOW_STATE_ROOT": str(temporary / "state"),
                 "PYTHONPYCACHEPREFIX": str(temporary / "pycache"),
             }
             for command in (
@@ -617,8 +617,8 @@ class AdvisorConcurrentSessionTest(unittest.TestCase):
             self.assertEqual(forged.returncode, 0, forged.stdout + forged.stderr)
             state = json.loads(run_workflow("status", "--repo", str(repo), cwd=repo, env=env).stdout)
             sid_file = (
-                Path(env["CLAUDE_WORKFLOW_STATE_ROOT"]) / "_advisor-sessions"
-                / f"{state['repo']['key']}-{slug}-{state['workflowId']}.sid"
+                Path(env["CODEX_WORKFLOW_STATE_ROOT"]) / "_advisor-sessions"
+                / f"{state['repo']['key']}-{slug}-{state['workflowId']}.codex.sid"
             )
             common = [
                 str(WRAPPER), "--slug", slug, "--phase", "preflight-advice",
@@ -709,9 +709,9 @@ class AdvisorConcurrentSessionTest(unittest.TestCase):
                     cwd=repo, env=env,
                 ).stdout
             )
-            self.assertEqual(
-                json.loads(evidence["document"]["raw"]), json.loads(success_stdout), marker,
-            )
+            raw = json.loads(evidence["document"]["raw"])  # the winner's digest names its recorded envelope
+            self.assertTrue(success_stdout.startswith(
+                f"verdict={raw['verdict']} findings={len(raw['findings'])} intake={intake}\n"), marker)
 
 
 class AdvisorBudgetContractTest(unittest.TestCase):
@@ -763,7 +763,7 @@ class AdvisorPhaseLessPayloadContractTest(unittest.TestCase):
             env = os.environ | {
                 "HOME": directory,
                 "CLAUDE_HOME": str(temporary / "claude"),
-                "CLAUDE_WORKFLOW_STATE_ROOT": str(temporary / "state"),
+                "CODEX_WORKFLOW_STATE_ROOT": str(temporary / "state"),
             }
             for option in (("--packet", str(packet)), ("--base-ref", "HEAD")):
                 with self.subTest(option=option[0]):

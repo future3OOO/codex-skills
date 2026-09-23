@@ -149,7 +149,6 @@ class MappedIntakeFailureTests(unittest.TestCase):
         )
         self.assertEqual(red.returncode, 0, red.stdout + red.stderr)
 
-
         current = read_workflow(identity)
         evidence_id = str(current["tddEvidence"])
         connection = sqlite3.connect(database_path(identity))

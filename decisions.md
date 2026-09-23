@@ -1745,7 +1745,7 @@ Decisions:
   The compaction re-arm names open steps and unresolved map items only.
 - Deleted as obsolete: the recorder/pass-state/verify-run/tdd-run shims, session
   associations, and `benchmarks/ab_estate_benchmark.py` with its test (it drove the
-  deleted shims and already expected hook output removed by #182).
+  deleted shims and already expected hook output removed by future3OOO/claude-skills#182).
 
 - Independent review (R-1..R-11) corrected the observed runner (caller's process
   group, streamed output, own verification key), typed-gate output (whole report
@@ -1803,10 +1803,23 @@ Decisions:
 - The late-RED channel names each changed-path list once with the items that share
   it (26,291 -> about 4,000 characters on this pass), keeping the final consult under
   the transport limit it reached again at 1,054,168 characters.
+- PR #102 review: deletions leave the advisor diff via `--diff-filter=d`, so a file
+  replaced by a directory keeps its hunks; a map update without a reassessment binds no
+  mechanism; `--check` names no rolled-back row; LIVE advisor failures are #103.
+- Transport, fifth overflow (1,058,079 characters): each final re-sent the whole pass.
+  The ledger marks a tree as judged after every recorded final verdict (not
+  context-mismatch), not only approvals: approval-only makes a fix-before-commit chain
+  resend the whole pass (837,977 bytes, over the provider limit). Accepted trade-off
+  (SPEC-33 rejected on that measurement; its "approved" wording on SPEC-30 is
+  corrected): after compaction a later final may lack the text of hunks an earlier
+  final judged, which only the whole-pass numstat and the finding ledger still carry.
+  The next final gets the pass's numstat plus the diff since `judgedTree`, an appeal
+  the base its disputed verdict was sent. A wrapper session pointer drew five findings
+  (RR-12/14/15, SPEC-31/32) before this single ledger owner. This pass predates the
+  field; its final ran on a state copy stamped with its last final's gate tree
+  (837,977 -> 27,812 bytes).
 
-Delivery status: independent review closed (R-1..R-11, RR-1..RR-9) and the final
-advisor returned commit-ready with no material finding (intake
-evidence-a234ab4bbaf68f7b20c090aedd3c2008). The final consult ran through this
-branch's wrapper against a copy of the state root, because the installed wrapper
-cannot bound its diff. Committed and pushed as one PR linking #96; merge awaits
-explicit authorization.
+Delivery status: PR #102 (closes #96). The follow-up commit answers its 30 review
+threads with fixes or measured rejections, after independent review and a final
+advisor consult on a copy of the state root (the installed wrapper cannot bound its
+diff). Merge awaits explicit authorization.

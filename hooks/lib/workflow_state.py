@@ -93,15 +93,6 @@ def _require_state(state: JsonObject | None) -> JsonObject:
     return _normalise(state) or state
 
 
-def _require(identity: RepoIdentity) -> JsonObject:
-    return _require_state(read_workflow(identity))
-
-
-def _updated(state: JsonObject) -> JsonObject:
-    state["updatedAt"] = utc_timestamp()
-    return state
-
-
 def _commit(
     transaction: LedgerMutation,
     state: JsonObject,
@@ -109,7 +100,8 @@ def _commit(
     *, evidence: Sequence[EvidenceWrite] = (),
     manifests: Sequence[ManifestWrite] = (),
 ) -> JsonObject:
-    return transaction.append(_updated(state), kind, evidence=evidence, manifests=manifests)
+    state["updatedAt"] = utc_timestamp()
+    return transaction.append(state, kind, evidence=evidence, manifests=manifests)
 
 
 def _evidence_ready(state: JsonObject, field: str) -> bool:
@@ -153,11 +145,6 @@ def _preflight_finding_states(state: JsonObject) -> list[JsonObject]:
     return [entry for entry in states if isinstance(entry, dict) and entry.get("stage") == "preflight"]
 
 
-def _rides_the_map(entry: JsonObject) -> bool:
-    """A pending behavioral finding is a direct attack obligation the map owns."""
-    return entry.get("status") == "pending" and entry.get("kind") == "behavioral"
-
-
 def _review_assessed(state: JsonObject) -> bool:
     """A recorded assessment may expose open findings to its final advisor.
 
@@ -181,10 +168,6 @@ def _require_predecessor(state: JsonObject, phase: str) -> None:
         raise WorkflowIncomplete(f"{phase} requires {SEQUENCE[position - 1]}")
 
 
-def _next_incomplete_phase(state: JsonObject) -> str:
-    return next((phase for phase in SEQUENCE if not _allows_next(state, phase)), "complete-workflow")
-
-
 def _derive_next_action(state: JsonObject, tdd_document: JsonObject | None = None) -> str:
     finding_states = state.get("findingStates", [])
     correction = [
@@ -205,7 +188,7 @@ def _derive_next_action(state: JsonObject, tdd_document: JsonObject | None = Non
         return "close-current-findings"
     if any(entry.get("appealStatus") == "pending" for entry in finding_states):
         return "appeal-final-review"
-    phase = _next_incomplete_phase(state)
+    phase = next((phase for phase in SEQUENCE if not _allows_next(state, phase)), "complete-workflow")
     if phase == "final-review":
         review = state.get("finalReview")
         if isinstance(review, dict) and review.get("status") not in {None, "pending"}:
@@ -463,7 +446,7 @@ def _require_owned_behavioral_findings(
     """A pending behavioral preflight finding is admitted only as a mapped attack obligation."""
     unowned = sorted(
         str(entry.get("findingId")) for entry in _preflight_finding_states(state)
-        if _rides_the_map(entry)
+        if entry.get("status") == "pending" and entry.get("kind") == "behavioral"
         and (str(entry.get("intakeEvidenceId")), str(entry.get("findingId"))) not in owned
     )
     if unowned:
@@ -574,8 +557,8 @@ def commit_tdd(
             mechanism_updates = [entry for entry in state.get("findingStates", [])
                 if entry.get("kind") == "behavioral" and _finding_unresolved(entry)
                 and (str(entry["intakeEvidenceId"]), str(entry["findingId"])) in affected
-                and _mechanism_explanation(entry.get("mechanismEvidence"), transaction.evidence,
-                                           state["workflowId"]) != summary_doc.get("reassessment")]
+                and summary_doc.get("reassessment") not in (None, _mechanism_explanation(
+                    entry.get("mechanismEvidence"), transaction.evidence, state["workflowId"]))]
             previous = _map_items(transaction.evidence(expected_evidence_id))
             if previous is None:
                 previous = _map_items(transaction.evidence(state.get("preflightEvidence")))
@@ -624,33 +607,12 @@ def commit_tdd(
         return _commit(transaction, state, f"tdd-{action or 'annotated'}", evidence=writes, manifests=manifests), evidence_id
 
 
-def annotate_tdd_evidence(
-    identity: RepoIdentity,
-    slug: str,
-    workflow_id: str | None,
-    summary_doc: JsonObject,
-    *,
-    expected_evidence_id: str | None = None,
-    reassessed: frozenset[str] = frozenset(),
-) -> tuple[JsonObject, str | None]:
-    """Use the same binding/ownership transaction without changing lifecycle."""
-    state, evidence_id = commit_tdd(
-        identity, slug, workflow_id, summary_doc, None,
-        expected_evidence_id=expected_evidence_id, reassessed=reassessed,
-    )
-    return state, evidence_id
-
-
-def _candidate_tree(identity: RepoIdentity) -> str:
-    return _active_candidate_tree(identity)
-
-
 def _validate_disposition_context(identity: RepoIdentity, state: JsonObject, document: JsonObject) -> tuple[dict[str, str], str | None]:
     context = document.get("context")
     if not isinstance(context, dict) or context.get("workflowId") != state.get("workflowId"):
         raise WorkflowError("disposition context does not match the active workflow instance")
     manifest = tree_manifest(identity)
-    if context.get("candidateTree") != _candidate_tree(identity):
+    if context.get("candidateTree") != _active_candidate_tree(identity):
         raise WorkflowError("disposition candidateTree does not match the current reviewable tree")
     return manifest, _head_oid(identity)
 
@@ -745,7 +707,7 @@ def commit_review(
                     entry.pop("repairReviewedTree", None)
                 else:
                     entry["repairReviewEvidence"] = write.evidence_id
-                    entry["repairReviewedTree"] = _candidate_tree(identity)
+                    entry["repairReviewedTree"] = _active_candidate_tree(identity)
             if summary_doc.get("reviewContextId") and not any(
                     _finding_unresolved(entry) and entry.get("repairOwner") for entry in state.get("findingStates", [])):
                 state["reviewerContextId"] = summary_doc["reviewContextId"]
@@ -1072,10 +1034,6 @@ def evidence_document(identity: RepoIdentity, evidence_id: str | None) -> JsonOb
     return document if isinstance(document, dict) else None
 
 
-def evidence_record(identity: RepoIdentity, evidence_id: str) -> JsonObject | None:
-    return read_evidence(identity, evidence_id)
-
-
 def _graph_candidate_ready(
     document: object, candidate: str, *, slug: object, workflow_id: object,
 ) -> bool:
@@ -1393,6 +1351,10 @@ def record_advisor_result(
                         "source": source, "status": verdict, "intakeEvidence": intake_reference,
                         "findings": "pending" if _stage_unresolved(state, stage, source) else "none",
                     }
+                    # A later final is sent only the change since the tree this verdict judged; an
+                    # appeal of it re-judges from the base this verdict itself was sent.
+                    state["judgedBase"] = state.get("judgedTree")
+                    state["judgedTree"] = expected_candidate_tree or _active_candidate_tree(identity)
                 state.pop("finalReviewContextMismatchEvidence", None)
                 state["phase"] = "final-review"
         else:
@@ -1656,7 +1618,7 @@ def _resolve_disposition_receipts(identity: RepoIdentity, transaction: LedgerMut
         ):
             raise WorkflowError("fixed requires a successful current executed receipt")
     if document.get("context") is None:
-        document["context"] = {"workflowId": state["workflowId"], "candidateTree": _candidate_tree(identity)}
+        document["context"] = {"workflowId": state["workflowId"], "candidateTree": _active_candidate_tree(identity)}
     for item in document["dispositions"]:
         finding = findings.get(item["finding_id"])
         if finding is None:
@@ -2020,7 +1982,7 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
         raise ValueError(f"unsupported checkpoint phase: {phase}")
     if reconsult and phase != "preflight-advice":
         raise ValueError("--reconsult requires preflight-advice")
-    state = _require(identity)
+    state = _require_state(read_workflow(identity))
     workflow_id = instance_id(state)
     candidate = _active_candidate_tree(identity)
     revalidation = bool(state.get("revalidation"))
@@ -2100,6 +2062,8 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
     if channel_dir is None:
         return result
     ledger, late = _finding_ledger(identity, state, items), {}
+    since = state.get("judgedBase" if state.get("nextAction") == "appeal-final-review" else "judgedTree") \
+        if phase == "final-review" else None
     for entry in _late_items(items):  # each changed-path list once, with the items that share it
         late.setdefault(json.dumps(entry["productionChanged"]), {"ids": [], "productionChanged": entry["productionChanged"]})["ids"].append(entry["id"])
     values: dict[str, tuple[object, object]] = {
@@ -2108,7 +2072,7 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
         "finding-ledger": (None, ledger or None),
         "late-red": (None, list(late.values()) or None),
         "diff": (None, None if "passStartOid" in missing else current_pass_evidence(
-            str(identity.root), f"{state['passStartOid']}^{{tree}}", candidate)),
+            str(identity.root), f"{state['passStartOid']}^{{tree}}", candidate, since=since)),
     }
     result["channels"] = []
     for position, (name, description) in enumerate(CHANNELS):
@@ -2117,6 +2081,8 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
             continue
         data = content if isinstance(content, bytes) else (
             content if isinstance(content, str) else json.dumps(content, sort_keys=True, separators=(",", ":"))).encode("utf-8")
+        if since and name == "diff":  # the pass's last recorded final verdict judged everything through `since`
+            description = f"the whole pass's changed files (numstat), then the diff since {since}, judged by the last final"
         path = os.path.join(channel_dir, f"{position}-{name}")
         with open(path, "wb") as handle:
             handle.write(data)

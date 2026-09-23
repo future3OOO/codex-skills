@@ -102,12 +102,8 @@ def _text(value: object) -> str | None:
     return (value.strip() or None) if isinstance(value, str) else None
 
 
-def _words(value: str) -> list[str]:
-    return re.findall(r"[a-z0-9]+", value.casefold())
-
-
 def _names_generic_failure(marker: str) -> bool:
-    words = _words(marker)
+    words = re.findall(r"[a-z0-9]+", marker.casefold())
     for phrase in GENERIC_RED_PHRASES:
         parts = phrase.split()
         if "".join(parts) in words:
@@ -639,20 +635,6 @@ def unresolved(
     ]
 
 
-def _actionable(items: list[JsonObject]) -> set[str]:
-    """Admission reads only the items a RED can act on; a superseded item's obligation moved on."""
-    return {str(entry["id"]) for entry in items if entry.get("status") in {"pending", "red"}}
-
-
-def may_refactor(items: list[JsonObject]) -> bool:
-    """The refactor-while-GREEN window: every contract item resolved and one GREEN through RED."""
-    pending = _actionable(items)
-    contract = [entry for entry in items if entry.get("kind") == "contract"]
-    return not any(entry["id"] in pending for entry in contract) and any(
-        entry.get("status") in {"green", "superseded"} for entry in contract
-    )
-
-
 def edit_blocker(items: list[JsonObject]) -> str | None:
     """Missing ordering prerequisites, not the full set of edit obligations. Advice only."""
     preservation = [
@@ -667,9 +649,8 @@ def edit_blocker(items: list[JsonObject]) -> str | None:
     ]
     if unswept:
         return "contract item(s) without a RED: " + ", ".join(unswept)
-    if any(entry.get("kind") == "contract" and entry.get("status") == "red" for entry in items):
-        return None
-    if may_refactor(items):
+    # No contract item is pending here: a RED, or the refactor-while-GREEN window, admits the edit.
+    if any(entry.get("kind") == "contract" and entry.get("status") in {"red", "green", "superseded"} for entry in items):
         return None
     contract = [str(entry["id"]) for entry in items if entry.get("kind") == "contract"]
     return (

@@ -120,8 +120,8 @@ Decide every material unknown one of three ways: resolve it from the packet,
 repository, runtime, governing artifact or verified source; interview with
 `/grilling`, one question at a time, when it can change Module shape, public
 Interface, Seam placement, data contract or irreversible scope; or block honestly
-and do not record. A settled choice whose consequence still needs falsification is
-a pending `behaviorMap` item, not an unknown. Do not pause for ceremonial approval.
+and do not record. A settled choice still needing falsification, or unsettled
+readings of one behavior, is a pending `behaviorMap` item, not an unknown.
 
 ### `behaviorMap`
 

@@ -116,11 +116,8 @@ def _private_sidecars(path: Path) -> None:
                 candidate.chmod(0o600)
         except OSError:
             pass
-def _locked(exc: sqlite3.OperationalError) -> bool:
-    text = str(exc).lower()
-    return "locked" in text or "busy" in text
 def _raise_operational(exc: sqlite3.OperationalError) -> NoReturn:
-    if _locked(exc):
+    if "locked" in (text := str(exc).lower()) or "busy" in text:
         raise LedgerBusy("workflow database is busy; no transition was recorded") from exc
     raise LedgerError(f"workflow database failure: {exc}") from exc
 def _open_connection(path: Path, *, read_only: bool) -> sqlite3.Connection:

@@ -273,8 +273,9 @@ def _producer_stop_document(path: Path) -> bool:
     """Whether this `<session>.json` holds what the retired Stop producer wrote.
 
     That producer wrote schemaVersion 1 plus one of the fields its callers set,
-    updating the object in place, so extra keys were the producer's too. An empty fingerprint is a real payload: the resolution path clears the
-    field by writing "". Unparseable bytes or another schema are not this
+    updating the object in place, so extra keys were the producer's too. An
+    empty fingerprint is a real payload: the resolution path clears the field
+    by writing "". Unparseable bytes or another schema are not this
     contract's to delete. The caller owns the filename test, so the two
     preserved cases keep separate reported reasons.
     """

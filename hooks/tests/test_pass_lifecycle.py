@@ -2765,12 +2765,12 @@ class PassLifecycleTests(unittest.TestCase):
         blocked, _ = ready_for_edit(identity, "app.py")
         self.assertFalse(blocked, "a reviewable edit reopened production editing on a completed pass")
 
-        from hooks.lib.workflow_state import TDD_CLOSED, WorkflowError, annotate_tdd_evidence
+        from hooks.lib.workflow_state import TDD_CLOSED, WorkflowError, commit_tdd
         prepared = {"workflowId": wid, "behaviorMap": self.preflight_document()["behaviorMap"], "runs": []}
         # Observe the real writer before transaction acquisition; substitute no collaborator.
         program = """import json, sys
 from hooks.lib.repo_identity import resolve_repo_identity
-from hooks.lib.workflow_state import annotate_tdd_evidence
+from hooks.lib.workflow_state import commit_tdd
 def wait_at_mutation(frame, event, arg):
     if event == 'call' and frame.f_code.co_name == 'mutation':
         sys.settrace(None)
@@ -2778,8 +2778,8 @@ def wait_at_mutation(frame, event, arg):
         sys.stdin.readline()
     return wait_at_mutation
 sys.settrace(wait_at_mutation)
-annotate_tdd_evidence(resolve_repo_identity(sys.argv[1]), 'terminal-state', sys.argv[2],
-                      json.loads(sys.argv[3]), expected_evidence_id=json.loads(sys.argv[4]))
+commit_tdd(resolve_repo_identity(sys.argv[1]), 'terminal-state', sys.argv[2],
+           json.loads(sys.argv[3]), None, expected_evidence_id=json.loads(sys.argv[4]))
 """
         with subprocess.Popen(
             [sys.executable, "-c", program, str(self.repo), wid, json.dumps(prepared),
@@ -2796,8 +2796,7 @@ annotate_tdd_evidence(resolve_repo_identity(sys.argv[1]), 'terminal-state', sys.
         self.assertEqual(state["verification"], "pending")
         failure = "GOVERNANCE_ANNOTATION_MUTATED_DOCUMENT: STALE_PREPARATION_BYPASSED_GOVERNANCE"
         with self.assertRaisesRegex(WorkflowError, TDD_CLOSED, msg=failure):
-            annotate_tdd_evidence(identity, "terminal-state", wid, prepared,
-                                  expected_evidence_id=state.get("tddEvidence"))
+            commit_tdd(identity, "terminal-state", wid, prepared, None, expected_evidence_id=state.get("tddEvidence"))
         self.assertEqual(json.loads(self.cli("status").stdout), state, failure)
         self.assertEqual(self.history_events(), history, failure)
         update = self.tmp / "governance-map.json"

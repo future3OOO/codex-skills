@@ -10,7 +10,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from ._workflow_db import CHECK_ONLY, LedgerError, _canonical, history
+from ._workflow_db import CHECK_ONLY, LedgerError, _canonical, history, read_evidence
 from .behavior_map import interpretation_pending
 from .command_runner import emit_json as _emit_json, print_output as _print_output, run as _run, run_entry as _run_entry
 from .repo_identity import RepoIdentity, RepoIdentityError, resolve_repo_identity, try_resolve_repo_identity
@@ -36,7 +36,6 @@ from .workflow_state import (
     commit_verification,
     complete,
     evidence_document,
-    evidence_record,
     execution_receipt,
     pause,
     public_status,
@@ -356,7 +355,9 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
     CHECK_ONLY.set(args.check)
     state = bound_state(identity, args.slug, args.workflow_id)
     slug, workflow_id = str(state["slug"]), str(state["workflowId"])
-    checked = {"checked": True} if args.check else {}
+    def emit(receipt: dict[str, object]) -> None:  # a rolled-back --check names none of its rows
+        _emit_json({key: value for key, value in receipt.items() if key not in {"evidenceId", "summaryId"}}
+                   | {"checked": True} if args.check else receipt)
     if args.kind == "preflight":
         if not args.input:
             raise ValueError("record preflight requires --input <path|->")
@@ -366,7 +367,7 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
         _, evidence_id = commit_evidence_phase(identity, slug, workflow_id, "preflight", {
             "schemaVersion": 1, "slug": slug, "workflowId": workflow_id, "document": document,
             "recordedAt": utc_timestamp()}, status=status)
-        _emit_json({"evidenceId": evidence_id, "status": status, **checked})
+        emit({"evidenceId": evidence_id, "status": status})
         return 2 if pending else 0
     if args.kind == "review":
         if not args.input:
@@ -374,11 +375,11 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
         document, status, findings = review_summary(
             args.input, slug=slug, workflow_id=workflow_id, review_context_id=args.review_context_id)
         state, evidence_id = commit_review(identity, slug, workflow_id, document, status, findings)
-        _emit_json({"summaryId": evidence_id, "status": state["codeReview"]["status"], **checked})
+        emit({"summaryId": evidence_id, "status": state["codeReview"]["status"]})
         return 0
     if args.kind == "tdd-map":
         from .tdd_workflow import map_update
-        _emit_json({**map_update(identity, state, _document(args, "TDD map update")), **checked})
+        emit(map_update(identity, state, _document(args, "TDD map update")))
         return 0
     candidate = _active_candidate_tree(identity)
     if args.kind == "advisor-result":
@@ -418,7 +419,7 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
         findings = args.findings or ("none" if flag is None and document is None else "addressed")
         state = advisor_disposition(identity, slug, workflow_id, args.stage, findings,
                                     document=document, flag=flag, expected_candidate_tree=candidate)
-    _emit_json({**_receipt(state, identity), **checked})
+    emit(_receipt(state, identity))
     return 0
 
 
@@ -453,7 +454,7 @@ def _dispatch(args: argparse.Namespace) -> int:
     elif args.command == "history":
         _emit_json(history(identity, args.workflow_id))
     elif args.command == "evidence":
-        value = evidence_record(identity, args.evidence_id)
+        value = read_evidence(identity, args.evidence_id)
         if value is None:
             raise WorkflowError("evidence not found")
         document = value.pop("document")
@@ -486,8 +487,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         # The TDD verb's parsing travels with its implementation.
         if values and values[0] == "tdd":
-            from .tdd_workflow import run_tdd
-            return run_tdd(values[1:])
+            from .tdd_workflow import _run_tdd
+            return _run_tdd(values[1:])
         return _dispatch(parser().parse_args(values))
     except (RepoIdentityError, LedgerError, WorkflowError, ValueError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)

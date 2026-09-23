@@ -66,12 +66,8 @@ def atomic_write_bytes(path: Path, value: bytes) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def atomic_write_text(path: Path, value: str) -> None:
-    atomic_write_bytes(path, value.encode("utf-8"))
-
-
 def atomic_write_json(path: Path, value: object) -> None:
-    atomic_write_text(path, json.dumps(value, sort_keys=True, indent=2, ensure_ascii=False) + "\n")
+    atomic_write_bytes(path, (json.dumps(value, sort_keys=True, indent=2, ensure_ascii=False) + "\n").encode("utf-8"))
 
 
 @contextlib.contextmanager

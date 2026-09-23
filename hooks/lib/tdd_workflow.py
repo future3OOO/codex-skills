@@ -31,7 +31,6 @@ from .workflow_state import (
     WorkflowError,
     _executed_selections,
     _head_oid,
-    annotate_tdd_evidence,
     bound_state,
     commit_tdd,
     evidence_document,
@@ -226,20 +225,15 @@ def _not_required(
     return 0
 
 
-def _workflow_id_of(state: JsonObject) -> str:
-    value = instance_id(state)
-    if value is None:
-        raise WorkflowError(NO_INSTANCE_ID)
-    return str(value)
-
-
 def _active_candidate(identity: RepoIdentity, value: str | None) -> tuple[JsonObject, str, str]:
     state = bound_state(identity, value)
     if state.get("revalidation"):
         raise WorkflowError(TDD_CLOSED)
     if state.get("preflight") != "passed" or not state.get("preflightEvidence"):
         raise WorkflowError("tdd requires recorded preflight evidence")
-    return state, str(state["slug"]), _workflow_id_of(state)
+    if (workflow_id := instance_id(state)) is None:
+        raise WorkflowError(NO_INSTANCE_ID)
+    return state, str(state["slug"]), str(workflow_id)
 
 
 def _candidate_drift(
@@ -1083,10 +1077,11 @@ def map_update(identity: RepoIdentity, state: JsonObject, value: JsonObject) -> 
     if source is not None:
         reassessed |= {str(source)}
     if reassessed or json.dumps(updated, sort_keys=True) != json.dumps(items, sort_keys=True):
-        document = {**(current or _map_doc(
+        # A diagnosis describes its own update; an update without one inherits none.
+        document = {**{key: field for key, field in (current or _map_doc(
             slug=str(state["slug"]), workflow_id=str(state["workflowId"]),
             items=items, status=status, kind="map",
-        )), "behaviorMap": updated, "status": status, "dispositions": dispositions,
+        )).items() if key != "reassessment"}, "behaviorMap": updated, "status": status, "dispositions": dispositions,
             "sourceBehaviorId": source, "updatedAt": utc_timestamp(),
             **({"reassessment": value["reassessment"].strip()} if str(value.get("reassessment", "")).strip() else {})}
         if input_checks:
@@ -1109,23 +1104,13 @@ def map_update(identity: RepoIdentity, state: JsonObject, value: JsonObject) -> 
             set(entry) & {"boundaryInputs", "interpretations", "interpretation", "authority"}
             for entry in dispositions
         ) and set(behavior_map.unresolved(items)) != set(unresolved)
-        if before == after and not review_changed and not interpretation_progress:
-            _, evidence_id = annotate_tdd_evidence(
-                identity, str(state["slug"]), str(state["workflowId"]), document,
-                expected_evidence_id=current_evidence_id, reassessed=reassessed,
-            )
-        else:
-            action = "in-progress" if unresolved else "passed"
-            _, evidence_id = commit_tdd(
-                identity, str(state["slug"]), str(state["workflowId"]), document, action,
-                expected_evidence_id=current_evidence_id,
-                review_changed=review_changed, reassessed=reassessed,
-            )
+        # A None action annotates the evidence under the same binding without a lifecycle change.
+        quiet = before == after and not review_changed and not interpretation_progress
+        _, evidence_id = commit_tdd(
+            identity, str(state["slug"]), str(state["workflowId"]), document,
+            None if quiet else "in-progress" if unresolved else "passed",
+            expected_evidence_id=current_evidence_id, review_changed=review_changed, reassessed=reassessed,
+        )
     return {"summaryId": evidence_id, "status": status, "pending": unresolved,
             "added": [entry["id"] for entry in added_items],
             **({"inputEvidence": input_checks} if input_checks else {})}
-
-
-def run_tdd(values: list[str]) -> int:
-    """Public entry for the workflow CLI's mapped-or-legacy TDD verb."""
-    return _run_tdd(values)

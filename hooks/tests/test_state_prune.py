@@ -554,7 +554,7 @@ class StatePruneTests(unittest.TestCase):
         return resolve_repo_identity(repo)
 
     def dead_stop_slot(self, name: str = "stoprepo"):
-        """A classifiably dead slot holding real producer-written Stop documents.
+        """A classifiably dead slot holding the retired Stop producer's documents.
 
         The documents carry the shape the retired Stop producer persisted, which
         installed estates still hold; the repository is then deleted to make
