@@ -334,7 +334,8 @@ class AdvisorSecurityBoundaryTest(unittest.TestCase):
                 (Path(env["CLAUDE_WORKFLOW_STATE_ROOT"]) / "_advisor-sessions").glob("*.sid")
             ).read_text(encoding="utf-8").strip()
             tools = advisor_tool_names(env, sid) if result.returncode == 0 else []
-            return result, tools, hook_marker.exists(), advisor_document(result, cwd=repo, env=env)
+            return result, tools, hook_marker.exists(), (advisor_document(result, cwd=repo, env=env)
+                                                        if result.returncode == 0 else {})
 
     def _run_final_probe(
         self, question: str
@@ -459,7 +460,7 @@ class AdvisorSecurityBoundaryTest(unittest.TestCase):
                         str(block.get("text", "")) for block in content
                         if isinstance(block, dict) and block.get("type") == "text"
                     ))
-            recorded = advisor_document(result, cwd=repo, env=env)
+            recorded = advisor_document(result, cwd=repo, env=env) if result.returncode == 0 else {}
             return result, advisor_tool_names(env, sid), user_texts[-1], before, recorded
 
     def test_final_review_preserves_secured_envelope(self) -> None:

@@ -3,8 +3,8 @@
 RED and GREEN must select the same tests, not use byte-identical command text.
 Direct pytest and unittest commands establish reach: the runner reports an
 executed test whose own failure carries the mapped marker. Any other command is
-an operation at the production Interface: its failure is recorded with reach
-unresolved and review establishes that the observed failure is the mapped
+an operation at the production Interface: its failure is classified and review
+establishes that the observed failure is the mapped
 promise. The workflow ledger is continuity, not an attestation system.
 """
 from __future__ import annotations
@@ -603,7 +603,7 @@ def evaluate_red(
 ) -> tuple[dict[str, object] | None, str]:
     """Evidence that RED reached the mapped failure, or why it did not: a runner's
     report decides for runner surfaces; a non-runner operation is classified by
-    its final diagnostic and keeps its marker line with reach unresolved.
+    its final diagnostic and keeps its marker line for review.
 
     A proof also records what the failure observed apart from the authored marker
     (issue #54): `observation` is the terminal rendering with the marker elided and

@@ -139,6 +139,27 @@ class WorkflowLedgerTests(unittest.TestCase):
         self.assertEqual(resumed.returncode, 0, "PROJECTION_MIGRATION_PARTIAL " + resumed.stderr)
         self.assertEqual(json.loads(resumed.stdout)["slug"], "schema-one", "PROJECTION_MIGRATION_PARTIAL")
 
+    def test_concurrent_schema_one_opens_share_one_migration(self) -> None:
+        self.begin("schema-one-race")
+        with sqlite3.connect(self.database) as connection:
+            current = connection.execute("SELECT state_json FROM workflows").fetchone()[0]
+            connection.execute("ALTER TABLE workflow_events ADD COLUMN state_json TEXT NOT NULL DEFAULT '{}'")
+            connection.execute("UPDATE workflow_events SET state_json = ?", (current,))
+            connection.execute("ALTER TABLE workflows DROP COLUMN state_json")
+        with sqlite3.connect(self.database) as blocker:
+            blocker.execute("BEGIN IMMEDIATE")
+            processes = [subprocess.Popen(
+                [sys.executable, str(WORKFLOW), "status", "--repo", str(self.repo)],
+                cwd=self.repo, env=self.env, text=True,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            ) for _ in range(2)]
+            time.sleep(.3)
+            blocker.rollback()
+            results = [process.communicate(timeout=15) for process in processes]
+        for process, (stdout, stderr) in zip(processes, results):
+            self.assertEqual(process.returncode, 0, "SCHEMA1_RACE " + stderr)
+            self.assertEqual(json.loads(stdout)["slug"], "schema-one-race")
+
     def test_killed_migration_reopens_with_every_event(self) -> None:
         self.begin("interrupted-migration")
         with sqlite3.connect(self.database) as connection:
@@ -511,6 +532,25 @@ class WorkflowLedgerTests(unittest.TestCase):
                         "RUN_RECEIPT_INCOMPLETE")
         self.assertTrue({"gate", "at", "baseRef", "graphEvidenceId"}.isdisjoint(run),
                         "RUN_UNUSED_FIELDS_RETAINED")
+        binary = self.cli("verify", "--repo", str(self.repo), "--slug", "run-retention",
+                          "--", sys.executable, "-c", "import sys; sys.stdout.buffer.write(b'\\xff' * 5000)")
+        self.assertEqual(binary.returncode, 0, binary.stderr)
+        receipt = json.loads(binary.stdout.splitlines()[-1])
+        run = read_evidence(self.identity, receipt["evidenceId"])["document"]["runs"][-1]
+        self.assertLessEqual(len(run["outputTail"].encode()), 1024, "NONUTF8_TAIL_OVERSIZED")
+
+    def test_reserved_revision_root_keys_fail_before_evidence_insert(self) -> None:
+        from hooks.lib._workflow_db import LedgerError, _insert_evidence, evidence_write
+        wid = self.begin("reserved-root")["workflowId"]
+        with sqlite3.connect(self.database) as connection:
+            for field in ("runsRevision", "behaviorMapRevision"):
+                with self.subTest(field=field):
+                    try:
+                        _insert_evidence(connection, [evidence_write(wid, "preflight", {field: "caller"})])
+                    except LedgerError:
+                        pass
+                    else:
+                        self.fail("RESERVED_ROOT_ACCEPTED " + field)
 
     def test_observed_runs_in_different_directories_do_not_merge(self) -> None:
         from hooks.lib._workflow_db import read_evidence
@@ -680,7 +720,7 @@ class WorkflowLedgerTests(unittest.TestCase):
                          "LITERAL_JSON_INTERPRETED_AS_LEDGER_MARKER")
 
     def test_preexisting_raw_evidence_keeps_literal_marker_keys(self) -> None:
-        from hooks.lib._workflow_db import evidence_write, read_evidence
+        from hooks.lib._workflow_db import _insert_evidence, evidence_write, read_evidence
 
         workflow_id = self.begin("raw-marker-history")["workflowId"]
         document = {"boundaryInputs": [{"$literal": {"x": 1}}, {"$part": "user-input"}]}
@@ -697,6 +737,13 @@ class WorkflowLedgerTests(unittest.TestCase):
         except Exception as exc:
             self.fail("LEGACY_LITERAL_KEY_LOST: " + str(exc))
         self.assertEqual(hydrated, document, "LEGACY_LITERAL_KEY_LOST")
+        with sqlite3.connect(self.database) as connection:
+            _insert_evidence(connection, [evidence_write(workflow_id, "preflight", document)])
+        try:
+            replayed = read_evidence(self.identity, write.evidence_id)["document"]
+        except Exception as exc:
+            self.fail("SCHEMA1_DUP_CORRUPTED: " + str(exc))
+        self.assertEqual(replayed, document, "SCHEMA1_DUP_CORRUPTED")
 
     def test_review_manifests_share_unchanged_tree_entries(self) -> None:
         for index in range(100):

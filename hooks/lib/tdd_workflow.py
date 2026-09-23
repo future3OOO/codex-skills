@@ -611,7 +611,8 @@ def _run_tdd(values: list[str]) -> int:
     updated_item = behavior_map.item(updated, args.behavior_id)
     if baseline or (phase == "green" and valid):
         updated_item["proofBinding"] = {"candidateTree": binding["candidateTree"],
-                                         "command": command_text, "testId": args.test_id}
+                                         "command": command_text, "testId": args.test_id,
+                                         **({"runCwd": receipt["runCwd"]} if receipt and receipt.get("runCwd") else {})}
     doc_kind = "cycle"
     if baseline:
         updated_item["status"] = "already-satisfied"
@@ -629,6 +630,7 @@ def _run_tdd(values: list[str]) -> int:
         changed = sorted({*previous.get("productionChanged", []), *proof.get("productionChanged", [])})
         updated_item["redProof"] = {
             **proof,
+            **({"testId": previous["testId"]} if previous.get("testId") and not proof.get("testId") else {}),
             **({"productionChanged": changed} if changed else {}),
             **({"runCwd": receipt["runCwd"]} if receipt and receipt.get("runCwd") else {}),
         }
@@ -972,7 +974,8 @@ def _map_update(values: list[str]) -> int:
         if isinstance(proof_binding, dict) and proof_binding.get("candidateTree") == (candidate_tree := candidate_tree or _active_candidate_tree(identity)):
             source_tree = tree_manifest(identity) if source_tree is None else source_tree
             check, error = _input_admission(entry, tdd_surface.identify(shlex.split(proof_binding["command"])),
-                                           Path(identity.root), source_tree, proof_binding.get("testId"))
+                                           Path(identity.root) / str(proof_binding.get("runCwd", ".")),
+                                           source_tree, proof_binding.get("testId"), Path(identity.root))
             input_checks[entry["id"]] = check
             if not error and not check["unresolved"]:
                 continue

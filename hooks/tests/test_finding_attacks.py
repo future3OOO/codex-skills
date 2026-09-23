@@ -800,10 +800,10 @@ class SamePassDesign(AttackHarness):
     def test_a_changed_design_declaration_records_in_the_same_pass(self) -> None:
         marker = "SAME_PASS_DESIGN_DEEPENING_REFUSED"
         wid = self.begin("design-deepening")
-        first = self.ok("record", "advisor-result", "--slug", "design-deepening", "--workflow-id", wid,
+        self.ok("record", "advisor-result", "--slug", "design-deepening", "--workflow-id", wid,
                         "--stage", "preflight", "--source", "codex-advisor",
                         "--input", empty_advisor_envelope(self.tmp, "completed"))
-        first_evidence = first.get("governedDesignEvidence")
+        first_evidence = self.status().get("governedDesignEvidence")
         deepened = self.json_file("design-b.json", {
             "schemaVersion": 1, "status": "present", "sha256": "b" * 64,
         })
@@ -811,8 +811,9 @@ class SamePassDesign(AttackHarness):
                           "--stage", "preflight", "--source", "codex-advisor",
                           "--input", empty_advisor_envelope(self.tmp, "completed"), "--design-declaration", str(deepened))
         self.assertEqual(second.returncode, 0, marker + ": " + second.stdout + second.stderr)
-        after = json.loads(second.stdout)
-        self.assertNotEqual(after.get("governedDesignEvidence"), first_evidence, marker)
+        after = self.status().get("governedDesignEvidence")
+        self.assertIsInstance(after, str, marker)
+        self.assertNotEqual(after, first_evidence, marker)
         if isinstance(first_evidence, str) and first_evidence:
             prior = self.cli("evidence", "--full", "--evidence-id", first_evidence)
             self.assertEqual(prior.returncode, 0, marker + ": prior declaration unreadable")
@@ -867,6 +868,13 @@ class FixedRequiresGreenAttack(AttackHarness):
         self.assertEqual(state["tddEvidence"], evidence_id, "UNNECESSARY_MAP_DOCUMENT")
         after = self.ok("history")
         self.assertEqual(len(after["events"]), len(before["events"]) + 1, marker)
+        unrelated = self.json_file("unrelated-map.json", {"reassessment": "unrelated settled obligation",
+            "items": [{"id": "BM_UNRELATED", "kind": "preservation", "basis": "unrelated",
+                       "behavior": "unrelated behavior", "seam": "app module", "expected": "stable",
+                       "redFailure": "FINDING_SUBSET_LOST", "status": "omitted", "evidence": "outside this finding"}]})
+        retained = self.cli("record", "map", "--slug", slug, "--workflow-id", wid,
+                            "--input", str(unrelated))
+        self.assertEqual(retained.returncode, 0, "FINDING_SUBSET_LOST " + retained.stdout + retained.stderr)
 
     def test_behavioral_fixed_requires_an_owning_green_through_red(self) -> None:
         marker = "FIXED_CLOSED_WITHOUT_GREEN_ATTACK"
@@ -1542,6 +1550,17 @@ class MapCorrectionAttacks(AttackHarness):
         return self.map_update(slug, dispositions=[{
             "id": "BM_ATTACK", "status": "pending",
             "evidence": "Select the streaming call; the ordering contract is unchanged."}])
+
+    def test_source_ref_only_update_keeps_existing_mechanism_evidence(self) -> None:
+        slug, _, _, _ = self.wrong_occurrence("MECHANISM_EVIDENCE_LOST", finding=True)
+        self.assertEqual(self.correct_red(slug).returncode, 0)
+        before = self.status()["findingStates"][0]["mechanismEvidence"]
+        refs = self.map_items()["BM_ATTACK"]["sourceRefs"]
+        updated = self.map_update(slug, reassessment=None,
+                                  dispositions=[{"id": "BM_ATTACK", "sourceRefs": refs}])
+        self.assertEqual(updated.returncode, 0, updated.stderr)
+        self.assertEqual(self.status()["findingStates"][0]["mechanismEvidence"], before,
+                         "MECHANISM_EVIDENCE_LOST")
 
     def repair_order(self) -> None:
         fixture = self.repo / "order.txt"

@@ -440,10 +440,17 @@ fi
 
 if [[ -n "$phase" ]]; then
   record_stage=preflight; [[ "$phase" == final-review ]] && record_stage=final
-  python3 "$workflow_cli" record advisor-result --repo "$repo_root" --slug "$producer_slug" \
+  if python3 "$workflow_cli" record advisor-result --repo "$repo_root" --slug "$producer_slug" \
     --workflow-id "$active_wid" --stage "$record_stage" --source codex-advisor \
     --input "$output_file" --design-declaration "$design_declaration_file" \
-    --expected-candidate-tree "$candidate" >"$transport_dir/result-receipt"
+    --expected-candidate-tree "$candidate" >"$transport_dir/result-receipt"; then :
+  else
+    status=$?
+    retained=$(mktemp "$state_dir/refused-output.XXXXXX")
+    cp "$output_file" "$retained"
+    printf 'advisor output retained: %s\n' "$retained" >&2
+    exit "$status"
+  fi
 fi
 python3 - "$output_file" "$transport_dir/result-receipt" <<'PY'
 import json, pathlib, sys

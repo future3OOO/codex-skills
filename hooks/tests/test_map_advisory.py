@@ -361,8 +361,7 @@ class MapAdvisoryTests(unittest.TestCase):
         self.slug = "map-advisory-next"
         self.begin_pass(*UNITTEST, COMPUTE)
         self.edit_compute(3)
-        lines, _ = self.hook()
-        self.assertEqual(lines, [], marker)
+        self.assertEqual(self.hook(), ([], 1), marker)
 
     def test_the_hook_delivers_under_a_live_mcp_holder(self) -> None:
         # The hook path delivers the notice while a live gitnexus MCP server

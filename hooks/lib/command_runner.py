@@ -96,7 +96,7 @@ def _tail(raw: bytes, limit: int = MAX_CAPTURE) -> str:
             break
         start = max(start, lead + width)
         break
-    return raw[start:].decode("utf-8", errors="replace")
+    return raw[start:].decode("utf-8", errors="replace").encode("utf-8")[-limit:].decode("utf-8", errors="ignore")
 
 
 def run_entry(

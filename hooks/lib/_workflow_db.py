@@ -250,6 +250,10 @@ def _schema(connection: sqlite3.Connection) -> None:
     if "state_json" in event_columns:
         _begin_write(connection)
         try:
+            if "state_json" not in {str(row["name"]) for row in connection.execute("PRAGMA table_info(workflow_events)")}:
+                connection.rollback()
+                return
+            workflow_columns = {str(row["name"]) for row in connection.execute("PRAGMA table_info(workflows)")}
             if "state_json" not in workflow_columns:
                 connection.execute("ALTER TABLE workflows ADD COLUMN state_json TEXT")
             connection.execute(
@@ -433,6 +437,8 @@ def _pack(
     connection: sqlite3.Connection, workflow_id: str, value: object,
     linked_parts: set[str] | None = None,
 ) -> object:
+    if isinstance(value, dict) and REVISION_FIELDS & value.keys():
+        raise LedgerError("evidence root contains a reserved revision field")
     links = linked_parts if linked_parts is not None else set()
 
     def pack(item: object, *, document: bool = False, inline: bool = False) -> object:
@@ -533,6 +539,8 @@ def _read_part(connection: sqlite3.Connection, kind: str, identifier: object) ->
 
 def _insert_evidence(connection: sqlite3.Connection, writes: Sequence[EvidenceWrite]) -> None:
     for write in writes:
+        if connection.execute("SELECT 1 FROM evidence WHERE evidence_id = ?", (write.evidence_id,)).fetchone():
+            continue
         links: set[str] = set()
         document = _canonical(_pack(connection, write.workflow_id, write.document, links))
         connection.execute(

@@ -43,13 +43,19 @@ def observed_test(payload: dict[str, object]) -> None:
         return
     if not re.match(r"^\s*(?:\S*/)?(?:pytest|py\.test|python[\d.]*\s+-m\s+(?:pytest|unittest))(?=\s|$)", command):
         return
+    if re.search(r"(?:^|\s)(?:--help|--version|-h|-V)(?=\s|$)", command):
+        return
     cwd = inputs.get("workdir") or working_directory(payload)
     if not isinstance(cwd, str):
         return
+    cwd = str(Path(cwd).resolve())
     identity = try_resolve_repo_identity(cwd)
     if identity is None:
         return
-    state = read_workflow(identity)
+    try:
+        state = read_workflow(identity)
+    except (WorkflowError, LedgerError, OSError, ValueError, sqlite3.Error):
+        return
     if state is None or state.get("phase") == "complete":
         return
     wrapped = [
@@ -75,7 +81,8 @@ def main() -> int:
     tool_name = tool_name.removeprefix("collaboration") if isinstance(tool_name, str) else ""
     if tool_name in {"Bash", "exec_command"}:
         observed_test(payload)
-        return 0
+        if tool_name == "exec_command":
+            return 0
     if tool_name in {"Agent", "spawn_agent", "followup_task", "send_input", "send_message", "resume_agent"}:
         missing: list[str] = []
         try:

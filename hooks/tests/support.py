@@ -13,12 +13,9 @@ from hooks.lib.repo_identity import RepoIdentity, resolve_repo_identity
 from hooks.lib.state_store import _active_candidate_tree
 from hooks.lib.workflow_documents import advisor_envelope, graph_evidence_document
 from hooks.lib.workflow_state import (
-    advisor_disposition,
     commit_evidence_phase,
     instance_id,
     read_workflow,
-    record_advisor_result,
-    set_phase,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -259,72 +256,6 @@ def graph_packet(root: str, candidate: str, head: str) -> dict[str, object]:
             "coverageGaps": [],
         },
     }
-
-
-def advance_to_final_review(repo: Path, tmp: Path, design=None) -> RepoIdentity:
-    """Drive one pass from intake to a ready final-review checkpoint.
-
-    Producer-owned steps go through the real recorders because that is the only way
-    to obtain their evidence; lead-owned phases advance through the library, the way
-    these suites already advance steps they are not testing.
-    """
-    identity = record_context_forge(repo, tmp)
-    state = read_workflow(identity)
-    slug, workflow_id = str(state["slug"]), str(instance_id(state))
-
-    def producer(command: str, document: object) -> None:
-        path = tmp / f"{command}-input.json"
-        path.write_text(json.dumps(document), encoding="utf-8")
-        result = subprocess.run(
-            [
-                sys.executable,
-                str(WORKFLOW),
-                command,
-                "--repo",
-                str(repo),
-                "--slug",
-                slug,
-                "--workflow-id",
-                workflow_id,
-                "--input",
-                str(path),
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        assert result.returncode == 0, result.stdout + result.stderr
-
-    record_advisor_result(
-        identity, slug, workflow_id, "preflight", "codex-advisor", "completed",
-        design=design, intake=empty_advisor_intake(tmp, slug, workflow_id),
-    )
-    advisor_disposition(identity, slug, workflow_id, "preflight", "none")
-    producer(
-        "record", "preflight", build_no_change_document("advance to final review")
-    )
-    set_phase(identity, "tdd", "not-required")
-    for extra in (
-        ("--", sys.executable, "-c", "pass"),
-        ("--kind", "quality-gate", "--base-ref", "HEAD"),
-    ):
-        subprocess.run(
-            [
-                sys.executable,
-                str(WORKFLOW),
-                "verify",
-                "--repo",
-                str(repo),
-                "--slug",
-                slug,
-                *extra,
-            ],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-    set_phase(identity, "code-review", "passed", findings="none")
-    return identity
 
 
 def record_context_forge(repo: Path, tmp: Path) -> RepoIdentity:

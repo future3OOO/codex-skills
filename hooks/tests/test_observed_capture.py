@@ -87,6 +87,14 @@ class ObservedCaptureTests(unittest.TestCase):
         self.assertEqual(run.returncode, 0, "OBSERVED_RESULT_MISMATCH " + run.stderr)
         self.assertIn("Ran 1 test", run.stdout, "OBSERVED_RESULT_MISMATCH")
 
+    def test_relative_workdir_runs_the_selected_subdirectory_test(self) -> None:
+        update = self.hook("python3 -m unittest test_sub", cwd=Path("sub"))
+        self.assertIsNotNone(update, "RELATIVE_CWD_BROKEN")
+        run = subprocess.run(["bash", "-lc", update["command"]], cwd=self.repo / "sub",
+                             env=self.env, text=True, capture_output=True)
+        self.assertEqual(run.returncode, 0, "RELATIVE_CWD_BROKEN " + run.stderr)
+        self.assertIn("Ran 1 test", run.stdout, "RELATIVE_CWD_BROKEN")
+
     def test_passing_command_keeps_exit_zero_when_its_tree_binding_changes(self) -> None:
         (self.repo / "test_mutate.py").write_text(
             "import pathlib, unittest\nclass Check(unittest.TestCase):\n"
@@ -119,6 +127,23 @@ class ObservedCaptureTests(unittest.TestCase):
         history = self.cli("history")
         self.assertEqual(len(json.loads(history.stdout)["events"]), 1,
                          "CAPTURE_PASSTHROUGH_CHANGED")
+
+    def test_help_and_version_are_not_recorded_as_tests(self) -> None:
+        for command in ("pytest --help", "pytest --version", "python3 -m unittest --help"):
+            with self.subTest(command=command):
+                self.assertIsNone(self.hook(command), "HELP_CAPTURE_FALSE_RUN")
+        self.assertEqual(len(json.loads(self.cli("history").stdout)["events"]), 1,
+                         "HELP_CAPTURE_FALSE_RUN")
+
+    def test_unreadable_ledger_does_not_block_the_shell_command(self) -> None:
+        database, = Path(self.env["CODEX_WORKFLOW_STATE_ROOT"]).rglob("workflow.sqlite3")
+        database.write_bytes(b"corrupt ledger")
+        payload = {"tool_name": "exec_command", "cwd": str(self.repo),
+                   "tool_input": {"command": "python3 -m unittest test_ok"}}
+        run = subprocess.run([sys.executable, str(HOOK)], input=json.dumps(payload),
+                             cwd=self.repo, env=self.env, text=True, capture_output=True)
+        self.assertEqual(run.returncode, 0, "CORRUPT_HOOK_BLOCKED")
+        self.assertEqual(run.stdout, "", "CORRUPT_HOOK_BLOCKED")
 
     def test_shell_glob_keeps_the_original_test_arguments(self) -> None:
         command = "python3 -m unittest test_o?.py"

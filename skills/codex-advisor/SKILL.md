@@ -22,7 +22,7 @@ Run after investigating scope and design, before production preflight. Supply a
 focused question. The wrapper supplies the recorded request, projection, design,
 and diff; its prompt challenges load-bearing promises, caller-reachable failure
 operations, and planned real-Seam attacks. It records the provider's envelope.
-A material finding remains open until measured disposition or mapped proof.
+A material finding remains open until its measured disposition is recorded; mapped proof supports a fixed disposition.
 
 Supply `--design-file <durable design>` or `--design-absent <specific reason>`.
 A design is a falsifiable hypothesis; deepen it append-only in the same pass.
@@ -138,7 +138,7 @@ For an existing GREEN attack and its current executed receipt, bind a pending
 finding without writing a second map-ownership document:
 
 ```bash
-workflow.py record advisor-disposition --finding SPEC-1 --fixed \
+python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" record advisor-disposition --finding SPEC-1 --fixed \
   --evidence-ref <evidenceId>:<runIndex> --behavior-id BM_ATTACK
 ```
 

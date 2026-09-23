@@ -663,13 +663,24 @@ class WorkflowHookTests(HookHarness):
         self.assertEqual(state["implementation"], "pending")
         self.assertEqual(state["nextAction"], "tdd")
 
-    def test_shipped_hooks_do_not_intercept_bash_or_git(self) -> None:
+    def test_shipped_hooks_do_not_install_git_gates(self) -> None:
         settings = json.loads((ROOT / "hooks.json").read_text(encoding="utf-8"))
-        pre_tool = settings["hooks"]["PreToolUse"]
-        self.assertFalse(any(entry.get("matcher") == "Bash" for entry in pre_tool))
+        self.assertIn("PreToolUse", settings["hooks"])
         self.assertFalse((ROOT / ".githooks").exists())
         self.assertFalse((ROOT / "hooks" / "repoforge-commit-gate.sh").exists())
         self.assertFalse((ROOT / "hooks" / "codex-challenge-commit-gate.sh").exists())
+
+    def test_bash_write_receives_edit_advisory(self) -> None:
+        self.assertEqual(self.state("begin", "--slug", "bash-intake").returncode, 0)
+        result = subprocess.run(
+            [sys.executable, str(INTAKE)], cwd=self.repo, env=self.env, text=True,
+            input=json.dumps({"cwd": str(self.repo), "tool_name": "Bash",
+                              "tool_input": {"command": "echo changed > app.py"}}),
+            capture_output=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("workflow intake: missing before this production edit", result.stdout,
+                      "BASH_EDIT_ADVISORY_MISSING")
 
     def test_sqlite_state_is_durable_without_a_precompact_flush_hook(self) -> None:
         self.assertFalse((ROOT / "hooks" / "pre-compact-flush.py").exists())
@@ -703,11 +714,14 @@ class PerEditOverheadTests(HookHarness):
         self.assertIn("python lint findings", first.stdout, marker)
         self.assertEqual(self.post_edit("app.py").stdout, "", marker + ": identical repeat")
 
-        path.write_text("import os\n", encoding="utf-8")
-        changed = self.post_edit("app.py")
-        self.assertEqual(changed.returncode, 0, changed.stderr)
-        self.assertIn("python lint findings", changed.stdout, marker)
-        self.assertNotEqual(changed.stdout, first.stdout, marker + ": changed content")
+        if shutil.which("ruff"):
+            path.write_text("value = undefined_name\n", encoding="utf-8")
+            changed = self.post_edit("app.py")
+            self.assertEqual(changed.returncode, 0, changed.stderr)
+            self.assertIn("python lint findings", changed.stdout, marker)
+            self.assertNotEqual(changed.stdout, first.stdout, marker + ": changed content")
+            path.write_text("value = (\n", encoding="utf-8")
+            self.assertEqual(self.post_edit("app.py").stdout, "", "EPOCH_REPEAT_EMITTED")
 
         reset = subprocess.run(
             [sys.executable, str(ADVISORY_RESET)], cwd=self.repo, env=self.env, text=True,
@@ -716,10 +730,25 @@ class PerEditOverheadTests(HookHarness):
         )
         self.assertEqual(reset.returncode, 0, reset.stderr)
         self.assertEqual(reset.stdout, "", marker + ": reset leaked context")
-        self.assertEqual(self.post_edit("app.py").stdout, changed.stdout,
+        self.assertEqual(self.post_edit("app.py").stdout, first.stdout,
                          marker + ": same advice must return in a new epoch")
         settings = json.loads((ROOT / "hooks.json").read_text())
         self.assertIn("PostCompact", settings["hooks"], marker + ": reset not installed")
+
+    def test_postcompact_resets_the_configured_codex_home(self) -> None:
+        path = self.repo / "app.py"
+        path.write_text("value = (\n", encoding="utf-8")
+        first = self.post_edit("app.py").stdout
+        self.assertIn("python lint findings", first)
+        self.assertEqual(self.post_edit("app.py").stdout, "")
+        command = json.loads((ROOT / "hooks.json").read_text())["hooks"]["PostCompact"][0]["hooks"][0]["command"]
+        home = self.tmp / "empty-home"
+        home.mkdir()
+        reset = subprocess.run(["bash", "-c", command], cwd=self.repo,
+                               env={**self.env, "HOME": str(home), "CODEX_HOME": str(ROOT)},
+                               text=True, input=json.dumps({"session_id": SESSION}), capture_output=True)
+        self.assertEqual(reset.returncode, 0, "POSTCOMPACT_HOME_WRONG " + reset.stderr)
+        self.assertEqual(self.post_edit("app.py").stdout, first, "POSTCOMPACT_HOME_WRONG")
 
     def test_pre_edit_reminder_returns_after_compaction(self) -> None:
         begun = self.state("begin", "--slug", "pre-advisory-epoch")
@@ -1155,6 +1184,15 @@ class WrapperPromptTests(HookHarness):
         self.assertIn("500 lines", section, "DELETED_BODY_RETAINED")
         self.assertNotIn("-legacy = 1", section, "DELETED_BODY_RETAINED")
 
+    def test_deleted_path_control_bytes_stay_inside_one_header(self) -> None:
+        env = self.wrapper_rig()
+        path = "odd\nname.py"
+        self.commit_fixtures({path: b"legacy = 1\n"})
+        payload = self.final_consult(env, "deleted-control", edit=lambda: (self.repo / path).unlink())
+        section = self.diff_section(payload)
+        self.assertNotIn("odd\nname.py", section, "DELETED_PATH_INJECTED")
+        self.assertIn("odd\\nname.py", section, "DELETED_PATH_INJECTED")
+
     def test_the_transport_returns_the_diff_the_payload_carries(self) -> None:
         marker = "TRANSPORT_RETURNS_DEFINITIONS_TUPLE"
         env = self.wrapper_rig()
@@ -1250,9 +1288,10 @@ class WrapperPromptTests(HookHarness):
         return wid
 
     def test_a_refused_answer_is_still_emitted(self) -> None:
-        marker = "REFUSED_ADVISOR_OUTPUT_DISCARDED"
+        marker = "ADVISOR_OUTPUT_LOST"
         env = self.wrapper_rig()
-        reply = '{"schemaVersion":1,"findings":[{"id":"SPEC-1","claim":"c"}],"verdict":"completed"}'
+        reply = json.dumps({"schemaVersion": 1,
+            "findings": [{"id": "SPEC-1", "claim": "c" + "x" * 4000}], "verdict": "completed"})
         env["ADVISOR_SHIM_REPLY"] = reply
         begun = self.state("begin", "--slug", "keep-output")
         self.assertEqual(begun.returncode, 0, begun.stdout + begun.stderr)
@@ -1264,6 +1303,9 @@ class WrapperPromptTests(HookHarness):
         self.assertIn("requires id, claim, and material", result.stderr, marker)
         self.assertLessEqual(len((result.stdout + result.stderr).encode()), 2048, marker)
         self.assertNotIn("codex_advisor_complete", result.stderr, marker)
+        retained = re.search(r"advisor output retained: (.+)", result.stderr)
+        self.assertIsNotNone(retained, marker + result.stderr)
+        self.assertEqual(Path(retained.group(1)).read_text().strip(), reply, marker)
 
     def test_final_review_creates_its_session_without_a_preflight_consult(self) -> None:
         marker = "FINAL_REVIEW_NEEDS_PREFLIGHT_SESSION"
@@ -1682,22 +1724,6 @@ class RedFirstTests(HookHarness):
     def events(self) -> int:
         return len(json.loads(self.state("history").stdout)["events"])
 
-    def rewrite_latest_evidence(self, update) -> None:
-        """Rewrite the persisted TDD evidence document the way an older producer left it."""
-        identity = resolve_repo_identity(self.repo)
-        evidence_id = json.loads(self.state("status").stdout)["tddEvidence"]
-        database = Path(self.env["CODEX_WORKFLOW_STATE_ROOT"]) / identity.key / "workflow.sqlite3"
-        connection = sqlite3.connect(database)
-        try:
-            document = json.loads(connection.execute(
-                "SELECT document_json FROM evidence WHERE evidence_id = ?", (evidence_id,)).fetchone()[0])
-            update(document)
-            connection.execute("UPDATE evidence SET document_json = ? WHERE evidence_id = ?",
-                               (json.dumps(document, sort_keys=True, separators=(",", ":")), evidence_id))
-            connection.commit()
-        finally:
-            connection.close()
-
     def test_a_finding_with_an_extra_field_or_unknown_kind_still_records(self) -> None:
         marker = "TOLERABLE_ENVELOPE_REFUSED"
         slug = "tolerant-envelope"
@@ -1951,23 +1977,6 @@ class RedFirstTests(HookHarness):
         self.assertEqual(recorded.returncode, 0, marker + ": " + recorded.stdout + recorded.stderr)
         kinds = {e["findingId"]: e["kind"] for e in json.loads(self.state("status").stdout)["findingStates"]}
         self.assertEqual(kinds, {"SPEC-1": "behavioral", "SPEC-2": "behavioral"}, marker)
-
-    def test_a_pre_upgrade_red_still_reaches_green(self) -> None:
-        marker = "PRE_UPGRADE_RED_CANNOT_GREEN"
-        slug = "pre-upgrade"
-        self.open_pass(slug, [pending_behavior("BM_A", behavior="a is two", seam="app module", expected="app.a == 2", red_failure="A_NOT_TWO")])
-        self.assertEqual(self.tdd(slug, "red", "BM_A", "a").returncode, 0)
-
-        def strip_red_command(document: dict) -> dict:
-            for entry in document.get("behaviorMap", []):
-                entry.pop("redCommand", None)
-                entry.pop("redProof", None)
-            return document
-        self.rewrite_latest_evidence(strip_red_command)
-        (self.repo / "app.py").write_text("a = 2\nb = 1\n", encoding="utf-8")
-        green = self.tdd(slug, "green", "BM_A", "a")
-        self.assertEqual(green.returncode, 0, marker + ": " + green.stdout + green.stderr)
-        self.assertEqual(self.map_status()["BM_A"], "green", marker)
 
     def test_a_refused_preflight_or_green_leaves_state_unchanged(self) -> None:
         marker = "PREFLIGHT_REFUSAL_MUTATED_STATE"

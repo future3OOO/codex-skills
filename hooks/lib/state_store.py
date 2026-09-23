@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import importlib.util
 import json
 import os
@@ -51,7 +52,7 @@ def _session_dir(session: str) -> Path:
 
 
 def advisory_changed(session: str | None, repo_key: str, event: str, content: str) -> bool:
-    """Emit each advisory change once while this session still holds its context."""
+    """Emit each distinct advisory once in the current compaction epoch."""
     if session is None:
         return True
     try:
@@ -60,9 +61,11 @@ def advisory_changed(session: str | None, repo_key: str, event: str, content: st
             path = directory / "advisory-epoch.json"
             prior = read_json(path) or {}
             key = f"{repo_key}:{event}"
-            if prior.get(key) == content:
+            digest = hashlib.sha256(content.encode()).hexdigest()
+            seen = prior.get(key, [])
+            if isinstance(seen, list) and digest in seen:
                 return False
-            atomic_write_json(path, {**prior, key: content})
+            atomic_write_json(path, {**prior, key: [*(seen if isinstance(seen, list) else []), digest]})
         return True
     except OSError:
         return True

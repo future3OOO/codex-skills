@@ -164,7 +164,7 @@ class ContractProofAuthorityTests(unittest.TestCase):
                 cwd=self.repo, env=self.h.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 check=False, timeout=60)
         except subprocess.TimeoutExpired:
-            self.fail(f"{marker}: tdd-map did not return")
+            self.fail(f"{marker}: record map did not return")
         self.assertEqual(result.returncode, 2, f"{marker}: " + result.stdout + result.stderr)
         self.assertIn(names, result.stderr, marker)
         self.assertEqual(read_workflow(self.identity).get("tddEvidence"), before, marker)
@@ -434,7 +434,7 @@ class ContractProofAuthorityTests(unittest.TestCase):
 
     def supersede(self, source: str, target: str | None, items: list[dict[str, object]] | None = None,
                   pending: str | None = None) -> dict[str, object]:
-        """A tdd-map update superseding ``source`` by ``target`` (None omits supersededBy)."""
+        """A map update superseding ``source`` by ``target`` (None omits supersededBy)."""
         disposition: dict[str, object] = {"id": source, "status": "superseded", "evidence": "a sharper item owns this outcome"}
         if target is not None:
             disposition["supersededBy"] = target

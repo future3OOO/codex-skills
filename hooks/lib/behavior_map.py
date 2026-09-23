@@ -200,6 +200,7 @@ def validate_items(
     value: object,
     *,
     allow_runtime: bool,
+    allow_unbound: bool = False,
     existing: Iterable[JsonObject] = (),
     terminals: dict[str, JsonObject] | None = None,
 ) -> list[JsonObject]:
@@ -217,7 +218,7 @@ def validate_items(
     errors: list[str] = []
     for position, raw in enumerate(value, 1):
         try:
-            result.append(_validated_item(raw, position, seen, statuses, allow_runtime))
+            result.append(_validated_item(raw, position, seen, statuses, allow_runtime, allow_unbound))
         except ValueError as exc:
             errors.append(str(exc))
     if errors:
@@ -238,6 +239,7 @@ def validate_items(
 
 def _validated_item(
     raw: object, position: int, seen: set[str], statuses: frozenset[str], allow_runtime: bool,
+    allow_unbound: bool,
 ) -> JsonObject:
     if not isinstance(raw, dict):
         raise ValueError(f"behaviorMap item {position} must be an object")
@@ -280,7 +282,7 @@ def _validated_item(
         errors.append(_CONTRACT_DISPOSITION_REFUSED.format(label))
     if status == "withdrawn" and kind != "contract":
         errors.append(_PRESERVATION_WITHDRAWN_REFUSED.format(label))
-    refs = checked(lambda: _source_refs(raw.get("sourceRefs"), label, allow_unbound=not allow_runtime))
+    refs = checked(lambda: _source_refs(raw.get("sourceRefs"), label, allow_unbound=allow_unbound))
     item: JsonObject = {
         "id": label,
         "kind": kind,
@@ -357,7 +359,7 @@ def _required(raw: dict[str, object], field: str, identifier: str) -> str:
 
 
 def initial_items(value: object) -> list[JsonObject]:
-    return validate_items(value, allow_runtime=False)
+    return validate_items(value, allow_runtime=False, allow_unbound=True)
 
 
 def runtime_items(value: object, *, terminals: dict[str, JsonObject] | None = None) -> list[JsonObject]:
@@ -465,6 +467,8 @@ def apply_dispositions(
                 raise ValueError(f"behavior {identifier} is withdrawn; it cannot acquire sourceRefs")
             if additions:
                 mapped["sourceRefs"] = [*existing, *additions]
+        if "evidence" in raw and not isinstance(raw["evidence"], str):
+            raise ValueError(f"behavior {identifier} disposition evidence must be text")
         revalidate = "revalidate" in raw
         status = _text(raw.get("status"))
         if revalidate and (raw["revalidate"] is not True or "status" in raw):

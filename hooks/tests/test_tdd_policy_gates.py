@@ -462,6 +462,8 @@ class MappedTddPolicyGateTests(unittest.TestCase):
             sub = h.repo / name
             executed = h.cli("verify", "--repo", str(h.repo), "--slug", slug, "--observed",
                              "--run-cwd", str(sub), "--", sys.executable, "-m", "unittest", "-v", "test_local")
+            self.assertEqual(executed.returncode, 1 if name == "fail" else 0,
+                             executed.stdout + executed.stderr)
             receipt = json.loads(executed.stdout.splitlines()[-1])
             refs.append(receipt["evidenceId"] + ":" + str(receipt["runIndex"]))
         red = h.cli("tdd", "--repo", str(h.repo), "--slug", slug, "--phase", "red",
@@ -473,6 +475,60 @@ class MappedTddPolicyGateTests(unittest.TestCase):
                       "--test-id", "test_local.Cases.test_case")
         self.assertEqual(green.returncode, 2, "CROSS_CWD_CYCLE_ACCEPTED " + green.stdout + green.stderr)
         self.assertEqual(h.evidence()["behaviorMap"][0]["status"], "red", "CROSS_CWD_CYCLE_ACCEPTED")
+
+    def test_nonroot_baseline_reassessment_uses_its_selected_source(self) -> None:
+        h = self.harness
+        item = pending_behavior("BM_INPUT")
+        item.update(boundaryInputs=["--quiet"], interpretations=["quiet", "loud"],
+                    interpretation="quiet", authority="contract")
+        slug, wid = h.begin_with_map([item])
+        sub = h.repo / "sub"
+        sub.mkdir()
+        (sub / "test_local.py").write_text(
+            f"import sys, unittest\nsys.path.insert(0, {str(ROOT)!r})\n"
+            "from hooks.lib.tdd_surface import identify\n"
+            "class Cases(unittest.TestCase):\n"
+            " def test_case(self):\n"
+            "  self.assertEqual(identify(['pytest', '--quiet', '--verbose'])['runner'], 'pytest')\n")
+        observed = h.cli("verify", "--repo", str(h.repo), "--slug", slug, "--observed",
+                         "--run-cwd", str(sub), "--", sys.executable, "-m", "unittest", "-v", "test_local")
+        self.assertEqual(observed.returncode, 0, observed.stderr)
+        receipt = json.loads(observed.stdout.splitlines()[-1])
+        baseline = h.cli("tdd", "--repo", str(h.repo), "--slug", slug, "--phase", "red",
+                         "--behavior-id", "BM_INPUT", "--from-evidence",
+                         f"{receipt['evidenceId']}:{receipt['runIndex']}",
+                         "--test-id", "test_local.Cases.test_case")
+        self.assertEqual(baseline.returncode, 0, baseline.stdout + baseline.stderr)
+        updated = h.update_map(slug, wid, {"reassessment": "new represented input",
+            "dispositions": [{"id": "BM_INPUT", "boundaryInputs": ["--quiet", "--verbose"],
+                              "evidence": "same selected test source"}]})
+        self.assertEqual(updated.returncode, 0, updated.stdout + updated.stderr)
+        self.assertEqual(h.evidence()["behaviorMap"][0]["status"], "already-satisfied",
+                         "CWD_INPUT_REASSESS_LOST")
+
+    def test_repeated_local_red_keeps_receipt_test_identity(self) -> None:
+        h = self.harness
+        slug, _ = h.begin_with_map([pending_behavior("BM_RED", red_failure="VALUE_NOT_TWO")])
+        (h.repo / "test_app.py").write_text(
+            "import app,unittest\nclass Cases(unittest.TestCase):\n"
+            " def test_case(self): self.assertEqual(app.value,2,'VALUE_NOT_TWO')\n")
+        command = (sys.executable, "-m", "unittest", "-v", "test_app")
+        observed = h.cli("verify", "--repo", str(h.repo), "--slug", slug, "--observed", "--", *command)
+        receipt = json.loads(observed.stdout.splitlines()[-1])
+        reference = f"{receipt['evidenceId']}:{receipt['runIndex']}"
+        red = h.cli("tdd", "--repo", str(h.repo), "--slug", slug, "--phase", "red",
+                    "--behavior-id", "BM_RED", "--from-evidence", reference,
+                    "--test-id", "test_app.Cases.test_case")
+        self.assertEqual(red.returncode, 0, red.stdout + red.stderr)
+        self.assertEqual(h.tdd(slug, "red", "BM_RED", command).returncode, 0)
+        (h.repo / "app.py").write_text("value = 2\n")
+        observed = h.cli("verify", "--repo", str(h.repo), "--slug", slug, "--observed", "--", *command)
+        receipt = json.loads(observed.stdout.splitlines()[-1])
+        reference = f"{receipt['evidenceId']}:{receipt['runIndex']}"
+        green = h.cli("tdd", "--repo", str(h.repo), "--slug", slug, "--phase", "green",
+                      "--behavior-id", "BM_RED", "--from-evidence", reference,
+                      "--test-id", "test_app.Cases.test_case")
+        self.assertEqual(green.returncode, 0, "REPEAT_RED_RECEIPT_LOST " + green.stderr)
 
     def test_reentry_recovers_late_interpretation_hold(self) -> None:
         h = self.harness

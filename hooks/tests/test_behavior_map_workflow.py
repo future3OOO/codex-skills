@@ -148,6 +148,28 @@ class BehaviorMapWorkflowTests(unittest.TestCase):
             "--input", str(payload),
         )
 
+    def test_map_check_and_commit_reject_unbound_finding_reference(self) -> None:
+        slug, wid = self.begin_to_preflight([pending_behavior("BM_OWNER")])
+        payload = self.tmp / "unbound.json"
+        payload.write_text(json.dumps({"reassessment": "attach reviewed behavior",
+            "items": [{**pending_behavior("BM_EXTRA"),
+            "sourceRefs": [{"type": "finding", "id": "SPEC-1"}]}]}), encoding="utf-8")
+        for flags in (("--check",), ()):
+            with self.subTest(flags=flags):
+                result = self.cli("record", "map", "--slug", slug, "--workflow-id", wid,
+                                  "--input", str(payload), *flags)
+                self.assertEqual(result.returncode, 2, "UNBOUND_FINDING_ACCEPTED " + result.stdout)
+                self.assertIn("sourceRef 1 requires only", result.stderr,
+                              "UNBOUND_FINDING_ACCEPTED " + result.stdout + result.stderr)
+
+    def test_omitted_disposition_rejects_nontext_evidence(self) -> None:
+        keep = {**pending_behavior("BM_KEEP"), "kind": "preservation"}
+        slug, wid = self.begin_to_preflight([pending_behavior("BM_OWNER"), keep])
+        updated = self.update_map(slug, wid, {"reassessment": "settle preservation",
+            "dispositions": [{"id": "BM_KEEP", "status": "omitted", "evidence": 7}]})
+        self.assertEqual(updated.returncode, 2, "NONSTRING_EVIDENCE_ACCEPTED " + updated.stdout)
+        self.assertIn("evidence must be text", updated.stderr, "NONSTRING_EVIDENCE_ACCEPTED")
+
     def test_consecutive_hook_obligations_are_bounded_without_extra_edit_work(self) -> None:
         # Declared before measurement: 82 rows, complete displayed guarantees,
         # <=2,048 UTF-8 bytes and <=2 seconds/hook; no extra reads/processes

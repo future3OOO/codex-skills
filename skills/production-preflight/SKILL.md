@@ -1,6 +1,6 @@
 ---
 name: production-preflight
-description: Produce the required before-edit proof for production code changes — reuse path, chosen approach, touchpoints, verify vs update surfaces, module shape, risks, Behavior Map, and honest openQuestions. Use before writing code on implementation, refactor, bug-fix, or review-comment passes.
+description: Establish module shape, real proof, and a Behavior Map before production edits. Use for implementation, refactor, bug-fix, or review-comment passes.
 ---
 
 # Production Preflight

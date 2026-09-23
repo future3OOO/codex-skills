@@ -17,7 +17,8 @@ def current_pass_evidence(root: str, base_tree: str, candidate_tree: str) -> byt
     for entry in deleted.split(b"\0"):
         if not entry:
             continue
-        added, removed, path = entry.split(b"\t", 2)
+        _, removed, path = entry.split(b"\t", 2)
+        path = path.replace(b"\\", b"\\\\").replace(b"\n", b"\\n").replace(b"\r", b"\\r").replace(b"\t", b"\\t")
         count = removed if removed.isdigit() else b"binary"
         diff += b"diff --git a/" + path + b" b/" + path + b"\n"
         diff += b"deleted file: " + path + b" (" + count + b" lines)\n"

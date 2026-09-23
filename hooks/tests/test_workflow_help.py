@@ -105,7 +105,7 @@ class CompleteHelpContractTests(unittest.TestCase):
 
     def test_advisor_rejects_retired_anchor_flags_and_keeps_fresh(self) -> None:
         result = subprocess.run(
-            [str(ADVISOR), "--packet", "/tmp/unused-packet", "--fresh"],
+            [str(ADVISOR), "--fresh", "--packet", "/tmp/unused-packet"],
             text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
         )
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)

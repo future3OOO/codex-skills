@@ -516,6 +516,9 @@ class RepoForgeWorkflowTests(unittest.TestCase):
         self.assertEqual(run["exitCode"], 0)
         self.assertIn("external graph evidence is stale: it does not name the evaluated snapshot",
                       verified.stdout, "owner rules did not name the stale binding")
+        findings = json.JSONDecoder().raw_decode(verified.stdout.split('"findings": ', 1)[1])[0]
+        for finding in self.owner_states({"findings": findings}).values():
+            self.assertEqual(finding["status"], "incomplete", "stale owner rule passed")
 
     @unittest.skipUnless(GITNEXUS, "the real GitNexus CLI is unavailable")
     def test_bootstrap_records_the_producer_graph_result_as_workflow_evidence(self) -> None:

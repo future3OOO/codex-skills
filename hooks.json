@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ~/.codex/hooks/advisory-epoch-reset.py",
+            "command": "python3 \"${CODEX_HOME:-$HOME/.codex}/hooks/advisory-epoch-reset.py\"",
             "timeout": 15
           }
         ]

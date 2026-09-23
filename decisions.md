@@ -19,7 +19,9 @@ advisor result requires its immutable envelope; direct result flags remain only
 for a measured preflight transport outage. Advisories deduplicate identical
 content within one compaction epoch and emit again after PostCompact resets it.
 Native checkout recovery has no reader for per-session repository association
-markers, so the post-edit writer and its prune classifier are removed. Kindless
+markers, so the post-edit writer and its prune classifier are removed. This
+supersedes the edit-marker pruning retention in the 2026-09-20 native-checkout
+decision; checkout-local readiness remains. Kindless
 recorded map items now fail closed instead of entering a compatibility branch.
 Preflight map items may name a finding by ID alone; the recorder binds its exact
 pending intake inside the commit transaction. TDD commits compare the preflight
@@ -61,31 +63,9 @@ A retained process-interruption attack kills migration after the rollback
 journal opens over 50,001 real events, then reopens with every event intact;
 it passed four runs.
 
-**Delivery:** Candidate on `fix/issue96-ledger-ceremony-isolated`. One
-independent advisor review found real glob-rewrite, multi-item validation and
-schema-1 prune gaps; their real hook/CLI RED attacks and corrections are in
-this pass. Its storage-accounting finding corrected the measurement above.
-Final advice exposed a shell `#` rewrite and hidden independent field errors;
-real hook/CLI attacks now pass with both corrected in this pass. Current-tree
-review then exposed a carriage-return rewrite and a nested interpretation error;
-their real hook/CLI attacks pass. The required independent code-review delegate
-found a large preflight intent echo and stale live-provider test setup. The
-preflight receipt is now bounded, and both real final-provider probes pass using
-the current CLI. Return review exposed loss of the full advisor envelope; the
-existing evidence-part writer now stores those exact bytes while the receipt
-stays terse. A retained concurrent-provider attack also exposed a duplicate
-preflight consult; a recorded result now closes ordinary consultation while
-explicit `--reconsult` remains available. The final advisor's later literal-key,
-run-directory and multi-item advisor-validation findings were reproduced on the
-prior candidate tree and corrected in this pass. Phased advisor evidence now
-uses bounded three-line hunks, deletion headers with line counts, and a measured
-1 MiB refusal before provider dispatch. A later prompt exceeded that cap by
-4,217 bytes; removing the redundant per-line diff prefix keeps the complete
-diff while fitting the provider input. The shell `#` correction remains.
-Current-tree tests, quality gate, and independent review pass; renewed final
-advice and PR remain pending.
-The installed estate is unchanged;
-candidate executions use isolated state roots.
+**Delivery:** [PR #101](https://github.com/future3OOO/codex-skills/pull/101)
+is open; current-head CI and reviewer closure govern handoff. Candidate
+executions use isolated state roots; the installed estate is unchanged.
 
 ## 2026-09-21 — Session relocation via marker, kill, and resume
 
