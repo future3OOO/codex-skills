@@ -6,7 +6,6 @@ import json
 import os
 import re
 import shutil
-import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -124,26 +123,6 @@ class HookHarness(unittest.TestCase):
 
     def owner_phase(self, phase: str, status: str, *, findings: str | None = None) -> None:
         set_phase(resolve_repo_identity(self.repo), phase, status, findings=findings)
-
-    def rewrite_latest_state(self, update) -> None:
-        identity = resolve_repo_identity(self.repo)
-        database = Path(self.env["CODEX_WORKFLOW_STATE_ROOT"]) / identity.key / "workflow.sqlite3"
-        connection = sqlite3.connect(database)
-        try:
-            event_id = connection.execute(
-                "SELECT event_id FROM active_projection WHERE slot = 1"
-            ).fetchone()[0]
-            state = json.loads(connection.execute(
-                "SELECT state_json FROM workflow_events WHERE event_id = ?", (event_id,)
-            ).fetchone()[0])
-            update(state)
-            connection.execute(
-                "UPDATE workflow_events SET state_json = ? WHERE event_id = ?",
-                (json.dumps(state, sort_keys=True, separators=(",", ":")), event_id),
-            )
-            connection.commit()
-        finally:
-            connection.close()
 
     def assert_obligations_only(self, *identifiers: str) -> None:
         before = {}
