@@ -10,6 +10,8 @@ from __future__ import annotations
 import json
 import sqlite3
 import os
+import re
+import shlex
 import sys
 from pathlib import Path
 
@@ -18,9 +20,9 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from hooks.lib._workflow_db import LedgerError  # noqa: E402
-from hooks.lib.hook_input import edited_path, is_explorer_continuation, read_hook_payload, working_directory  # noqa: E402
+from hooks.lib.hook_input import edited_path, is_explorer_continuation, read_hook_payload, session_key, working_directory  # noqa: E402
 from hooks.lib.repo_identity import RepoIdentityError, resolve_repo_identity, try_resolve_repo_identity  # noqa: E402
-from hooks.lib.state_store import is_reviewable_path, is_test_path  # noqa: E402
+from hooks.lib.state_store import advisory_changed, is_reviewable_path, is_test_path  # noqa: E402
 from hooks.lib.tdd_workflow import edit_blockers  # noqa: E402
 from hooks.lib.workflow_state import (  # noqa: E402
     WorkflowError,
@@ -31,14 +33,56 @@ from hooks.lib.workflow_state import (  # noqa: E402
 )
 
 
-def advise(context: str) -> None:
-    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": context}}))
+def observed_test(payload: dict[str, object]) -> None:
+    inputs = payload.get("tool_input")
+    if not isinstance(inputs, dict):
+        return
+    field = "command" if isinstance(inputs.get("command"), str) else "cmd"
+    command = inputs.get(field)
+    if not isinstance(command, str) or not command or any(char in command for char in ("`", "$", "#", "\r", "\n", "*", "?", "[", "]", "{", "}", "~", ";", "&", "|", "<", ">")):
+        return
+    if not re.match(r"^\s*(?:\S*/)?(?:pytest|py\.test|python[\d.]*\s+-m\s+(?:pytest|unittest))(?=\s|$)", command):
+        return
+    if re.search(r"(?:^|\s)(?:--help|--version|-h|-V|--(?:co(?:llect-only)?|fixtures(?:-per-test)?|markers|setup-(?:plan|only)))(?=\s|$)", command):
+        return
+    cwd = inputs.get("workdir") or working_directory(payload)
+    if not isinstance(cwd, str):
+        return
+    cwd = str(Path(cwd).resolve())
+    identity = try_resolve_repo_identity(cwd)
+    if identity is None:
+        return
+    try:
+        state = read_workflow(identity)
+    except (WorkflowError, LedgerError, OSError, ValueError, sqlite3.Error):
+        return
+    if state is None or state.get("phase") == "complete":
+        return
+    wrapped = [
+        sys.executable,
+        str(ROOT / "skills/repo-production-workflow/scripts/workflow.py"),
+        "verify", "--repo", str(identity.root), "--slug", str(state["slug"]),
+        "--observed", "--run-cwd", cwd, "--", "bash", "-lc", command,
+    ]
+    print(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse", "permissionDecision": "allow",
+        "updatedInput": {**inputs, field: shlex.join(wrapped)},
+    }}))
+
+
+def advise(context: str, payload: dict[str, object], repo_key: str) -> None:
+    if advisory_changed(session_key(payload), repo_key, "PreToolUse", context):
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": context}}))
 
 
 def main() -> int:
     payload = read_hook_payload()
     tool_name = payload.get("tool_name")
     tool_name = tool_name.removeprefix("collaboration") if isinstance(tool_name, str) else ""
+    if tool_name in {"Bash", "exec_command"}:
+        observed_test(payload)
+        if tool_name == "exec_command":
+            return 0
     if tool_name in {"Agent", "spawn_agent", "followup_task", "send_input", "send_message", "resume_agent"}:
         missing: list[str] = []
         try:
@@ -100,13 +144,13 @@ def main() -> int:
         if ready and not is_test_path(relative):
             missing = edit_blockers(identity, read_workflow(identity), reminders=reminders)
     except (WorkflowError, LedgerError, ValueError) as exc:
-        advise(f"workflow intake: workflow evidence is unreadable: {exc}. Admitted; nothing records this edit until it is repaired.")
+        advise(f"workflow intake: workflow evidence is unreadable: {exc}. Admitted; nothing records this edit until it is repaired.", payload, identity.key)
         return 0
     if missing:
         reminders.insert(0, "workflow intake: missing before this production edit: " + ", ".join(missing)
                          + ". Admitted; a RED taken after it is recorded as late.")
     if reminders:
-        advise("\n".join(reminders))
+        advise("\n".join(reminders), payload, identity.key)
     return 0
 
 

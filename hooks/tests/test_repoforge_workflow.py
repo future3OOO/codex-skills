@@ -27,7 +27,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from hooks.lib.workflow_documents import graph_evidence_document  # noqa: E402
-from hooks.tests.support import build_no_change_document, fixture_env, graph_packet  # noqa: E402
+from hooks.tests.support import build_no_change_document, empty_advisor_envelope, fixture_env, graph_packet  # noqa: E402
 
 
 @unittest.skipUnless(CANONICAL_BOOTSTRAP.is_file(), "real Repo Context Forge source is unavailable")
@@ -130,7 +130,7 @@ class RepoForgeWorkflowTests(unittest.TestCase):
         return json.loads(result.stdout)
 
     def evidence(self, evidence_id: str) -> dict[str, object]:
-        result = self.pass_state("evidence", "--evidence-id", evidence_id)
+        result = self.pass_state("evidence", "--full", "--evidence-id", evidence_id)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return json.loads(result.stdout)
 
@@ -254,7 +254,7 @@ class RepoForgeWorkflowTests(unittest.TestCase):
 
         self.assertEqual(forged.returncode, 0, marker + "\n" + forged.stdout + forged.stderr)
         state = self.status()
-        self.assertEqual((state["repoContextForge"], state["gitnexus"]), ("passed", "passed"), marker)
+        self.assertEqual(state["repoContextForge"], "passed", marker)
         evidence = self.evidence(str(state["repoContextForgeEvidence"]))["document"]
         projection = evidence["advisorProjection"]
         self.assertEqual(projection["sourceRepo"], {"gap": "source_repo_unavailable"}, marker)
@@ -369,8 +369,9 @@ class RepoForgeWorkflowTests(unittest.TestCase):
         self.assertEqual(recorded.returncode, 0, recorded.stdout + recorded.stderr)
         state = self.status()
         self.assertEqual(state["repoContextForge"], "passed")
-        graph = self.evidence(str(state["repoContextForgeEvidence"]))["document"]["graph"]
-        self.assertEqual((graph["status"], graph["entries"]), ("resolved", []))
+        document = self.evidence(str(state["repoContextForgeEvidence"]))["document"]
+        self.assertEqual(document["advisorProjection"]["graph"]["status"], "resolved")
+        self.assertNotIn("graph", document)
 
     @unittest.skipUnless(GITNEXUS, "the real GitNexus CLI is unavailable")
     def test_same_slug_replacement_rejects_the_stale_producer(self) -> None:
@@ -429,75 +430,26 @@ class RepoForgeWorkflowTests(unittest.TestCase):
         declaration = self.tmp / "design-absent.json"
         declaration.write_text(json.dumps({"schemaVersion": 1, "status": "absent", "reason": "test pass has no governing design"}), encoding="utf-8")
         for step in (
-            ("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
-             "--source", "codex-advisor", "--verdict", "completed", "--design-declaration", str(declaration)),
-            ("advisor-disposition", "--slug", slug, "--workflow-id", wid,
+            ("record", "advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
+             "--source", "codex-advisor", "--input", empty_advisor_envelope(self.tmp, "completed"), "--design-declaration", str(declaration)),
+            ("record", "advisor-disposition", "--slug", slug, "--workflow-id", wid,
              "--stage", "preflight", "--findings", "none"),
         ):
             result = self.pass_state(*step)
             self.assertEqual(result.returncode, 0, " ".join(step) + "\n" + result.stdout + result.stderr)
-        # This suite proves growth-per-cycle accounting, not candidate policy;
-        # its free-form tdd() plumbing rides the legacy path, so the fixture
-        # commits a map-less pre-Behavior-Map preflight - a setup shortcut
-        # producing the imported-legacy document shape (the real importer path
-        # is proven by LegacyImportFreeFormTests) - inside the suite's own
-        # state-root environment. Setup only.
         document = build_no_change_document("issue-106 typed verification fixture")
-        document.pop("behaviorMap", None)
-        doc_path = self.tmp / "legacy-preflight.json"
+        doc_path = self.tmp / "preflight.json"
         doc_path.write_text(json.dumps(document), encoding="utf-8")
-        committed = subprocess.run(
-            [sys.executable, "-c",
-             "import json, sys; sys.path.insert(0, sys.argv[1]); "
-             "from hooks.lib.repo_identity import resolve_repo_identity; "
-             "from hooks.lib import workflow_state as w; "
-             "w.commit_evidence_phase(resolve_repo_identity(sys.argv[2]), sys.argv[3], sys.argv[4], "
-             "'preflight', json.load(open(sys.argv[5])))",
-             str(ROOT), str(self.repo), slug, wid, str(doc_path)],
-            cwd=str(ROOT), env=self.env, text=True,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        committed = self.pass_state("record", "preflight", "--slug", slug,
+                                    "--workflow-id", wid, "--input", str(doc_path))
         self.assertEqual(committed.returncode, 0, committed.stdout + committed.stderr)
-
-    def tdd(self, phase: str, behavior: str, result_value: int,
-            *, expected: str | None = None) -> subprocess.CompletedProcess[str]:
-        """One real RED or GREEN through the recorder CLI, over the fixture's own Seam."""
-        args = [sys.executable, str(WORKFLOW), "tdd", "--cwd", str(self.repo), "--slug", self.slug,
-                "--phase", phase, "--behavior", behavior, "--seam", "app.compute import Interface"]
-        if expected:
-            args += ["--expected-failure", expected]
-        args += ["--", sys.executable, "-c",
-                 f"import app; assert app.compute(1) == {result_value}, 'AssertionError: {behavior}'"]
-        return subprocess.run(
-            args, cwd=self.repo, env=self.env, text=True,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
-        )
-
-    def compute_returns(self, offset: int) -> None:
-        self.repo.joinpath("app.py").write_text(
-            f"def compute(value):\n    return value + {offset}\n", encoding="utf-8"
-        )
 
     def advance_to_typed_verification(self) -> None:
         """The real recorders between recorded context evidence and typed verification."""
         self.advance_to_tdd()
-        state = self.status()
-        slug, wid = str(state["slug"]), str(state["workflowId"])
-        gate = subprocess.run(
-            [sys.executable, str(QUALITY_GATE), "check", "--repo", str(self.repo), "--json"],
-            cwd=self.repo, env=self.env, text=True,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
-        )
-        self.assertEqual(gate.returncode, 0, gate.stdout + gate.stderr)
-        baseline = self.tmp / "baseline-gate.json"
-        baseline.write_text(gate.stdout, encoding="utf-8")
-        for step in (
-            ("tdd", "--slug", slug, "--not-required",
-             "fixture pass proves evidence wiring, not a fixture behavior change"),
-            ("record-production-code", "--slug", slug, "--workflow-id", wid, "--input", str(baseline)),
-            ("set-phase", "--phase", "implementation", "--status", "passed"),
-        ):
-            result = self.pass_state(*step)
-            self.assertEqual(result.returncode, 0, " ".join(step) + "\n" + result.stdout + result.stderr)
+        result = self.pass_state("tdd", "--slug", self.slug, "--not-required",
+                                 "fixture pass proves evidence wiring, not a fixture behavior change")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def typed_quality_gate_run(self, base_ref: str) -> tuple[subprocess.CompletedProcess[str], dict[str, object]]:
         """One typed quality-gate verification and the run entry it recorded."""
@@ -537,7 +489,8 @@ class RepoForgeWorkflowTests(unittest.TestCase):
         verified, run = self.typed_quality_gate_run("main")
         self.assertEqual(verified.returncode, 0, verified.stdout + verified.stderr)
         self.assertIsNone(run["bindingError"], run["bindingError"])
-        for rule_id, finding in sorted(self.owner_states(run["gate"]).items()):
+        gate = json.loads("\n".join(verified.stdout.splitlines()[:-1]))
+        for rule_id, finding in sorted(self.owner_states(gate).items()):
             gaps = finding["completeness"]["gaps"]
             self.assertNotEqual(finding["status"], "incomplete", f"{rule_id} could not evaluate: {gaps}")
             self.assertTrue(finding["completeness"]["complete"], f"{rule_id} gaps: {gaps}")
@@ -560,13 +513,12 @@ class RepoForgeWorkflowTests(unittest.TestCase):
 
         verified, run = self.typed_quality_gate_run("main")
         self.assertEqual(verified.returncode, 0, verified.stdout + verified.stderr)
-        for rule_id, finding in sorted(self.owner_states(run["gate"]).items()):
-            self.assertEqual(finding["status"], "incomplete", f"{rule_id}: {finding}")
-            self.assertIn(
-                "external graph evidence is stale: it does not name the evaluated snapshot",
-                finding["completeness"]["gaps"],
-                f"{rule_id} did not name the stale binding",
-            )
+        self.assertEqual(run["exitCode"], 0)
+        self.assertIn("external graph evidence is stale: it does not name the evaluated snapshot",
+                      verified.stdout, "owner rules did not name the stale binding")
+        findings = json.JSONDecoder().raw_decode(verified.stdout.split('"findings": ', 1)[1])[0]
+        for finding in self.owner_states({"findings": findings}).values():
+            self.assertEqual(finding["status"], "incomplete", "stale owner rule passed")
 
     @unittest.skipUnless(GITNEXUS, "the real GitNexus CLI is unavailable")
     def test_bootstrap_records_the_producer_graph_result_as_workflow_evidence(self) -> None:
@@ -583,21 +535,11 @@ class RepoForgeWorkflowTests(unittest.TestCase):
         record = self.evidence(str(evidence_id))
         self.assertEqual(record["kind"], "repo-context-forge")
         self.assertEqual(record["workflowId"], state["workflowId"])
-        graph = record["document"]["graph"]
-        self.assertEqual(graph["status"], "resolved")
-        self.assertEqual(graph["unresolved_checks"], [])
-        self.assertTrue(graph["entries"], "the recorded graph result carries no entries")
-        self.assertTrue(
-            all(entry["status"] == "resolved" and entry["resolved_identity"] for entry in graph["entries"])
-        )
-        self.assertEqual(
-            graph["authority"]["source_repository"],
-            str(Path(self.repo).resolve()),
-            "the evidence is not bound to this source checkout",
-        )
-        self.assertTrue(graph["producer_revision"]["commit"])
+        self.assertNotIn("graph", record["document"])
+        self.assertRegex(record["document"]["packetSha256"], r"^[0-9a-f]{64}$")
         projection = record["document"]["advisorProjection"]
         self.assertEqual(projection["schemaVersion"], 1)
+        self.assertEqual(projection["graph"]["status"], "resolved")
         self.assertEqual(
             (projection["expectedCandidateTree"], projection["indexedCandidateTree"]),
             (state["activeCandidateTree"], state["activeCandidateTree"]),
@@ -612,7 +554,7 @@ class RepoForgeWorkflowTests(unittest.TestCase):
         self.assertEqual(checkpoint["advisorProjection"], projection)
 
     @unittest.skipUnless(GITNEXUS, "the real GitNexus CLI is unavailable")
-    def test_mutation_and_status_responses_share_graph_candidate_readiness(self) -> None:
+    def test_brief_mutation_receipt_reports_graph_recovery(self) -> None:
         marker = "MUTATION_STATUS_GRAPH_READINESS_DIVERGED"
         forged = self.graph_bootstrap()
         self.assertEqual(forged.returncode, 0, forged.stdout + forged.stderr)
@@ -628,17 +570,9 @@ class RepoForgeWorkflowTests(unittest.TestCase):
         )
         self.assertEqual(paused.returncode, 0, paused.stdout + paused.stderr)
         mutation, status = json.loads(paused.stdout), self.status()
-        self.assertEqual(
-            (
-                mutation["activeCandidateTree"], mutation["repoContextForge"], mutation["gitnexus"],
-                status["activeCandidateTree"], status["repoContextForge"], status["gitnexus"],
-            ),
-            (
-                status["activeCandidateTree"], "pending", "pending",
-                mutation["activeCandidateTree"], "pending", "pending",
-            ),
-            marker + json.dumps({"mutation": mutation, "status": status}, sort_keys=True),
-        )
+        self.assertEqual((mutation["nextAction"], status["repoContextForge"]),
+                         ("repo-context-forge", "pending"), marker)
+        self.assertNotIn("activeCandidateTree", mutation, marker)
 
     def git_out(self, *args: str) -> str:
         result = subprocess.run(
@@ -1030,55 +964,6 @@ class RepoForgeWorkflowTests(unittest.TestCase):
         self.assertEqual(forged.returncode, 0, forged.stdout + forged.stderr)
         self.assertEqual(self.status().get("baseOid"), main, "MAIN_BASED_PASS_CHANGED_BASE")
 
-    @unittest.skipUnless(GITNEXUS, "the real GitNexus CLI is unavailable")
-    def test_the_recorder_counts_cycle_openings_and_nothing_else(self) -> None:
-        """`tddCycleCount` is the recorder's own count of cycle-opening REDs.
-
-        Every other outcome leaves it alone: a rerun of the active candidate, the
-        GREEN that closes a cycle, the reopen a GREEN regression records under the
-        same ambiguous `tdd-reopen` action, and a RED that no longer fails.
-        """
-        forged = self.graph_bootstrap()
-        self.assertEqual(forged.returncode, 0, forged.stdout + forged.stderr)
-        self.advance_to_tdd()
-        self.assertNotIn("tddCycleCount", self.status(), "a pass with no cycle already counted one")
-
-        first = self.tdd("red", "compute adds two", 3, expected="AssertionError")
-        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
-        self.assertEqual(self.status().get("tddCycleCount"), 1, "the first valid RED opened no cycle")
-
-        rerun = self.tdd("red", "compute adds two", 3, expected="AssertionError")
-        self.assertEqual(rerun.returncode, 0, rerun.stdout + rerun.stderr)
-        self.assertEqual(self.status().get("tddCycleCount"), 1, "a rerun of the active candidate counted again")
-
-        self.compute_returns(2)
-        green = self.tdd("green", "compute adds two", 3)
-        self.assertEqual(green.returncode, 0, green.stdout + green.stderr)
-        self.assertEqual(self.status().get("tddCycleCount"), 1, "GREEN counted as a cycle opening")
-
-        second = self.tdd("red", "compute adds three", 4, expected="AssertionError")
-        self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
-        self.assertEqual(self.status().get("tddCycleCount"), 2, "the next tracer RED opened no cycle")
-
-        self.compute_returns(3)
-        second_green = self.tdd("green", "compute adds three", 4)
-        self.assertEqual(second_green.returncode, 0, second_green.stdout + second_green.stderr)
-
-        # A GREEN that regresses reopens the cycle through the same recorder
-        # action a cycle-opening RED uses, which is exactly why the count cannot
-        # be reconstructed from the ledger.
-        self.compute_returns(2)
-        regressed = self.tdd("green", "compute adds three", 4)
-        self.assertEqual(regressed.returncode, 2, regressed.stdout + regressed.stderr)
-        self.assertEqual(self.status()["tdd"], "in-progress", "the regression did not reopen the cycle")
-        self.assertEqual(self.status().get("tddCycleCount"), 2, "a regression reopen counted as a cycle opening")
-
-        # A RED that no longer fails is not a cycle: it proves nothing.
-        self.compute_returns(3)
-        passing_red = self.tdd("red", "compute adds three", 4, expected="AssertionError")
-        self.assertEqual(passing_red.returncode, 2, passing_red.stdout + passing_red.stderr)
-        self.assertEqual(self.status().get("tddCycleCount"), 2, "an invalid RED counted as a cycle opening")
-
 
 class GraphEvidenceContractTests(unittest.TestCase):
     """The producer-result contract, at the validation Interface the Adapter uses.
@@ -1127,6 +1012,8 @@ class GraphEvidenceContractTests(unittest.TestCase):
             "soulforge_impact": {"dependents": []}, "source_dirty_overlap": True, "symbol_count": 20,
         }]
         document = self.document_for(packet)
+        self.assertNotIn("graph", document, "RCF_UNUSED_GRAPH_RETAINED")
+        self.assertRegex(document["packetSha256"], r"^[0-9a-f]{64}$", "RCF_PACKET_UNREFERENCED")
         target = document["advisorProjection"]["targets"][0]
         self.assertEqual(target, {
             "path": "hooks/lib/tdd_workflow.py", "surface_role": "production", "rank": 4,
@@ -1212,7 +1099,7 @@ class GraphEvidenceContractTests(unittest.TestCase):
         projection = document["advisorProjection"]
         self.assertEqual(projection["committedHeadOid"], "a" * 40, marker)
         self.assertEqual(projection["sourceBaseOid"], "b" * 40, marker)
-        self.assertEqual(document["graph"]["status"], "resolved", marker)
+        self.assertEqual(document["advisorProjection"]["graph"]["status"], "resolved", marker)
         self.assertEqual(document["workflowId"], "wid", marker)
         self.assertNotIn("gateContext", document, marker)
         self.assertNotIn("gateContextGap", document, marker)

@@ -14,7 +14,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from hooks.lib import behavior_map  # noqa: E402
-from hooks.lib.behavior_map import no_change_item  # noqa: E402
+from hooks.tests.support import no_change_item  # noqa: E402
 from hooks.lib.repo_identity import resolve_repo_identity  # noqa: E402
 
 from hooks.lib.workflow_state import (  # noqa: E402
@@ -25,14 +25,13 @@ from hooks.lib.workflow_state import (  # noqa: E402
     record_advisor_result,
     record_base_oid,
 )
-from hooks.tests.support import build_document, pending_behavior, record_context_forge  # noqa: E402
+from hooks.tests.support import build_document, empty_advisor_intake, pending_behavior, record_context_forge  # noqa: E402
 # Module alias only: binding the TestCase name here would make unittest.main
 # rediscover and re-run the whole behavior-map suite inside this file.
 from hooks.tests import test_behavior_map_workflow as bmw  # noqa: E402
 
 INTAKE = ROOT / "hooks" / "rcf-intake-gate.py"
 POST_EDIT = ROOT / "hooks" / "code-quality-gate.py"
-QUALITY_GATE = ROOT / "skills" / "production-code" / "scripts" / "code_quality_gate.py"
 
 
 def contract(identifier: str = "BM_CONTRACT", **fields: object) -> dict[str, object]:
@@ -58,7 +57,8 @@ class ContractProofAuthorityTests(unittest.TestCase):
         self.assertEqual(begun.returncode, 0, begun.stdout + begun.stderr)
         slug, workflow_id = json.loads(begun.stdout)["slug"], json.loads(begun.stdout)["workflowId"]
         identity = record_context_forge(self.repo, self.h.tmp)
-        record_advisor_result(identity, slug, workflow_id, "preflight", "codex-advisor", "completed")
+        record_advisor_result(identity, slug, workflow_id, "preflight", "codex-advisor", "completed",
+                              intake=empty_advisor_intake(self.h.tmp, slug, workflow_id))
         advisor_disposition(identity, slug, workflow_id, "preflight", "none")
         return slug, workflow_id
 
@@ -71,7 +71,7 @@ class ContractProofAuthorityTests(unittest.TestCase):
             encoding="utf-8",
         )
         return self.h.cli(
-            "record-preflight", "--slug", slug, "--workflow-id", workflow_id,
+            "record", "preflight", "--slug", slug, "--workflow-id", workflow_id,
             "--input", str(payload),
         )
 
@@ -159,12 +159,12 @@ class ContractProofAuthorityTests(unittest.TestCase):
         payload.write_text(json.dumps(update), encoding="utf-8")
         try:
             result = subprocess.run(
-                [sys.executable, str(bmw.WORKFLOW), "tdd-map", "--repo", str(self.repo), "--slug", slug,
+                [sys.executable, str(bmw.WORKFLOW), "record", "map", "--repo", str(self.repo), "--slug", slug,
                  "--workflow-id", workflow_id, "--input", str(payload)],
                 cwd=self.repo, env=self.h.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 check=False, timeout=60)
         except subprocess.TimeoutExpired:
-            self.fail(f"{marker}: tdd-map did not return")
+            self.fail(f"{marker}: record map did not return")
         self.assertEqual(result.returncode, 2, f"{marker}: " + result.stdout + result.stderr)
         self.assertIn(names, result.stderr, marker)
         self.assertEqual(read_workflow(self.identity).get("tddEvidence"), before, marker)
@@ -186,21 +186,6 @@ class ContractProofAuthorityTests(unittest.TestCase):
             "contract", marker,
         )
 
-    def record_production_code(self, slug: str, workflow_id: str) -> None:
-        gate = subprocess.run(
-            [sys.executable, str(QUALITY_GATE), "check", "--repo", str(self.repo), "--json"],
-            cwd=ROOT, env=self.h.env, text=True,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
-        )
-        self.assertEqual(gate.returncode, 0, gate.stdout + gate.stderr)
-        verdict = self.h.tmp / "gate-verdict.json"
-        verdict.write_text(gate.stdout, encoding="utf-8")
-        recorded = self.h.cli(
-            "record-production-code", "--slug", slug, "--workflow-id", workflow_id,
-            "--input", str(verdict),
-        )
-        self.assertEqual(recorded.returncode, 0, recorded.stdout + recorded.stderr)
-
     def intake_advice(self, relative: str = "app.py") -> str:
         """The real PreToolUse hook: prerequisites and obligations, never a denial."""
         hook = subprocess.run(
@@ -217,7 +202,7 @@ class ContractProofAuthorityTests(unittest.TestCase):
 
     def item_status(self, behavior_id: str) -> str:
         state = read_workflow(self.identity)
-        document = json.loads(self.h.cli("evidence", "--evidence-id", str(state["tddEvidence"])).stdout)["document"]
+        document = json.loads(self.h.cli("evidence", "--full", "--evidence-id", str(state["tddEvidence"])).stdout)["document"]
         return next(str(entry["status"]) for entry in document["behaviorMap"] if entry["id"] == behavior_id)
 
     def test_a_preservation_red_before_any_contract_green_records(self) -> None:
@@ -242,7 +227,6 @@ class ContractProofAuthorityTests(unittest.TestCase):
                               "evidence": "app.value == 1 observed through the public import"}],
         })
         self.assertEqual(dispositioned.returncode, 0, marker + ": " + dispositioned.stdout + dispositioned.stderr)
-        self.record_production_code(slug, workflow_id)
         before = {}
         for action, key in (("status", "workflowId"), ("history", "events")):
             captured = self.h.cli(action)
@@ -269,14 +253,13 @@ class ContractProofAuthorityTests(unittest.TestCase):
         self.assertEqual(payload.get("status"), "already-satisfied", marker)
         state = read_workflow(self.identity)
         self.assertNotIn("tddCycleCount", state, marker)
-        document = self.h.cli("evidence", "--evidence-id", str(state["tddEvidence"]))
+        document = self.h.cli("evidence", "--full", "--evidence-id", str(state["tddEvidence"]))
         self.assertEqual(document.returncode, 0, document.stdout + document.stderr)
         recorded = json.loads(document.stdout)["document"]
         [present] = [entry for entry in recorded["behaviorMap"] if entry["id"] == "BM_PRESENT"]
         self.assertEqual(present["status"], "already-satisfied", marker)
         self.assertIn("test_behavior_probe.BehaviorProbe.test_behavior", present["evidence"], marker)
         self.assertIsNone(recorded.get("activeBehaviorId"), marker)
-        self.record_production_code(slug, workflow_id)
         self.assertIn("contract", self.intake_advice(), marker)
         not_required = self.h.cli("tdd", "--slug", slug, "--not-required", "the mapped behavior exists")
         self.assertEqual(not_required.returncode, 0, marker + ": " + not_required.stdout + not_required.stderr)
@@ -330,7 +313,7 @@ class ContractProofAuthorityTests(unittest.TestCase):
              "--phase", "red", "--behavior-id", "BM_PRESENT", "--", *command],
             cwd=self.repo, env=self.h.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
         self.assertEqual(mixed.returncode, 0, f"{marker}: {(mixed.stderr.strip().splitlines() or [''])[-1]}")
-        document = self.h.cli("evidence", "--evidence-id", str(read_workflow(self.identity)["tddEvidence"]))
+        document = self.h.cli("evidence", "--full", "--evidence-id", str(read_workflow(self.identity)["tddEvidence"]))
         self.assertEqual(json.loads(document.stdout)["document"]["runs"][-1]["redProof"]["testsExecuted"], 1, marker)
 
     def green(self, slug: str, behavior_id: str, value: int, marker: str) -> None:
@@ -355,8 +338,9 @@ class ContractProofAuthorityTests(unittest.TestCase):
         self.assertEqual(baseline.returncode, 0, marker + ": " + (baseline.stderr.strip().splitlines() or [""])[-1])
         self.assertEqual(json.loads(baseline.stdout.strip().splitlines()[-1]).get("status"), "already-satisfied", marker)
         state = read_workflow(self.identity)
-        document = json.loads(self.h.cli("evidence", "--evidence-id", str(state["tddEvidence"])).stdout)["document"]
-        self.assertEqual(document["runs"][-1].get("productionChanged"), [], marker)
+        document = json.loads(self.h.cli("evidence", "--full", "--evidence-id", str(state["tddEvidence"])).stdout)["document"]
+        self.assertEqual(document["behaviorMap"][0]["status"], "already-satisfied", marker)
+        self.assertNotIn("productionChanged", document["behaviorMap"][0].get("baselineProof", {}), marker)
 
     def proved_first_item(self) -> tuple[str, str]:
         """BM_A GREEN through RED and reassessed; BM_B pending on the dirty candidate."""
@@ -418,19 +402,12 @@ class ContractProofAuthorityTests(unittest.TestCase):
         self.assertIn(clause, final.split("esac", 1)[0], marker)
         self.assertNotIn(clause, preflight.rsplit("  preflight-advice)\n", 1)[-1], marker)
 
-    def test_kindless_recorded_items_load_without_contract_authority(self) -> None:
-        # A #138-era map (recorded before `kind`) keeps loading through the
-        # adapters' Interface, but none of its items can open editing.
-        marker = "KINDLESS_ITEM_HELD_CONTRACT_AUTHORITY"
-        legacy = pending_behavior("BM_OLD")
-        legacy.pop("kind")
-        legacy["status"] = "red"
-        try:
-            items = behavior_map.runtime_items([legacy])
-        except ValueError as exc:
-            self.fail(f"{marker}: recorded kind-less map refused to load: {exc}")
-        self.assertEqual([entry["id"] for entry in items], ["BM_OLD"], marker)
-        self.assertIsNotNone(behavior_map.edit_blocker(items), marker)
+    def test_kindless_recorded_items_fail_closed(self) -> None:
+        item = pending_behavior("BM_OLD")
+        item.pop("kind")
+        item["status"] = "red"
+        with self.assertRaisesRegex(ValueError, "kind"):
+            behavior_map.runtime_items([item])
 
     def test_new_seam_first_red_asserts_the_seams_existence(self) -> None:
         # Issue #141 D: the first RED for a Seam that does not exist yet is a
@@ -444,7 +421,7 @@ class ContractProofAuthorityTests(unittest.TestCase):
                          "import app; self.assertTrue(hasattr(app, 'enable_checkpoints'), 'CHECKPOINT_SEAM_ABSENT')")
         self.assertEqual(red.returncode, 0, marker + ": " + red.stdout + red.stderr)
         state = read_workflow(self.identity)
-        document = self.h.cli("evidence", "--evidence-id", str(state["tddEvidence"]))
+        document = self.h.cli("evidence", "--full", "--evidence-id", str(state["tddEvidence"]))
         run = json.loads(document.stdout)["document"]["runs"][-1]
         self.assertEqual(run["redProof"]["quality"], "assertion-reached", marker)
         slug, _ = self.h.begin_to_preflight([seam])
@@ -457,7 +434,7 @@ class ContractProofAuthorityTests(unittest.TestCase):
 
     def supersede(self, source: str, target: str | None, items: list[dict[str, object]] | None = None,
                   pending: str | None = None) -> dict[str, object]:
-        """A tdd-map update superseding ``source`` by ``target`` (None omits supersededBy)."""
+        """A map update superseding ``source`` by ``target`` (None omits supersededBy)."""
         disposition: dict[str, object] = {"id": source, "status": "superseded", "evidence": "a sharper item owns this outcome"}
         if target is not None:
             disposition["supersededBy"] = target
@@ -474,7 +451,6 @@ class ContractProofAuthorityTests(unittest.TestCase):
         superseded = self.h.update_map(slug, workflow_id, self.supersede("BM_A", "BM_B", [replacement], pending="BM_A"))
         self.assertEqual(superseded.returncode, 0, f"{marker}: {(superseded.stderr.strip().splitlines() or [''])[-1]}")
         self.assertEqual(json.loads(superseded.stdout)["pending"], ["BM_A", "BM_B"], marker)
-        self.record_production_code(slug, workflow_id)
         with self.assertRaises(WorkflowIncomplete, msg=marker) as refused:
             complete(self.identity, slug=slug, workflow_id=workflow_id)
         self.assertIn("BM_A", str(refused.exception), marker)
@@ -583,7 +559,7 @@ class ContractProofAuthorityTests(unittest.TestCase):
 
     def item_document(self) -> dict[str, object]:
         state = read_workflow(self.identity)
-        return json.loads(self.h.cli("evidence", "--evidence-id", str(state["tddEvidence"])).stdout)["document"]
+        return json.loads(self.h.cli("evidence", "--full", "--evidence-id", str(state["tddEvidence"])).stdout)["document"]
 
     def item(self, behavior_id: str) -> dict[str, object]:
         return next(entry for entry in self.item_document()["behaviorMap"] if entry["id"] == behavior_id)

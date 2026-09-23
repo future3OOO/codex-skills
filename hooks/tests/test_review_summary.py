@@ -16,13 +16,12 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from hooks.tests.support import build_no_change_document, record_context_forge  # noqa: E402
+from hooks.tests.support import build_no_change_document, empty_advisor_envelope, empty_advisor_intake, record_context_forge  # noqa: E402
 from hooks.lib.repo_identity import resolve_repo_identity  # noqa: E402
 from hooks.lib.state_store import _active_candidate_tree  # noqa: E402
-from hooks.lib.workflow_state import advisor_disposition, read_workflow, record_advisor_result, set_phase  # noqa: E402
+from hooks.lib.workflow_state import advisor_disposition, commit_evidence_phase, read_workflow, record_advisor_result, set_phase  # noqa: E402
 
 WORKFLOW = ROOT / "skills" / "repo-production-workflow" / "scripts" / "workflow.py"
-QUALITY_GATE = ROOT / "skills" / "production-code" / "scripts" / "code_quality_gate.py"
 
 
 class ReviewSummaryHarness(unittest.TestCase):
@@ -52,31 +51,16 @@ class ReviewSummaryHarness(unittest.TestCase):
         self.assertEqual(begun.returncode, 0, begun.stdout + begun.stderr)
         identity = record_context_forge(self.repo, self.tmp)
         self.wid = read_workflow(identity)["workflowId"]
-        record_advisor_result(identity, "review-summary", read_workflow(identity)["workflowId"], "preflight", "codex-advisor", "completed")
+        record_advisor_result(identity, "review-summary", self.wid, "preflight", "codex-advisor", "completed",
+                              intake=empty_advisor_intake(self.tmp, "review-summary", self.wid))
         advisor_disposition(identity, "review-summary", read_workflow(identity)["workflowId"], "preflight", "none")
-        doc_path = self.tmp / "setup-preflight.json"
-        doc_path.write_text(json.dumps(build_no_change_document("suite setup")), encoding="utf-8")
-        recorded = subprocess.run(
-            [sys.executable, str(WORKFLOW), "record-preflight", "--repo", str(self.repo), "--slug", "review-summary",
-             "--workflow-id", read_workflow(identity)["workflowId"], "--input", str(doc_path)],
-            cwd=str(Path(__file__).resolve().parents[2]), env=self.env, text=True,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-        assert recorded.returncode == 0, recorded.stdout + recorded.stderr
+        setup_items = build_no_change_document("suite setup")["behaviorMap"]
+        setup_items[0]["basis"] = "review fixture"
+        commit_evidence_phase(identity, "review-summary", self.wid, "preflight", {
+            "schemaVersion": 1, "slug": "review-summary", "workflowId": self.wid,
+            "document": {"behaviorMap": setup_items},
+        })
         set_phase(identity, "tdd", "not-required")
-        gate = subprocess.run(
-            [sys.executable, str(QUALITY_GATE), "check", "--repo", str(self.repo), "--json"],
-            cwd=str(ROOT), env=self.env, text=True,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-        assert gate.returncode == 0, gate.stdout + gate.stderr
-        gate_path = self.tmp / "setup-gate.json"
-        gate_path.write_text(gate.stdout, encoding="utf-8")
-        recorded = subprocess.run(
-            [sys.executable, str(WORKFLOW), "record-production-code", "--repo", str(self.repo), "--slug", "review-summary",
-             "--workflow-id", read_workflow(identity)["workflowId"], "--input", str(gate_path)],
-            cwd=str(ROOT), env=self.env, text=True,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-        assert recorded.returncode == 0, recorded.stdout + recorded.stderr
-        set_phase(identity, "implementation", "passed")
         verified = subprocess.run(
             [sys.executable, str(WORKFLOW), "verify", "--repo", str(self.repo), "--slug", "review-summary",
              "--", sys.executable, "-c", "pass"],
@@ -105,7 +89,7 @@ class ReviewSummaryHarness(unittest.TestCase):
         )
 
     def evidence(self, evidence_id: str) -> dict[str, object]:
-        result = self.run_script(WORKFLOW, "evidence", "--evidence-id", evidence_id)
+        result = self.run_script(WORKFLOW, "evidence", "--full", "--evidence-id", evidence_id)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return json.loads(result.stdout)["document"]
 
@@ -139,21 +123,43 @@ class ReviewSummaryHarness(unittest.TestCase):
                                     "result": "the fixture remains incorrect"},
             field: "issue-1" if field == "reference" else "verified current-tree evidence", **extra}]}
 
-    def record_review(self, path: Path, context: str = "review", model: str = "gpt-5") -> subprocess.CompletedProcess[str]:
+    def record_review(self, path: Path, context: str = "review") -> subprocess.CompletedProcess[str]:
         return self.run_script(
-            WORKFLOW, "record-review", "--slug", "review-summary", "--workflow-id", self.wid,
-            "--resolved-model", model, "--review-context-id", context, "--input", str(path),
+            WORKFLOW, "record", "review", "--slug", "review-summary", "--workflow-id", self.wid,
+            "--review-context-id", context, "--input", str(path),
         )
 
 class ReviewSummaryTests(ReviewSummaryHarness):
+    def test_review_intake_keeps_only_consumed_finding_fields(self) -> None:
+        path = self.tmp / "minimal-review.json"
+        finding = {"id": "SPEC-1", "claim": "wrong value", "material": True,
+                   "kind": "nonbehavioral"}
+        path.write_text(json.dumps({"findings": [finding]}), encoding="utf-8")
+        recorded = self.run_script(WORKFLOW, "record", "review", "--input", str(path))
+        self.assertEqual(recorded.returncode, 0, "REVIEW_PROSE_STILL_REQUIRED " + recorded.stderr)
+        document = self.evidence(json.loads(recorded.stdout)["summaryId"])
+        self.assertEqual(document["findings"], [finding])
+
+    def test_ordinary_review_can_omit_repair_context_identity(self) -> None:
+        marker = "REVIEW_OPTIONAL_REFUSED"
+        path = self.tmp / "ordinary-review.json"
+        path.write_text(json.dumps({"findings": []}), encoding="utf-8")
+        recorded = self.run_script(
+            WORKFLOW, "record", "review", "--slug", "review-summary", "--workflow-id", self.wid,
+            "--input", str(path),
+        )
+        self.assertEqual(recorded.returncode, 0, marker + " " + recorded.stderr)
+        document = self.evidence(json.loads(recorded.stdout)["summaryId"])
+        self.assertNotIn("reviewContextId", document)
+
     def test_pending_findings_allow_fresh_final_assessment_without_completion(self) -> None:
         marker = "PENDING_FINDINGS_PREVENT_FINAL_ASSESSMENT"
         design = self.tmp / "design.json"
         design.write_text(json.dumps({"schemaVersion": 1, "status": "absent",
                                      "reason": "Existing CLI assessment admission probe"}))
-        declared = self.run_script(WORKFLOW, "advisor-result", "--slug", "review-summary",
+        declared = self.run_script(WORKFLOW, "record", "advisor-result", "--slug", "review-summary",
             "--workflow-id", self.wid, "--stage", "preflight", "--source", "codex-advisor",
-            "--verdict", "completed", "--design-declaration", str(design))
+            "--input", empty_advisor_envelope(self.tmp, "completed"), "--design-declaration", str(design))
         self.assertEqual(declared.returncode, 0, declared.stderr)
         self.assertFalse(json.loads(self.run_script(WORKFLOW, "checkpoint", "--phase", "final-review").stdout)["ready"], marker)
         path = self.tmp / "assessment.json"
@@ -166,7 +172,7 @@ class ReviewSummaryTests(ReviewSummaryHarness):
         path.write_text(json.dumps({"schemaVersion": 1, "verdict": "fix-before-commit", "findings": [
             {"id": "SPEC-2", "claim": "Independent finding remains unresolved",
              "kind": "nonbehavioral", "material": True}]}))
-        final_args = ("advisor-result", "--slug", "review-summary", "--workflow-id", self.wid,
+        final_args = ("record", "advisor-result", "--slug", "review-summary", "--workflow-id", self.wid,
                       "--stage", "final", "--source", "codex-advisor", "--input", str(path),
                       "--design-declaration", str(design))
         update = self.tmp / "reassessment.json"
@@ -174,7 +180,7 @@ class ReviewSummaryTests(ReviewSummaryHarness):
             "items": [{"id": "BM_CURRENT", "kind": "contract", "basis": "newly requested read",
                        "behavior": "Current application value remains readable", "seam": "Python import",
                        "expected": "value is 1", "redFailure": "CURRENT_READ_CHANGED"}]}))
-        mapped = self.run_script(WORKFLOW, "tdd-map", "--slug", "review-summary",
+        mapped = self.run_script(WORKFLOW, "record", "map", "--slug", "review-summary",
                                  "--workflow-id", self.wid, "--input", str(update))
         self.assertEqual(mapped.returncode, 0, mapped.stderr)
         self.assertEqual(self.run_script(WORKFLOW, *final_args).returncode, 2, "REASSESSED_MAP_ADMITTED_FINAL_RESULT")
@@ -191,7 +197,7 @@ class ReviewSummaryTests(ReviewSummaryHarness):
         (self.repo / "app.py").write_text("value = 1\n")
         accepted = self.run_script(WORKFLOW, *final_args)
         self.assertEqual(accepted.returncode, 0, marker + accepted.stderr)
-        self.assertTrue(all(f["status"] == "pending" for f in json.loads(accepted.stdout)["findingStates"]), marker)
+        self.assertTrue(all(f["status"] == "pending" for f in json.loads(self.run_script(WORKFLOW, "status").stdout)["findingStates"]), marker)
         self.assertEqual(self.run_script(WORKFLOW, "complete").returncode, 2, marker)
         events = self.event_count()
         self.assertEqual(self.run_script(WORKFLOW, *final_args).returncode, 2, marker)
@@ -261,14 +267,9 @@ class ReviewSummaryTests(ReviewSummaryHarness):
         }
         path = self.tmp / "review.json"
         path.write_text(json.dumps({"findings": []}), encoding="utf-8")
-        missing_identity = self.record_review(path, "", "")
+        missing_identity = self.record_review(path, "")
         self.assertEqual(missing_identity.returncode, 2, missing_identity.stdout + missing_identity.stderr)
-        self.assertIn("resolved model", missing_identity.stderr)
-
-        path.write_text(json.dumps({"findings": [{key: value for key, value in finding.items() if key != "consequence"}]}), encoding="utf-8")
-        missing_consequence = self.record_review(path, "fresh-review-1")
-        self.assertEqual(missing_consequence.returncode, 2, missing_consequence.stdout + missing_consequence.stderr)
-        self.assertIn("requires consequence", missing_consequence.stderr)
+        self.assertIn("review context id", missing_identity.stderr)
 
         path.write_text(json.dumps({"findings": [finding]}), encoding="utf-8")
         intake = self.record_review(path, "fresh-review-1")
@@ -328,7 +329,7 @@ class ReviewSummaryTests(ReviewSummaryHarness):
             "behavior": "app.value is two", "seam": "import app", "expected": "value equals two",
             "redFailure": "VALUE_NOT_TWO", "status": "pending",
         }]}), encoding="utf-8")
-        mapped = self.run_script(WORKFLOW, "tdd-map", "--slug", "review-summary", "--workflow-id", self.wid,
+        mapped = self.run_script(WORKFLOW, "record", "map", "--slug", "review-summary", "--workflow-id", self.wid,
                                  "--input", str(update))
         self.assertEqual(mapped.returncode, 0, mapped.stdout + mapped.stderr)
         verified = self.run_script(WORKFLOW, "verify", "--slug", "review-summary", "--kind", "quality-gate", "--base-ref", "HEAD")
@@ -404,12 +405,12 @@ class ReviewSummaryTests(ReviewSummaryHarness):
                              "PENDING_REVIEW_BINDING_STALE")
             previous = state["reviewManifestId"]
 
-    def test_legacy_empty_document_is_a_no_finding_intake(self) -> None:
-        path = self.tmp / "legacy-empty.json"
+    def test_empty_review_document_is_a_no_finding_intake(self) -> None:
+        path = self.tmp / "empty-review.json"
         path.write_text(json.dumps({"findings": [], "dispositions": []}), encoding="utf-8")
-        recorded = self.record_review(path, "legacy-empty")
-        self.assertEqual(recorded.returncode, 0, "LEGACY_EMPTY_REVIEW_REJECTED" + recorded.stdout + recorded.stderr)
-        self.assertEqual(json.loads(recorded.stdout)["status"], "passed", "LEGACY_EMPTY_REVIEW_REJECTED")
+        recorded = self.record_review(path, "empty-review")
+        self.assertEqual(recorded.returncode, 0, "EMPTY_REVIEW_REJECTED" + recorded.stdout + recorded.stderr)
+        self.assertEqual(json.loads(recorded.stdout)["status"], "passed", "EMPTY_REVIEW_REJECTED")
 
     def test_disposition_requires_current_measurements(self) -> None:
         marker = "UNMEASURED_REVIEW_FINDING_DISPOSITION_ACCEPTED"
@@ -465,21 +466,14 @@ class ReviewSummaryTests(ReviewSummaryHarness):
         from hooks.lib import workflow_documents
         shapes = workflow_documents.DOCUMENT_SHAPES
         table = workflow_documents.DOCUMENT_SHAPE_TABLE
-        self.assertEqual(list(shapes), ["fixed", "rejected-with-evidence", "report-only", "accepted-follow-up", "governed-design"], marker)
+        self.assertEqual(list(shapes), ["preflight", "review", "advisor-result", "advisor-disposition", "map",
+                                        "fixed", "rejected-with-evidence", "report-only", "accepted-follow-up", "governed-design"], marker)
         for name, shape in shapes.items():
             self.assertIn(f"| `{name}` | {shape} |", table, marker)
             self.assertEqual(f"| `{name}` | {shape} |".count("|"), 3, "DOCUMENT_SHAPE_TABLE_HAS_EXTRA_COLUMN")
-        command = 'python3 -I -c \'import sys; from pathlib import Path; sys.path.insert(0, str(Path.home() / ".codex")); from hooks.lib.workflow_documents import DOCUMENT_SHAPE_TABLE; print(DOCUMENT_SHAPE_TABLE)\''
-        delegate_prompt = (ROOT / "skills/code-review/SKILL.md").read_text(encoding="utf-8")
-        self.assertNotIn(command, delegate_prompt, "DELEGATE_PROMPT_CARRIES_LEAD_RECORDING")
-        for relative in ("skills/codex-advisor/SKILL.md", "skills/repo-production-workflow/SKILL.md"):
-            text = (ROOT / relative).read_text(encoding="utf-8")
-            self.assertIn(command, text, "AUTHOR_TABLE_COMMAND_USED_CALLER_PATH")
-            self.assertNotIn("| `fixed` |", text, marker)
-        (self.tmp / ".codex").symlink_to(ROOT, target_is_directory=True)
-        rendered = subprocess.run(["python3", "-I", "-c", command.removeprefix("python3 -I -c '").removesuffix("'")], cwd=self.repo, env={**os.environ, "HOME": str(self.tmp)},
-            text=True, capture_output=True, check=False)
-        self.assertEqual((rendered.returncode, rendered.stdout.strip()), (0, table), "AUTHOR_TABLE_COMMAND_USED_CALLER_PATH" + rendered.stderr)
+        rendered = self.run_script(WORKFLOW, "record", "--help")
+        self.assertEqual(rendered.returncode, 0, rendered.stderr)
+        self.assertIn(table, rendered.stdout, "AUTHOR_TABLE_COMMAND_USED_CALLER_PATH")
 
     def test_record_review_refusal_names_shape_and_preserves_state(self) -> None:
         marker = "REVIEW_SHAPE_GUIDANCE_MISSING"
@@ -553,8 +547,8 @@ class ReviewSummaryTests(ReviewSummaryHarness):
         document = self.disposition_document(intake, "SPEC-1", "fixed")
         path.write_text(json.dumps(document), encoding="utf-8")
         before_events = self.event_count()
-        process = subprocess.Popen([sys.executable, str(WORKFLOW), "record-review", "--slug", "review-summary",
-            "--workflow-id", self.wid, "--resolved-model", "gpt-5", "--review-context-id", "race",
+        process = subprocess.Popen([sys.executable, str(WORKFLOW), "record", "review", "--slug", "review-summary",
+            "--workflow-id", self.wid, "--review-context-id", "race",
             "--input", str(path), "--repo", str(self.repo)], cwd=ROOT, env=self.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         saw_hash = mutated = False
         deadline = time.monotonic() + 30
@@ -583,10 +577,10 @@ class ReviewSummaryTests(ReviewSummaryHarness):
         }
         path = self.tmp / "unhashable.json"
         before_events = self.event_count()
-        path.write_text(json.dumps({"findings": [{**finding, "axis": []}]}), encoding="utf-8")
-        refused = self.record_review(path, "unhashable-axis")
-        self.assertEqual(refused.returncode, 2, "an unhashable axis crashed instead of refusing")
-        self.assertIn("has an invalid axis", refused.stderr)
+        path.write_text(json.dumps({"findings": [{**finding, "kind": []}]}), encoding="utf-8")
+        refused = self.record_review(path, "unhashable-kind")
+        self.assertEqual(refused.returncode, 2, "an unhashable kind crashed instead of refusing")
+        self.assertIn("has an invalid kind", refused.stderr)
         self.assertEqual(self.event_count(), before_events, "a refused intake appended an event")
         self.assertNotIn("codeReviewEvidence", json.loads(self.run_script(WORKFLOW, "status").stdout))
 
@@ -620,8 +614,8 @@ class ReviewSummaryTests(ReviewSummaryHarness):
         payload = self.tmp / "premature.json"
         payload.write_text(json.dumps({"findings": []}), encoding="utf-8")
         premature = self.run_script(
-            WORKFLOW, "record-review", "--slug", "review-summary", "--workflow-id", new_wid,
-            "--resolved-model", "gpt-5", "--review-context-id", "fresh-review-2",
+            WORKFLOW, "record", "review", "--slug", "review-summary", "--workflow-id", new_wid,
+            "--review-context-id", "fresh-review-2",
             "--input", str(payload),
         )
         self.assertEqual(premature.returncode, 2, "a premature recorder call was accepted before verification")

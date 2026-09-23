@@ -13,6 +13,7 @@ from pathlib import Path
 
 from . import behavior_map, tdd_surface
 from .command_runner import (
+    MAX_CAPTURE,
     emit_json as _emit_json,
     print_output as _print_output,
     run as _run,
@@ -26,15 +27,13 @@ from .state_store import (
     production_changes,
     read_json,
     repo_state_dir,
-    utc_timestamp,
 )
-from .workflow_documents import load_json
+from .workflow_documents import DOCUMENT_SHAPES, load_json
 from .workflow_state import (
     NO_INSTANCE_ID,
     TDD_CLOSED,
     WorkflowError,
     _executed_selections,
-    _head_oid,
     annotate_tdd_evidence,
     bound_state,
     commit_tdd,
@@ -42,6 +41,7 @@ from .workflow_state import (
     execution_digest,
     execution_receipt,
     instance_id,
+    read_workflow,
     run_recorded_baseline,
     safe_slug,
 )
@@ -50,14 +50,7 @@ JsonObject = dict[str, object]
 
 
 def _tdd_parser() -> argparse.ArgumentParser:
-    """The sole grammar for mapped and imported-legacy TDD options."""
-    parser = argparse.ArgumentParser(
-        prog="workflow tdd",
-        epilog=(
-            "imported pre-map workflows keep the legacy flags: "
-            "--behavior, --seam, --expected-failure"
-        ),
-    )
+    parser = argparse.ArgumentParser(prog="workflow tdd")
     parser.add_argument("--repo", "--cwd", dest="repo", default=".")
     parser.add_argument("--slug", required=True)
     mode = parser.add_mutually_exclusive_group(required=True)
@@ -66,19 +59,17 @@ def _tdd_parser() -> argparse.ArgumentParser:
     parser.add_argument("--behavior-id")
     parser.add_argument("--from-evidence", help="reuse an executed evidence-id:run-index")
     parser.add_argument("--test-id", help="the exact unittest test attributed to this item")
-    parser.add_argument("--behavior")
-    parser.add_argument("--seam", default="")
-    parser.add_argument("--expected-failure", default="")
     parser.add_argument("--timeout", type=int, default=900)
     return parser
 
 
 def _map_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="workflow tdd-map")
+    parser = argparse.ArgumentParser(prog="workflow record map", epilog=DOCUMENT_SHAPES["map"])
     parser.add_argument("--repo", "--cwd", dest="repo", default=".")
-    parser.add_argument("--slug", required=True)
-    parser.add_argument("--workflow-id", required=True)
+    parser.add_argument("--slug")
+    parser.add_argument("--workflow-id")
     parser.add_argument("--input", required=True)
+    parser.add_argument("--check", action="store_true", help="validate without recording")
     return parser
 
 
@@ -101,38 +92,6 @@ def current_map(
     return behavior_map.recorded_map(tdd_document, preflight_document), tdd_document
 
 
-def _legacy_green_candidate(
-    current: JsonObject | None,
-    workflow_id: str,
-    args: argparse.Namespace,
-) -> bool:
-    """Only an imported, already-open legacy RED may finish free-form."""
-    if not isinstance(current, dict) or current.get("behaviorMap") is not None:
-        return False
-    if args.behavior_id is not None or args.not_required is not None:
-        return False
-    if args.phase != "green":
-        return False
-    if not all(
-        (
-            current.get("schemaVersion") == 1,
-            current.get("workflowId") == workflow_id,
-            current.get("status") == "pending",
-            isinstance(current.get("behavior"), str),
-            isinstance(current.get("seam"), str),
-            isinstance(current.get("command"), str),
-        )
-    ):
-        return False
-    runs = current.get("runs")
-    return isinstance(runs, list) and any(
-        isinstance(run, dict)
-        and run.get("phase") == "red"
-        and run.get("valid") is True
-        for run in runs
-    )
-
-
 def _map_doc(
     *,
     slug: str,
@@ -141,7 +100,6 @@ def _map_doc(
     status: str,
     kind: str,
     active: str | None = None,
-    reassessment_pending: str | None = None,
     reassessment: str | None = None,
     **extra: object,
 ) -> JsonObject:
@@ -153,8 +111,6 @@ def _map_doc(
         "status": status,
         "behaviorMap": items,
         "activeBehaviorId": active,
-        "reassessmentPending": reassessment_pending,
-        "updatedAt": utc_timestamp(),
         **extra,
     }
     if reassessment is not None:
@@ -173,11 +129,6 @@ def edit_blockers(
         reminders.append(behavior_map.obligation_digest(items, (document or {}).get("activeBehaviorId")))
     reason = behavior_map.edit_blocker(items)
     return [reason] if reason else []
-
-
-def completion_blockers(identity: RepoIdentity, state: JsonObject) -> list[str]:
-    """Map conditions that forbid workflow completion (diagnostic; complete() re-judges in its transaction)."""
-    return behavior_map.closure_blockers(*_evidence_pair(identity, state))
 
 
 def _not_required(
@@ -225,7 +176,6 @@ def _not_required(
             "workflowId": str(state["workflowId"]),
             "status": "not-required",
             "reason": reason,
-            "updatedAt": utc_timestamp(),
         }
     )
     _, evidence_id = commit_tdd(
@@ -235,6 +185,7 @@ def _not_required(
         document,
         "not-required",
         expected_evidence_id=existing_id,
+        expected_preflight_id=str(state["preflightEvidence"]),
     )
     _emit_json({"summaryId": evidence_id, "status": "not-required"})
     return 0
@@ -328,7 +279,6 @@ def _pass_proof(
                 ), False
             return {
                 "quality": "operation-succeeded",
-                "reach": "unresolved",
                 "runner": str(runner),
                 "observation": [observed],
                 "site": shlex.join(str(token) for token in surface.get("arguments") or []),
@@ -371,14 +321,10 @@ def _pass_proof(
 
 
 def _tree_binding(identity: RepoIdentity, state: JsonObject) -> dict[str, object]:
-    """The tree a RED-phase run is launched on: production paths changed since the
-    pass began (tracked or untracked) and the commits on either side. Order of
-    proof is recorded here as evidence; nothing refuses on it."""
+    """Production paths changed since the pass began, before this RED runs."""
     start = state.get("passStartOid")
     return {
         "productionChanged": production_changes(identity, start if isinstance(start, str) and start else "HEAD"),
-        "passStartOid": start,
-        "headOid": _head_oid(identity),
     }
 
 
@@ -397,8 +343,11 @@ def _baseline_refusal(binding: dict[str, object], kind: object) -> str:
 
 
 def _input_admission(mapped: JsonObject, surface: JsonObject, root: Path, source_tree: dict[str, str],
-                     test_id: str | None = None) -> tuple[JsonObject, str]:
+                     test_id: str | None = None, repo_root: Path | None = None) -> tuple[JsonObject, str]:
     evidence = tdd_surface.input_evidence(surface, root, mapped["boundaryInputs"], test_id)
+    if repo_root is not None and root != repo_root:
+        prefix = root.relative_to(repo_root)
+        evidence["sources"] = {str(prefix / path): digest for path, digest in evidence["sources"].items()}
     if evidence["sources"].keys() - source_tree.keys():
         evidence.update(represented=[], missing=[], unresolved=mapped["boundaryInputs"],
                         limits=[*evidence["limits"], "selected source lacks execution-tree binding"])
@@ -406,7 +355,7 @@ def _input_admission(mapped: JsonObject, surface: JsonObject, root: Path, source
 
 
 def _run_tdd(values: list[str]) -> int:
-    """Run the one mapped-or-imported-legacy candidate-cycle lifecycle."""
+    """Run one mapped candidate-cycle lifecycle."""
     dash = values.index("--") if "--" in values else None
     recorder_region = values if dash is None else values[:dash]
     runner_region = [] if dash is None else values[dash + 1 :]
@@ -431,20 +380,13 @@ def _run_tdd(values: list[str]) -> int:
         if "outputTail" not in receipt:
             raise WorkflowError("test attribution requires the original execution report")
         args.runner_command = shlex.split(str(receipt["command"]))
+    execution_root = Path(identity.root) / str(receipt.get("runCwd", ".")) if receipt else Path(identity.root)
+    if not execution_root.resolve().is_relative_to(Path(identity.root).resolve()):
+        raise WorkflowError("execution working directory is outside the repository")
     items, current = current_map(identity, state)
-    legacy = items is None or _legacy_green_candidate(current, workflow_id, args)
-    if legacy and args.behavior_id is not None:
-        raise WorkflowError(
-            "imported legacy TDD uses --behavior/--seam, not --behavior-id"
-        )
-    if legacy and receipt is not None:
-        raise WorkflowError("execution reuse requires a recorded Behavior Map")
-    if not legacy and (args.behavior is not None or args.seam or args.expected_failure):
-        raise WorkflowError(
-            "mapped TDD uses --behavior-id; legacy --behavior/--seam flags cannot "
-            "satisfy a recorded Behavior Map"
-        )
-    if not legacy and args.behavior_id is None and args.not_required is None:
+    if items is None:
+        raise WorkflowError("TDD requires a recorded Behavior Map")
+    if args.behavior_id is None and args.not_required is None:
         raise WorkflowError("recorded Behavior Map requires --behavior-id or --not-required")
     if args.not_required is not None:
         return _not_required(args, identity, state, items)
@@ -456,54 +398,29 @@ def _run_tdd(values: list[str]) -> int:
         if isinstance(state.get("tddEvidence"), str)
         else None
     )
-    if legacy:
-        behavior = str(args.behavior or "").strip()
-        seam = str(args.seam or "").strip()
-        if not behavior:
-            raise ValueError("--behavior is required for RED/GREEN")
-        if not seam:
-            raise ValueError("--seam is required: name the real production Interface")
-        expected = str(args.expected_failure or "").strip()
-        contract: dict[str, str] = {"slug": slug, "behavior": behavior, "seam": seam}
-        candidate = current
-        active = None
-    else:
-        if not args.behavior_id:
-            raise ValueError("--behavior-id is required for mapped RED/GREEN")
-        mapped = behavior_map.item(items, args.behavior_id)
-        status = str(mapped["status"])
-        reassessment = mapped.get("revalidationRequired") is True or (phase == "green" and status == "green")
-        if phase == "red" and status not in {"pending", "red"}:
-            raise WorkflowError(
-                f"behavior {args.behavior_id} is {status}; add a new map item for a new defect"
-            )
-        # A finished cycle for another item is history, not a candidate: the next
-        # item's RED opens its own cycle without an intervening map update.
-        candidate = (
-            current
-            if isinstance(current, dict) and current.get("kind") == "cycle"
-            and (current.get("activeBehaviorId") is not None or current.get("behaviorId") == args.behavior_id)
-            else None
-        )
-        active = candidate.get("activeBehaviorId") if isinstance(candidate, dict) else None
-        if phase == "green" and status != "red" and not (status == "green" and reassessment):
-            raise WorkflowError(
-                f"behavior {args.behavior_id} has no valid mapped RED; a contract item is "
-                "proved only by GREEN through its own RED"
-            )
-        expected = str(mapped["redFailure"])
-        contract = {
-            "slug": slug,
-            "behaviorId": args.behavior_id,
-            "behavior": str(mapped["behavior"]),
-            "seam": str(mapped["seam"]),
-        }
+    if not args.behavior_id:
+        raise ValueError("--behavior-id is required for mapped RED/GREEN")
+    mapped = behavior_map.item(items, args.behavior_id)
+    status = str(mapped["status"])
+    reassessment = mapped.get("revalidationRequired") is True or (phase == "green" and status == "green")
+    if phase == "red" and status not in {"pending", "red"}:
+        raise WorkflowError(f"behavior {args.behavior_id} is {status}; add a new map item for a new defect")
+    candidate = (
+        current if isinstance(current, dict) and current.get("kind") == "cycle"
+        and (current.get("activeBehaviorId") is not None or current.get("behaviorId") == args.behavior_id)
+        else None
+    )
+    active = candidate.get("activeBehaviorId") if isinstance(candidate, dict) else None
+    if phase == "green" and status != "red" and not (status == "green" and reassessment):
+        raise WorkflowError(f"behavior {args.behavior_id} has no valid mapped RED")
+    expected = str(mapped["redFailure"])
+    contract = {"slug": slug, "behaviorId": args.behavior_id,
+                "behavior": str(mapped["behavior"]), "seam": str(mapped["seam"])}
 
     command, command_text, surface = _candidate_command(args.runner_command)
-    if not legacy:
-        refusal = tdd_surface.repository_resolution(surface, identity.root)
-        if refusal is not None:
-            raise WorkflowError("mapped proof surfaces must resolve inside the repository: " + refusal)
+    refusal = tdd_surface.repository_resolution(surface, execution_root)
+    if refusal is not None:
+        raise WorkflowError("mapped proof surfaces must resolve inside the repository: " + refusal)
     same_instance = (
         isinstance(candidate, dict) and candidate.get("workflowId") == workflow_id
     )
@@ -514,51 +431,40 @@ def _run_tdd(values: list[str]) -> int:
     )
     # Only an open cycle (status red) binds the item to its surface; before that a
     # differing command is the corrected attempt, accumulating beside refused ones.
-    if not legacy and same_instance and status != "red":
+    if same_instance and status != "red":
         drift, guidance = [], ""
     matches = same_instance and not drift
     # RED sweep: every pending item records its own RED beside an open one.
     sweep = (
-        not legacy and phase == "red" and status == "pending" and active is not None
+        phase == "red" and status == "pending" and active is not None
         and active != args.behavior_id
     )
     # Every already-RED item binds both repeated RED and GREEN to its own
     # producer command, even beside another item's open cycle.
-    recorded_red = None if legacy else mapped.get("redCommand")
-    if not legacy and receipt is not None and status in {"red", "green"}:
+    recorded_red = mapped.get("redCommand")
+    red_proof = mapped.get("redProof")
+    if (status in {"red", "green"} and isinstance(red_proof, dict)
+            and red_proof.get("runCwd") != (receipt.get("runCwd") if receipt else None)):
+        raise WorkflowError("GREEN/RED must use the recorded RED working directory")
+    if receipt is not None and status in {"red", "green"}:
         test_id = (mapped.get("redProof") or {}).get("testId")
         if test_id != args.test_id:
             raise WorkflowError("reused GREEN/RED must name the item's recorded test identity")
     own_red = (
-        not legacy and (status == "red" or (status == "green" and reassessment))
+        (status == "red" or (status == "green" and reassessment))
         and isinstance(recorded_red, str)
         and not tdd_surface.differences(tdd_surface.identify(shlex.split(recorded_red)), surface)
     )
-    if not legacy and (status == "red" and recorded_red is not None or status == "green" and reassessment) and not own_red:
+    if (status == "red" and recorded_red is not None or status == "green" and reassessment) and not own_red:
         prefix = "candidate does not match the active mapped cycle; " if phase == "red" else ""
         raise WorkflowError(f"{prefix}{phase.upper()} must run the item's recorded RED surface: {recorded_red}")
     if sweep or (own_red and active != args.behavior_id):
         candidate, same_instance, drift, matches, guidance = None, False, [], False, ""
-    completed_cycle = (
-        legacy
-        and same_instance
-        and candidate.get("status") in {"passed", "not-required"}
-    )
-    if legacy:
-        if same_instance and not matches and (phase == "green" or not completed_cycle):
-            raise WorkflowError(
-                "candidate does not match the active cycle; finish or regress the current "
-                "candidate first" + _drift_report(drift) + guidance
-            )
-    else:
-        if same_instance and drift:
-            raise WorkflowError(
-                "candidate does not match the active mapped cycle; finish it first"
-                + _drift_report(drift)
-                + guidance
-            )
-        if active is not None and not matches and not (sweep or own_red):
-            raise WorkflowError("finish the active mapped cycle before selecting another item")
+    if same_instance and drift:
+        raise WorkflowError("candidate does not match the active mapped cycle; finish it first"
+                            + _drift_report(drift) + guidance)
+    if active is not None and not matches and not (sweep or own_red):
+        raise WorkflowError("finish the active mapped cycle before selecting another item")
 
     env = None
     if surface.get("runner") == "pytest":
@@ -573,9 +479,8 @@ def _run_tdd(values: list[str]) -> int:
     # Measured before the command runs: the binding describes the tree the RED
     # was launched on, whatever the command rewrites or commits before returning.
     binding = _tree_binding(identity, state) if phase == "red" else {}
-    tree_before = receipt_tree if receipt is not None else tree_manifest(identity) if not legacy else None
-    if not legacy:
-        binding["candidateTree"] = _active_candidate_tree(identity)
+    tree_before = receipt_tree if receipt is not None else tree_manifest(identity)
+    binding["candidateTree"] = _active_candidate_tree(identity)
     if receipt is not None:
         raw = str(receipt["outputTail"]).encode()
         exit_code, timed_out = int(receipt["exitCode"]), False
@@ -604,24 +509,21 @@ def _run_tdd(values: list[str]) -> int:
     nonexecuting = False
     if receipt is not None:
         outcome, proof, proof_error = tdd_surface.attributed_result(
-            surface, receipt, args.test_id, expected, Path(identity.root))
+            surface, receipt, args.test_id, expected, execution_root)
         red_ok = phase == "red" and outcome == "failed"
         baseline = phase == "red" and status == "pending" and outcome == "passed"
         exit_code = 0 if outcome == "passed" else int(receipt["exitCode"]) or 1
         nonexecuting = outcome == "skipped"
     elif phase == "red" and not timed_out and exit_code != 0:
-        if legacy:
-            red_ok = bool(expected) and expected in output
-        else:
-            proof, proof_error = tdd_surface.evaluate_red(surface, output, expected, Path(identity.root))
-            red_ok = proof is not None
-    elif phase == "red" and not legacy and not timed_out and status == "pending":
+        proof, proof_error = tdd_surface.evaluate_red(surface, output, expected, Path(identity.root))
+        red_ok = proof is not None
+    elif phase == "red" and not timed_out and status == "pending":
         # Producer-backed baseline: a pending surface passing is already
         # satisfied, opens nothing, counts no cycle, and describes the baseline
         # only while this pass has not changed production code.
         proof, proof_error, nonexecuting = _pass_proof(surface, output, baseline=True, exit_code=exit_code)
         baseline = proof is not None
-    elif phase == "green" and not legacy and not timed_out and (
+    elif phase == "green" and not timed_out and (
         exit_code == 0 or (surface.get("runner") == "pytest" and exit_code == 5)
     ):
         # A GREEN is the surface passing, not the command exiting 0: a skipped or
@@ -637,8 +539,9 @@ def _run_tdd(values: list[str]) -> int:
         proof, proof_error, baseline = None, refusal, False
     input_check = None
     input_error = ""
-    if not legacy and proof is not None and (baseline or phase == "green") and mapped.get("boundaryInputs"):
-        input_check, input_error = _input_admission(mapped, surface, Path(identity.root), tree_before, args.test_id)
+    if proof is not None and (baseline or phase == "green") and mapped.get("boundaryInputs"):
+        input_check, input_error = _input_admission(mapped, surface, execution_root, tree_before,
+                                                    args.test_id, Path(identity.root))
         if input_error:
             proof, proof_error, baseline = None, input_error, False
         else:
@@ -666,7 +569,7 @@ def _run_tdd(values: list[str]) -> int:
         proof, proof_error, baseline = None, (
             f"{detail} already settled {owner}: one observed outcome cannot baseline two items"
         ), False
-    if red_ok and not legacy and (owner := behavior_map.inherited_red(items, args.behavior_id, proof)):
+    if red_ok and (owner := behavior_map.inherited_red(items, args.behavior_id, proof)):
         # The same observation cannot open RED for two items: this obligation's
         # test stopped where another item's already did and observed nothing of
         # its own; the first RED stays the initial slice.
@@ -677,7 +580,7 @@ def _run_tdd(values: list[str]) -> int:
     valid = (
         red_ok
         if phase == "red"
-        else not timed_out and exit_code == 0 and prior_red and (legacy or proof is not None)
+        else not timed_out and exit_code == 0 and prior_red and proof is not None
     )
 
     if proof is not None and binding.get("productionChanged"):
@@ -686,18 +589,16 @@ def _run_tdd(values: list[str]) -> int:
         "phase": phase,
         "command": command_text,
         "valid": valid,
-        **binding,
+        **({"candidateTree": binding["candidateTree"]} if "candidateTree" in binding else {}),
     }
-    if legacy:
-        fields["expectedFailure"] = expected or None
-    else:
-        fields["behaviorId"] = args.behavior_id
-        fields["expectedFailure"] = expected if phase == "red" else None
-        if proof is not None:
-            fields["passProof" if phase == "green" else "redProof"] = proof
-        elif proof_error:
-            fields["passProofFailure" if phase == "green" else "redProofFailure"] = proof_error
-    run = _run_entry(raw, exit_code, timed_out, outputBytes=len(raw), **fields)
+    fields["behaviorId"] = args.behavior_id
+    if proof is not None:
+        fields["passProof" if phase == "green" else "redProof"] = proof
+    elif proof_error:
+        fields["passProofFailure" if phase == "green" else "redProofFailure"] = proof_error
+    run = _run_entry(raw, exit_code, timed_out,
+                     capture_limit=MAX_CAPTURE if surface.get("runner") == "unittest" else 1024,
+                     outputBytes=len(raw), **fields)
     if receipt is not None:
         run.pop("outputTail")
         run.update(sourceReference=args.from_evidence, testId=args.test_id)
@@ -705,120 +606,88 @@ def _run_tdd(values: list[str]) -> int:
     document: JsonObject | None = None
     opens_cycle = False
     action: str | None = "in-progress"
-    if legacy:
-        preserved = phase == "red" and matches and not valid and completed_cycle
-        new_cycle = (
-            phase == "red"
-            and valid
-            and not matches
-            and (not same_instance or completed_cycle)
-        )
-        recorded = not preserved and (matches or new_cycle)
-        if recorded:
-            regression = phase == "green" and matches and not valid
-            reopen = regression or (
-                phase == "red" and valid and (new_cycle or completed_cycle)
-            )
-            action = (
-                "passed"
-                if phase == "green" and valid
-                else "reopen"
-                if reopen
-                else "in-progress"
-            )
-            opens_cycle = new_cycle
-            document = {
-                "schemaVersion": 1,
-                "slug": slug,
-                "workflowId": workflow_id,
-                "status": "passed" if phase == "green" and valid else "pending",
-                "behavior": contract["behavior"],
-                "seam": contract["seam"],
-                "command": command_text,
-                "surface": surface,
-                "runs": [*prior_runs, run] if matches else [run],
-                "updatedAt": utc_timestamp(),
-            }
+    # Every mapped run is retained, a refused attempt with its reason.
+    updated = behavior_map.clone(items)
+    updated_item = behavior_map.item(updated, args.behavior_id)
+    if baseline or (phase == "green" and valid):
+        updated_item["proofBinding"] = {"candidateTree": binding["candidateTree"],
+                                         "command": command_text, "testId": args.test_id,
+                                         **({"runCwd": receipt["runCwd"]} if receipt and receipt.get("runCwd") else {})}
+    doc_kind = "cycle"
+    if baseline:
+        updated_item["status"] = "already-satisfied"
+        updated_item["evidence"] = _BASELINE_STAMP + command_text
+        updated_item["baselineProof"] = proof
+        updated_item.pop("revalidationRequired", None)
+        next_active = None
+        doc_kind = "map"
+    elif phase == "red" and valid:
+        updated_item["status"] = "red"
+        updated_item["redCommand"] = command_text
+        # Lateness is sticky: a rerun on a cleaner tree keeps every path an
+        # earlier RED for this item recorded.
+        previous = mapped.get("redProof") if isinstance(mapped.get("redProof"), dict) else {}
+        changed = sorted({*previous.get("productionChanged", []), *proof.get("productionChanged", [])})
+        updated_item["redProof"] = {
+            **proof,
+            **({"testId": previous["testId"]} if previous.get("testId") and not proof.get("testId") else {}),
+            **({"productionChanged": changed} if changed else {}),
+            **({"runCwd": receipt["runCwd"]} if receipt and receipt.get("runCwd") else {}),
+        }
+        next_active = args.behavior_id
+        action = "reopen" if reassessment else "in-progress"
+        opens_cycle = status != "red"
+    elif phase == "green" and valid:
+        updated_item["status"] = "green"
+        updated_item["proofCommand"] = command_text
+        updated_item.pop("revalidationRequired", None)
+        next_active = None
     else:
-        # Every mapped run is retained, a refused attempt with its reason.
-        updated = behavior_map.clone(items)
-        updated_item = behavior_map.item(updated, args.behavior_id)
-        if baseline or (phase == "green" and valid):
-            updated_item["proofBinding"] = {"candidateTree": binding["candidateTree"],
-                                             "command": command_text, "testId": args.test_id}
-        doc_kind = "cycle"
-        if baseline:
-            updated_item["status"] = "already-satisfied"
-            updated_item["evidence"] = _BASELINE_STAMP + command_text
-            updated_item["baselineProof"] = proof
-            updated_item.pop("revalidationRequired", None)
-            next_active = None
-            reassessment_pending = None
-            doc_kind = "map"
-        elif phase == "red" and valid:
+        # A refused attempt is evidence, not progress: annotated without a
+        # transition (action None). A failed GREEN is a regression.
+        if phase == "green" and status == "green" and not nonexecuting:
             updated_item["status"] = "red"
-            updated_item["redCommand"] = command_text
-            # Lateness is sticky: a rerun on a cleaner tree keeps every path an
-            # earlier RED for this item recorded.
-            previous = mapped.get("redProof") if isinstance(mapped.get("redProof"), dict) else {}
-            changed = sorted({*previous.get("productionChanged", []), *proof.get("productionChanged", [])})
-            updated_item["redProof"] = {**proof, "productionChanged": changed} if changed else proof
-            next_active = args.behavior_id
-            reassessment_pending = None
-            action = "reopen" if reassessment else "in-progress"
-            opens_cycle = status != "red"
-        elif phase == "green" and valid:
-            updated_item["status"] = "green"
-            updated_item["proofCommand"] = command_text
-            updated_item.pop("revalidationRequired", None)
-            next_active = None
-            reassessment_pending = None
-        else:
-            # A refused attempt is evidence, not progress: annotated without a
-            # transition (action None). A failed GREEN is a regression.
-            if phase == "green" and status == "green" and not nonexecuting:
-                updated_item["status"] = "red"
-            next_active = args.behavior_id if status == "red" else None
-            reassessment_pending = None
-            action = "reopen" if phase == "green" else None
-        pending = behavior_map.unresolved(updated)
-        if baseline or (phase == "green" and valid):
-            action = "in-progress" if pending else "passed"
-        if reassessment and (baseline or (
-            phase == "green" and status == "green" and (valid or nonexecuting)
-        )):
-            # No execution leaves the obligation unresolved, not contradicted.
-            # A regression or ambiguous failure keeps ordinary invalidation.
-            action = ("passed" if (valid or baseline) and not pending
-                      and state.get("tdd") not in {"passed", "not-required"} else None)
-        if isinstance(current, dict) and (
-            action is None or (active is not None and active != args.behavior_id and not opens_cycle)
-        ):
-            # Evidence beside A's RED must not replace A's binding, including
-            # baselines, unsuccessful attempts and another item's recheck.
-            document = {**current, "behaviorMap": updated, "status": "pending" if pending else "passed",
-                        "runs": [*current.get("runs", []), run], "updatedAt": utc_timestamp()}
-        else:
-            document = _map_doc(
-                slug=slug,
-                workflow_id=workflow_id,
-                items=updated,
-                status="pending" if pending else "passed",
-                kind=doc_kind,
-                active=next_active,
-                reassessment_pending=reassessment_pending,
-                reassessment=(current or {}).get("reassessment"),
-                behaviorId=args.behavior_id,
-                behavior=contract["behavior"],
-                seam=contract["seam"],
-                command=command_text,
-                surface=surface,
-                runs=[*prior_runs, run] if matches else [run],
-            )
+        next_active = args.behavior_id if status == "red" else None
+        action = "reopen" if phase == "green" else None
+    pending = behavior_map.unresolved(updated)
+    if baseline or (phase == "green" and valid):
+        action = "in-progress" if pending else "passed"
+    if reassessment and (baseline or (
+        phase == "green" and status == "green" and (valid or nonexecuting)
+    )):
+        # No execution leaves the obligation unresolved, not contradicted.
+        # A regression or ambiguous failure keeps ordinary invalidation.
+        action = ("passed" if (valid or baseline) and not pending
+                  and state.get("tdd") not in {"passed", "not-required"} else None)
+    if isinstance(current, dict) and (
+        action is None or (active is not None and active != args.behavior_id and not opens_cycle)
+    ):
+        # Evidence beside A's RED must not replace A's binding, including
+        # baselines, unsuccessful attempts and another item's recheck.
+        document = {**current, "behaviorMap": updated, "status": "pending" if pending else "passed",
+                    "runs": [*current.get("runs", []), run]}
+    else:
+        document = _map_doc(
+            slug=slug,
+            workflow_id=workflow_id,
+            items=updated,
+            status="pending" if pending else "passed",
+            kind=doc_kind,
+            active=next_active,
+            reassessment=(current or {}).get("reassessment"),
+            behaviorId=args.behavior_id,
+            behavior=contract["behavior"],
+            seam=contract["seam"],
+            command=command_text,
+            surface=surface,
+            runs=[*prior_runs, run] if matches else [run],
+        )
     if document is not None:
         _, evidence_id = commit_tdd(
             identity, slug, workflow_id, document, action,
-            expected_evidence_id=evidence_id, opens_cycle=opens_cycle, tree_before=tree_before,
+            expected_evidence_id=evidence_id,
+            expected_preflight_id=str(state["preflightEvidence"]),
+            opens_cycle=opens_cycle, tree_before=tree_before,
             review_changed=opens_cycle,
         )
     if run.get("bindingError"):
@@ -833,8 +702,7 @@ def _run_tdd(values: list[str]) -> int:
         "exitCode": exit_code,
         "runIndex": len(document.get("runs", [])) - 1 if document else None,
     }
-    if not legacy:
-        payload["behaviorId"] = args.behavior_id
+    payload["behaviorId"] = args.behavior_id
     if input_check is not None:
         payload["inputEvidence"] = input_check
     if baseline:
@@ -842,14 +710,7 @@ def _run_tdd(values: list[str]) -> int:
     _emit_json(payload)
     if valid or baseline:
         return 0
-    if legacy:
-        print(
-            "RED must fail for the expected reason."
-            if phase == "red"
-            else "GREEN must pass after a valid RED for the same command, behavior, and Seam.",
-            file=sys.stderr,
-        )
-    elif input_error and proof_error == input_error:
+    if input_error and proof_error == input_error:
         print(
             input_error + ". Select actual proof supplying these inputs; reuse an applicable "
             "verification receipt with --from-evidence and --test-id. Passing preservation "
@@ -1009,17 +870,14 @@ def _is_owned(path: str, node: str, scopes: list[tuple[str, str, bool]]) -> bool
 def _advisory_publish(
     identity: RepoIdentity, workflow_id: str, gap: str | None, unowned: dict[str, int]
 ) -> str | None:
-    """Write the canonical result and return one notice line only when it changed
-    and has something to report; an identical result is silent (returns None) and
-    writes nothing."""
+    """Cache the canonical result and return a notice for the hook's epoch filter."""
     paths = {name: unowned[name] for name in sorted(unowned)}
     canonical = {"workflowId": workflow_id, "gap": gap, "paths": paths}
     try:
         store = repo_state_dir(identity) / _ADVISORY_FILE
         prior = read_json(store)
-        if prior == canonical:
-            return None
-        atomic_write_json(store, canonical)
+        if prior != canonical:
+            atomic_write_json(store, canonical)
     except OSError:
         # The disposable dedup cache could not be resolved or written. Report
         # that as a gap through the one-line notice rather than failing the edit
@@ -1046,7 +904,10 @@ def _advisory_publish(
 def _map_update(values: list[str]) -> int:
     args = _map_parser().parse_args(values)
     identity = resolve_repo_identity(args.repo)
-    state = bound_state(identity, safe_slug(args.slug))
+    state = bound_state(identity, safe_slug(args.slug)) if args.slug else read_workflow(identity)
+    if state is None:
+        raise WorkflowError("no active workflow")
+    args.workflow_id = args.workflow_id or state["workflowId"]
     if instance_id(state) != args.workflow_id:
         raise WorkflowError("--workflow-id does not match the active workflow instance")
     current, preflight_document = _evidence_pair(identity, state)
@@ -1062,26 +923,46 @@ def _map_update(values: list[str]) -> int:
 
     value = load_json(args.input, label="TDD map update")
     allowed = {"sourceBehaviorId", "reassessment", "items", "dispositions"}
+    errors = []
     unknown = sorted(set(value) - allowed)
     if unknown:
-        raise ValueError("TDD map update has unknown fields: " + ", ".join(unknown))
+        errors.append("TDD map update has unknown fields: " + ", ".join(unknown))
     reassessment = value.get("reassessment")
-    if not isinstance(reassessment, str) or not reassessment.strip():
-        raise ValueError("TDD map update requires a non-empty reassessment")
+    if reassessment is not None and (not isinstance(reassessment, str) or not reassessment.strip()):
+        errors.append("TDD map update reassessment must be non-empty when supplied")
     additions = value.get("items", [])
     if not isinstance(additions, list):
-        raise ValueError("TDD map update items must be an array")
+        errors.append("TDD map update items must be an array")
+        additions = []
     dispositions = value.get("dispositions", [])
     if not isinstance(dispositions, list):
-        raise ValueError("TDD map update dispositions must be an array")
+        errors.append("TDD map update dispositions must be an array")
+        dispositions = []
+    if reassessment is None and (additions or not dispositions or any(
+        not isinstance(entry, dict) or set(entry) - {"id", "sourceRefs"}
+        for entry in dispositions
+    )):
+        errors.append("TDD map update requires a non-empty reassessment")
     source = value.get("sourceBehaviorId")
-    if source is not None and behavior_map.item(items, str(source)).get("status") not in behavior_map.PROOF_STATUSES:
-        raise ValueError("sourceBehaviorId must name a GREEN item")
+    if source is not None:
+        try:
+            if behavior_map.item(items, str(source)).get("status") not in behavior_map.PROOF_STATUSES:
+                errors.append("sourceBehaviorId must name a GREEN item")
+        except ValueError:
+            errors.append("sourceBehaviorId must name a GREEN item")
 
     updated = behavior_map.clone(items)
     if dispositions:
-        behavior_map.apply_dispositions(updated, dispositions, settled_findings=settled_findings)
-    added_items = behavior_map.added_items(additions, updated) if additions else []
+        try:
+            behavior_map.apply_dispositions(updated, dispositions, settled_findings=settled_findings)
+        except ValueError as exc:
+            errors.append(str(exc))
+    try:
+        added_items = behavior_map.added_items(additions, updated) if additions else []
+    except ValueError as exc:
+        errors.append(str(exc))
+    if errors:
+        raise ValueError("; ".join(errors))
     updated.extend(added_items)
     input_checks = {}
     candidate_tree = None
@@ -1093,7 +974,8 @@ def _map_update(values: list[str]) -> int:
         if isinstance(proof_binding, dict) and proof_binding.get("candidateTree") == (candidate_tree := candidate_tree or _active_candidate_tree(identity)):
             source_tree = tree_manifest(identity) if source_tree is None else source_tree
             check, error = _input_admission(entry, tdd_surface.identify(shlex.split(proof_binding["command"])),
-                                           Path(identity.root), source_tree, proof_binding.get("testId"))
+                                           Path(identity.root) / str(proof_binding.get("runCwd", ".")),
+                                           source_tree, proof_binding.get("testId"), Path(identity.root))
             input_checks[entry["id"]] = check
             if not error and not check["unresolved"]:
                 continue
@@ -1110,12 +992,19 @@ def _map_update(values: list[str]) -> int:
     reassessed = frozenset(str(entry["id"]).strip() for entry in [*added_items, *dispositions])
     if source is not None:
         reassessed |= {str(source)}
+    if args.check:
+        _emit_json({"valid": True, "status": status})
+        return 0
     if reassessed or json.dumps(updated, sort_keys=True) != json.dumps(items, sort_keys=True):
         document = {**(current or _map_doc(
             slug=str(state["slug"]), workflow_id=str(state["workflowId"]),
             items=items, status=status, kind="map",
-        )), "behaviorMap": updated, "status": status, "reassessment": reassessment.strip(), "dispositions": dispositions,
-            "sourceBehaviorId": source, "updatedAt": utc_timestamp()}
+        )), "behaviorMap": updated, "status": status, "dispositions": dispositions,
+            }
+        if reassessment is None:
+            document.pop("reassessment", None)
+        else:
+            document["reassessment"] = reassessment.strip()
         if input_checks:
             document["inputEvidence"] = input_checks
         active = document.get("activeBehaviorId")
@@ -1139,13 +1028,15 @@ def _map_update(values: list[str]) -> int:
         if before == after and not review_changed and not interpretation_progress:
             _, evidence_id = annotate_tdd_evidence(
                 identity, str(state["slug"]), str(state["workflowId"]), document,
-                expected_evidence_id=current_evidence_id, reassessed=reassessed,
+                expected_evidence_id=current_evidence_id,
+                expected_preflight_id=str(state["preflightEvidence"]), reassessed=reassessed,
             )
         else:
             action = "in-progress" if unresolved else "passed"
             _, evidence_id = commit_tdd(
                 identity, str(state["slug"]), str(state["workflowId"]), document, action,
                 expected_evidence_id=current_evidence_id,
+                expected_preflight_id=str(state["preflightEvidence"]),
                 review_changed=review_changed, reassessed=reassessed,
             )
     _emit_json(
@@ -1161,7 +1052,7 @@ def _map_update(values: list[str]) -> int:
 
 
 def run_tdd(values: list[str]) -> int:
-    """Public entry for the workflow CLI's mapped-or-legacy TDD verb."""
+    """Public entry for the workflow CLI's mapped TDD verb."""
     return _run_tdd(values)
 
 

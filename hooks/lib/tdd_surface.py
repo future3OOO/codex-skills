@@ -3,8 +3,8 @@
 RED and GREEN must select the same tests, not use byte-identical command text.
 Direct pytest and unittest commands establish reach: the runner reports an
 executed test whose own failure carries the mapped marker. Any other command is
-an operation at the production Interface: its failure is recorded with reach
-unresolved and review establishes that the observed failure is the mapped
+an operation at the production Interface: its failure is classified and review
+establishes that the observed failure is the mapped
 promise. The workflow ledger is continuity, not an attestation system.
 """
 from __future__ import annotations
@@ -603,7 +603,7 @@ def evaluate_red(
 ) -> tuple[dict[str, object] | None, str]:
     """Evidence that RED reached the mapped failure, or why it did not: a runner's
     report decides for runner surfaces; a non-runner operation is classified by
-    its final diagnostic and keeps its marker line with reach unresolved.
+    its final diagnostic and keeps its marker line for review.
 
     A proof also records what the failure observed apart from the authored marker
     (issue #54): `observation` is the terminal rendering with the marker elided and
@@ -626,7 +626,7 @@ def evaluate_red(
             _pytest_red(output, marker, arguments if isinstance(arguments, list) else ()), marker, root,
         )
     observed = diagnostic if marker in diagnostic else next(line.strip() for line in lines if marker in line)
-    return {"quality": "failure-observed", "reach": "unresolved", "runner": str(runner),
+    return {"quality": "failure-observed", "runner": str(runner),
             "observedFailure": observed, "observation": [observed.replace(marker, "")],
             "site": shlex.join(str(token) for token in surface.get("arguments") or [])}, ""
 
@@ -744,7 +744,8 @@ def _unittest_red(
 def attributed_result(surface: dict[str, object], receipt: dict[str, object], test_id: str,
                       marker: str, root: Path | None = None) -> tuple[str | None, dict[str, object] | None, str]:
     """Attribute a retained verbose unittest report; ambiguity stays single-item."""
-    if surface.get("runner") != "unittest" or receipt.get("outputBytes", 16001) > 16000:
+    if (surface.get("runner") != "unittest" or receipt.get("outputBytes", 16001) > 16000
+            or len(str(receipt.get("outputTail", "")).encode()) < receipt.get("outputBytes", 16001)):
         return None, None, "reuse needs a complete verbose unittest execution report"
     if test_id.rsplit(".", 1)[-1] in UNITTEST_FIXTURES:
         return None, None, "a fixture cannot supply test-body proof"

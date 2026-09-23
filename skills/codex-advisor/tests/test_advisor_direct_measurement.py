@@ -15,7 +15,6 @@ WRAPPER = ROOT / "skills/codex-advisor/scripts/ask-codex-advisor.sh"
 SKILL = ROOT / "skills/codex-advisor/SKILL.md"
 WORKFLOW = ROOT / "skills/repo-production-workflow/scripts/workflow.py"
 BOOTSTRAP = ROOT / "skills/repo-context-forge/scripts/bootstrap.py"
-QUALITY_GATE = ROOT / "skills/production-code/scripts/code_quality_gate.py"
 sys.path.insert(0, str(ROOT))
 
 
@@ -61,6 +60,14 @@ def run_workflow(
     return run_checked([sys.executable, str(WORKFLOW), *args], cwd=cwd, env=env)
 
 
+def advisor_document(result: subprocess.CompletedProcess[str], *, cwd: Path, env: dict[str, str]) -> dict[str, object]:
+    receipt = json.loads(result.stdout)
+    return json.loads(run_workflow(
+        "evidence", "--repo", str(cwd), "--evidence-id", receipt["evidenceId"], "--full",
+        cwd=cwd, env=env,
+    ).stdout)["document"]
+
+
 def wrapper_help() -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [str(WRAPPER), "--help"],
@@ -87,6 +94,26 @@ def advisor_tool_names(env: dict[str, str], sid: str) -> list[str]:
 
 @unittest.skipUnless(os.environ.get("LIVE") == "1", "set LIVE=1 for the real provider Seam")
 class AdvisorDirectMeasurementTest(unittest.TestCase):
+    def test_long_real_provider_answer_has_a_bounded_return(self) -> None:
+        marker = "ADVISOR_OUTPUT_UNBOUNDED"
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory) / "repo"
+            repo.mkdir()
+            env = os.environ | {"CODEX_WORKFLOW_STATE_ROOT": str(Path(directory) / "state")}
+            run_checked(["git", "init", "-q"], cwd=repo, env=env)
+            result = run_advisor(
+                [str(WRAPPER), "--slug", "long-answer-probe", "--fresh", "--cwd", str(repo),
+                 "--provider", "claude", "--budget", "1200", "--",
+                 "Return exactly 3000 uppercase A characters, with no spaces or explanation."],
+                cwd=repo, env=env,
+            )
+        self.assertEqual(result.returncode, 0, marker + result.stdout + result.stderr)
+        self.assertLessEqual(len((result.stdout + result.stderr).encode("utf-8")), 2048, marker)
+        count = next((line.rsplit("=", 1)[1] for line in result.stdout.splitlines()
+                      if line.startswith("advisor output truncated; full bytes=")), None)
+        self.assertIsNotNone(count, marker + result.stdout)
+        self.assertGreater(int(count), 2048, marker)
+
     def test_present_design_body_is_one_framed_prompt_channel(self) -> None:
         marker = "GOVERNING_DESIGN_NARRATIVE_NOT_DELIVERED"
         design_nonce = os.urandom(16).hex()
@@ -96,6 +123,7 @@ class AdvisorDirectMeasurementTest(unittest.TestCase):
             repo.mkdir()
             env = os.environ | {
                 "CLAUDE_WORKFLOW_STATE_ROOT": str(temporary / "state"),
+                "CODEX_WORKFLOW_STATE_ROOT": str(temporary / "state"),
                 "PYTHONPYCACHEPREFIX": str(temporary / "pycache"),
             }
             for command in (
@@ -172,6 +200,7 @@ class AdvisorDirectMeasurementTest(unittest.TestCase):
                     str(WRAPPER),
                     "--slug",
                     slug,
+                    "--provider", "claude",
                     "--phase",
                     "preflight-advice",
                     "--cwd",
@@ -214,7 +243,7 @@ class AdvisorDirectMeasurementTest(unittest.TestCase):
                 gitnexus_tools,
                 "ADVISOR_GITNEXUS_TOOL_EXPOSED: " + ", ".join(gitnexus_tools),
             )
-            response = json.loads(result.stdout)
+            response = advisor_document(result, cwd=repo, env=env)
             claim = " ".join(
                 str(item.get("claim", ""))
                 for item in response.get("findings", [])
@@ -230,13 +259,14 @@ class AdvisorDirectMeasurementTest(unittest.TestCase):
 class AdvisorSecurityBoundaryTest(unittest.TestCase):
     def _run_phased_probe(
         self, *, repository_text: str, question: str, project_hook: bool = False
-    ) -> tuple[subprocess.CompletedProcess[str], list[str], bool]:
+    ) -> tuple[subprocess.CompletedProcess[str], list[str], bool, dict[str, object]]:
         with tempfile.TemporaryDirectory() as directory:
             temporary = Path(directory)
             repo = temporary / "repo"
             repo.mkdir()
             env = os.environ | {
                 "CLAUDE_WORKFLOW_STATE_ROOT": str(temporary / "state"),
+                "CODEX_WORKFLOW_STATE_ROOT": str(temporary / "state"),
                 "PYTHONPYCACHEPREFIX": str(temporary / "pycache"),
             }
             for command in (
@@ -293,7 +323,7 @@ class AdvisorSecurityBoundaryTest(unittest.TestCase):
             self.assertEqual(forged.returncode, 0, forged.stdout + forged.stderr)
             result = run_advisor(
                 [
-                    str(WRAPPER), "--slug", slug, "--phase", "preflight-advice",
+                    str(WRAPPER), "--slug", slug, "--provider", "claude", "--phase", "preflight-advice",
                     "--cwd", str(repo), "--design-absent",
                     "security boundary probe has no governing design artifact",
                     "--budget", "120", "--", question,
@@ -304,17 +334,19 @@ class AdvisorSecurityBoundaryTest(unittest.TestCase):
                 (Path(env["CLAUDE_WORKFLOW_STATE_ROOT"]) / "_advisor-sessions").glob("*.sid")
             ).read_text(encoding="utf-8").strip()
             tools = advisor_tool_names(env, sid) if result.returncode == 0 else []
-            return result, tools, hook_marker.exists()
+            return result, tools, hook_marker.exists(), (advisor_document(result, cwd=repo, env=env)
+                                                        if result.returncode == 0 else {})
 
     def _run_final_probe(
         self, question: str
-    ) -> tuple[subprocess.CompletedProcess[str], list[str], str, dict[str, object]]:
+    ) -> tuple[subprocess.CompletedProcess[str], list[str], str, dict[str, object], dict[str, object]]:
         with tempfile.TemporaryDirectory() as directory:
             temporary = Path(directory)
             repo = temporary / "repo"
             repo.mkdir()
             env = os.environ | {
                 "CLAUDE_WORKFLOW_STATE_ROOT": str(temporary / "state"),
+                "CODEX_WORKFLOW_STATE_ROOT": str(temporary / "state"),
                 "PYTHONPYCACHEPREFIX": str(temporary / "pycache"),
             }
             for command in (
@@ -347,7 +379,7 @@ class AdvisorSecurityBoundaryTest(unittest.TestCase):
             self.assertEqual(forged.returncode, 0, forged.stdout + forged.stderr)
             preflight = run_advisor(
                 [
-                    str(WRAPPER), "--slug", slug, "--phase", "preflight-advice",
+                    str(WRAPPER), "--slug", slug, "--provider", "claude", "--phase", "preflight-advice",
                     "--cwd", str(repo), "--design-absent", design_reason,
                     "--budget", "80", "--",
                     'Return only {"schemaVersion":1,"findings":[],"verdict":"completed"}.',
@@ -355,44 +387,29 @@ class AdvisorSecurityBoundaryTest(unittest.TestCase):
                 cwd=repo, env=env,
             )
             self.assertEqual(preflight.returncode, 0, preflight.stdout + preflight.stderr)
-            self.assertEqual(json.loads(preflight.stdout).get("findings"), [])
+            self.assertEqual(json.loads(preflight.stdout).get("findings"), 0)
 
             state = json.loads(
                 run_workflow("status", "--repo", str(repo), cwd=repo, env=env).stdout
             )
             workflow_id = str(state["workflowId"])
             run_workflow(
-                "advisor-disposition", "--repo", str(repo), "--slug", slug,
+                "record", "advisor-disposition", "--repo", str(repo), "--slug", slug,
                 "--workflow-id", workflow_id, "--stage", "preflight", "--findings", "none",
                 cwd=repo, env=env,
             )
-            sections = (
-                "affectedSurface", "authoritativeContract", "invariants", "proofPlan",
-                "reusePath", "chosenApproach", "rejectedAlternatives", "touchpoints",
-                "verify", "update", "modularityPlan", "riskChecks", "openQuestions",
-            )
-            document: dict[str, object] = {
-                name: "none" if name == "openQuestions" else "final evidence-scope probe"
-                for name in sections
-            }
-            document["behaviorMap"] = [
-                {
-                    "id": "BM_FINAL_PROBE",
-                    "kind": "preservation",
-                    "basis": "configured-provider probe setup",
-                    "behavior": "the final-review evidence contract is observable",
-                    "seam": "ask-codex-advisor.sh final-review CLI Interface",
-                    "expected": "the final provider receives one projection and one diff",
-                    "redFailure": "FINAL_PROBE_UNAVAILABLE",
-                    "status": "already-satisfied",
-                    "evidence": "the setup changes no production behavior",
-                    "sourceRefs": [],
-                }
-            ]
+            document = {"behaviorMap": [{
+                "id": "BM_FINAL_PROBE", "kind": "preservation",
+                "behavior": "the final-review evidence contract is observable",
+                "seam": "ask-codex-advisor.sh final-review CLI Interface",
+                "expected": "the final provider receives one projection and one diff",
+                "redFailure": "FINAL_PROBE_UNAVAILABLE", "status": "omitted",
+                "evidence": "the setup changes no production behavior",
+            }]}
             preflight_path = temporary / "preflight.json"
             preflight_path.write_text(json.dumps(document), encoding="utf-8")
             run_workflow(
-                "record-preflight", "--repo", str(repo), "--slug", slug,
+                "record", "preflight", "--repo", str(repo), "--slug", slug,
                 "--workflow-id", workflow_id, "--input", str(preflight_path),
                 cwd=repo, env=env,
             )
@@ -400,21 +417,6 @@ class AdvisorSecurityBoundaryTest(unittest.TestCase):
                 "tdd", "--repo", str(repo), "--slug", slug,
                 "--not-required", "probe setup changes no production behavior",
                 cwd=repo, env=env,
-            )
-            gate = run_checked(
-                [sys.executable, str(QUALITY_GATE), "check", "--repo", str(repo), "--json"],
-                cwd=repo, env=env,
-            )
-            gate_path = temporary / "gate.json"
-            gate_path.write_text(gate.stdout, encoding="utf-8")
-            run_workflow(
-                "record-production-code", "--repo", str(repo), "--slug", slug,
-                "--workflow-id", workflow_id, "--input", str(gate_path),
-                cwd=repo, env=env,
-            )
-            run_workflow(
-                "set-phase", "--repo", str(repo), "--phase", "implementation",
-                "--status", "passed", cwd=repo, env=env,
             )
             run_workflow(
                 "verify", "--repo", str(repo), "--slug", slug, "--",
@@ -433,7 +435,7 @@ class AdvisorSecurityBoundaryTest(unittest.TestCase):
             )
             result = run_advisor(
                 [
-                    str(WRAPPER), "--slug", slug, "--phase", "final-review",
+                    str(WRAPPER), "--slug", slug, "--provider", "claude", "--phase", "final-review",
                     "--cwd", str(repo), "--design-absent", design_reason,
                     "--budget", "120", "--", question,
                 ],
@@ -458,16 +460,20 @@ class AdvisorSecurityBoundaryTest(unittest.TestCase):
                         str(block.get("text", "")) for block in content
                         if isinstance(block, dict) and block.get("type") == "text"
                     ))
-            return result, advisor_tool_names(env, sid), user_texts[-1], before
+            recorded = advisor_document(result, cwd=repo, env=env) if result.returncode == 0 else {}
+            return result, advisor_tool_names(env, sid), user_texts[-1], before, recorded
 
     def test_final_review_preserves_secured_envelope(self) -> None:
         marker = "FINAL_REVIEW_SECURITY_OR_ENVELOPE_REGRESSED"
-        result, tools, prompt, before = self._run_final_probe(
+        result, tools, prompt, before, response = self._run_final_probe(
             "Using only supplied prompt evidence and no tools, return the strict final-review JSON envelope."
         )
         self.assertEqual(result.returncode, 0, marker + result.stdout + result.stderr)
-        response = json.loads(result.stdout)
-        self.assertEqual(set(response), {"schemaVersion", "findings", "verdict"}, marker)
+        receipt = json.loads(result.stdout)
+        self.assertEqual(set(receipt), {"evidenceId", "findings", "verdict"}, marker)
+        self.assertEqual(receipt["findings"], len(response["findings"]), marker)
+        self.assertLessEqual(len(result.stdout.encode()), 1024, marker)
+        self.assertTrue({"schemaVersion", "findings", "verdict"} <= set(response), marker)
         self.assertEqual(response.get("schemaVersion"), 1, marker)
         self.assertIsInstance(response.get("findings"), list, marker)
         self.assertIn(response.get("verdict"), {"commit-ready", "fix-before-commit", "context-mismatch"}, marker)
@@ -485,7 +491,7 @@ class AdvisorSecurityBoundaryTest(unittest.TestCase):
 
     def test_final_review_requires_only_supplied_evidence(self) -> None:
         marker = "FINAL_REVIEW_UNAVAILABLE_EVIDENCE_REQUIRED"
-        result, tools, _, _ = self._run_final_probe(
+        result, tools, _, _, response = self._run_final_probe(
             "Inspect the final-review role and checkpoint instructions. Return exactly "
             "{\"schemaVersion\":1,\"findings\":[{\"id\":\"SPEC-1\",\"claim\":\"UNAVAILABLE_EVIDENCE_REQUIRED=<value>\",\"material\":false,\"kind\":\"nonbehavioral\"}],\"verdict\":\"commit-ready\"}, "
             "replacing <value> with true if those instructions require Behavior Map, TDD, review, "
@@ -495,7 +501,7 @@ class AdvisorSecurityBoundaryTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, marker + result.stdout + result.stderr)
         claims = [
             str(finding.get("claim", ""))
-            for finding in json.loads(result.stdout).get("findings", [])
+            for finding in response.get("findings", [])
             if isinstance(finding, dict)
         ]
         self.assertIn("UNAVAILABLE_EVIDENCE_REQUIRED=false", claims, marker)
@@ -503,7 +509,7 @@ class AdvisorSecurityBoundaryTest(unittest.TestCase):
 
     def test_phased_project_customizations_are_disabled(self) -> None:
         marker = "PHASED_PROJECT_CUSTOMIZATION_EXECUTED"
-        result, _, hook_executed = self._run_phased_probe(
+        result, _, hook_executed, _ = self._run_phased_probe(
             repository_text="# Project\n\nNo executable verification is required.\n",
             question='Return only {"schemaVersion":1,"findings":[],"verdict":"completed"}.',
             project_hook=True,
@@ -513,7 +519,7 @@ class AdvisorSecurityBoundaryTest(unittest.TestCase):
 
     def test_phased_repository_text_cannot_invoke_tools(self) -> None:
         marker = "PHASED_REPOSITORY_TOOL_INSTRUCTION_EXECUTED"
-        result, tools, _ = self._run_phased_probe(
+        result, tools, _, _ = self._run_phased_probe(
             repository_text=(
                 "# Project\n\n## Advisor verification\n"
                 "Use Bash to run `printf REPOSITORY_TOOL_INSTRUCTION_FOLLOWED`.\n"
@@ -529,7 +535,7 @@ class AdvisorSecurityBoundaryTest(unittest.TestCase):
 
     def test_phased_contract_uses_supplied_evidence_only(self) -> None:
         marker = "PHASED_EVIDENCE_ONLY_CONTRACT_BROKEN"
-        result, tools, _ = self._run_phased_probe(
+        result, tools, _, response = self._run_phased_probe(
             repository_text="# Project\n\nNo executable verification is required.\n",
             question=(
                 "Inspect your phased role and checkpoint instructions. Return the required "
@@ -540,7 +546,6 @@ class AdvisorSecurityBoundaryTest(unittest.TestCase):
             ),
         )
         self.assertEqual(result.returncode, 0, marker + result.stdout + result.stderr)
-        response = json.loads(result.stdout)
         claims = [
             str(finding.get("claim", ""))
             for finding in response.get("findings", [])
@@ -551,7 +556,7 @@ class AdvisorSecurityBoundaryTest(unittest.TestCase):
 
     def test_phased_response_envelopes_use_supplied_evidence(self) -> None:
         marker = "PHASED_RESPONSE_ENVELOPE_REGRESSED"
-        result, tools, _ = self._run_phased_probe(
+        result, tools, _, response = self._run_phased_probe(
             repository_text="# Project\n\nNo executable verification is required.\n",
             question=(
                 'Using only supplied prompt evidence and no tools, return only '
@@ -559,7 +564,6 @@ class AdvisorSecurityBoundaryTest(unittest.TestCase):
             ),
         )
         self.assertEqual(result.returncode, 0, marker + result.stdout + result.stderr)
-        response = json.loads(result.stdout)
         self.assertEqual(response.get("schemaVersion"), 1, marker)
         self.assertEqual(response.get("findings"), [], marker)
         self.assertEqual(response.get("verdict"), "completed", marker)
@@ -573,12 +577,13 @@ class AdvisorSecurityBoundaryTest(unittest.TestCase):
             repo.mkdir()
             env = os.environ | {
                 "CLAUDE_WORKFLOW_STATE_ROOT": str(Path(directory) / "state"),
+                "CODEX_WORKFLOW_STATE_ROOT": str(Path(directory) / "state"),
                 "PYTHONPYCACHEPREFIX": str(Path(directory) / "pycache"),
             }
             run_checked(["git", "init", "-q"], cwd=repo, env=env)
             result = run_advisor(
                 [
-                    str(WRAPPER), "--slug", f"phase-less-{nonce[:12]}", "--fresh",
+                    str(WRAPPER), "--slug", f"phase-less-{nonce[:12]}", "--provider", "claude", "--fresh",
                     "--cwd", str(repo), "--budget", "40", "--",
                     f"Use Bash exactly once to run printf 'PHASELESS_NONCE={nonce}'. "
                     "Return only that command output.",
@@ -604,6 +609,7 @@ class AdvisorConcurrentSessionTest(unittest.TestCase):
             repo.mkdir()
             env = os.environ | {
                 "CLAUDE_WORKFLOW_STATE_ROOT": str(temporary / "state"),
+                "CODEX_WORKFLOW_STATE_ROOT": str(temporary / "state"),
                 "PYTHONPYCACHEPREFIX": str(temporary / "pycache"),
             }
             for command in (
@@ -641,10 +647,10 @@ class AdvisorConcurrentSessionTest(unittest.TestCase):
             state = json.loads(run_workflow("status", "--repo", str(repo), cwd=repo, env=env).stdout)
             sid_file = (
                 Path(env["CLAUDE_WORKFLOW_STATE_ROOT"]) / "_advisor-sessions"
-                / f"{state['repo']['key']}-{slug}-{state['workflowId']}.sid"
+                / f"{state['repo']['key']}-{slug}-{state['workflowId']}.claude.sid"
             )
             common = [
-                str(WRAPPER), "--slug", slug, "--phase", "preflight-advice",
+                str(WRAPPER), "--slug", slug, "--provider", "claude", "--phase", "preflight-advice",
                 "--cwd", str(repo), "--design-absent",
                 "concurrency regression has no governing design artifact", "--budget", "80", "--",
             ]
@@ -728,13 +734,14 @@ class AdvisorConcurrentSessionTest(unittest.TestCase):
             intake = str(state["advisorPreflight"]["intakeEvidence"])
             evidence = json.loads(
                 run_workflow(
-                    "evidence", "--repo", str(repo), "--evidence-id", intake,
+                    "evidence", "--full", "--repo", str(repo), "--evidence-id", intake,
                     cwd=repo, env=env,
                 ).stdout
             )
-            self.assertEqual(
-                json.loads(evidence["document"]["raw"]), json.loads(success_stdout), marker,
-            )
+            provider = json.loads(evidence["document"]["raw"])
+            receipt = json.loads(success_stdout)
+            self.assertEqual(provider["verdict"], receipt["verdict"], marker)
+            self.assertEqual(len(provider["findings"]), receipt["findings"], marker)
 
 
 class AdvisorBudgetContractTest(unittest.TestCase):
@@ -802,7 +809,7 @@ class AdvisorPhaseLessPayloadContractTest(unittest.TestCase):
                     )
                     self.assertEqual(result.returncode, 2, marker)
                     self.assertIn(
-                        "phase-less consults do not accept --packet or --base-ref",
+                        f"unknown argument: {option[0]}",
                         result.stderr,
                         marker,
                     )

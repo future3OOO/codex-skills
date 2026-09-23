@@ -16,7 +16,7 @@ second source of truth that drifts on its own.
 | GitNexus context/impact doctrine | `AGENTS.md` — GitNexus | The workflow supplies packet-specific facts |
 | Execution sequence and phase order | `repo-production-workflow/SKILL.md` | `AGENTS.md` — Production Repo Workflow owns only when skills fire |
 | Review ownership | `repo-production-workflow/SKILL.md` | `code-review` is the forked delegate's task; the lead records and dispositions; the final Codex Advisor review follows |
-| Terminal state and the governance-revalidation exception | `WORKFLOW-MAP.md` | `workflow.py` exposes the operator-facing Interface; `hooks/lib/workflow_state.py` implements shared transitions consumed by the CLI and hooks; legacy scripts are compatibility shims |
+| Terminal state and the governance-revalidation exception | `WORKFLOW-MAP.md` | `workflow.py` exposes the operator-facing Interface; `hooks/lib/workflow_state.py` implements shared transitions consumed by the CLI and hooks |
 | Public workflow status JSON | `WORKFLOW-MAP.md` | `workflow.py status` emits the canonical `schemaVersion: 1` projection; hooks and advisor automation consume semantic fields only |
 | SQLite ledger schema and transaction mechanics | `hooks/lib/_workflow_db.py` | `workflow_state.py` supplies policy mutations; `state_prune.py` supplies estate retention decisions through the ledger's private inventory/apply Interface |
 | Hook operational documentation | `WORKFLOW-MAP.md` | `config.toml` and the hook scripts remain the executable Interface; `AGENTS.md` — GitNexus keeps only what changes lead action |

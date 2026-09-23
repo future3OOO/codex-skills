@@ -123,7 +123,7 @@ for args in \
   check_status "phased caller choice refused ($args)" 2 "$status"
 done
 check "phased fresh names checkpoint ownership" "checkpoint stage owns create or resume mode" "$("$WRAPPER" --slug t --phase preflight-advice --design-absent no --cwd "$argtmp/repo" --fresh -- q 2>&1)"
-check "phased anchor refusal names checkpoint ownership" "checkpoint owns projection and current-pass anchors" "$("$WRAPPER" --slug t --phase preflight-advice --design-absent no --cwd "$argtmp/repo" --packet "$argtmp/packet.json" -- q 2>&1)"
+check "retired anchor argument refused" "unknown argument: --packet" "$("$WRAPPER" --slug t --phase preflight-advice --design-absent no --cwd "$argtmp/repo" --packet "$argtmp/packet.json" -- q 2>&1)"
 
 printf '== checkpoint and path identity\n'
 state="$argtmp/state"
@@ -153,7 +153,7 @@ ln -s "$idtmp/repo" "$idtmp/link"
 PATH="$idtmp/bin:$PATH" HOME="$idtmp/home" CODEX_HOME="$idtmp/claude" \
   CODEX_WORKFLOW_STATE_ROOT="$idtmp/state" \
   "$WRAPPER" --slug path-identity --cwd "$idtmp/link" -- q >/dev/null 2>&1
-sid_count=$(ls "$idtmp/state/_advisor-sessions" 2>/dev/null | wc -l | tr -d ' ')
+sid_count=$(find "$idtmp/state/_advisor-sessions" -name '*.sid' -type f | wc -l | tr -d ' ')
 check_status "one phase-less SID across canonical paths" 1 "$sid_count"
 rm -rf "$idtmp"
 
@@ -250,10 +250,10 @@ check "codex session id persisted from provider banner" "$preflight_sid" "$(cat 
 check "design body is attached as framed evidence" "design> UNIQUE-DESIGN-BODY-MARKER" "$(cat "$rigtmp/capture/payload-1")"
 check_status "one design narrative section" 1 "$(count_exact "$rigtmp/capture/payload-1" '--- governed-design narrative evidence')"
 check "design evidence names line framing" "framing=design-line-prefix" "$(cat "$rigtmp/capture/payload-1")"
-check "design telemetry emitted" "codex_advisor_evidence name=governing-design" "$(cat "$rigtmp/preflight.err")"
+check_status "advisor return within 2 KiB" 1 "$(( $(wc -c <"$rigtmp/preflight.err") + $(printf '%s' "$preflight_out" | wc -c) <= 2048 ))"
 check "canonical design declaration is retained" '"sha256"' "$(cat "$rigtmp/capture/payload-1")"
-check "current-pass diff carries the changed value" "diff> +value = 2" "$(cat "$rigtmp/capture/payload-1")"
-check "projection is framed as untrusted data" "Untrusted repository-derived projection data follows" "$(cat "$rigtmp/capture/payload-1")"
+check "current-pass diff carries the changed value" "+value = 2" "$(cat "$rigtmp/capture/payload-1")"
+check "projection is framed as untrusted data" "Untrusted repository-derived channel data follows" "$(cat "$rigtmp/capture/payload-1")"
 check "diff is framed as untrusted data" "Untrusted repository diff data follows" "$(cat "$rigtmp/capture/payload-1")"
 check_status "one projection section" 1 "$(count_exact "$rigtmp/capture/payload-1" '--- advisor projection (schemaVersion 1) ---')"
 check_status "one current-pass diff section" 1 "$(count_exact "$rigtmp/capture/payload-1" '--- current-pass diff: passStartOid^{tree} -> activeCandidateTree ---')"
@@ -276,12 +276,9 @@ contract = {**pending_behavior("BM_READER", red_failure="READER_NOTE_WRONG"), "s
 keep = {**contract, "id":"BM_KEEP", "kind":"preservation", "redFailure":"READER_VALUE_WRONG", "sourceRefs":[
     *refs, {"type":"design", "evidenceId":state["governedDesignEvidence"], "id":"PRES-1"}]}
 doc = build_document("scoped wrapper diagnostic", behavior_map=[contract, keep])
-doc["chosenApproach"] = "Reuse the hook correctness operation at 82 rows; limit 2048 UTF-8 bytes and 2 seconds per hook, no extra DB reads or subprocesses versus old."
-doc["riskChecks"] = "Keep fixed bounds after measurement; compare the same real-hook Interface."
-doc["proofPlan"] = "workflow.py verify -- python3 -m unittest hooks.tests.test_behavior_map_workflow.BehaviorMapWorkflowTests.test_consecutive_hook_obligations_are_bounded_without_extra_edit_work; report actual source target, scale, limit and observed value."
 open(sys.argv[3], "w", encoding="utf-8").write(json.dumps(doc))
 PY
-CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" record-preflight --repo "$rigtmp/repo" --slug scoped-rig --workflow-id "$wid" --input "$rigtmp/preflight.json" >/dev/null
+CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" record preflight --repo "$rigtmp/repo" --slug scoped-rig --workflow-id "$wid" --input "$rigtmp/preflight.json" >/dev/null
 # The value edit preceded this pass's proof, so the reader contract is proved
 # through its own RED/GREEN on the note it still lacks; the preservation item
 # baselines late on the candidate and is revalidated by the same operation later.
@@ -300,16 +297,14 @@ sys.path.insert(0, sys.argv[1])
 from hooks.tests.support import record_context_forge
 record_context_forge(Path(sys.argv[2]), Path(sys.argv[2]).parent)
 PY
-PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/skills/production-code/scripts/code_quality_gate.py" check --repo "$rigtmp/repo" --json >"$rigtmp/gate.json"
-CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" record-production-code --repo "$rigtmp/repo" --slug scoped-rig --workflow-id "$wid" --input "$rigtmp/gate.json" >/dev/null
-CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" set-phase --repo "$rigtmp/repo" --phase implementation --status passed >/dev/null
 selected_receipt=$(PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" verify --repo "$rigtmp/repo" --slug scoped-rig -- python3 -m unittest hooks.tests.test_behavior_map_workflow.BehaviorMapWorkflowTests.test_consecutive_hook_obligations_are_bounded_without_extra_edit_work 2>"$rigtmp/measurement.err"); status=$?
 check_status "declared hook resource operation verifies through the real runner" 0 "$status"
 check "selected operation reports its fixed byte limit" '"limitBytes": 2048' "$selected_receipt"
 check "selected operation reports its retained scale" '"scale": 82' "$selected_receipt"
 printf '%s\n' "$selected_receipt" | tee "$rigtmp/selected-receipt.txt"
 CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" verify --repo "$rigtmp/repo" --slug scoped-rig --kind quality-gate --base-ref HEAD >/dev/null
-CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" set-phase --repo "$rigtmp/repo" --phase code-review --status not-required --findings none >/dev/null
+printf '%s\n' '{"findings":[]}' >"$rigtmp/review.json"
+CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" record review --repo "$rigtmp/repo" --slug scoped-rig --workflow-id "$wid" --input "$rigtmp/review.json" >/dev/null
 
 # One report-only finding is settled; the other remains pending. Reassessment
 # blocks final transport, but measured rejection remains reachable in that pass.
@@ -333,15 +328,15 @@ for identifier, status in (("SPEC-1", "report-only"), ("SPEC-2", "rejected-with-
     (repo.parent / f"{identifier}.json").write_text(json.dumps(doc), encoding="utf-8")
 (repo.parent / "reassess.json").write_text(json.dumps({"reassessment":"reader preservation affected", "dispositions":[{"id":"BM_KEEP", "revalidate":True, "evidence":"re-execute retained reader before closure"}]}), encoding="utf-8")
 PY
-out=$(CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" advisor-disposition --repo "$rigtmp/repo" --slug scoped-rig --workflow-id "$wid" --stage preflight --findings addressed --input "$rigtmp/SPEC-1.json" 2>&1); status=$?
+out=$(CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" record advisor-disposition --repo "$rigtmp/repo" --slug scoped-rig --workflow-id "$wid" --stage preflight --findings addressed --input "$rigtmp/SPEC-1.json" 2>&1); status=$?
 check_status "executed owning evidence settles report-only" 0 "$status"
-out=$(CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" tdd-map --repo "$rigtmp/repo" --slug scoped-rig --workflow-id "$wid" --input "$rigtmp/reassess.json" 2>&1); status=$?
+out=$(CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" record map --repo "$rigtmp/repo" --slug scoped-rig --workflow-id "$wid" --input "$rigtmp/reassess.json" 2>&1); status=$?
 check_status "settled owner enters reassessment" 0 "$status"
 out=$(run_wrapper --slug scoped-rig --phase final-review --design-file "$rigtmp/design.md" -- 'final question' 2>&1); status=$?
 check_status "pending preservation blocks ordinary final transport" 2 "$status"
 check "refusal names the unresolved owner" "BM_KEEP" "$out"
 check_status "blocked final never invokes the provider" 1 "$(cat "$rigtmp/capture/count")"
-out=$(CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" advisor-disposition --repo "$rigtmp/repo" --slug scoped-rig --workflow-id "$wid" --stage preflight --findings addressed --input "$rigtmp/SPEC-2.json" 2>&1); status=$?
+out=$(CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" record advisor-disposition --repo "$rigtmp/repo" --slug scoped-rig --workflow-id "$wid" --stage preflight --findings addressed --input "$rigtmp/SPEC-2.json" 2>&1); status=$?
 check_status "measured rejection remains reachable with pending preservation" 0 "$status"
 out=$(run_wrapper --slug scoped-rig --phase final-review --design-file "$rigtmp/design.md" -- 'final question' 2>&1); status=$?
 check_status "rejecting a finding does not erase pending preservation" 2 "$status"
@@ -376,7 +371,7 @@ check_status "final has one design narrative section" 1 "$(count_exact "$rigtmp/
 check "final carries framed design body" "design> UNIQUE-DESIGN-BODY-MARKER" "$(cat "$rigtmp/capture/payload-4")"
 check_status "final has one projection section" 1 "$(count_exact "$rigtmp/capture/payload-4" '--- advisor projection (schemaVersion 1) ---')"
 check_status "final has one current-pass diff section" 1 "$(count_exact "$rigtmp/capture/payload-4" '--- current-pass diff: passStartOid^{tree} -> activeCandidateTree ---')"
-check "final design telemetry emitted" "codex_advisor_evidence name=governing-design" "$(cat "$rigtmp/final.err")"
+check_status "final return within 2 KiB" 1 "$(( $(wc -c <"$rigtmp/final.err") + $(printf '%s' "$final_out" | wc -c) <= 2048 ))"
 check "projection telemetry emitted" "codex_advisor_evidence name=advisor-projection" "$(cat "$rigtmp/final.err")"
 check "diff telemetry emitted" "codex_advisor_evidence name=current-pass-diff" "$(cat "$rigtmp/final.err")"
 check "completion marker emitted" "codex_advisor_complete status=0 provider=codex" "$(cat "$rigtmp/final.err")"

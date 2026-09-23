@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import signal
 import subprocess
@@ -10,9 +11,8 @@ import tempfile
 import time
 
 from .repo_identity import RepoIdentity
-from .state_store import utc_timestamp
-
 MAX_CAPTURE = 16000
+RECEIPT_TAIL = 1024
 TERM_GRACE_SECONDS = 0.2
 KILL_GRACE_SECONDS = 0.2
 GROUP_POLL_SECONDS = 0.05
@@ -21,6 +21,7 @@ GROUP_POLL_SECONDS = 0.05
 def run(
     command: list[str], identity: RepoIdentity, timeout: float,
     env: dict[str, str] | None = None,
+    cwd: str | None = None,
 ) -> tuple[bytes, int, bool]:
     """Run one command; a command is complete when its owned process group is.
 
@@ -31,7 +32,7 @@ def run(
     with tempfile.TemporaryFile() as output:
         process = subprocess.Popen(
             command,
-            cwd=str(identity.root),
+            cwd=cwd or str(identity.root),
             stdout=output,
             stderr=subprocess.STDOUT,
             start_new_session=os.name == "posix",
@@ -81,9 +82,9 @@ def _signal(process: subprocess.Popen[bytes], value: signal.Signals) -> None:
         pass
 
 
-def _tail(raw: bytes) -> str:
-    """Decode the last MAX_CAPTURE bytes, starting after a valid character the cut split."""
-    start = max(0, len(raw) - MAX_CAPTURE)
+def _tail(raw: bytes, limit: int = MAX_CAPTURE) -> str:
+    """Decode the last bounded bytes, starting after a valid character the cut split."""
+    start = max(0, len(raw) - limit)
     for lead in range(start - 1, max(start - 4, -1), -1):
         byte = raw[lead]
         if byte & 0xC0 == 0x80:
@@ -95,16 +96,19 @@ def _tail(raw: bytes) -> str:
             break
         start = max(start, lead + width)
         break
-    return raw[start:].decode("utf-8", errors="replace")
+    return raw[start:].decode("utf-8", errors="replace").encode("utf-8")[-limit:].decode("utf-8", errors="ignore")
 
 
-def run_entry(raw: bytes, exit_code: int, timed_out: bool, **fields: object) -> dict[str, object]:
+def run_entry(
+    raw: bytes, exit_code: int, timed_out: bool, *, capture_limit: int = RECEIPT_TAIL,
+    **fields: object,
+) -> dict[str, object]:
     return {
         **fields,
         "exitCode": exit_code,
         "timedOut": timed_out,
-        "outputTail": _tail(raw),
-        "at": utc_timestamp(),
+        "outputTail": _tail(raw, capture_limit),
+        "outputSha256": hashlib.sha256(raw).hexdigest(),
     }
 
 

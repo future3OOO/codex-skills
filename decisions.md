@@ -6,6 +6,67 @@ Issue bodies own implementation scope; this record preserves decisions and their
 status. New decisions supersede earlier ones explicitly; observations and open
 acceptance gaps are not completed delivery.
 
+## 2026-09-23 — Issue #96 stores consumed workflow facts once
+
+**Decision:** [#96](https://github.com/future3OOO/codex-skills/issues/96)
+replaces repeated workflow snapshots and copied evidence with one current
+projection, content-addressed evidence parts, map/run revisions, and manifest
+deltas. Evidence documents and the current projection remain raw JSON for
+inspection; only parts and manifest deltas use zlib. New writes use schema 2;
+schema 1 SQLite migration remains because the installed ledger contains it.
+Old JSON workflow import and no-reader prose documents are retired. A successful
+advisor result requires its immutable envelope; direct result flags remain only
+for a measured preflight transport outage. Advisories deduplicate identical
+content within one compaction epoch and emit again after PostCompact resets it.
+Native checkout recovery has no reader for per-session repository association
+markers, so the post-edit writer and its prune classifier are removed. This
+supersedes the edit-marker pruning retention in the 2026-09-20 native-checkout
+decision; checkout-local readiness remains. Kindless
+recorded map items now fail closed instead of entering a compatibility branch.
+Preflight map items may name a finding by ID alone; the recorder binds its exact
+pending intake inside the commit transaction. TDD commits compare the preflight
+evidence they read as well as the TDD revision, so a replaced map cannot accept
+an in-flight run. Caller JSON keys resembling storage markers remain literal;
+only top-level map/run arrays are structural. Non-root observed runs retain a
+repository-relative working directory so identical commands from different
+directories have separate verification results and TDD source resolution.
+New packed evidence uses document schema 2 and links its literal escape marker;
+raw schema-1 evidence with no part edges remains byte-for-byte caller JSON on
+read. The return reviewer demonstrated why this distinction is required with
+a real base-ledger preflight containing `$literal`. TDD's recorded RED proof
+also retains a non-root execution directory and rejects GREEN from another
+directory; the reviewer reproduced a false green using two real test files
+before this correction. The return repair removes more code than it adds by
+retiring duplicate wrapper and subdirectory probes. Observed PreToolUse capture
+now passes the original simple test command to Bash as one argument, deleting
+the hook's `shlex` parser. Compound and expansion forms still pass through;
+the recorder keeps the original command in the receipt for TDD reuse.
+
+**Observed:** A read-only CX4 replay of retained fields measured 326,144
+payload bytes against 4,144,618 baseline payload bytes (92.13% reduction),
+with zero hydration mismatches. Including IDs, document-to-part links and
+manifest rows gives 867,249 versus 4,643,714 evidence-related table-value
+bytes (81.32% reduction); 468,000 candidate bytes are the required links.
+Whole vacuumed SQLite files measured 2,019,328 versus 6,508,544 bytes
+(68.97% reduction), including workflow state, indexes and page overhead.
+These are distinct scopes, not interchangeable storage claims. The first
+review manifest stays raw JSON; only its later deltas are eligible for
+compression.
+The distinct gate-read map items alone occupy over 53 KiB, above a 99%
+budget of about 41,446 bytes. The user chose to preserve consumed fields and raw
+JSON rather than weaken either constraint to claim 99%.
+The installed ledger contained event snapshots plus a stale projection column
+from an earlier candidate run. A read-only backup into a throwaway state root
+exposed that migration refusal; clean and mixed schema-1 migration tests now
+pass, and the live-ledger copy reopens twice with the same state and event count.
+A retained process-interruption attack kills migration after the rollback
+journal opens over 50,001 real events, then reopens with every event intact;
+it passed four runs.
+
+**Delivery:** [PR #101](https://github.com/future3OOO/codex-skills/pull/101)
+is open; current-head CI and reviewer closure govern handoff. Candidate
+executions use isolated state roots; the installed estate is unchanged.
+
 ## 2026-09-21 — Session relocation via marker, kill, and resume
 
 **Decision:** [#83](https://github.com/future3OOO/codex-skills/issues/83) is

@@ -12,6 +12,17 @@
         ]
       }
     ],
+    "PostCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CODEX_HOME:-$HOME/.codex}/hooks/advisory-epoch-reset.py\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Bash|apply_patch|Agent|spawn_agent|followup_task|send_input|send_message|resume_agent|collaborationspawn_agent|collaborationfollowup_task|collaborationsend_message",

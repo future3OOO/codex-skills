@@ -20,7 +20,7 @@ if str(ROOT) not in sys.path:
 from hooks.lib import behavior_map  # noqa: E402
 from hooks.lib.command_runner import run as runner_run  # noqa: E402
 from hooks.lib.repo_identity import resolve_repo_identity  # noqa: E402
-from hooks.lib.tdd_workflow import completion_blockers, current_map  # noqa: E402
+from hooks.lib.tdd_workflow import current_map  # noqa: E402
 from hooks.lib.workflow_state import (  # noqa: E402
     advisor_disposition,
     evidence_document,
@@ -29,6 +29,7 @@ from hooks.lib.workflow_state import (  # noqa: E402
 )
 from hooks.tests.support import (  # noqa: E402
     build_document,
+    empty_advisor_intake,
     pending_behavior,
     record_context_forge,
 )
@@ -113,7 +114,8 @@ class MappedTddRepairTests(unittest.TestCase):
         workflow_id = str(json.loads(begun.stdout)["workflowId"])
         identity = record_context_forge(self.repo, self.tmp)
         record_advisor_result(
-            identity, slug, workflow_id, "preflight", "codex-advisor", "completed"
+            identity, slug, workflow_id, "preflight", "codex-advisor", "completed",
+            intake=empty_advisor_intake(self.tmp, slug, workflow_id),
         )
         advisor_disposition(identity, slug, workflow_id, "preflight", "none")
         preflight = self.tmp / f"{slug}-preflight.json"
@@ -122,7 +124,7 @@ class MappedTddRepairTests(unittest.TestCase):
             encoding="utf-8",
         )
         recorded = self.cli(
-            "record-preflight",
+            "record", "preflight",
             "--repo",
             str(self.repo),
             "--slug",
@@ -162,7 +164,7 @@ class MappedTddRepairTests(unittest.TestCase):
         path = self.tmp / "map-update.json"
         path.write_text(json.dumps(document), encoding="utf-8")
         return self.cli(
-            "tdd-map",
+            "record", "map",
             "--repo",
             str(self.repo),
             "--slug",
@@ -238,7 +240,43 @@ class MappedTddRepairTests(unittest.TestCase):
         )
         self.assertEqual(finished.returncode, 0, finished.stdout + finished.stderr)
         identity = resolve_repo_identity(self.repo)
-        self.assertEqual(completion_blockers(identity, read_workflow(identity)), [])
+        self.assertEqual(behavior_map.unresolved(current_map(identity, read_workflow(identity))[0]), [])
+
+    def test_tdd_refuses_a_preflight_map_replaced_during_its_run(self) -> None:
+        slug, workflow_id = self.begin_with_map([pending_behavior("BM_A")], "source-race")
+        started, release = self.tmp / "started", self.tmp / "release"
+        (self.repo / "test_app.py").write_text(
+            "import time, unittest\nfrom pathlib import Path\nimport app\n"
+            "class ValueTests(unittest.TestCase):\n"
+            "    def test_value(self):\n"
+            f"        Path({str(started)!r}).write_text('1')\n"
+            "        deadline = time.monotonic() + 15\n"
+            f"        while not Path({str(release)!r}).exists() and time.monotonic() < deadline:\n"
+            "            time.sleep(0.01)\n"
+            "        self.assertEqual(app.value, 2, 'VALUE_NOT_TWO')\n",
+            encoding="utf-8",
+        )
+        process = subprocess.Popen(
+            [sys.executable, str(WORKFLOW), "tdd", "--repo", str(self.repo), "--slug", slug,
+             "--phase", "red", "--behavior-id", "BM_A", "--", sys.executable,
+             "-m", "unittest", "test_app.ValueTests.test_value"],
+            cwd=self.repo, env=self.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        try:
+            deadline = time.monotonic() + 10
+            while not started.exists() and process.poll() is None and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertTrue(started.exists(), "TDD_SOURCE_RACE test never reached its test seam")
+            path = self.tmp / "replacement-preflight.json"
+            path.write_text(json.dumps(build_document("replacement", behavior_map=[pending_behavior("BM_B")])))
+            replaced = self.cli("record", "preflight", "--repo", str(self.repo), "--slug", slug,
+                                "--workflow-id", workflow_id, "--input", str(path))
+            self.assertEqual(replaced.returncode, 0, replaced.stdout + replaced.stderr)
+        finally:
+            release.write_text("1")
+            output, error = process.communicate(timeout=20)
+        self.assertNotEqual(process.returncode, 0, "TDD_SOURCE_RACE " + output + error)
+        self.assertNotIn("tddEvidence", read_workflow(resolve_repo_identity(self.repo)), "TDD_SOURCE_RACE")
 
     def test_unittest_loader_failure_is_not_red(self) -> None:
         marker = "UNREACHED_ASSERTION"
@@ -514,7 +552,8 @@ class MappedTddRepairTests(unittest.TestCase):
         workflow_id = str(json.loads(begun.stdout)["workflowId"])
         identity = record_context_forge(self.repo, self.tmp)
         record_advisor_result(
-            identity, "zero-test-marker", workflow_id, "preflight", "codex-advisor", "completed"
+            identity, "zero-test-marker", workflow_id, "preflight", "codex-advisor", "completed",
+            intake=empty_advisor_intake(self.tmp, "zero-test-marker", workflow_id),
         )
         advisor_disposition(identity, "zero-test-marker", workflow_id, "preflight", "none")
         for marker in ("Ran 0 tests", "0 tests ran"):
@@ -528,7 +567,7 @@ class MappedTddRepairTests(unittest.TestCase):
                     encoding="utf-8",
                 )
                 recorded = self.cli(
-                    "record-preflight", "--repo", str(self.repo), "--slug", "zero-test-marker",
+                    "record", "preflight", "--repo", str(self.repo), "--slug", "zero-test-marker",
                     "--workflow-id", workflow_id, "--input", str(preflight),
                 )
                 self.assertEqual(
@@ -551,7 +590,7 @@ class MappedTddRepairTests(unittest.TestCase):
             encoding="utf-8",
         )
         recorded = self.cli(
-            "record-preflight", "--repo", str(self.repo), "--slug", "zero-test-marker",
+            "record", "preflight", "--repo", str(self.repo), "--slug", "zero-test-marker",
             "--workflow-id", workflow_id, "--input", str(preflight),
         )
         self.assertEqual(
@@ -692,7 +731,7 @@ class MappedTddRepairTests(unittest.TestCase):
         self.assertEqual(item["status"], "red", marker)
         proof = item["redProof"]
         self.assertEqual(proof["quality"], "failure-observed", marker)
-        self.assertEqual(proof["reach"], "unresolved", marker)
+        self.assertNotIn("reach", proof, marker)
         self.assertEqual(proof["runner"], "exact", marker)
         self.assertIn("PROD_REFUSED_OPERATION", proof["observedFailure"], marker)
         run = self.retained_run(marker)
@@ -701,7 +740,7 @@ class MappedTddRepairTests(unittest.TestCase):
         self.assertEqual(run["exitCode"], 1, marker)
         self.assertIn("PROD_REFUSED_OPERATION", run["outputTail"], marker)
         for field in ("productionChanged", "passStartOid", "headOid"):
-            self.assertIn(field, run, marker)
+            self.assertNotIn(field, run, marker)
         self.assertEqual(
             read_workflow(resolve_repo_identity(self.repo)).get("tddCycleCount"), 1, marker
         )
@@ -914,8 +953,8 @@ class MappedTddRepairTests(unittest.TestCase):
         document = self.evidence()
         self.assertEqual(
             (document.get("activeBehaviorId"), document.get("behaviorId"), self.mapped_item("BM_A")["redCommand"],
-             [run["expectedFailure"] for run in document["runs"] if not run["valid"]]),
-            ("BM_A", "BM_A", shlex.join(command), ["MISSING_B", "MISSING_B"]),
+             len([run for run in document["runs"] if not run["valid"]])),
+            ("BM_A", "BM_A", shlex.join(command), 2),
             "REFUSAL_LOST_ACTIVE_BINDING",
         )
         self.assertEqual(self.tdd(slug, "red", "BM_A", command).returncode, 0, "REFUSAL_LOST_ACTIVE_BINDING")
@@ -1056,9 +1095,9 @@ class MappedTddRepairTests(unittest.TestCase):
                     # direct operation records only the observed failure.
                     runner = command[0] == "pytest" or "unittest" in command
                     self.assertEqual(
-                        {key: proof.get(key) for key in ("quality", "testsExecuted", "reach")},
-                        {"quality": "assertion-reached", "testsExecuted": 1, "reach": None} if runner
-                        else {"quality": "failure-observed", "testsExecuted": None, "reach": "unresolved"},
+                        {key: proof.get(key) for key in ("quality", "testsExecuted")},
+                        {"quality": "assertion-reached", "testsExecuted": 1} if runner
+                        else {"quality": "failure-observed", "testsExecuted": None},
                         "RUNNER_PROOF_SHAPE_LOST",
                     )
                 else:

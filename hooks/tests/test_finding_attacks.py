@@ -7,6 +7,7 @@ RED/GREEN cycle targets exactly one recorded surface.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shlex
@@ -22,12 +23,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 WORKFLOW = ROOT / "skills" / "repo-production-workflow" / "scripts" / "workflow.py"
-QUALITY_GATE = ROOT / "skills" / "production-code" / "scripts" / "code_quality_gate.py"
 
 from hooks.lib.repo_identity import resolve_repo_identity  # noqa: E402
 from hooks.lib import behavior_map  # noqa: E402
 from hooks.lib.state_store import _active_candidate_tree  # noqa: E402
-from hooks.tests.support import build_document, record_context_forge  # noqa: E402
+from hooks.tests.support import build_document, empty_advisor_envelope, record_context_forge  # noqa: E402
 
 
 class AttackHarness(unittest.TestCase):
@@ -75,17 +75,21 @@ class AttackHarness(unittest.TestCase):
 
     def cli(self, *args: str) -> subprocess.CompletedProcess[str]:
         values = list(args)
-        if values and values[0] == "advisor-result" and "--design-declaration" not in values:
+        if values[:2] == ["record", "advisor-result"] and "--design-declaration" not in values:
             values += ["--design-declaration", str(self.design_absent)]
         # --repo travels directly after the subcommand so a runner command after
         # the -- sentinel never swallows it.
         return subprocess.run(
+            [sys.executable, str(WORKFLOW), *values[:2], "--repo", str(self.repo), *values[2:]]
+            if values and values[0] == "record" else
             [sys.executable, str(WORKFLOW), values[0], "--repo", str(self.repo), *values[1:]],
             cwd=ROOT, env=self.env, text=True, capture_output=True, check=False)
 
     def ok(self, *args: str) -> dict[str, object]:
         result = self.cli(*args)
         self.assertEqual(result.returncode, 0, " ".join(args[:2]) + ": " + result.stdout + result.stderr)
+        if args[:2] in {("record", "advisor-result"), ("record", "advisor-disposition")}:
+            return self.status()
         return json.loads(result.stdout) if result.stdout.strip().startswith("{") else {}
 
     def status(self) -> dict[str, object]:
@@ -107,7 +111,7 @@ class AttackHarness(unittest.TestCase):
         envelope = self.json_file("envelope.json", {"schemaVersion": 1, "findings": [{
             "id": identifier, "claim": claim, "material": True, "kind": "behavioral",
         }], "verdict": "completed"})
-        recorded = self.ok("advisor-result", "--slug", slug, "--workflow-id", wid,
+        recorded = self.ok("record", "advisor-result", "--slug", slug, "--workflow-id", wid,
                            "--stage", "preflight", "--source", "codex-advisor",
                            "--input", str(envelope))
         return str(recorded["advisorPreflight"]["intakeEvidence"])
@@ -122,7 +126,7 @@ class AttackHarness(unittest.TestCase):
 
     def record_preflight(self, slug: str, wid: str, behavior_map: list[dict[str, object]]) -> subprocess.CompletedProcess[str]:
         payload = self.json_file("preflight.json", build_document("attack", behavior_map=behavior_map))
-        return self.cli("record-preflight", "--slug", slug, "--workflow-id", wid,
+        return self.cli("record", "preflight", "--slug", slug, "--workflow-id", wid,
                         "--input", str(payload))
 
     def drive_attack_green(self, slug: str, marker: str, behavior_id: str = "BM_ATTACK", *, reassess: bool = True) -> None:
@@ -146,7 +150,7 @@ class AttackHarness(unittest.TestCase):
             "sourceBehaviorId": behavior_id, "reassessment": "no new obligation",
             "items": [], "dispositions": [],
         })
-        reassessed = self.cli("tdd-map", "--slug", slug, "--workflow-id",
+        reassessed = self.cli("record", "map", "--slug", slug, "--workflow-id",
                               str(self.status()["workflowId"]), "--input", str(update))
         self.assertEqual(reassessed.returncode, 0, reassessed.stdout + reassessed.stderr)
 
@@ -179,9 +183,9 @@ class AttackHarness(unittest.TestCase):
 
     def open_pytest_pass(self, slug: str, marker: str) -> str:
         wid = self.begin(slug)
-        self.ok("advisor-result", "--slug", slug, "--workflow-id", wid,
-                "--stage", "preflight", "--source", "codex-advisor", "--verdict", "completed")
-        self.ok("advisor-disposition", "--slug", slug, "--workflow-id", wid,
+        self.ok("record", "advisor-result", "--slug", slug, "--workflow-id", wid,
+                "--stage", "preflight", "--source", "codex-advisor", "--input", empty_advisor_envelope(self.tmp, "completed"))
+        self.ok("record", "advisor-disposition", "--slug", slug, "--workflow-id", wid,
                 "--stage", "preflight", "--findings", "none")
         owned = self.record_preflight(slug, wid, [{
             "id": "BM_ATTACK", "kind": "contract", "basis": "requested behavior",
@@ -243,6 +247,28 @@ class PendingAdvisorRetries(AttackHarness):
     CAPTURED = {"id": "SPEC-P2", "claim": "Diagnostic marker file is absent",
                 "material": True, "kind": "behavioral"}
 
+    def test_preflight_derives_the_exact_finding_owner(self) -> None:
+        slug = "derived-owner"
+        wid = self.begin(slug)
+        intake = self.behavioral_intake(slug, wid, "app.value is wrong")
+        item = self.owned_map(intake, marker="VALUE_NOT_TWO")[0]
+        item["sourceRefs"] = [{"type": "finding", "id": "SPEC-1"}]
+        recorded = self.record_preflight(slug, wid, [item])
+        self.assertEqual(recorded.returncode, 0, "FINDING_OWNER_MISSING " + recorded.stderr)
+        evidence_id = json.loads(recorded.stdout)["evidenceId"]
+        document = self.ok("evidence", "--full", "--evidence-id", evidence_id)["document"]
+        self.assertEqual(document["document"]["behaviorMap"][0]["sourceRefs"],
+                         [{"type": "finding", "evidenceId": intake, "id": "SPEC-1"}],
+                         "FINDING_OWNER_MISSING")
+        self.drive_attack_green(slug, "VALUE_NOT_TWO", reassess=False)
+        tdd_id = self.status()["tddEvidence"]
+        runs = self.ok("evidence", "--full", "--evidence-id", tdd_id)["document"]["runs"]
+        green_index = next(index for index, run in enumerate(runs) if run.get("phase") == "green")
+        fixed = self.cli("record", "advisor-disposition", "--finding", "SPEC-1", "--fixed",
+                         "--evidence-ref", f"{tdd_id}:{green_index}", "--behavior-id", "BM_ATTACK")
+        self.assertEqual(fixed.returncode, 0, "FINDING_OWNER_MISSING " + fixed.stderr)
+        self.assertEqual(self.status()["findingStates"][0]["status"], "fixed", "FINDING_OWNER_MISSING")
+
     def test_pending_retry_preserves_material_escalation(self) -> None:
         wid = self.begin("pending-retry")
         first = self.accept(wid, [{**self.CAPTURED, "material": False}])
@@ -251,7 +277,7 @@ class PendingAdvisorRetries(AttackHarness):
         self.assertEqual((len(state["findingStates"]), state["findingStates"][0]["material"],
                           state["advisorPreflight"]["findings"]), (1, True, "pending"),
                          "MATERIAL_ESCALATION_LOST")
-        self.assertFalse(self.ok("evidence", "--evidence-id", original)["document"]["findings"][0]["material"])
+        self.assertFalse(self.ok("evidence", "--full", "--evidence-id", original)["document"]["findings"][0]["material"])
 
     def test_behavioral_promotion_requires_current_behavioral_proof(self) -> None:
         marker = "BEHAVIORAL_PROMOTION_CLOSED_WITH_OLD_NONBEHAVIORAL_PROOF"
@@ -266,7 +292,7 @@ class PendingAdvisorRetries(AttackHarness):
         entry = state["findingStates"][0]
         current = state["advisorPreflight"]["intakeEvidence"]
         evidence = state["tddEvidence"]
-        runs = self.ok("evidence", "--evidence-id", evidence)["document"]["runs"]
+        runs = self.ok("evidence", "--full", "--evidence-id", evidence)["document"]["runs"]
         receipt = f"{evidence}:{next(i for i, run in enumerate(runs) if run.get('phase') == 'green')}"
         for reference in (old, current):
             full = json.loads(self.fixed_disposition(wid, reference, dict(self.ZERO_DOMAIN)).read_text())
@@ -275,14 +301,14 @@ class PendingAdvisorRetries(AttackHarness):
             concise = {"intakeEvidenceId": reference, "dispositions": [{"finding_id": "SPEC-1",
                        "status": "fixed", "reason": "all reads observe 2", "evidenceRefs": [receipt]}]}
             for document in (full, concise):
-                self.refused_unchanged(marker, lambda: self.cli("advisor-disposition", "--slug", "pending-retry",
+                self.refused_unchanged(marker, lambda: self.cli("record", "advisor-disposition", "--slug", "pending-retry",
                     "--workflow-id", wid, "--stage", "preflight", "--findings", "addressed", "--input",
                     str(self.json_file("promotion.json", document))))
         self.assertEqual(entry["kind"], "behavioral", marker)
-        self.ok("advisor-disposition", "--slug", "pending-retry", "--workflow-id", wid, "--stage", "preflight",
+        self.ok("record", "advisor-disposition", "--slug", "pending-retry", "--workflow-id", wid, "--stage", "preflight",
                 "--findings", "addressed", "--input", str(self.fixed_disposition(wid, current, dict(self.ZERO_DOMAIN))))
         self.assertEqual(self.status()["findingStates"][0]["status"], "fixed", marker)
-        self.assertEqual(self.ok("evidence", "--evidence-id", old)["document"]["findings"][0]["kind"], "nonbehavioral", marker)
+        self.assertEqual(self.ok("evidence", "--full", "--evidence-id", old)["document"]["findings"][0]["kind"], "nonbehavioral", marker)
 
     def test_retained_identity_survives_changed_wording_and_ids(self) -> None:
         marker = "FINDING_IDENTITY_SPLIT"
@@ -327,7 +353,7 @@ class PendingAdvisorRetries(AttackHarness):
         full = json.loads(self.fixed_disposition(wid, ref, dict(self.ZERO_DOMAIN)).read_text())
         full["dispositions"][0].pop("mechanism")
         evidence = self.status()["tddEvidence"]
-        measured = self.ok("evidence", "--evidence-id", evidence)["document"]
+        measured = self.ok("evidence", "--full", "--evidence-id", evidence)["document"]
         green = next(i for i, run in enumerate(measured["runs"]) if run.get("phase") == "green")
         concise = {"intakeEvidenceId": ref, "dispositions": [{"finding_id": "SPEC-1", "status": "fixed",
                     "reason": "all reads now yield 2", "evidenceRefs": [f"{evidence}:{green}"]}]}
@@ -336,7 +362,7 @@ class PendingAdvisorRetries(AttackHarness):
                 item = document["dispositions"][0]
                 if mechanism is not None:
                     item["mechanism"] = mechanism
-                result = self.cli("advisor-disposition", "--slug", "pending-retry", "--workflow-id", wid,
+                result = self.cli("record", "advisor-disposition", "--slug", "pending-retry", "--workflow-id", wid,
                                   "--stage", "preflight", "--findings", "addressed", "--input",
                                   str(self.json_file("mechanism.json", document)))
                 self.assertEqual(result.returncode, 2, marker)
@@ -346,7 +372,7 @@ class PendingAdvisorRetries(AttackHarness):
             "Initialize to 2; the invariant is that all reads observe 2. The latest "
             "counterexample was a fresh import observing 1. There are no other writers."
         )
-        accepted = self.ok("advisor-disposition", "--slug", "pending-retry", "--workflow-id", wid,
+        accepted = self.ok("record", "advisor-disposition", "--slug", "pending-retry", "--workflow-id", wid,
                            "--stage", "preflight", "--findings", "addressed", "--input",
                            str(self.json_file("mechanism.json", concise)))
         self.assertIn("mechanismEvidence", accepted["findingStates"][0], marker)
@@ -364,7 +390,7 @@ class PendingAdvisorRetries(AttackHarness):
         document = json.loads(path.read_text())
         document["dispositions"][0]["mechanism"] = "The constant initializer supplied the wrong value to all reads; change it to 2."
         path.write_text(json.dumps(document))
-        self.ok("advisor-disposition", "--slug", "pending-retry", "--workflow-id", wid,
+        self.ok("record", "advisor-disposition", "--slug", "pending-retry", "--workflow-id", wid,
                 "--stage", "preflight", "--findings", "addressed", "--input", str(path))
         fixed = self.status()["findingStates"][0]
         state = self.accept(wid, [finding])
@@ -378,7 +404,7 @@ class PendingAdvisorRetries(AttackHarness):
         retried = self.accept(wid, [{**finding, "claim": "The current counterexample also affects a fresh process"}])
         self.assertEqual(len(retried["findingStates"]), 2, marker)
         self.assertEqual(retried["findingStates"][-1].get("recurrence"), 1, marker)
-        refused = self.cli("advisor-disposition", "--slug", "pending-retry", "--workflow-id", wid,
+        refused = self.cli("record", "advisor-disposition", "--slug", "pending-retry", "--workflow-id", wid,
                            "--stage", "preflight", "--findings", "addressed", "--input", str(path))
         self.assertEqual(refused.returncode, 2, marker)
 
@@ -392,14 +418,14 @@ class PendingAdvisorRetries(AttackHarness):
         explanation = "Fresh imports share the incorrect initializer. " * 100 + "Distinct final diagnosis."
         update = self.json_file("diagnosis.json", {"reassessment": explanation,
             "items": [{**self.owned_map(ref, marker="FRESH_READ_WRONG")[0], "id": "BM_FRESH"}]})
-        recorded = self.ok("tdd-map", "--slug", "pending-retry", "--workflow-id", wid, "--input", str(update))
+        recorded = self.ok("record", "map", "--slug", "pending-retry", "--workflow-id", wid, "--input", str(update))
         summary = self.cli("summary").stdout
         self.assertIn("Mechanism", summary, marker)
         self.assertIn("Fresh imports share the incorrect initializer.", summary, "RECOVERY_DIAGNOSIS_NOT_SHOWN")
         self.assertLessEqual(len(summary.strip()), 3000, marker)
         reference = self.status()["findingStates"][0].get("mechanismEvidence")
         self.assertEqual(reference, {"evidenceId": recorded["summaryId"], "id": "SPEC-1"}, marker)
-        recovered = self.ok("evidence", "--evidence-id", reference["evidenceId"])["document"]
+        recovered = self.ok("evidence", "--full", "--evidence-id", reference["evidenceId"])["document"]
         self.assertEqual(recovered["reassessment"], explanation, marker)
 
     def test_second_recurrence_requires_reviewer_repair_and_lead_review(self) -> None:
@@ -412,9 +438,9 @@ class PendingAdvisorRetries(AttackHarness):
             ref = state["advisorPreflight"]["intakeEvidence"]
             update = self.json_file("owner.json", {"reassessment": f"Repair {recurrence}: the initializer affects every read; set it to 2.",
                 "dispositions": [{"id": "BM_ATTACK", "sourceRefs": [{"type": "finding", "evidenceId": ref, "id": "SPEC-1"}]}]})
-            self.ok("tdd-map", "--slug", "pending-retry", "--workflow-id", wid, "--input", str(update))
+            self.ok("record", "map", "--slug", "pending-retry", "--workflow-id", wid, "--input", str(update))
             document = self.fixed_disposition(wid, ref, dict(self.ZERO_DOMAIN))
-            self.ok("advisor-disposition", "--slug", "pending-retry", "--workflow-id", wid,
+            self.ok("record", "advisor-disposition", "--slug", "pending-retry", "--workflow-id", wid,
                     "--stage", "preflight", "--findings", "addressed", "--input", str(document))
             state = self.accept(wid, [finding])
         current = state["findingStates"][-1]
@@ -423,10 +449,10 @@ class PendingAdvisorRetries(AttackHarness):
         self.assertEqual(owner.get("implementerContextId"), "retry-fixture", marker)
         self.assertEqual(owner.get("reviewerContextId"), self.env.get("CODEX_THREAD_ID"), marker)
         ref = state["advisorPreflight"]["intakeEvidence"]
-        self.ok("tdd-map", "--slug", "pending-retry", "--workflow-id", wid, "--input", str(self.json_file("owner.json", {
+        self.ok("record", "map", "--slug", "pending-retry", "--workflow-id", wid, "--input", str(self.json_file("owner.json", {
             "reassessment": "Second recurrence requires the reviewer to correct the complete read mechanism.",
             "dispositions": [{"id": "BM_ATTACK", "sourceRefs": [{"type": "finding", "evidenceId": ref, "id": "SPEC-1"}]}]})))
-        result = self.cli("advisor-disposition", "--slug", "pending-retry", "--workflow-id", wid,
+        result = self.cli("record", "advisor-disposition", "--slug", "pending-retry", "--workflow-id", wid,
                           "--stage", "preflight", "--findings", "addressed", "--input",
                           str(self.fixed_disposition(wid, ref, dict(self.ZERO_DOMAIN))))
         self.assertEqual(result.returncode, 2, marker)
@@ -444,8 +470,7 @@ class PendingAdvisorRetries(AttackHarness):
         self.ok("verify", "--slug", "pending-retry", "--", "git", "diff", "--check")
         self.ok("verify", "--slug", "pending-retry", "--kind", "quality-gate", "--base-ref", "HEAD")
         assessment = self.json_file("ordinary-review.json", {"findings": []})
-        self.ok("record-review", "--slug", "pending-retry", "--workflow-id", wid,
-                "--resolved-model", "recorder-input-not-model-review",
+        self.ok("record", "review", "--slug", "pending-retry", "--workflow-id", wid,
                 "--review-context-id", "fresh-rooted-reviewer", "--input", str(assessment))
         assessed = self.status()["findingStates"][-1]
         self.assertEqual(assessed["repairOwner"], owner, marker)
@@ -453,11 +478,11 @@ class PendingAdvisorRetries(AttackHarness):
         self.assertEqual(assessed["status"], "pending", marker)
         review = self.json_file("lead-review.json", {"findings": [], "implementationContextId": "retry-fixture"})
         for reviewer, expected in (("retry-fixture", 2), (self.env["CODEX_THREAD_ID"], 0)):
-            result = self.cli("record-review", "--slug", "pending-retry", "--workflow-id", wid,
-                              "--resolved-model", "recorder-input-not-model-review", "--review-context-id", reviewer,
+            result = self.cli("record", "review", "--slug", "pending-retry", "--workflow-id", wid,
+                              "--review-context-id", reviewer,
                               "--input", str(review))
             self.assertEqual(result.returncode, expected, marker + result.stderr)
-        self.ok("advisor-disposition", "--slug", "pending-retry", "--workflow-id", wid,
+        self.ok("record", "advisor-disposition", "--slug", "pending-retry", "--workflow-id", wid,
                 "--stage", "preflight", "--findings", "addressed", "--input",
                 str(self.fixed_disposition(wid, ref, dict(self.ZERO_DOMAIN))))
         self.assertEqual(self.status()["finalReview"]["status"], "pending", marker)
@@ -471,13 +496,13 @@ class PendingAdvisorRetries(AttackHarness):
         })
         if raw is not None:
             envelope.write_text(raw, encoding="utf-8")
-        return self.cli("advisor-result", "--slug", "pending-retry", "--workflow-id", wid,
+        return self.cli("record", "advisor-result", "--slug", "pending-retry", "--workflow-id", wid,
                         "--stage", stage, "--source", source, "--input", str(envelope))
 
     def accept(self, wid: str, findings: list[dict[str, object]], **kwargs) -> dict[str, object]:
         result = self.response(wid, findings, **kwargs)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        return json.loads(result.stdout)
+        return self.status()
 
     def close_finding(self, wid: str, intake: str, finding: dict[str, object], *,
                       stage: str = "preflight", status: str = "rejected-with-evidence") -> subprocess.CompletedProcess[str]:
@@ -494,15 +519,15 @@ class PendingAdvisorRetries(AttackHarness):
                                         "result": "false"},
                 "evidence": "test -f app.py exited 0"}],
         })
-        return self.cli("advisor-disposition", "--slug", "pending-retry", "--workflow-id", wid,
+        return self.cli("record", "advisor-disposition", "--slug", "pending-retry", "--workflow-id", wid,
                         "--stage", stage, "--findings", "addressed", "--input", str(document))
 
     def ready(self, wid: str) -> None:
         record_context_forge(self.repo, self.tmp)
         self.ok("verify", "--slug", "pending-retry", "--", "git", "diff", "--check")
         self.ok("verify", "--slug", "pending-retry", "--kind", "quality-gate", "--base-ref", "HEAD")
-        self.ok("record-review", "--slug", "pending-retry", "--workflow-id", wid,
-                "--resolved-model", "recorder-input-not-model-review", "--review-context-id", "retry-fixture",
+        self.ok("record", "review", "--slug", "pending-retry", "--workflow-id", wid,
+                "--review-context-id", "retry-fixture",
                 "--input", str(self.json_file("review.json", {"findings": []})))
 
     def start_final(self) -> str:
@@ -546,7 +571,7 @@ class PendingAdvisorRetries(AttackHarness):
         for key in ("findingStates", "preflightEvidence", "tddEvidence", "tddCycleCount"):
             self.assertEqual(after[key], before[key], marker)
         self.assertEqual(self.ok("checkpoint", "--phase", "final-review")["findingLedger"], ledger, marker)
-        closed = self.cli("advisor-disposition", "--slug", "pending-retry", "--workflow-id", wid,
+        closed = self.cli("record", "advisor-disposition", "--slug", "pending-retry", "--workflow-id", wid,
                           "--stage", "preflight", "--findings", "addressed", "--input",
                           str(self.fixed_disposition(wid, original, dict(self.ZERO_DOMAIN))))
         self.assertEqual(closed.returncode, 0, marker + closed.stdout + closed.stderr)
@@ -632,8 +657,8 @@ class PendingAdvisorRetries(AttackHarness):
             "id": "REVIEW-ALIAS", "axis": "Spec", "severity": "high", "location": "app.py",
             "evidence": "recorder input, not a native review", "consequence": "same unresolved obligation",
             "smallest_action": "repair the original finding"}]})
-        self.ok("record-review", "--slug", "pending-retry", "--workflow-id", other,
-                "--resolved-model", "recorder-input-not-model-review", "--review-context-id", "retry-fixture",
+        self.ok("record", "review", "--slug", "pending-retry", "--workflow-id", other,
+                "--review-context-id", "retry-fixture",
                 "--input", str(review))
         cross = self.status()
         self.assertEqual(len(cross["findingStates"]), 1, marker)
@@ -649,7 +674,7 @@ class PendingAdvisorRetries(AttackHarness):
         changed_verdict = self.accept(final_wid, [note, {**note, "id": "NEW", "material": True}], stage="final")
         self.assertEqual(len(changed_verdict["findingStates"]), 2, marker)
 
-    def test_observations_retain_raw_bytes(self) -> None:
+    def test_observations_retain_packet_digests_and_exact_envelopes(self) -> None:
         marker = "OBSERVATION_LOST"
         wid = self.begin("pending-retry")
         raws = [json.dumps({"schemaVersion": 1, "findings": [self.CAPTURED], "verdict": "completed"},
@@ -657,11 +682,13 @@ class PendingAdvisorRetries(AttackHarness):
         for raw in raws:
             self.accept(wid, [self.CAPTURED], raw=raw)
         history = self.ok("history")
-        documents = [self.ok("evidence", "--evidence-id", evidence_id)
+        documents = [self.ok("evidence", "--full", "--evidence-id", evidence_id)
                      for event in history["events"] if event["kind"] == "advisor-preflight-result"
                      for evidence_id in event["evidenceIds"]]
         observations = [entry["document"] for entry in documents if entry["kind"] == "finding-intake-preflight"]
-        self.assertEqual(sorted(d["raw"] for d in observations), sorted(raws), marker)
+        self.assertEqual(sorted(d["sha256"] for d in observations),
+                         sorted(hashlib.sha256(raw.encode()).hexdigest() for raw in raws), marker)
+        self.assertEqual([d["raw"] for d in observations], raws, "ADVISOR_ENVELOPE_NOT_RETRIEVABLE")
 
     def test_invalid_payload_refuses_atomically(self) -> None:
         wid = self.begin("pending-retry")
@@ -677,7 +704,7 @@ class PendingAdvisorRetries(AttackHarness):
         wid = self.begin("pending-retry")
         envelope = self.json_file("concurrent.json", {"schemaVersion": 1,
             "findings": [self.CAPTURED], "verdict": "completed"})
-        args = ("advisor-result", "--slug", "pending-retry", "--workflow-id", wid,
+        args = ("record", "advisor-result", "--slug", "pending-retry", "--workflow-id", wid,
                 "--stage", "preflight", "--source", "codex-advisor", "--input", str(envelope))
         with ThreadPoolExecutor(max_workers=3) as pool:
             results = list(pool.map(lambda _: self.cli(*args), range(3)))
@@ -700,7 +727,7 @@ class PendingAdvisorRetries(AttackHarness):
                                                    "verdict": "completed"})
         profile = self.tmp / "retry.prof"
         result = subprocess.run([sys.executable, "-m", "cProfile", "-o", str(profile), str(WORKFLOW),
-            "advisor-result", "--repo", str(self.repo), "--slug", "pending-retry", "--workflow-id", wid,
+            "record", "advisor-result", "--repo", str(self.repo), "--slug", "pending-retry", "--workflow-id", wid,
             "--stage", "preflight", "--source", "codex-advisor", "--input", str(envelope),
             "--design-declaration", str(self.design_absent)], cwd=ROOT, env=self.env, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -738,7 +765,7 @@ class PendingAdvisorRetries(AttackHarness):
             f"atexit.register(lambda: Path({str(reads_file)!r}).write_text(json.dumps(reads))); "
             "sys.argv=sys.argv[1:]; runpy.run_path(sys.argv[0],run_name='__main__')"
         )
-        result = subprocess.run([sys.executable, "-c", tracer, str(WORKFLOW), "advisor-result",
+        result = subprocess.run([sys.executable, "-c", tracer, str(WORKFLOW), "record", "advisor-result",
             "--repo", str(self.repo), "--slug", "pending-retry", "--workflow-id", wid,
             "--stage", "final", "--source", "codex-advisor", "--input", str(envelope),
             "--design-declaration", str(self.design_absent)], cwd=ROOT, env=self.env,
@@ -753,7 +780,7 @@ class PendingAdvisorRetries(AttackHarness):
         self.assertEqual(states[0]["appealStatus"], "disagreement")
         if shared:
             self.assertEqual(states[1], {**first["findingStates"][1], "observations": [
-                {"evidenceId": json.loads(result.stdout)["finalReview"]["intakeEvidence"],
+                {"evidenceId": self.status()["finalReview"]["intakeEvidence"],
                  "id": "B", "producer": "codex-advisor", "stage": "final"}]})
             self.assertNotEqual(states[2]["intakeEvidenceId"], original)
         print(f"target=workflow.py advisor-result final_appeal pending_findings={len(states)} original_intake_read_limit=1 observed={count}")
@@ -773,21 +800,22 @@ class SamePassDesign(AttackHarness):
     def test_a_changed_design_declaration_records_in_the_same_pass(self) -> None:
         marker = "SAME_PASS_DESIGN_DEEPENING_REFUSED"
         wid = self.begin("design-deepening")
-        first = self.ok("advisor-result", "--slug", "design-deepening", "--workflow-id", wid,
+        self.ok("record", "advisor-result", "--slug", "design-deepening", "--workflow-id", wid,
                         "--stage", "preflight", "--source", "codex-advisor",
-                        "--verdict", "completed")
-        first_evidence = first.get("governedDesignEvidence")
+                        "--input", empty_advisor_envelope(self.tmp, "completed"))
+        first_evidence = self.status().get("governedDesignEvidence")
         deepened = self.json_file("design-b.json", {
             "schemaVersion": 1, "status": "present", "sha256": "b" * 64,
         })
-        second = self.cli("advisor-result", "--slug", "design-deepening", "--workflow-id", wid,
+        second = self.cli("record", "advisor-result", "--slug", "design-deepening", "--workflow-id", wid,
                           "--stage", "preflight", "--source", "codex-advisor",
-                          "--verdict", "completed", "--design-declaration", str(deepened))
+                          "--input", empty_advisor_envelope(self.tmp, "completed"), "--design-declaration", str(deepened))
         self.assertEqual(second.returncode, 0, marker + ": " + second.stdout + second.stderr)
-        after = json.loads(second.stdout)
-        self.assertNotEqual(after.get("governedDesignEvidence"), first_evidence, marker)
+        after = self.status().get("governedDesignEvidence")
+        self.assertIsInstance(after, str, marker)
+        self.assertNotEqual(after, first_evidence, marker)
         if isinstance(first_evidence, str) and first_evidence:
-            prior = self.cli("evidence", "--evidence-id", first_evidence)
+            prior = self.cli("evidence", "--full", "--evidence-id", first_evidence)
             self.assertEqual(prior.returncode, 0, marker + ": prior declaration unreadable")
 
 
@@ -810,24 +838,65 @@ class UnownedFindingBlocks(AttackHarness):
 
 
 class FixedRequiresGreenAttack(AttackHarness):
+    def test_receipt_disposition_binds_an_existing_attack_without_map_update(self) -> None:
+        marker = "DERIVED_FINDING_BINDING"
+        slug = "derived-binding"
+        wid = self.begin(slug)
+        item = self.owned_map("unused", marker=marker)
+        item[0]["sourceRefs"] = []
+        self.assertEqual(self.record_preflight(slug, wid, item).returncode, 0)
+        intake_id = self.behavioral_intake(slug, wid, "the reviewed value is wrong")
+        early = self.cli("record", "advisor-disposition", "--finding", "SPEC-1", "--fixed",
+                         "--evidence-ref", f"{self.status()['preflightEvidence']}:0",
+                         "--behavior-id", "BM_ATTACK")
+        self.assertEqual(early.returncode, 2, "UNEXECUTED_RECEIPT_ACCEPTED")
+        self.assertNotIn("behaviorId", self.status()["findingStates"][0], "FAILED_BINDING_MUTATED_STATE")
+        self.drive_attack_green(slug, marker)
+        evidence_id = self.status()["tddEvidence"]
+        before = self.ok("history")
+        wrong = self.cli("record", "advisor-disposition", "--finding", "SPEC-1", "--fixed",
+                         "--evidence-ref", f"{evidence_id}:1", "--behavior-id", "BM_MISSING")
+        self.assertEqual(wrong.returncode, 2, "FOREIGN_BEHAVIOR_ACCEPTED")
+        self.assertEqual(self.ok("history"), before, "FAILED_BINDING_WROTE_EVENT")
+        result = self.cli("record", "advisor-disposition", "--finding", "SPEC-1", "--fixed",
+                          "--evidence-ref", f"{evidence_id}:1", "--behavior-id", "BM_ATTACK")
+        self.assertEqual(result.returncode, 0, marker + result.stdout + result.stderr)
+        state = self.status()
+        self.assertEqual(state["findingStates"][0]["status"], "fixed", marker)
+        self.assertEqual(state["findingStates"][0]["behaviorId"], "BM_ATTACK", marker)
+        self.assertEqual(state["advisorPreflight"]["intakeEvidence"], intake_id, marker)
+        self.assertEqual(state["tddEvidence"], evidence_id, "UNNECESSARY_MAP_DOCUMENT")
+        after = self.ok("history")
+        self.assertEqual(len(after["events"]), len(before["events"]) + 1, marker)
+        unrelated = self.json_file("unrelated-map.json", {"reassessment": "unrelated settled obligation",
+            "items": [{"id": "BM_UNRELATED", "kind": "preservation", "basis": "unrelated",
+                       "behavior": "unrelated behavior", "seam": "app module", "expected": "stable",
+                       "redFailure": "FINDING_SUBSET_LOST", "status": "omitted", "evidence": "outside this finding"}]})
+        retained = self.cli("record", "map", "--slug", slug, "--workflow-id", wid,
+                            "--input", str(unrelated))
+        self.assertEqual(retained.returncode, 0, "FINDING_SUBSET_LOST " + retained.stdout + retained.stderr)
+        self.assertEqual(self.status()["findingStates"][0]["status"], "fixed", "FINDING_SUBSET_LOST")
+        current = self.ok("evidence", "--full", "--evidence-id", self.status()["tddEvidence"])["document"]
+        self.assertIn("BM_ATTACK", {item["id"] for item in current["behaviorMap"]}, "FINDING_SUBSET_LOST")
+
     def test_behavioral_fixed_requires_an_owning_green_through_red(self) -> None:
         marker = "FIXED_CLOSED_WITHOUT_GREEN_ATTACK"
         wid = self.begin("fixed-green")
         intake_id = self.behavioral_intake("fixed-green", wid, "the reviewed value is wrong")
         owned = self.record_preflight("fixed-green", wid, self.owned_map(intake_id, marker=marker))
         self.assertEqual(owned.returncode, 0, marker + ": " + owned.stdout + owned.stderr)
-        early = self.cli("advisor-disposition", "--slug", "fixed-green", "--workflow-id", wid,
+        early = self.cli("record", "advisor-disposition", "--slug", "fixed-green", "--workflow-id", wid,
                          "--stage", "preflight", "--findings", "addressed", "--input",
                          str(self.fixed_disposition(wid, intake_id, dict(self.ZERO_DOMAIN))))
         self.assertEqual(early.returncode, 2, marker + ": " + early.stdout + early.stderr)
         self.assertIn("SPEC-1", early.stderr, marker)
         self.assertIn("GREEN", early.stderr, marker)
         self.drive_attack_green("fixed-green", marker)
-        closed = self.cli("advisor-disposition", "--slug", "fixed-green", "--workflow-id", wid,
+        closed = self.cli("record", "advisor-disposition", "--slug", "fixed-green", "--workflow-id", wid,
                           "--stage", "preflight", "--findings", "addressed", "--input",
                           str(self.fixed_disposition(wid, intake_id, dict(self.ZERO_DOMAIN))))
         self.assertEqual(closed.returncode, 0, marker + ": " + closed.stdout + closed.stderr)
-        states = json.loads(closed.stdout)["findingStates"]
+        states = self.status()["findingStates"]
         self.assertEqual(states[0]["status"], "fixed", marker)
 
 
@@ -841,14 +910,14 @@ class DomainFreeFixed(AttackHarness):
         self.drive_attack_green("fixed-domain", marker)
         # The premise-false escape must not close a behavioral finding without a
         # measured complete-domain zero: exactly how a broad finding narrows away.
-        domain_free = self.cli("advisor-disposition", "--slug", "fixed-domain", "--workflow-id", wid,
+        domain_free = self.cli("record", "advisor-disposition", "--slug", "fixed-domain", "--workflow-id", wid,
                                "--stage", "preflight", "--findings", "addressed", "--input",
                                str(self.fixed_disposition(wid, intake_id, dict(self.SEAM_ONLY),
                                                           premise_result="false")))
         self.assertEqual(domain_free.returncode, 2, marker + ": " + domain_free.stdout + domain_free.stderr)
         self.assertIn("complete domain", domain_free.stderr, marker)
         self.assertEqual(self.status()["findingStates"][0]["status"], "pending", marker)
-        measured = self.cli("advisor-disposition", "--slug", "fixed-domain", "--workflow-id", wid,
+        measured = self.cli("record", "advisor-disposition", "--slug", "fixed-domain", "--workflow-id", wid,
                             "--stage", "preflight", "--findings", "addressed", "--input",
                             str(self.fixed_disposition(wid, intake_id, dict(self.ZERO_DOMAIN))))
         self.assertEqual(measured.returncode, 0, marker + ": " + measured.stdout + measured.stderr)
@@ -875,7 +944,7 @@ class ReservationGone(AttackHarness):
                 "preservationObligations": ["keep the fixture value readable"],
             }],
         })
-        refused = self.cli("advisor-disposition", "--slug", "reservation-gone", "--workflow-id", wid,
+        refused = self.cli("record", "advisor-disposition", "--slug", "reservation-gone", "--workflow-id", wid,
                            "--stage", "preflight", "--findings", "addressed", "--input", str(reservation))
         self.assertEqual(refused.returncode, 2, marker + ": " + refused.stdout + refused.stderr)
         self.assertIn("invalid", refused.stderr, marker)
@@ -887,8 +956,8 @@ class ReservationGone(AttackHarness):
 
 class SamePassAttack(AttackHarness):
     def review(self, slug: str, wid: str, path: Path) -> subprocess.CompletedProcess[str]:
-        return self.cli("record-review", "--slug", slug, "--workflow-id", wid,
-                        "--resolved-model", "attack-harness", "--review-context-id",
+        return self.cli("record", "review", "--slug", slug, "--workflow-id", wid,
+                        "--review-context-id",
                         "same-pass-attack", "--input", str(path))
 
     def test_a_late_attack_is_proved_and_closed_in_the_same_workflow(self) -> None:
@@ -899,9 +968,9 @@ class SamePassAttack(AttackHarness):
         env["ADVISOR_SHIM_REPLY"] = '{"schemaVersion":1,"findings":[],"verdict":"commit-ready"}'
         consult = ("--slug", slug, "--phase", "final-review", "--design-absent", "attack fixture")
         wid = self.begin(slug)
-        self.ok("advisor-result", "--slug", slug, "--workflow-id", wid,
-                "--stage", "preflight", "--source", "codex-advisor", "--verdict", "completed")
-        self.ok("advisor-disposition", "--slug", slug, "--workflow-id", wid,
+        self.ok("record", "advisor-result", "--slug", slug, "--workflow-id", wid,
+                "--stage", "preflight", "--source", "codex-advisor", "--input", empty_advisor_envelope(self.tmp, "completed"))
+        self.ok("record", "advisor-disposition", "--slug", slug, "--workflow-id", wid,
                 "--stage", "preflight", "--findings", "none")
         main_marker = "MAIN_VALUE_NOT_TWO"
         owned = self.record_preflight(slug, wid, [{
@@ -912,14 +981,6 @@ class SamePassAttack(AttackHarness):
         }])
         self.assertEqual(owned.returncode, 0, marker + ": " + owned.stdout + owned.stderr)
         self.drive_attack_green(slug, main_marker, "BM_MAIN")
-        gate = subprocess.run([sys.executable, str(QUALITY_GATE), "check", "--repo", str(self.repo),
-                               "--json"], cwd=ROOT, env=self.env, text=True, capture_output=True,
-                              check=False)
-        self.assertEqual(gate.returncode, 0, gate.stdout + gate.stderr)
-        self.ok("record-production-code", "--slug", slug, "--workflow-id", wid,
-                "--input", str(self.json_file("gate.json", json.loads(gate.stdout))))
-        self.ok("set-phase", "--phase", "implementation", "--status", "passed",
-                "--slug", slug, "--workflow-id", wid)
         for extra in (("--", sys.executable, "-c", "pass"),
                       ("--kind", "quality-gate", "--base-ref", "HEAD")):
             verified = self.cli("verify", "--slug", slug, *extra)
@@ -939,7 +1000,7 @@ class SamePassAttack(AttackHarness):
         # restarts the workflow nor invalidates the recorded graph context.
         record_context_forge(self.repo, self.tmp)
         note_marker = "NOTE_SEAM_ABSENT"
-        added = self.cli("tdd-map", "--slug", slug, "--workflow-id", wid, "--input",
+        added = self.cli("record", "map", "--slug", slug, "--workflow-id", wid, "--input",
                          str(self.json_file("late-attack.json", {
                              "reassessment": "own the late review finding with a real attack",
                              "dispositions": [],
@@ -978,7 +1039,7 @@ class SamePassAttack(AttackHarness):
         command[command.index("red")] = "green"
         green = subprocess.run(command, cwd=ROOT, env=self.env, text=True, capture_output=True, check=False)
         self.assertEqual(green.returncode, 0, marker + ": " + green.stdout + green.stderr)
-        reassessed = self.cli("tdd-map", "--slug", slug, "--workflow-id", wid, "--input",
+        reassessed = self.cli("record", "map", "--slug", slug, "--workflow-id", wid, "--input",
                               str(self.json_file("late-reassess.json", {
                                   "sourceBehaviorId": "BM_NOTE",
                                   "reassessment": "no new obligation", "items": [], "dispositions": [],
@@ -1004,7 +1065,7 @@ class SamePassAttack(AttackHarness):
             }],
         }))
         self.assertEqual(fixed.returncode, 0, marker + ": " + fixed.stdout + fixed.stderr)
-        omit = self.cli("tdd-map", "--slug", slug, "--workflow-id", wid, "--input",
+        omit = self.cli("record", "map", "--slug", slug, "--workflow-id", wid, "--input",
                         str(self.json_file("omit-owner.json", {
                             "reassessment": "silently drop the owner",
                             "items": [],
@@ -1018,8 +1079,6 @@ class SamePassAttack(AttackHarness):
         # Post-edit revalidation for the production fix itself - the ordinary
         # rule for changed trees, not a metadata-only rerun.
         record_context_forge(self.repo, self.tmp)
-        self.ok("set-phase", "--phase", "implementation", "--status", "passed",
-                "--slug", slug, "--workflow-id", wid)
         for extra in (("--", sys.executable, "-c", "pass"),
                       ("--kind", "quality-gate", "--base-ref", "HEAD")):
             verified = self.cli("verify", "--slug", slug, *extra)
@@ -1096,7 +1155,7 @@ class FindingLedgerAtFinal(AttackHarness):
         owned = self.record_preflight("finding-ledger", wid, self.owned_map(intake_id, marker=marker))
         self.assertEqual(owned.returncode, 0, marker + ": " + owned.stdout + owned.stderr)
         self.drive_attack_green("finding-ledger", marker)
-        closed = self.cli("advisor-disposition", "--slug", "finding-ledger", "--workflow-id", wid,
+        closed = self.cli("record", "advisor-disposition", "--slug", "finding-ledger", "--workflow-id", wid,
                           "--stage", "preflight", "--findings", "addressed", "--input",
                           str(self.fixed_disposition(wid, intake_id, dict(self.ZERO_DOMAIN))))
         self.assertEqual(closed.returncode, 0, marker + ": " + closed.stdout + closed.stderr)
@@ -1122,7 +1181,7 @@ class FindingLedgerAtFinal(AttackHarness):
         self.assertEqual(owned.returncode, 0, marker + ": " + owned.stdout + owned.stderr)
         self.drive_attack_green("ledger-measurement", marker)
         document = self.fixed_disposition(wid, intake_id, dict(self.ZERO_DOMAIN))
-        closed = self.cli("advisor-disposition", "--slug", "ledger-measurement", "--workflow-id", wid,
+        closed = self.cli("record", "advisor-disposition", "--slug", "ledger-measurement", "--workflow-id", wid,
                           "--stage", "preflight", "--findings", "addressed", "--input", str(document))
         self.assertEqual(closed.returncode, 0, marker + ": " + closed.stdout + closed.stderr)
         recorded = json.loads(Path(document).read_text(encoding="utf-8"))["dispositions"][0]
@@ -1301,7 +1360,7 @@ class AddoptsPyargsNeutralized(AttackHarness):
                 retained = {"tddEvidence", "updatedAt"}
                 self.assertEqual({k: v for k, v in after.items() if k not in retained},
                                  {k: v for k, v in before.items() if k not in retained}, marker)
-                document = self.ok("evidence", "--evidence-id", after["tddEvidence"])["document"]
+                document = self.ok("evidence", "--full", "--evidence-id", after["tddEvidence"])["document"]
                 self.assertEqual(document["status"], "pending", marker)
                 self.assertIsNone(document["activeBehaviorId"], marker)
                 self.assertEqual([item["status"] for item in document["behaviorMap"]], ["pending"], marker)
@@ -1321,7 +1380,7 @@ class BulkRejectionAdvisorTests(AttackHarness):
              "kind": "nonbehavioral"}
             for i in range(1, count + 1)
         ], "verdict": "completed"})
-        recorded = self.ok("advisor-result", "--slug", slug, "--workflow-id", wid,
+        recorded = self.ok("record", "advisor-result", "--slug", slug, "--workflow-id", wid,
                            "--stage", "preflight", "--source", "codex-advisor",
                            "--input", str(envelope))
         return str(recorded["advisorPreflight"]["intakeEvidence"])
@@ -1351,7 +1410,7 @@ class BulkRejectionAdvisorTests(AttackHarness):
     def reject(self, slug: str, wid: str, count: int, *, valid: bool = True,
                material: int | None = None, rejected: int | None = None) -> subprocess.CompletedProcess[str]:
         intake_id = self.material_intake(slug, wid, count, material=material)
-        return self.cli("advisor-disposition", "--slug", slug, "--workflow-id", wid,
+        return self.cli("record", "advisor-disposition", "--slug", slug, "--workflow-id", wid,
                         "--stage", "preflight", "--findings", "addressed",
                         "--input", str(self.rejection_doc(wid, intake_id, count, valid=valid,
                                                           rejected=rejected)))
@@ -1394,7 +1453,7 @@ class BulkRejectionAdvisorTests(AttackHarness):
         wid = self.begin("shape-advisor")
         intake_id = self.material_intake("shape-advisor", wid, 1)
         before = self.status()
-        result = self.cli("advisor-disposition", "--slug", "shape-advisor", "--workflow-id", wid,
+        result = self.cli("record", "advisor-disposition", "--slug", "shape-advisor", "--workflow-id", wid,
                           "--stage", "preflight", "--findings", "addressed",
                           "--input", str(self.rejection_doc(wid, intake_id, 1, valid=False)))
         self.assertNotEqual(result.returncode, 0, marker + ": " + result.stdout + result.stderr)
@@ -1432,9 +1491,9 @@ class MapCorrectionAttacks(AttackHarness):
 
     def open_pass(self, slug: str, behavior_map: list[dict[str, object]]) -> str:
         wid = self.begin(slug)
-        self.ok("advisor-result", "--slug", slug, "--workflow-id", wid,
-                "--stage", "preflight", "--source", "codex-advisor", "--verdict", "completed")
-        self.ok("advisor-disposition", "--slug", slug, "--workflow-id", wid,
+        self.ok("record", "advisor-result", "--slug", slug, "--workflow-id", wid,
+                "--stage", "preflight", "--source", "codex-advisor", "--input", empty_advisor_envelope(self.tmp, "completed"))
+        self.ok("record", "advisor-disposition", "--slug", slug, "--workflow-id", wid,
                 "--stage", "preflight", "--findings", "none")
         recorded = self.record_preflight(slug, wid, behavior_map)
         self.assertEqual(recorded.returncode, 0, recorded.stdout + recorded.stderr)
@@ -1443,7 +1502,7 @@ class MapCorrectionAttacks(AttackHarness):
     def map_update(self, slug: str, **document: object) -> subprocess.CompletedProcess[str]:
         wid = str(self.status()["workflowId"])
         update = self.json_file("map.json", {"reassessment": "map correction", **document})
-        return self.cli("tdd-map", "--slug", slug, "--workflow-id", wid, "--input", str(update))
+        return self.cli("record", "map", "--slug", slug, "--workflow-id", wid, "--input", str(update))
 
     def withdraw(self, slug: str, identifier: str) -> subprocess.CompletedProcess[str]:
         return self.map_update(slug, dispositions=[
@@ -1456,7 +1515,7 @@ class MapCorrectionAttacks(AttackHarness):
     def map_items(self) -> dict[str, dict[str, object]]:
         state = self.status()
         evidence_id = state.get("tddEvidence") or state.get("preflightEvidence")
-        document = self.ok("evidence", "--evidence-id", str(evidence_id))
+        document = self.ok("evidence", "--full", "--evidence-id", str(evidence_id))
         items = document.get("behaviorMap")
         if items is None:
             items = (document.get("document") or {}).get("behaviorMap")
@@ -1495,6 +1554,17 @@ class MapCorrectionAttacks(AttackHarness):
             "id": "BM_ATTACK", "status": "pending",
             "evidence": "Select the streaming call; the ordering contract is unchanged."}])
 
+    def test_source_ref_only_update_keeps_existing_mechanism_evidence(self) -> None:
+        slug, _, _, _ = self.wrong_occurrence("MECHANISM_EVIDENCE_LOST", finding=True)
+        self.assertEqual(self.correct_red(slug).returncode, 0)
+        before = self.status()["findingStates"][0]["mechanismEvidence"]
+        refs = self.map_items()["BM_ATTACK"]["sourceRefs"]
+        updated = self.map_update(slug, reassessment=None,
+                                  dispositions=[{"id": "BM_ATTACK", "sourceRefs": refs}])
+        self.assertEqual(updated.returncode, 0, updated.stderr)
+        self.assertEqual(self.status()["findingStates"][0]["mechanismEvidence"], before,
+                         "MECHANISM_EVIDENCE_LOST")
+
     def repair_order(self) -> None:
         fixture = self.repo / "order.txt"
         fixture.write_text(fixture.read_text().replace(
@@ -1507,7 +1577,7 @@ class MapCorrectionAttacks(AttackHarness):
         correction = self.correct_red(slug)
         self.assertEqual(correction.returncode, 0, marker + ": " + correction.stderr)
         self.assertEqual(self.map_items()["BM_ATTACK"]["status"], "pending", marker)
-        document = self.ok("evidence", "--evidence-id", self.status()["tddEvidence"])["document"]
+        document = self.ok("evidence", "--full", "--evidence-id", self.status()["tddEvidence"])["document"]
         self.assertIsNone(document["activeBehaviorId"], marker)
         for field in ("command", "surface", "runs"):
             self.assertNotIn(field, document, marker)
@@ -1533,10 +1603,10 @@ class MapCorrectionAttacks(AttackHarness):
         record_context_forge(self.repo, self.tmp)
         self.ok("verify", "--slug", slug, "--", *correct)
         self.ok("verify", "--slug", slug, "--kind", "quality-gate", "--base-ref", "HEAD")
-        self.ok("record-review", "--slug", slug, "--workflow-id", wid,
-                "--resolved-model", "recorder-fixture", "--review-context-id", "correction-fixture",
+        self.ok("record", "review", "--slug", slug, "--workflow-id", wid,
+                "--review-context-id", "correction-fixture",
                 "--input", str(self.json_file("review.json", {"findings": []})))
-        self.ok("advisor-result", "--slug", slug, "--workflow-id", wid,
+        self.ok("record", "advisor-result", "--slug", slug, "--workflow-id", wid,
                 "--stage", "final", "--source", "codex-advisor", "--input",
                 str(self.json_file("final.json", {"schemaVersion": 1, "findings": [], "verdict": "commit-ready"})))
         completed = self.cli("complete")
@@ -1613,11 +1683,11 @@ class MapCorrectionAttacks(AttackHarness):
                     (self.repo / "app.py").write_text("value = 2\n", encoding="utf-8")
                     self.ok("tdd", "--slug", slug, "--phase", "green", "--behavior-id", "BM_EXTRA", "--", *other)
                 before, neighbor = self.status(), self.map_items()["BM_EXTRA"]
-                old = self.ok("evidence", "--evidence-id", before["tddEvidence"])["document"]
+                old = self.ok("evidence", "--full", "--evidence-id", before["tddEvidence"])["document"]
                 correction = self.correct_red(slug)
                 self.assertEqual(correction.returncode, 0, marker + ": " + correction.stderr)
                 after = self.status()
-                current = self.ok("evidence", "--evidence-id", after["tddEvidence"])["document"]
+                current = self.ok("evidence", "--full", "--evidence-id", after["tddEvidence"])["document"]
                 for key in ("kind", "command", "surface", "behaviorId", "activeBehaviorId", "runs"):
                     self.assertEqual(current[key], old[key], marker)
                 for key in before.keys() - {"tddEvidence", "updatedAt", "nextAction", "mapSelections"}:
@@ -1637,7 +1707,7 @@ class MapCorrectionAttacks(AttackHarness):
         slug, wid, _, correct = self.wrong_occurrence(marker, finding=True)
         before = self.status()
         old_id = before["tddEvidence"]
-        historical = self.ok_text("evidence", "--evidence-id", old_id)
+        historical = self.ok_text("evidence", "--full", "--evidence-id", old_id)
         contract = self.map_items()["BM_ATTACK"]
         correction = self.correct_red(slug)
         self.assertEqual(correction.returncode, 0, marker + ": " + correction.stderr)
@@ -1654,7 +1724,7 @@ class MapCorrectionAttacks(AttackHarness):
         # The corrected RED records its own observation; everything else is retained.
         for key in expected.keys() - {"status", "redProof"}:
             self.assertEqual(final[key], expected[key], marker)
-        self.assertEqual(self.ok_text("evidence", "--evidence-id", old_id), historical, marker)
+        self.assertEqual(self.ok_text("evidence", "--full", "--evidence-id", old_id), historical, marker)
         self.assertEqual(self.status()["workflowId"], wid, marker)
 
     def test_red_correction_is_atomic_against_invalid_input_and_inflight_run(self) -> None:
@@ -1675,7 +1745,7 @@ class MapCorrectionAttacks(AttackHarness):
         probe.write_text(
             "import subprocess, sys\nfrom pathlib import Path\n"
             "if Path('release').exists():\n"
-            f"    result = subprocess.run({[sys.executable, str(WORKFLOW), 'tdd-map', '--repo', str(self.repo), '--slug', slug, '--workflow-id', wid, '--input', str(request)]!r})\n"
+            f"    result = subprocess.run({[sys.executable, str(WORKFLOW), 'record', 'map', '--repo', str(self.repo), '--slug', slug, '--workflow-id', wid, '--input', str(request)]!r})\n"
             "    if result.returncode: sys.exit(result.returncode)\n"
             "raise AssertionError('ESTIMATE_OVERLAP')\n", encoding="utf-8")
         inflight = [sys.executable, "inflight.py"]
@@ -1726,7 +1796,7 @@ class MapCorrectionAttacks(AttackHarness):
         for runner in ("unittest", "pytest"):
             slug = "recheck-" + runner
             keep = {**self.contract("VALUE_NOT_TWO"), "kind": "preservation", "id": "BM_KEEP"}
-            wid = self.open_pass(slug, [self.contract("VALUE_NOT_TWO"), keep])
+            self.open_pass(slug, [self.contract("VALUE_NOT_TWO"), keep])
             self.drive_attack_green(slug, "VALUE_NOT_TWO")
             (self.repo / "test_keep_probe.py").write_text(
                 "import app, os, unittest\nclass T(unittest.TestCase):\n"
@@ -1750,8 +1820,6 @@ class MapCorrectionAttacks(AttackHarness):
                     f"import os\nvalue = int(os.environ.get('RECHECK_VALUE', '{value}'))\n", encoding="utf-8")
                 result = execute(phase)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            HookHarness.record_gate_evidence(self, slug, wid)
-            self.ok("set-phase", "--phase", "implementation", "--status", "passed")
             HookHarness.run_verification(self, slug)
             self.ok("set-phase", "--phase", "code-review", "--status", "not-required", "--findings", "none")
             before = self.status()
@@ -1762,7 +1830,7 @@ class MapCorrectionAttacks(AttackHarness):
             }]).returncode, 0)
             self.assertEqual(execute("green").returncode, 0)
             rechecked = self.status()
-            document = self.ok("evidence", "--evidence-id", str(rechecked["tddEvidence"]))["document"]
+            document = self.ok("evidence", "--full", "--evidence-id", str(rechecked["tddEvidence"]))["document"]
             self.assertEqual(document["status"], "passed", "RECHECK_LEFT_STALE_MAP_STATUS")
             for field in ("verificationEvidence", "qualityGateEvidence", "codeReview", "tddCycleCount"):
                 self.assertEqual(rechecked.get(field), before.get(field))
@@ -1771,7 +1839,7 @@ class MapCorrectionAttacks(AttackHarness):
             }]).returncode, 0)
             flagged = self.status()
             historical_id = str(flagged["tddEvidence"])
-            historical = self.ok("evidence", "--evidence-id", historical_id)
+            historical = self.ok("evidence", "--full", "--evidence-id", historical_id)
             self.assertEqual(historical["document"]["status"], "pending")
             for mode in (("skip", "regression") if runner == "unittest" else ("warning", "skip", "regression")):
                 self.env["RECHECK_MODE"] = mode
@@ -1780,7 +1848,7 @@ class MapCorrectionAttacks(AttackHarness):
                 result = execute("green")
                 self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
                 after = self.status()
-                document = self.ok("evidence", "--evidence-id", str(after["tddEvidence"]))["document"]
+                document = self.ok("evidence", "--full", "--evidence-id", str(after["tddEvidence"]))["document"]
                 run = document["runs"][-1]
                 self.assertFalse(run["valid"])
                 self.assertEqual(run["candidateTree"], candidate)
@@ -1802,7 +1870,7 @@ class MapCorrectionAttacks(AttackHarness):
             self.assertEqual(self.status()["tdd"], "passed")
             self.assertEqual(self.status()["verification"], "pending")
             self.assertNotIn("revalidationRequired", self.map_items()["BM_KEEP"])
-            self.assertEqual(self.ok("evidence", "--evidence-id", historical_id), historical)
+            self.assertEqual(self.ok("evidence", "--full", "--evidence-id", historical_id), historical)
             self.assertEqual(_active_candidate_tree(identity), candidate)
 
     def test_annotation_keeps_its_admission_without_waiving_transition_prerequisites(self) -> None:
@@ -1846,7 +1914,7 @@ class MapCorrectionAttacks(AttackHarness):
         self.drive_attack_green(slug, "VALUE_NOT_TWO")
         before, history = self.status(), self.ok_text("history")
         eid = str(before["tddEvidence"])
-        original = self.ok("evidence", "--evidence-id", eid)["document"]
+        original = self.ok("evidence", "--full", "--evidence-id", eid)["document"]
         document = behavior_map.clone([original])[0]
         document["behaviorMap"][0]["status"] = "post-edit-passed"
         with self.assertRaises((ValueError, WorkflowError)):
@@ -1854,7 +1922,7 @@ class MapCorrectionAttacks(AttackHarness):
                                   expected_evidence_id=eid)
         self.assertEqual(self.status(), before)
         self.assertEqual(self.ok_text("history"), history)
-        self.assertEqual(self.ok("evidence", "--evidence-id", eid)["document"], original)
+        self.assertEqual(self.ok("evidence", "--full", "--evidence-id", eid)["document"], original)
 
     def test_reassessment_preserves_interleaved_cycles_and_reference_identity(self) -> None:
         slug, marker = "interleaved-reassessment", "VALUE_NOT_TWO"
@@ -1895,7 +1963,7 @@ class MapCorrectionAttacks(AttackHarness):
         }
 
         def document():
-            return self.ok("evidence", "--evidence-id", str(self.status()["tddEvidence"]))["document"]
+            return self.ok("evidence", "--full", "--evidence-id", str(self.status()["tddEvidence"]))["document"]
 
         def run(phase, identifier, expected=0, command=None):
             result = self.cli("tdd", "--slug", slug, "--phase", phase,
@@ -1926,7 +1994,11 @@ class MapCorrectionAttacks(AttackHarness):
         self.refused_unchanged("REVALIDATE_AND_STATUS_ACCEPTED", lambda: self.map_update(slug, dispositions=[{
             "id": "BM_KEEP", "revalidate": True, "status": "pending", "evidence": "ambiguous request"}]))
         before = self.status()
-        changed = self.map_update(slug, dispositions=[{"id": "BM_KEEP", "sourceRefs": refs}])
+        update_path = self.json_file("mechanical-owner.json", {
+            "dispositions": [{"id": "BM_KEEP", "sourceRefs": refs}],
+        })
+        changed = self.cli("record", "map", "--slug", slug, "--workflow-id", wid,
+                           "--input", str(update_path))
         self.assertEqual(changed.returncode, 0, changed.stdout + changed.stderr)
         after = self.status()
         self.assertEqual({key: value for key, value in before.items() if key not in {"tddEvidence", "updatedAt", "findingStates"}},
@@ -1936,10 +2008,11 @@ class MapCorrectionAttacks(AttackHarness):
         self.assertEqual(self.map_items()["BM_KEEP"]["sourceRefs"], refs)
         still_bound()
         events = self.ok_text("history")
-        repeated = self.map_update(slug, dispositions=[{"id": "BM_KEEP", "sourceRefs": refs}])
+        repeated = self.cli("record", "map", "--slug", slug, "--workflow-id", wid,
+                            "--input", str(update_path))
         self.assertEqual(repeated.returncode, 0, repeated.stderr)
-        self.assertEqual(self.status(), after)
-        self.assertEqual(self.ok_text("history"), events)
+        self.assertEqual(self.status(), after, "test_reassessment_preserves_interleaved_cycles_and_reference_identity")
+        self.assertEqual(self.ok_text("history"), events, "test_reassessment_preserves_interleaved_cycles_and_reference_identity")
         self.refused_unchanged("FOREIGN_REFERENCE_ACCEPTED", lambda: self.map_update(slug, dispositions=[
             {"id": "BM_DIRECT", "sourceRefs": refs},
             {"id": "BM_KEEP", "sourceRefs": [{"type": "finding", "evidenceId": foreign, "id": "SPEC-1"}]},
@@ -1992,7 +2065,7 @@ class MapCorrectionAttacks(AttackHarness):
         run("green", "BM_ATTACK")
         self.assertEqual(self.status()["tdd"], "passed")
         self.assertEqual(self.status()["tddCycleCount"], cycle_count)
-        self.assertEqual(self.ok("evidence", "--evidence-id", historical_id)["document"], historical)
+        self.assertEqual(self.ok("evidence", "--full", "--evidence-id", historical_id)["document"], historical)
         self.ok("verify", "--slug", slug, "--", sys.executable, "-c", "print('verified')")
         before = self.status()
         self.assertEqual(self.map_update(slug, dispositions=[
@@ -2033,7 +2106,7 @@ class MapCorrectionAttacks(AttackHarness):
                     value["dispositions"][0].update(status="report-only")
                     value["dispositions"][0]["materialConsequence"]["result"] = "false"
                     disposition.write_text(json.dumps(value), encoding="utf-8")
-                closed = self.cli("advisor-disposition", "--slug", slug, "--workflow-id", wid,
+                closed = self.cli("record", "advisor-disposition", "--slug", slug, "--workflow-id", wid,
                                   "--stage", "preflight", "--findings", "addressed", "--input", str(disposition))
                 self.assertEqual(closed.returncode, 0, closed.stdout + closed.stderr)
                 self.ok("verify", "--slug", slug, "--", sys.executable, "-c", "print('verified')")
@@ -2088,7 +2161,7 @@ class MapCorrectionAttacks(AttackHarness):
                 # its current GREEN. It does not invent a failure to regain it.
                 rejection = json.loads(self.fixed_disposition(wid, intake, dict(self.ZERO_DOMAIN), "false").read_text())
                 rejection["dispositions"][0]["status"] = "rejected-with-evidence"
-                result = self.cli("advisor-disposition", "--slug", slug, "--workflow-id", wid,
+                result = self.cli("record", "advisor-disposition", "--slug", slug, "--workflow-id", wid,
                                   "--stage", "preflight", "--findings", "addressed", "--input",
                                   str(self.json_file("rejection.json", rejection)))
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -2225,7 +2298,7 @@ class MapCorrectionAttacks(AttackHarness):
         item = self.map_items()["BM_KEEP"]
         self.assertEqual(item["status"], "pending", marker)
         self.assertNotIn("evidence", item, marker)
-        prior = self.ok("evidence", "--evidence-id", before)["document"]["behaviorMap"]
+        prior = self.ok("evidence", "--full", "--evidence-id", before)["document"]["behaviorMap"]
         self.assertEqual({e["id"]: e["status"] for e in prior}["BM_KEEP"], "omitted", marker)
 
     def test_a_reopened_owner_closes_its_finding(self) -> None:
@@ -2244,7 +2317,7 @@ class MapCorrectionAttacks(AttackHarness):
         self.assertEqual(omitted.returncode, 0, omitted.stdout + omitted.stderr)
         self.drive_attack_green(slug, marker)
         disposition = self.fixed_disposition(wid, intake_id, dict(self.ZERO_DOMAIN))
-        stuck = self.cli("advisor-disposition", "--slug", slug, "--workflow-id", wid,
+        stuck = self.cli("record", "advisor-disposition", "--slug", slug, "--workflow-id", wid,
                          "--stage", "preflight", "--findings", "addressed", "--input", str(disposition))
         self.assertEqual(stuck.returncode, 2, stuck.stdout + stuck.stderr)
         self.assertIn("BM_KEEP", stuck.stderr, stuck.stderr)
@@ -2263,10 +2336,10 @@ class MapCorrectionAttacks(AttackHarness):
                       marker + ": " + baseline.stdout + baseline.stderr)
         # The probe file changed the reviewable tree; the closing document binds the new one.
         disposition = self.fixed_disposition(wid, intake_id, dict(self.ZERO_DOMAIN))
-        closed = self.cli("advisor-disposition", "--slug", slug, "--workflow-id", wid,
+        closed = self.cli("record", "advisor-disposition", "--slug", slug, "--workflow-id", wid,
                           "--stage", "preflight", "--findings", "addressed", "--input", str(disposition))
         self.assertEqual(closed.returncode, 0, marker + ": " + closed.stdout + closed.stderr)
-        self.assertEqual(json.loads(closed.stdout)["findingStates"][0]["status"], "fixed", marker)
+        self.assertEqual(self.status()["findingStates"][0]["status"], "fixed", marker)
 
     def test_pending_reopen_refuses_but_green_can_be_reassessed(self) -> None:
         marker = "REOPEN_REFUSAL_MISSING"
@@ -2281,14 +2354,14 @@ class MapCorrectionAttacks(AttackHarness):
             {"id": "BM_ALSO", "status": "omitted", "evidence": "settled"}]).returncode, 0)
         self.drive_attack_green(slug, marker)
         evidence_id = self.status()["tddEvidence"]
-        historical = self.ok("evidence", "--evidence-id", evidence_id)
+        historical = self.ok("evidence", "--full", "--evidence-id", evidence_id)
         reopened = self.map_update(slug, dispositions=[{
             "id": "BM_ATTACK", "status": "pending", "evidence": "GREEN lacks sufficient behavioral proof"}])
         self.assertEqual(reopened.returncode, 0, reopened.stderr)
         current = self.map_items()["BM_ATTACK"]
         self.assertEqual(current["status"], "pending")
         self.assertFalse(behavior_map.producer_proved(current))
-        self.assertEqual(self.ok("evidence", "--evidence-id", evidence_id), historical)
+        self.assertEqual(self.ok("evidence", "--full", "--evidence-id", evidence_id), historical)
 
     def keep_probe(self, value: int) -> None:
         (self.repo / "test_keep_probe.py").write_text(
@@ -2318,7 +2391,7 @@ class MapCorrectionAttacks(AttackHarness):
         item = self.map_items()["BM_KEEP"]
         self.assertEqual(item["status"], "pending", marker)
         self.assertNotIn("evidence", item, marker)
-        prior = self.ok("evidence", "--evidence-id", before)["document"]["behaviorMap"]
+        prior = self.ok("evidence", "--full", "--evidence-id", before)["document"]["behaviorMap"]
         self.assertEqual({e["id"]: e["status"] for e in prior}["BM_KEEP"], "already-satisfied", marker)
 
     def test_withdrawal_while_red_refuses(self) -> None:
@@ -2377,7 +2450,7 @@ class MapCorrectionAttacks(AttackHarness):
                                         "result": "false"},
                 "evidence": "python -c 'import app; print(app.value)' printed 1 as documented",
             }]})
-        rejected = self.cli("advisor-disposition", "--slug", slug, "--workflow-id", wid,
+        rejected = self.cli("record", "advisor-disposition", "--slug", slug, "--workflow-id", wid,
                             "--stage", "preflight", "--findings", "addressed", "--input", str(rejection))
         self.assertEqual(rejected.returncode, 0, rejected.stdout + rejected.stderr)
 
@@ -2445,7 +2518,7 @@ class ReportOnlyProofAttacks(AttackHarness):
             }]})
 
     def dispose(self, slug: str, wid: str, document: Path) -> subprocess.CompletedProcess[str]:
-        return self.cli("advisor-disposition", "--slug", slug, "--workflow-id", wid,
+        return self.cli("record", "advisor-disposition", "--slug", slug, "--workflow-id", wid,
                         "--stage", "preflight", "--findings", "addressed", "--input", str(document))
 
     def owned_pass(self, slug: str, marker: str, extra: list[dict[str, object]] | None = None,
@@ -2500,7 +2573,7 @@ class ReportOnlyProofAttacks(AttackHarness):
         self.assertIn('"already-satisfied"', baseline.stdout, baseline.stdout)
         accepted = self.dispose(slug, wid, self.disposition(wid, intake_id, "report-only"))
         self.assertEqual(accepted.returncode, 0, marker + ": " + accepted.stdout + accepted.stderr)
-        self.assertEqual(json.loads(accepted.stdout)["findingStates"][0]["status"], "report-only", marker)
+        self.assertEqual(self.status()["findingStates"][0]["status"], "report-only", marker)
 
     def test_report_only_accepts_a_producer_baselined_contract_owner(self) -> None:
         marker = "CONTRACT_BASELINE_OWNER_REFUSED"
@@ -2540,7 +2613,7 @@ class ReportOnlyProofAttacks(AttackHarness):
             f"    def test_value(self): self.assertEqual(app.value, 1, {marker!r})\n", encoding="utf-8")
         baseline = self.mapped_tdd(slug, "red", [sys.executable, "-m", "unittest", "test_attack_probe"])
         self.assertEqual(baseline.returncode, 0, baseline.stdout + baseline.stderr)
-        recorded = self.ok("evidence", "--evidence-id", str(self.status()["tddEvidence"]))["document"]["behaviorMap"]
+        recorded = self.ok("evidence", "--full", "--evidence-id", str(self.status()["tddEvidence"]))["document"]["behaviorMap"]
         attack = next(item for item in recorded if item["id"] == "BM_ATTACK")
         self.assertIsInstance(attack.get("baselineProof"), dict, marker)
         # Joint proof: the field is the producer's alone.
@@ -2570,7 +2643,7 @@ class ReportOnlyProofAttacks(AttackHarness):
         self.drive_attack_green(slug, marker)
         closed = self.dispose(slug, wid, self.fixed_disposition(wid, intake_id, dict(self.ZERO_DOMAIN)))
         self.assertEqual(closed.returncode, 0, marker + ": " + closed.stdout + closed.stderr)
-        self.assertEqual(json.loads(closed.stdout)["findingStates"][0]["status"], "fixed", marker)
+        self.assertEqual(self.status()["findingStates"][0]["status"], "fixed", marker)
 
     def owned_item(self, identifier: str, intake_id: str, marker: str) -> dict[str, object]:
         return {"id": identifier, "kind": "contract", "basis": "advisor finding attack",
@@ -2584,7 +2657,7 @@ class ReportOnlyProofAttacks(AttackHarness):
             "items": [self.owned_item("BM_ATTACK2", intake_id, marker2)],
             "dispositions": [{"id": "BM_ATTACK", "status": "superseded", "supersededBy": "BM_ATTACK2",
                               "evidence": "BM_ATTACK2 asserts the same outcome through its own surface"}]})
-        superseded = self.cli("tdd-map", "--slug", slug, "--workflow-id", wid, "--input", str(update))
+        superseded = self.cli("record", "map", "--slug", slug, "--workflow-id", wid, "--input", str(update))
         self.assertEqual(superseded.returncode, 0, superseded.stdout + superseded.stderr)
 
     def test_a_temp_path_command_refuses(self) -> None:
@@ -2636,7 +2709,7 @@ class WorkflowRecovery(AttackHarness):
         document = self.json_file("add.json", {
             "reassessment": "An independently uncovered operation", "items": [item],
         })
-        self.ok("tdd-map", "--slug", slug, "--workflow-id", wid, "--input", str(document))
+        self.ok("record", "map", "--slug", slug, "--workflow-id", wid, "--input", str(document))
 
     def test_new_obligation_retains_measurements_and_blocks_closure(self) -> None:
         marker = "OBLIGATION_DISCARDED_RECEIPTS"
@@ -2668,25 +2741,25 @@ class WorkflowRecovery(AttackHarness):
         rerun = self.mapped_tdd(slug, "green", [sys.executable, "-m", "unittest", "test_attack_probe"])
         self.assertEqual(rerun.returncode, 0, marker + rerun.stderr)
         before = self.status()
-        original = self.ok("evidence", "--evidence-id", before["tddEvidence"])["document"]
+        original = self.ok("evidence", "--full", "--evidence-id", before["tddEvidence"])["document"]
         for target in ("MISSING", "BM_BASELINE"):
             document = self.json_file("bad-replacement.json", {"reassessment": "Reject invalid chain", "dispositions": [
                 {"id": "BM_BASELINE", "status": "superseded", "supersededBy": target, "evidence": "Obsolete baseline"},
             ]})
             self.refused_unchanged(marker, lambda: self.cli(
-                "tdd-map", "--slug", slug, "--workflow-id", wid, "--input", str(document)))
+                "record", "map", "--slug", slug, "--workflow-id", wid, "--input", str(document)))
         document = self.json_file("replacement.json", {"reassessment": "The original attack owns the corrected promise", "dispositions": [
             {"id": "BM_BASELINE", "status": "superseded", "supersededBy": "BM_ATTACK", "evidence": "Obsolete baseline"},
         ]})
-        result = self.cli("tdd-map", "--slug", slug, "--workflow-id", wid, "--input", str(document))
+        result = self.cli("record", "map", "--slug", slug, "--workflow-id", wid, "--input", str(document))
         self.assertEqual(result.returncode, 0, marker + result.stderr)
-        evidence = self.ok("evidence", "--evidence-id", self.status()["tddEvidence"])["document"]
+        evidence = self.ok("evidence", "--full", "--evidence-id", self.status()["tddEvidence"])["document"]
         retired = next(item for item in evidence["behaviorMap"] if item["id"] == "BM_BASELINE")
         self.assertEqual(retired["supersededFrom"], "already-satisfied")
         self.assertIn("baselineProof", retired)
         self.assertEqual(self.status()["mapSelections"].get("BM_BASELINE"),
                          before["mapSelections"]["BM_BASELINE"], "BASELINE_SELECTION_LOST")
-        self.assertEqual(self.ok("evidence", "--evidence-id", before["tddEvidence"])["document"], original)
+        self.assertEqual(self.ok("evidence", "--full", "--evidence-id", before["tddEvidence"])["document"], original)
 
     def test_manifest_sampling_errors_refuse_without_ledger_changes(self) -> None:
         slug = "sampling-error"
@@ -2706,8 +2779,8 @@ class WorkflowRecovery(AttackHarness):
             "evidenceRefs": [run["evidenceId"] + ":" + str(run["runIndex"])],
         }]})
         commands = [
-            ["tdd-map", "--slug", slug, "--workflow-id", wid, "--input", str(addition)],
-            ["advisor-disposition", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
+            ["record", "map", "--slug", slug, "--workflow-id", wid, "--input", str(addition)],
+            ["record", "advisor-disposition", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
              "--findings", "addressed", "--input", str(disposition)],
         ]
         history = self.ok("history")
@@ -2748,7 +2821,7 @@ class WorkflowRecovery(AttackHarness):
         (self.repo / "app.py").write_text("value = 1\n")
         failed = self.mapped_tdd(slug, "green", [sys.executable, "-m", "unittest", "test_attack_probe"])
         self.assertEqual(failed.returncode, 2)
-        document = self.ok("evidence", "--evidence-id", self.status()["tddEvidence"])["document"]
+        document = self.ok("evidence", "--full", "--evidence-id", self.status()["tddEvidence"])["document"]
         self.assertEqual(document["behaviorMap"][0]["status"], "red", "FAILED_RECHECK_STILL_GREEN")
         self.assertIn("BM_ATTACK", self.cli("complete").stderr)
 
@@ -2794,13 +2867,13 @@ class WorkflowRecovery(AttackHarness):
             }],
         })
         (self.repo / "app.py").write_text("value = 1\n")
-        stale = self.cli("advisor-disposition", "--slug", slug, "--workflow-id", wid,
+        stale = self.cli("record", "advisor-disposition", "--slug", slug, "--workflow-id", wid,
                          "--stage", "preflight", "--findings", "addressed", "--input", str(document))
         self.assertEqual(stale.returncode, 2)
         self.assertIn("stale", stale.stderr)
         self.assertEqual(self.status()["advisorPreflight"]["findings"], "pending")
         (self.repo / "app.py").write_text("value = 2\n")
-        disposed = self.cli("advisor-disposition", "--slug", slug, "--workflow-id", wid,
+        disposed = self.cli("record", "advisor-disposition", "--slug", slug, "--workflow-id", wid,
                             "--stage", "preflight", "--findings", "addressed", "--input", str(document))
         self.assertEqual(disposed.returncode, 0, marker + disposed.stderr)
         self.assertEqual(counter.read_text(), "x", marker)
@@ -2815,7 +2888,7 @@ class WorkflowRecovery(AttackHarness):
         envelope = self.json_file("intake.json", {"schemaVersion": 1, "verdict": "completed", "findings": [
             {"id": "STD-1", "claim": "test convention needs correction", "material": True, "kind": "nonbehavioral"},
         ]})
-        intake = self.ok("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
+        intake = self.ok("record", "advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
                          "--source", "codex-advisor", "--input", str(envelope))["advisorPreflight"]["intakeEvidence"]
         item = self.owned_map("unused", marker="VALUE_WRONG")[0]
         item["sourceRefs"] = []
@@ -2831,7 +2904,7 @@ class WorkflowRecovery(AttackHarness):
             if value == 2:
                 reset = self.json_file("reset.json", {"reassessment": "Observe actual successful baseline",
                     "dispositions": [{"id": "BM_ATTACK", "status": "pending", "evidence": "Release prior RED binding"}]})
-                self.ok("tdd-map", "--slug", slug, "--workflow-id", wid, "--input", str(reset))
+                self.ok("record", "map", "--slug", slug, "--workflow-id", wid, "--input", str(reset))
             run = self.mapped_tdd(slug, "red", [sys.executable, "-m", "unittest", "-v", "test_probe"])
             self.assertEqual(run.returncode, 2 if value is None else 0, run.stderr)
             receipt = json.loads(run.stdout.splitlines()[-1])
@@ -2839,7 +2912,7 @@ class WorkflowRecovery(AttackHarness):
                 "finding_id": "STD-1", "status": "fixed", "reason": "Inspect convention using actual operation outcome",
                 "evidenceRefs": [receipt["summaryId"] + ":" + str(receipt["runIndex"])],
             }]})
-            result = self.cli("advisor-disposition", "--slug", slug, "--workflow-id", wid,
+            result = self.cli("record", "advisor-disposition", "--slug", slug, "--workflow-id", wid,
                               "--stage", "preflight", "--findings", "addressed", "--input", str(document))
             self.assertEqual(result.returncode, expected, marker + result.stdout + result.stderr)
 
@@ -2852,7 +2925,7 @@ class WorkflowRecovery(AttackHarness):
         self.assertIn("next=repo-context-forge", summary, "STALE_RECOVERY_ADVERTISED_SUCCESS")
         self.assertIn("quality-gate-tree-stale", summary, "STALE_RECOVERY_ADVERTISED_SUCCESS")
         receipt = self.ok("pause", "--slug", slug, "--workflow-id", self.status()["workflowId"],
-                          "--reason", "Inspect current recovery", "--compact")
+                          "--reason", "Inspect current recovery")
         self.assertEqual(receipt["nextAction"], "repo-context-forge", "STALE_RECOVERY_ADVERTISED_SUCCESS")
         self.assertEqual(receipt["verification"], "pending", "STALE_RECOVERY_ADVERTISED_SUCCESS")
         self.assertIn("quality-gate-tree-stale", receipt["bindingError"], "STALE_RECOVERY_ADVERTISED_SUCCESS")
@@ -2907,7 +2980,7 @@ class WorkflowRecovery(AttackHarness):
                               "--test-id", test_id)
                 self.assertEqual(reuse.returncode, 2, "PRINTED_TEST_BECAME_PROOF" + reuse.stdout)
                 state = h.status()
-                items = h.ok("evidence", "--evidence-id", state["tddEvidence"])["document"]["behaviorMap"]
+                items = h.ok("evidence", "--full", "--evidence-id", state["tddEvidence"])["document"]["behaviorMap"]
                 self.assertEqual(next(i["status"] for i in items if i["id"] == "BM_OTHER"),
                                  "pending", "PRINTED_TEST_BECAME_PROOF")
             finally:
@@ -3018,7 +3091,7 @@ class WorkflowRecovery(AttackHarness):
                     "mechanism": "The shared initializer supplied waiting to every label reader. Initialize label to ready; the attributed label operation now passes independently of the still-incorrect value initializer.",
                     "evidenceRefs": [attributed["summaryId"] + ":" + str(attributed["runIndex"])],
                 }]})
-                disposed = self.cli("advisor-disposition", "--slug", slug, "--workflow-id", wid,
+                disposed = self.cli("record", "advisor-disposition", "--slug", slug, "--workflow-id", wid,
                                     "--stage", "preflight", "--findings", "addressed", "--input", str(document))
                 self.assertEqual(disposed.returncode, 0, marker + disposed.stderr)
                 self.assertIn("BM_ATTACK", self.cli("complete").stderr)

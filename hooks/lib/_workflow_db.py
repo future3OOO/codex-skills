@@ -1,7 +1,7 @@
 """Private SQLite implementation for the repository workflow Module.
 This is not a selectable backend or public persistence Interface.  It is the
 workflow Module's local-runtime implementation: one on-disk database per
-repository slot, a temporary legacy importer, and deterministic recovery of the
+repository slot and deterministic recovery of the
 active-event pointer from the event ledger.
 """
 from __future__ import annotations
@@ -10,17 +10,16 @@ import hashlib
 import json
 import os
 import sqlite3
+import zlib
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 from typing import Iterator, NoReturn, Sequence
-from .preflight_document import validate_document
 from .repo_identity import RepoIdentity
-from .state_store import _active_candidate_tree, codex_home, read_json, repo_state_dir, utc_timestamp
+from .state_store import _active_candidate_tree, codex_home, repo_state_dir, utc_timestamp
 DATABASE_NAME = "workflow.sqlite3"
 DATABASE_FILES = frozenset({DATABASE_NAME, *(f"{DATABASE_NAME}{suffix}" for suffix in ("-journal", "-wal", "-shm"))})
 AUTHORITY = "sqlite-event-ledger-v1"
-STATE_SCHEMA_VERSION = 1
+STATE_SCHEMA_VERSION = 2
 POLICY_VERSION = 1
 BUSY_TIMEOUT_MS = 2500
 JsonObject = dict[str, object]
@@ -28,8 +27,6 @@ class LedgerError(RuntimeError):
     """The authoritative workflow ledger could not be read or changed."""
 class LedgerBusy(LedgerError):
     """A bounded SQLite wait expired."""
-class LegacyImportError(LedgerError):
-    """Legacy state could not be imported without guessing."""
 @dataclass(frozen=True)
 class EvidenceWrite:
     evidence_id: str
@@ -59,6 +56,20 @@ class RetentionApplyResult:
     error: str | None = None
 def _canonical(value: object) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def _encode_json(value: object) -> str | bytes:
+    raw = _canonical(value)
+    encoded = raw.encode("utf-8")
+    packed = zlib.compress(encoded, 1)
+    return packed if len(packed) < len(encoded) else raw
+
+
+def _decode_json(value: str | bytes) -> object:
+    try:
+        return json.loads(zlib.decompress(value).decode("utf-8") if isinstance(value, bytes) else value)
+    except (TypeError, ValueError, UnicodeError, zlib.error) as exc:
+        raise LedgerError("stored evidence JSON is corrupt") from exc
 def _logical_id(prefix: str, workflow_id: str, kind: str, document: object) -> str:
     payload = "\0".join((workflow_id, kind, _canonical(document))).encode("utf-8")
     return f"{prefix}-{hashlib.sha256(payload).hexdigest()[:32]}"
@@ -67,7 +78,7 @@ def evidence_write(
     kind: str,
     document: JsonObject,
     *,
-    schema_version: int = 1,
+    schema_version: int = 2,
     recorded_at: str | None = None,
 ) -> EvidenceWrite:
     return EvidenceWrite(
@@ -99,8 +110,7 @@ def database_path(identity: RepoIdentity) -> Path:
     root = Path(override).expanduser() if override else codex_home() / "state"
     return root / identity.key / DATABASE_NAME
 def _store_exists(identity: RepoIdentity) -> bool:
-    path = database_path(identity)
-    return path.exists() or (path.parent / "workflow.json").exists()
+    return database_path(identity).exists()
 def _private_sidecars(path: Path) -> None:
     for suffix in ("", "-journal", "-wal", "-shm"):
         candidate = Path(f"{path}{suffix}")
@@ -176,7 +186,8 @@ def _schema(connection: sqlite3.Connection) -> None:
             workflow_id TEXT PRIMARY KEY,
             repo_key TEXT NOT NULL,
             slug TEXT NOT NULL,
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            state_json TEXT
         );
         CREATE TABLE IF NOT EXISTS evidence (
             evidence_id TEXT PRIMARY KEY,
@@ -197,7 +208,6 @@ def _schema(connection: sqlite3.Connection) -> None:
             recorded_at TEXT NOT NULL,
             state_schema_version INTEGER NOT NULL,
             policy_version INTEGER NOT NULL,
-            state_json TEXT NOT NULL,
             activates_workflow INTEGER NOT NULL DEFAULT 0 CHECK (activates_workflow IN (0, 1)),
             UNIQUE(event_id, workflow_id)
         );
@@ -218,17 +228,49 @@ def _schema(connection: sqlite3.Connection) -> None:
             FOREIGN KEY(event_id, workflow_id)
                 REFERENCES workflow_events(event_id, workflow_id) ON DELETE CASCADE
         );
-        CREATE TABLE IF NOT EXISTS migration_records (
-            name TEXT PRIMARY KEY,
-            completed_at TEXT NOT NULL,
-            details_json TEXT NOT NULL
+        CREATE TABLE IF NOT EXISTS evidence_parts (
+            part_id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL,
+            content_json TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS evidence_part_links (
+            evidence_id TEXT NOT NULL REFERENCES evidence(evidence_id) ON DELETE CASCADE,
+            part_id TEXT NOT NULL REFERENCES evidence_parts(part_id) ON DELETE RESTRICT,
+            PRIMARY KEY(evidence_id, part_id)
+        );
+        CREATE INDEX IF NOT EXISTS evidence_part_links_by_part ON evidence_part_links(part_id);
         CREATE INDEX IF NOT EXISTS workflow_events_by_workflow
             ON workflow_events(workflow_id, event_id);
         CREATE INDEX IF NOT EXISTS evidence_by_workflow
             ON evidence(workflow_id, recorded_at);
         """
     )
+    event_columns = {str(row["name"]) for row in connection.execute("PRAGMA table_info(workflow_events)")}
+    workflow_columns = {str(row["name"]) for row in connection.execute("PRAGMA table_info(workflows)")}
+    if "state_json" in event_columns:
+        _begin_write(connection)
+        try:
+            if "state_json" not in {str(row["name"]) for row in connection.execute("PRAGMA table_info(workflow_events)")}:
+                connection.rollback()
+                return
+            workflow_columns = {str(row["name"]) for row in connection.execute("PRAGMA table_info(workflows)")}
+            if "state_json" not in workflow_columns:
+                connection.execute("ALTER TABLE workflows ADD COLUMN state_json TEXT")
+            connection.execute(
+                """UPDATE workflows SET state_json = (
+                    SELECT state_json FROM workflow_events
+                    WHERE workflow_events.workflow_id = workflows.workflow_id
+                    ORDER BY event_id DESC LIMIT 1)"""
+            )
+            if connection.execute("SELECT 1 FROM workflows WHERE state_json IS NULL LIMIT 1").fetchone():
+                raise LedgerError("workflow history has no current state for migration")
+            connection.execute("ALTER TABLE workflow_events DROP COLUMN state_json")
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+    elif "state_json" not in workflow_columns:
+        raise LedgerError("workflow state schema has no current projection")
 def _begin_write(connection: sqlite3.Connection) -> None:
     try:
         connection.execute("BEGIN IMMEDIATE")
@@ -246,127 +288,6 @@ def _validate_repository_identity(connection: sqlite3.Connection, identity: Repo
 def _validate_state_identity(identity: RepoIdentity, state: JsonObject) -> None:
     if state.get("repo") != identity.as_dict():
         raise LedgerError("canonical workflow state repository identity does not match this checkout")
-def _strict_document(path: Path) -> JsonObject:
-    value = read_json(path)
-    if not isinstance(value, dict):
-        raise LegacyImportError(f"legacy document is missing or malformed: {path}")
-    return value
-def _legacy_kind(name: str) -> str | None:
-    for prefix, kind in (
-        ("disposition-preflight-", "advisor-disposition-preflight"),
-        ("disposition-final-", "advisor-disposition-final"), ("preflight-", "preflight"),
-        ("gate-", "production-code"), ("verification-", "verification"), ("tdd-", "tdd"),
-        ("review-", "code-review"),
-    ):
-        if name.startswith(prefix) and name.endswith(".json") and len(name) > len(prefix) + 5:
-            return kind
-    return None
-def _legacy_evidence(
-    state: JsonObject, slot: Path,
-) -> tuple[JsonObject, list[EvidenceWrite], list[ManifestWrite]]:
-    converted = json.loads(_canonical(state))
-    workflow_id = converted.get("workflowId")
-    if not isinstance(workflow_id, str) or not workflow_id:
-        raise LegacyImportError("legacy workflow has no workflowId")
-    writes: dict[str, EvidenceWrite] = {}
-    manifests: list[ManifestWrite] = []
-    latest: dict[str, tuple[datetime, str, str]] = {}
-    def import_evidence(kind: str, path: Path, document: JsonObject) -> EvidenceWrite:
-        if kind == "preflight":
-            try:
-                validate_document(document.get("document"))
-            except ValueError as exc:
-                raise LegacyImportError(
-                    f"legacy preflight evidence is incomplete: {path}: {exc}") from exc
-        recorded_at: str | None = None
-        parsed_at: datetime | None = None
-        for field in ("recordedAt", "updatedAt", "createdAt"):
-            value = document.get(field)
-            if not isinstance(value, str):
-                continue
-            try:
-                candidate = datetime.fromisoformat(value)
-            except ValueError:
-                continue
-            if candidate.tzinfo is not None:
-                recorded_at, parsed_at = value, candidate
-                break
-        if recorded_at is None or parsed_at is None:
-            raise LegacyImportError(f"legacy evidence has no orderable timestamp: {path}")
-        write = evidence_write(workflow_id, kind, document, recorded_at=recorded_at)
-        writes[write.evidence_id] = write
-        order = (parsed_at, path.name, write.evidence_id)
-        if kind not in latest or order > latest[kind]:
-            latest[kind] = order
-        return write
-    fields = {
-        "preflightEvidence": "preflight", "productionCodeEvidence": "production-code",
-        "verificationEvidence": "verification",
-    }
-    referenced: set[Path] = set()
-    for field, kind in fields.items():
-        reference = converted.get(field)
-        if reference is None:
-            continue
-        if not isinstance(reference, str) or not reference:
-            raise LegacyImportError(f"legacy {field} is not a path")
-        path = Path(reference)
-        referenced.add(path.resolve(strict=False))
-        document = _strict_document(path)
-        if type(document.get("schemaVersion")) is not int or document.get("schemaVersion") != 1:
-            raise LegacyImportError(f"legacy {field} has an unsupported schema")
-        owner = document.get("workflowId")
-        if not isinstance(owner, str) or not owner:
-            raise LegacyImportError(f"legacy {field} has no workflowId")
-        if owner != workflow_id:
-            raise LegacyImportError(f"legacy {field} belongs to a different workflow")
-        write = import_evidence(kind, path, document)
-        converted[field] = write.evidence_id
-    for path in sorted(slot.iterdir()):
-        kind = _legacy_kind(path.name)
-        if kind is None or path.resolve(strict=False) in referenced:
-            continue
-        if path.is_symlink() or not path.is_file():
-            raise LegacyImportError(f"legacy evidence is not a regular file: {path}")
-        document = _strict_document(path)
-        owner = document.get("workflowId")
-        if not isinstance(owner, str) or not owner:
-            raise LegacyImportError(f"legacy evidence has no workflowId: {path}")
-        if owner != workflow_id:
-            # Retained history for a superseded pass has no trustworthy state
-            # snapshot to import. Keep the file untouched rather than inventing
-            # a workflow event for it.
-            continue
-        if type(document.get("schemaVersion")) is not int or document.get("schemaVersion") != 1:
-            raise LegacyImportError(f"legacy evidence has an unsupported schema: {path}")
-        import_evidence(kind, path, document)
-    latest_fields = {
-        "preflight": "preflightLatestEvidence", "production-code": "productionCodeLatestEvidence",
-        "verification": "verificationLatestEvidence", "tdd": "tddEvidence",
-    }
-    for kind, field in latest_fields.items():
-        if kind in latest:
-            converted[field] = latest[kind][2]
-    if "code-review" in latest:
-        review = converted.get("codeReview")
-        if isinstance(review, dict) and review.get("status") in {"passed", "not-required"}:
-            converted["codeReviewEvidence"] = latest["code-review"][2]
-    for kind, field in (
-        ("advisor-disposition-preflight", "advisorPreflight"),
-        ("advisor-disposition-final", "finalReview"),
-    ):
-        review = converted.get(field)
-        if kind in latest and isinstance(review, dict) and review.get("findings") == "addressed":
-            review["dispositionEvidence"] = latest[kind][2]
-    manifest = converted.pop("reviewManifest", None)
-    if manifest is not None:
-        validated = _manifest_value(manifest)
-        if validated is None:
-            raise LegacyImportError("legacy reviewManifest is malformed")
-        write = manifest_write(workflow_id, "lead-review-tree", validated)
-        manifests.append(write)
-        converted["reviewManifestId"] = write.manifest_id
-    return converted, list(writes.values()), manifests
 def _manifest_value(value: object) -> dict[str, str] | None:
     if not isinstance(value, dict):
         return None
@@ -377,10 +298,35 @@ def _manifest_from(connection: sqlite3.Connection, manifest_id: str | None) -> d
     if not manifest_id:
         return None
     row = connection.execute(
-        "SELECT manifest_json FROM review_manifests WHERE manifest_id = ?",
+        "SELECT workflow_id, kind, manifest_json FROM review_manifests WHERE manifest_id = ?",
         (manifest_id,),
     ).fetchone()
-    return _manifest_value(json.loads(str(row["manifest_json"]))) if row is not None else None
+    if row is None:
+        return None
+    stored = _decode_json(row["manifest_json"])
+    if isinstance(stored, list):
+        if (len(stored) != 3 or not isinstance(stored[0], str)
+                or not isinstance(stored[2], list)
+                or not all(isinstance(path, str) for path in stored[2])):
+            raise LedgerError("stored review manifest delta is corrupt")
+        base = connection.execute(
+            "SELECT workflow_id, manifest_json FROM review_manifests WHERE manifest_id = ?",
+            (stored[0],),
+        ).fetchone()
+        if base is None or base["workflow_id"] != row["workflow_id"]:
+            raise LedgerError("stored review manifest base is missing")
+        document = _manifest_value(_decode_json(base["manifest_json"]))
+        changed = _manifest_value(stored[1])
+        if document is None or changed is None:
+            raise LedgerError("stored review manifest base is corrupt")
+        document = {**document, **changed}
+        for path in stored[2]:
+            document.pop(path, None)
+    else:
+        document = _manifest_value(stored)
+    if document is None or _logical_id("manifest", row["workflow_id"], row["kind"], document) != manifest_id:
+        raise LedgerError("stored review manifest digest mismatch")
+    return document
 def _insert_workflow(connection: sqlite3.Connection, identity: RepoIdentity, state: JsonObject) -> None:
     _validate_state_identity(identity, state)
     workflow_id = state.get("workflowId")
@@ -389,11 +335,214 @@ def _insert_workflow(connection: sqlite3.Connection, identity: RepoIdentity, sta
     if not all(isinstance(value, str) and value for value in (workflow_id, slug, created_at)):
         raise LedgerError("canonical workflow state is missing workflow identity")
     connection.execute(
-        "INSERT OR IGNORE INTO workflows(workflow_id, repo_key, slug, created_at) VALUES (?, ?, ?, ?)",
-        (workflow_id, identity.key, slug, created_at),
+        "INSERT OR IGNORE INTO workflows(workflow_id, repo_key, slug, created_at, state_json) VALUES (?, ?, ?, ?, ?)",
+        (workflow_id, identity.key, slug, created_at, _canonical(state)),
     )
+
+
+PART_FIELDS = (
+    ("behaviorMap", "behaviorMapRevision", "map-item", "map-revision"),
+    ("runs", "runsRevision", "run", "run-revision"),
+)
+REVISION_FIELDS = frozenset(entry[1] for entry in PART_FIELDS)
+
+
+def _part(connection: sqlite3.Connection, kind: str, value: object) -> str:
+    identifier = _logical_id("part", "", kind, value)
+    stored = _encode_json(value)
+    connection.execute(
+        "INSERT OR IGNORE INTO evidence_parts(part_id, kind, content_json) VALUES (?, ?, ?)",
+        (identifier, kind, stored),
+    )
+    return identifier
+
+
+def _revision(
+    connection: sqlite3.Connection, workflow_id: str, kind: str,
+    ids: list[str], links: set[str],
+) -> str:
+    identifier = _logical_id("part", "", kind, ids)
+    previous = connection.execute(
+        "SELECT p.part_id FROM evidence_parts p "
+        "JOIN evidence_part_links l ON l.part_id = p.part_id "
+        "JOIN evidence e ON e.evidence_id = l.evidence_id "
+        "WHERE e.workflow_id = ? AND p.kind = ? ORDER BY e.rowid DESC LIMIT 1",
+        (workflow_id, kind),
+    ).fetchone()
+    stored: object = ids
+    if previous is not None and previous[0] != identifier:
+        prior, depth = _read_revision(connection, kind, previous[0])
+        changes = [[index, item] for index, item in enumerate(ids[:len(prior)])
+                   if item != prior[index]]
+        delta = [previous[0], changes, ids[len(prior):], len(ids), depth + 1]
+        if depth < 15 and len(_encode_json(delta)) < len(_encode_json(ids)):
+            stored = delta
+    connection.execute(
+        "INSERT OR IGNORE INTO evidence_parts(part_id, kind, content_json) VALUES (?, ?, ?)",
+        (identifier, kind, _encode_json(stored)),
+    )
+    ancestor = identifier
+    while True:
+        row = connection.execute(
+            "SELECT content_json FROM evidence_parts WHERE part_id = ?", (ancestor,)
+        ).fetchone()
+        value = _decode_json(row[0]) if row is not None else None
+        if not isinstance(value, list) or len(value) != 5 or not isinstance(value[0], str):
+            break
+        ancestor = value[0]
+        links.add(ancestor)
+    return identifier
+
+
+def _read_revision(
+    connection: sqlite3.Connection, kind: str, identifier: str,
+    links: set[str] | None = None,
+) -> tuple[list[str], int]:
+    row = connection.execute(
+        "SELECT kind, content_json FROM evidence_parts WHERE part_id = ?", (identifier,)
+    ).fetchone()
+    if row is None or row["kind"] != kind:
+        raise LedgerError("evidence revision is missing or foreign")
+    stored = _decode_json(row["content_json"])
+    if isinstance(stored, list) and all(isinstance(item, str) for item in stored):
+        ids, depth = stored, 0
+    elif (isinstance(stored, list) and len(stored) == 5
+          and isinstance(stored[0], str) and isinstance(stored[1], list)
+          and isinstance(stored[2], list) and type(stored[3]) is int
+          and type(stored[4]) is int and 0 < stored[4] <= 15):
+        if links is not None and stored[0] not in links:
+            raise LedgerError("evidence revision base is unlinked")
+        prior, prior_depth = _read_revision(connection, kind, stored[0], links)
+        if stored[4] != prior_depth + 1 or not 0 <= stored[3] <= len(prior) + len(stored[2]):
+            raise LedgerError("evidence revision delta is corrupt")
+        ids = prior[:stored[3]]
+        ids.extend(stored[2])
+        if len(ids) != stored[3] or not all(isinstance(item, str) for item in ids):
+            raise LedgerError("evidence revision delta is corrupt")
+        for change in stored[1]:
+            if (not isinstance(change, list) or len(change) != 2
+                    or type(change[0]) is not int or not 0 <= change[0] < len(ids)
+                    or not isinstance(change[1], str)):
+                raise LedgerError("evidence revision delta is corrupt")
+            ids[change[0]] = change[1]
+        depth = stored[4]
+    else:
+        raise LedgerError("evidence revision is corrupt")
+    if _logical_id("part", "", kind, ids) != identifier:
+        raise LedgerError("evidence revision digest mismatch")
+    return ids, depth
+
+
+def _pack(
+    connection: sqlite3.Connection, workflow_id: str, value: object,
+    linked_parts: set[str] | None = None,
+) -> object:
+    if isinstance(value, dict) and REVISION_FIELDS & value.keys():
+        raise LedgerError("evidence root contains a reserved revision field")
+    links = linked_parts if linked_parts is not None else set()
+
+    def pack(item: object, *, document: bool = False, inline: bool = False) -> object:
+        if isinstance(item, dict):
+            packed = {key: pack(child) for key, child in item.items()
+                      if not document or key not in {"behaviorMap", "runs"}}
+            if document:
+                for field, revision, item_kind, revision_kind in PART_FIELDS:
+                    if field not in item:
+                        continue
+                    values = item[field]
+                    if not isinstance(values, list):
+                        raise LedgerError(f"evidence {field} is not an array")
+                    ids = [_part(connection, item_kind, pack(child, inline=True))
+                           for child in values]
+                    links.update(ids)
+                    packed[revision] = _revision(connection, workflow_id, revision_kind, ids, links)
+                    links.add(packed[revision])
+            elif set(item) & {"$part", "$literal", *REVISION_FIELDS}:
+                links.add(_part(connection, "literal-marker", {"schemaVersion": 2}))
+                packed = {"$literal": packed}
+        elif isinstance(item, list):
+            packed = [pack(child) for child in item]
+        else:
+            packed = item
+        if not (document or inline) and len(_canonical(packed).encode("utf-8")) > 200:
+            identifier = _part(connection, "subtree", packed)
+            links.add(identifier)
+            return {"$part": identifier}
+        return packed
+
+    return pack(value, document=True)
+
+
+def _expand(
+    connection: sqlite3.Connection, workflow_id: str, value: object, evidence_id: str,
+    schema_version: int,
+) -> object:
+    links = {str(row[0]) for row in connection.execute(
+        "SELECT part_id FROM evidence_part_links WHERE evidence_id = ?", (evidence_id,)
+    )}
+    if schema_version == 1 and not links:
+        return value  # Schema-1 documents stored raw JSON and had no part edges.
+    literal_marker = _logical_id("part", "", "literal-marker", {"schemaVersion": 2})
+    if literal_marker in links:
+        _read_part(connection, "literal-marker", literal_marker)
+
+    def expand(item: object, *, document: bool = False) -> object:
+        if isinstance(item, list):
+            return [expand(child) for child in item]
+        if not isinstance(item, dict):
+            return item
+        if not document and "$part" in item:
+            identifier = item["$part"]
+            if set(item) != {"$part"} or not isinstance(identifier, str) or identifier not in links:
+                raise LedgerError("evidence has an unlinked part marker")
+            return expand(_read_part(connection, "subtree", identifier))
+        if not document and "$literal" in item:
+            if (literal_marker not in links or set(item) != {"$literal"}
+                    or not isinstance(item["$literal"], dict)):
+                raise LedgerError("evidence literal marker is corrupt")
+            return {key: expand(child) for key, child in item["$literal"].items()}
+        expanded = {key: expand(child) for key, child in item.items()
+                    if not document or key not in REVISION_FIELDS}
+        if document:
+            for field, revision, item_kind, revision_kind in PART_FIELDS:
+                if revision not in item:
+                    continue
+                if field in item:
+                    raise LedgerError(f"evidence has both {field} and {revision}")
+                if item[revision] not in links:
+                    raise LedgerError(f"evidence {revision} is unlinked")
+                ids, _ = _read_revision(connection, revision_kind, item[revision], links)
+                if any(child not in links for child in ids):
+                    raise LedgerError(f"evidence {revision} contains an unlinked item")
+                expanded[field] = [expand(_read_part(connection, item_kind, child))
+                                   for child in ids]
+        return expanded
+
+    return expand(value, document=True)
+
+
+def _read_part(connection: sqlite3.Connection, kind: str, identifier: object) -> object:
+    row = connection.execute(
+        "SELECT kind, content_json FROM evidence_parts WHERE part_id = ?",
+        (identifier,),
+    ).fetchone()
+    if row is None or str(row["kind"]) != kind:
+        raise LedgerError(f"evidence part is missing or foreign: {identifier}")
+    try:
+        value = _decode_json(row["content_json"])
+    except LedgerError as exc:
+        raise LedgerError(f"evidence part is corrupt: {identifier}") from exc
+    if _logical_id("part", "", kind, value) != identifier:
+        raise LedgerError(f"evidence part digest mismatch: {identifier}")
+    return value
+
+
 def _insert_evidence(connection: sqlite3.Connection, writes: Sequence[EvidenceWrite]) -> None:
     for write in writes:
+        if connection.execute("SELECT 1 FROM evidence WHERE evidence_id = ?", (write.evidence_id,)).fetchone():
+            continue
+        links: set[str] = set()
+        document = _canonical(_pack(connection, write.workflow_id, write.document, links))
         connection.execute(
             """INSERT INTO evidence(
                    evidence_id, workflow_id, kind, schema_version, recorded_at, document_json
@@ -405,11 +554,36 @@ def _insert_evidence(connection: sqlite3.Connection, writes: Sequence[EvidenceWr
                 write.kind,
                 write.schema_version,
                 write.recorded_at,
-                _canonical(write.document),
+                document,
             ),
+        )
+        connection.executemany(
+            "INSERT OR IGNORE INTO evidence_part_links(evidence_id, part_id) VALUES (?, ?)",
+            ((write.evidence_id, identifier) for identifier in links),
         )
 def _insert_manifests(connection: sqlite3.Connection, writes: Sequence[ManifestWrite]) -> None:
     for write in writes:
+        existing = _manifest_from(connection, write.manifest_id)
+        if existing is not None:
+            if existing != write.document:
+                raise LedgerError("review manifest digest collision")
+            continue
+        full = _canonical(write.document)
+        base = connection.execute(
+            "SELECT manifest_id FROM review_manifests WHERE workflow_id = ? ORDER BY rowid LIMIT 1",
+            (write.workflow_id,),
+        ).fetchone()
+        if base is not None:
+            original = _manifest_from(connection, base["manifest_id"])
+            if original is None:
+                raise LedgerError("stored review manifest base is missing")
+            delta = _encode_json([
+                base["manifest_id"],
+                {path: value for path, value in write.document.items() if original.get(path) != value},
+                [path for path in original if path not in write.document],
+            ])
+            if len(delta) < len(full.encode("utf-8")):
+                full = delta
         connection.execute(
             """INSERT INTO review_manifests(
                    manifest_id, workflow_id, kind, schema_version, recorded_at, manifest_json
@@ -421,7 +595,7 @@ def _insert_manifests(connection: sqlite3.Connection, writes: Sequence[ManifestW
                 write.kind,
                 write.schema_version,
                 write.recorded_at,
-                _canonical(write.document),
+                full,
             ),
         )
 def _append_event(
@@ -440,17 +614,20 @@ def _append_event(
     cursor = connection.execute(
         """INSERT INTO workflow_events(
                workflow_id, kind, recorded_at, state_schema_version,
-               policy_version, state_json, activates_workflow
-           ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+               policy_version, activates_workflow
+           ) VALUES (?, ?, ?, ?, ?, ?)""",
         (
             workflow_id,
             kind,
             recorded_at,
             STATE_SCHEMA_VERSION,
             POLICY_VERSION,
-            _canonical(state),
             1 if activate else 0,
         ),
+    )
+    connection.execute(
+        "UPDATE workflows SET state_json = ? WHERE workflow_id = ?",
+        (_canonical(state), workflow_id),
     )
     event_id = int(cursor.lastrowid)
     connection.executemany(
@@ -487,60 +664,26 @@ def _apply_authority(connection: sqlite3.Connection, identity: RepoIdentity) -> 
     if _metadata(connection, "authority") == AUTHORITY:
         _validate_repository_identity(connection, identity)
         return
-    legacy_path = database_path(identity).parent / "workflow.json"
-    if legacy_path.exists():
-        legacy = _strict_document(legacy_path)
-        if (type(legacy.get("schemaVersion")) is not int
-                or legacy.get("schemaVersion") != 1
-                or legacy.get("repo") != identity.as_dict()):
-            raise LegacyImportError("legacy workflow identity or schema is unsupported")
-        converted, evidence, manifests = _legacy_evidence(legacy, legacy_path.parent)
-        _insert_workflow(connection, identity, converted)
-        event_id = _append_event(
-            connection,
-            converted,
-            "legacy-imported",
-            evidence=evidence,
-            manifests=manifests,
-            activate=True,
-        )
-        _set_projection(connection, str(converted["workflowId"]), event_id)
-        stored = json.loads(
-            connection.execute(
-                "SELECT state_json FROM workflow_events WHERE event_id = ?", (event_id,)
-            ).fetchone()["state_json"]
-        )
-        if stored != converted:
-            raise LegacyImportError("legacy import public status mismatch")
-        details = {
-            "legacyPath": str(legacy_path),
-            "workflowId": converted["workflowId"],
-            "evidenceIds": [write.evidence_id for write in evidence],
-            "manifestIds": [write.manifest_id for write in manifests],
-        }
-    else:
-        details = {"legacyPath": None, "workflowId": None, "evidenceIds": [], "manifestIds": []}
-    now = utc_timestamp()
-    connection.execute(
-        "INSERT INTO migration_records(name, completed_at, details_json) VALUES (?, ?, ?)",
-        ("legacy-json-v1", now, _canonical(details)),
-    )
     connection.executemany(
         "INSERT INTO metadata(key, value) VALUES (?, ?)",
         (("repo_key", identity.key), ("repo_root", str(identity.root)),
             ("authority", AUTHORITY),),
     )
-def _event_state(row: sqlite3.Row, workflow_id: str | None = None) -> JsonObject:
+def _event_versions(row: sqlite3.Row) -> None:
     state_version, policy_version = row["state_schema_version"], row["policy_version"]
-    if (type(state_version) is not int or state_version != STATE_SCHEMA_VERSION
+    if (type(state_version) is not int or state_version not in (1, STATE_SCHEMA_VERSION)
             or type(policy_version) is not int or not 1 <= policy_version <= POLICY_VERSION):
         raise LedgerError("authoritative event schema or policy is unsupported")
+
+
+def _event_state(row: sqlite3.Row, workflow_id: str | None = None) -> JsonObject:
+    _event_versions(row)
     try:
         state = json.loads(str(row["state_json"]))
     except (TypeError, ValueError) as exc:
         raise LedgerError("authoritative event contains invalid state JSON") from exc
     if (not isinstance(state, dict) or type(state.get("schemaVersion")) is not int
-            or state.get("schemaVersion") != STATE_SCHEMA_VERSION):
+            or state.get("schemaVersion") != 1):
         raise LedgerError("authoritative event contains invalid state schema")
     if workflow_id is not None and state.get("workflowId") != workflow_id:
         raise LedgerError("authoritative event workflowId does not match ledger identity")
@@ -558,10 +701,12 @@ def _repair_projection(connection: sqlite3.Connection) -> JsonObject | None:
         return None
     workflow_id = str(activation["workflow_id"])
     latest = connection.execute(
-        """SELECT event_id, state_schema_version, policy_version, state_json
-           FROM workflow_events
-           WHERE workflow_id = ?
-           ORDER BY event_id DESC
+        """SELECT event.event_id, event.state_schema_version, event.policy_version,
+                  workflow.state_json
+           FROM workflow_events AS event JOIN workflows AS workflow
+             ON workflow.workflow_id = event.workflow_id
+           WHERE event.workflow_id = ?
+           ORDER BY event.event_id DESC
            LIMIT 1""",
         (workflow_id,),
     ).fetchone()
@@ -613,11 +758,12 @@ class LedgerMutation:
         if not evidence_id:
             return None
         row = self.connection.execute(
-            "SELECT document_json FROM evidence WHERE evidence_id = ?", (evidence_id,)
+            "SELECT document_json, schema_version FROM evidence WHERE evidence_id = ?", (evidence_id,)
         ).fetchone()
         if row is None:
             return None
-        value = json.loads(str(row["document_json"]))
+        value = _expand(self.connection, str(self.state["workflowId"]),
+                        _decode_json(row["document_json"]), evidence_id, int(row["schema_version"]))
         return value if isinstance(value, dict) else None
     def manifest(self, manifest_id: str | None) -> dict[str, str] | None:
         return _manifest_from(self.connection, manifest_id)
@@ -652,24 +798,28 @@ def read_active(identity: RepoIdentity) -> JsonObject | None:
         except Exception:
             connection.rollback()
             raise
-def read_evidence(identity: RepoIdentity, evidence_id: str) -> JsonObject | None:
+def read_evidence(identity: RepoIdentity, evidence_id: str, *, full: bool = True) -> JsonObject | None:
     if _store_exists(identity):
         with _connection(identity) as connection:
             row = connection.execute(
-                """SELECT evidence_id, workflow_id, kind, schema_version, recorded_at, document_json
-                   FROM evidence WHERE evidence_id = ?""",
+                """SELECT evidence_id, workflow_id, kind, schema_version, recorded_at"""
+                + (", document_json" if full else "") + " FROM evidence WHERE evidence_id = ?",
                 (evidence_id,),
             ).fetchone()
             if row is not None:
-                document = json.loads(str(row["document_json"]))
-                return {
+                result: JsonObject = {
                     "evidenceId": str(row["evidence_id"]),
                     "workflowId": str(row["workflow_id"]),
                     "kind": str(row["kind"]),
                     "schemaVersion": int(row["schema_version"]),
                     "recordedAt": str(row["recorded_at"]),
-                    "document": document,
                 }
+                if full:
+                    result["document"] = _expand(
+                        connection, str(row["workflow_id"]), _decode_json(row["document_json"]), evidence_id,
+                        int(row["schema_version"]),
+                    )
+                return result
     return None
 def read_manifest(identity: RepoIdentity, manifest_id: str) -> dict[str, str] | None:
     if _store_exists(identity):
@@ -687,7 +837,7 @@ def history(identity: RepoIdentity, workflow_id: str | None = None) -> JsonObjec
             params: tuple[object, ...] = (workflow_id,) if workflow_id else ()
             rows = connection.execute(
                 f"""SELECT event.event_id, event.workflow_id, event.kind, event.recorded_at,
-                           event.state_schema_version, event.policy_version, event.state_json,
+                           event.state_schema_version, event.policy_version,
                            event.activates_workflow
                     FROM workflow_events AS event
                     {where}
@@ -698,7 +848,7 @@ def history(identity: RepoIdentity, workflow_id: str | None = None) -> JsonObjec
             for row in rows:
                 # Validated, never published: history fails closed on a row the
                 # projection could not rebuild from, and replays no state blob.
-                _event_state(row, str(row["workflow_id"]))
+                _event_versions(row)
                 event_id = int(row["event_id"])
                 evidence_ids = [
                     str(item["evidence_id"])
@@ -742,10 +892,12 @@ def _retention_inventory_connection(
         "ORDER BY event_id DESC LIMIT 1"
     ).fetchone()
     active = str(activation["workflow_id"]) if activation else None
+    event_columns = {str(row["name"]) for row in connection.execute("PRAGMA table_info(workflow_events)")}
+    state_column = "event.state_json" if "state_json" in event_columns else "workflow.state_json"
     rows = connection.execute(
-        """SELECT workflow.workflow_id, workflow.repo_key, workflow.slug,
+        f"""SELECT workflow.workflow_id, workflow.repo_key, workflow.slug,
                   event.event_id AS latest_event, event.state_schema_version,
-                  event.policy_version, event.state_json
+                  event.policy_version, {state_column} AS state_json
            FROM workflows AS workflow JOIN workflow_events AS event
              ON event.event_id = (SELECT MAX(latest.event_id) FROM workflow_events AS latest
                                   WHERE latest.workflow_id = workflow.workflow_id)
@@ -799,6 +951,11 @@ def apply_retention(
                     "DELETE FROM workflows WHERE workflow_id = ?",
                     ((workflow_id,) for workflow_id in sorted(remove_ids)),
                 )
+                if connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='evidence_parts'").fetchone():
+                    connection.execute(
+                        "DELETE FROM evidence_parts WHERE NOT EXISTS "
+                        "(SELECT 1 FROM evidence_part_links WHERE part_id = evidence_parts.part_id)"
+                    )
                 connection.commit()
                 return RetentionApplyResult("applied", current=current)
             except (sqlite3.DatabaseError, LedgerError, ValueError) as exc:
