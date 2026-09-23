@@ -96,7 +96,6 @@ class ConcurrentVerificationTests(HookHarness):
         record_context_forge(self.repo, self.tmp)
         self.record_preflight_evidence(slug, wid)
         self.owner_phase("tdd", "not-required")
-        self.record_gate_evidence(slug, wid)
         self.owner_phase("implementation", "passed")
         return slug
 

@@ -674,7 +674,7 @@ class PendingAdvisorRetries(AttackHarness):
         changed_verdict = self.accept(final_wid, [note, {**note, "id": "NEW", "material": True}], stage="final")
         self.assertEqual(len(changed_verdict["findingStates"]), 2, marker)
 
-    def test_observations_retain_packet_digests_without_unused_raw_bytes(self) -> None:
+    def test_observations_retain_packet_digests_and_exact_envelopes(self) -> None:
         marker = "OBSERVATION_LOST"
         wid = self.begin("pending-retry")
         raws = [json.dumps({"schemaVersion": 1, "findings": [self.CAPTURED], "verdict": "completed"},
@@ -688,7 +688,7 @@ class PendingAdvisorRetries(AttackHarness):
         observations = [entry["document"] for entry in documents if entry["kind"] == "finding-intake-preflight"]
         self.assertEqual(sorted(d["sha256"] for d in observations),
                          sorted(hashlib.sha256(raw.encode()).hexdigest() for raw in raws), marker)
-        self.assertTrue(all("raw" not in d for d in observations), "UNREAD_PACKET_BODY_STORED")
+        self.assertEqual([d["raw"] for d in observations], raws, "ADVISOR_ENVELOPE_NOT_RETRIEVABLE")
 
     def test_invalid_payload_refuses_atomically(self) -> None:
         wid = self.begin("pending-retry")
