@@ -52,9 +52,9 @@ Affected preservation uses producer-owned `revalidationRequired: true`, never au
 
 ## 2. Drive One Mapped Vertical Slice
 
-Select one pending contract ID and write its RED before the production edit that satisfies it. Settle each preservation item by baselining it through `tdd --phase red` or dispositioning it through `tdd-map`, early enough that a later RED on it means a regression.
+Select one pending contract ID and write its RED before the production edit that satisfies it. Settle each preservation item by baselining it through `tdd --phase red` or dispositioning it through `record map`, early enough that a later RED on it means a regression.
 
-Use [preflight's operational definitions](../production-preflight/SKILL.md#authoritativecontract)
+Use [preflight's proof](../production-preflight/SKILL.md)
 and governing authority to set the expected result, then drive its discriminating
 input through the real Seam. Inputs on which competing readings agree cannot
 prove the chosen distinction. If the expected result merely repeats an undefined
@@ -85,7 +85,7 @@ Several assertions may jointly prove one behavior; every assertion participating
 
 For a material interpretation choice, use preflight's optional `boundaryInputs`,
 `interpretations`, `interpretation` and `authority` on the same item through
-`tdd-map` dispositions. Unsettled readings keep applicable items unresolved even
+`record map` dispositions. Unsettled readings keep applicable items unresolved even
 when their inputs are represented. Removing inputs requires governing
 `evidence`; supersession must retain their obligations. Sufficient current proof
 is reused without another execution. Missing or stale input proof revalidates only
@@ -108,7 +108,7 @@ GREEN exposes implementation consequences. Inspect what the implementation actua
 
 ```bash
 python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" \
-  tdd-map --repo "$PWD" --slug <task> --workflow-id <active-workflowId> --input - <<'JSON'
+  record map --repo "$PWD" --input - <<'JSON'
 {"sourceBehaviorId": "BM_...", "reassessment": "...", "items": [...]}
 JSON
 ```
@@ -123,6 +123,6 @@ For execution and the necessary call forms, use [recorder.md](recorder.md). Add 
 
 The refactor window opens only after every contract item is resolved and at least one reached GREEN through RED; a baseline alone never opens it. Refactor only inside that window and rerun relevant tests after each step. If GREEN reveals a structural refactor candidate, use `/codebase-design` to evaluate it.
 
-TDD is complete only when every contract item is GREEN, baseline, or `withdrawn`, every preservation item is GREEN, producer-baselined `already-satisfied`, or `omitted` with evidence — a superseded item of either kind instead needs a currently proved GREEN terminal replacement — no applicable revalidation or proof gap remains, the affected retained checks pass, and no behavior-changing edit occurred after the last applicable GREEN.
+TDD is complete only when every contract item is GREEN, baseline, or `withdrawn`, every preservation item is GREEN, producer-baselined `already-satisfied`, or `omitted` — a superseded item of either kind instead needs a currently proved GREEN terminal replacement — no applicable revalidation or proof gap remains, the affected retained checks pass, and no behavior-changing edit occurred after the last applicable GREEN.
 
 When governed workflow continuity is active, follow [recorder.md](recorder.md). It records bounded map/RED/GREEN evidence; it is not authorization.

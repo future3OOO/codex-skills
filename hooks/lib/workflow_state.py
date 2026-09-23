@@ -4,12 +4,12 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import re
 import shlex
 import subprocess
 import sys
 import uuid
-from typing import Callable, Sequence
+from pathlib import Path
+from typing import Callable, NamedTuple, Sequence
 
 from . import behavior_map, tdd_surface
 from ._workflow_db import (
@@ -24,7 +24,7 @@ from ._workflow_db import (
     read_evidence,
     read_manifest,
 )
-from .repo_identity import RepoIdentity
+from .repo_identity import RepoIdentity, safe_slug
 from .workflow_documents import validate_advisor_projection, validate_design_declaration
 from .state_store import (
     _active_candidate_tree,
@@ -37,22 +37,25 @@ from .state_store import (
 )
 
 JsonObject = dict[str, object]
-STEP_FIELDS = {
-    "repo-context-forge": "repoContextForge",
-    "preflight": "preflight",
-    "tdd": "tdd",
-    "production-code": "productionCode",
-    "implementation": "implementation",
-    "verification": "verification",
+class Step(NamedTuple):
+    field: str
+    owner: str
+    predecessor: str | None
+    evidence: bool
+    completion: bool
+
+
+STEPS = {
+    "repo-context-forge": Step("repoContextForge", "producer", None, True, True),
+    "preflight": Step("preflight", "producer", "repo-context-forge", True, True),
+    "tdd": Step("tdd", "producer", "preflight", False, True),
+    "implementation": Step("implementation", "lead", None, False, False),
+    "verification": Step("verification", "producer", "tdd", True, True),
+    "code-review": Step("codeReview", "reviewer", "verification", False, True),
+    "final-review": Step("finalReview", "advisor", "code-review", False, True),
 }
-WORKFLOW_SEQUENCE = (
-    "repo-context-forge",
-    "preflight",
-    "tdd",
-    "verification",
-    "code-review",
-    "final-review",
-)
+STEP_FIELDS = {name: step.field for name, step in STEPS.items() if name not in {"code-review", "final-review"}}
+WORKFLOW_SEQUENCE = tuple(name for name, step in STEPS.items() if step.completion)
 STEP_STATUSES = {"pending", "in-progress", "passed", "not-required", "unavailable"}
 FINDING_STATUSES = {"pending", "none", "addressed"}
 REVIEW_SOURCES = {"codex-advisor"}
@@ -80,14 +83,10 @@ class WorkflowIncomplete(WorkflowError):
     """The workflow cannot transition to complete."""
 
 
-def safe_slug(value: str) -> str:
-    normalized = re.sub(r"[^A-Za-z0-9._-]+", "-", value.strip()).strip("-._").lower()
-    return normalized[:80] or "unnamed-workflow"
-
-
 def _normalise(state: JsonObject | None) -> JsonObject | None:
     if state is None:
         return None
+    state.pop("gitnexus", None)
     advisor = state.get("advisorPreflight")
     if isinstance(advisor, dict):
         advisor.setdefault("findings", "pending")
@@ -127,14 +126,11 @@ def _commit(
     return transaction.append(_updated(state), kind, evidence=evidence, manifests=manifests)
 
 
-EVIDENCE_PHASES = ("repo-context-forge", "preflight", "production-code", "verification")
-
-
 def _evidence_ready(state: JsonObject, phase: str) -> bool:
     """A producer-recorded passed: status alone is a bare claim for evidence phases."""
-    field = STEP_FIELDS[phase]
+    field = STEPS[phase].field
     return state.get(field) == "passed" and (
-        phase not in EVIDENCE_PHASES or bool(state.get(f"{field}Evidence"))
+        not STEPS[phase].evidence or bool(state.get(f"{field}Evidence"))
     )
 
 
@@ -194,15 +190,15 @@ def _review_assessed(state: JsonObject) -> bool:
 
 
 def _require_predecessor(state: JsonObject, phase: str) -> None:
-    if phase not in WORKFLOW_SEQUENCE:
+    step = STEPS.get(phase)
+    if step is None or not step.completion:
         return
     if phase == "code-review" and not _allows_next(state, "tdd"):
         raise WorkflowIncomplete("code-review requires tdd")
     if phase == "final-review" and _review_assessed(state):
         return
-    position = WORKFLOW_SEQUENCE.index(phase)
-    if position and not _allows_next(state, WORKFLOW_SEQUENCE[position - 1]):
-        raise WorkflowIncomplete(f"{phase} requires {WORKFLOW_SEQUENCE[position - 1]}")
+    if step.predecessor and not _allows_next(state, step.predecessor):
+        raise WorkflowIncomplete(f"{phase} requires {step.predecessor}")
 
 
 def _next_incomplete_phase(state: JsonObject) -> str:
@@ -264,7 +260,6 @@ def begin(identity: RepoIdentity, slug: str, intent: str = "") -> JsonObject:
         "advisorPreflight": {"source": None, "status": "pending", "findings": "pending", "reason": None},
         "preflight": "pending",
         "tdd": "pending",
-        "productionCode": "pending",
         "implementation": "pending",
         "verification": "pending",
         "codeReview": {"status": "pending", "findings": "pending"},
@@ -463,8 +458,10 @@ def _linked_finding_items(
 ) -> dict[tuple[str, str], dict[str, JsonObject]]:
     """Map items grouped by the recorded intake finding each sourceRef names."""
     by_ref: dict[tuple[str, str], dict[str, JsonObject]] = {}
+    by_id: dict[str, JsonObject] = {}
     intakes: dict[str, set[str]] = {}
     for entry in (_map_items(document) or []) if items is None else items:
+        by_id[str(entry["id"])] = entry
         for ref in entry.get("sourceRefs", []):
             if isinstance(ref, dict) and ref.get("type") == "finding":
                 key = (str(ref.get("evidenceId")), str(ref.get("id")))
@@ -482,6 +479,10 @@ def _linked_finding_items(
         keys = [(str(finding["intakeEvidenceId"]), str(finding["findingId"])),
                 *((str(ref["evidenceId"]), str(ref["id"])) for ref in finding.get("observations", []))]
         linked = {identifier: item for key in keys for identifier, item in by_ref.get(key, {}).items()}
+        if behavior_id := finding.get("behaviorId"):
+            if behavior_id not in by_id:
+                raise WorkflowError(f"finding {finding['findingId']} has a missing bound behavior")
+            linked[str(behavior_id)] = by_id[str(behavior_id)]
         for key in keys:
             if linked:
                 by_ref[key] = linked
@@ -536,6 +537,7 @@ def commit_tdd(
     action: str | None,
     *,
     expected_evidence_id: str | None = None,
+    expected_preflight_id: str | None = None,
     opens_cycle: bool = False,
     tree_before: dict[str, str] | None = None,
     review_changed: bool = False,
@@ -560,6 +562,8 @@ def commit_tdd(
                 raise WorkflowError("tdd requires recorded preflight evidence")
         if state.get("tddEvidence") != expected_evidence_id:
             raise WorkflowError("TDD evidence changed during the run; re-read and re-run the candidate")
+        if expected_preflight_id is not None and state.get("preflightEvidence") != expected_preflight_id:
+            raise WorkflowError("preflight map changed during the run; re-read and re-run the candidate")
         if summary_doc is not None:
             if summary_doc.get("workflowId") != state["workflowId"]:
                 raise WorkflowError("TDD document belongs to another workflow instance")
@@ -665,12 +669,14 @@ def annotate_tdd_evidence(
     summary_doc: JsonObject,
     *,
     expected_evidence_id: str | None = None,
+    expected_preflight_id: str | None = None,
     reassessed: frozenset[str] = frozenset(),
 ) -> tuple[JsonObject, str | None]:
     """Use the same binding/ownership transaction without changing lifecycle."""
     state, evidence_id = commit_tdd(
         identity, slug, workflow_id, summary_doc, None,
-        expected_evidence_id=expected_evidence_id, reassessed=reassessed,
+        expected_evidence_id=expected_evidence_id,
+        expected_preflight_id=expected_preflight_id, reassessed=reassessed,
     )
     return state, evidence_id
 
@@ -732,6 +738,8 @@ def commit_review(
                         == summary_doc.get("reviewContextId")]
             succession = summary_doc.get("repairSuccession")
             if succession is not None:
+                if not summary_doc.get("reviewContextId") or not summary_doc.get("implementationContextId"):
+                    raise WorkflowError("repair succession requires actual implementer and reviewer identities")
                 _validate_disposition_context(identity, state, succession)
                 successor = {"implementerContextId": summary_doc["implementationContextId"],
                              "reviewerContextId": summary_doc["reviewContextId"]}
@@ -769,8 +777,9 @@ def commit_review(
                 else:
                     entry["repairReviewEvidence"] = write.evidence_id
                     entry["repairReviewedTree"] = _candidate_tree(identity)
-            if not any(_finding_unresolved(entry) and entry.get("repairOwner")
-                       for entry in state.get("findingStates", [])):
+            if (summary_doc.get("reviewContextId")
+                    and not any(_finding_unresolved(entry) and entry.get("repairOwner")
+                                for entry in state.get("findingStates", []))):
                 state["reviewerContextId"] = summary_doc["reviewContextId"]
             unresolved = _stage_unresolved(state, "code-review", "code-review")
             if unresolved:
@@ -782,7 +791,7 @@ def commit_review(
         else:
             summary_doc = _resolve_disposition_receipts(identity, transaction, state, summary_doc)
             review_manifest, review_head = _validate_disposition_context(identity, state, summary_doc)
-            summary_doc = _linked_disposition_document(state, summary_doc, "code-review", "code-review")
+            summary_doc = _linked_disposition_document(state, summary_doc)
             write = evidence_write(str(state["workflowId"]), "code-review", summary_doc)
             intake_id = str(summary_doc["intakeEvidenceId"])
             unresolved = _apply_finding_dispositions(
@@ -825,6 +834,14 @@ def commit_evidence_phase(
         if expected_evidence_id is not _NO_CAS and state.get(latest_field) != expected_evidence_id:
             raise WorkflowError(f"{phase} evidence changed during the run; re-read and re-run the command")
         if phase == "preflight":
+            for item in evidence_doc["document"]["behaviorMap"]:
+                for ref in item.get("sourceRefs", []):
+                    if ref["type"] == "finding" and "evidenceId" not in ref:
+                        matches = [entry for entry in _preflight_finding_states(state)
+                                   if entry.get("findingId") == ref["id"] and _rides_the_map(entry)]
+                        if len(matches) != 1:
+                            raise WorkflowError(f"finding {ref['id']} needs one pending preflight intake")
+                        ref["evidenceId"] = matches[0]["intakeEvidenceId"]
             _require_owned_behavioral_findings(state, _linked_finding_items(transaction, evidence_doc))
         _apply_step(identity, state, phase, status)
         write = evidence_write(str(state["workflowId"]), phase, evidence_doc)
@@ -909,7 +926,11 @@ def record_pass_start_snapshot(
 
 
 def _verification_key(run: JsonObject) -> str:
-    return "quality-gate" if run.get("kind") == "quality-gate" else f"generic:{run.get('command')}"
+    if run.get("kind") == "quality-gate":
+        return "quality-gate"
+    cwd = run.get("runCwd")
+    return (f"generic-cwd:{json.dumps([cwd, run.get('command')])}" if cwd
+            else f"generic:{run.get('command')}")
 
 
 BASELINE_PROOF_QUALITIES = frozenset({"baseline-passed", "operation-succeeded"})
@@ -1059,7 +1080,6 @@ def commit_verification(
             "workflowId": state["workflowId"],
             "status": status,
             "runs": runs,
-            "updatedAt": utc_timestamp(),
         }
         if quality_manifest_id is not None:
             document["qualityGateManifestId"] = quality_manifest_id
@@ -1091,8 +1111,8 @@ def evidence_document(identity: RepoIdentity, evidence_id: str | None) -> JsonOb
     return document if isinstance(document, dict) else None
 
 
-def evidence_record(identity: RepoIdentity, evidence_id: str) -> JsonObject | None:
-    return read_evidence(identity, evidence_id)
+def evidence_record(identity: RepoIdentity, evidence_id: str, *, full: bool = True) -> JsonObject | None:
+    return read_evidence(identity, evidence_id, full=full)
 
 
 def _graph_candidate_ready(
@@ -1246,7 +1266,6 @@ def record_advisor_result(
     source: str,
     verdict: str,
     *,
-    findings: str | None = None,
     reason: str | None = None,
     design: JsonObject | None = None,
     intake: JsonObject | None = None,
@@ -1254,10 +1273,8 @@ def record_advisor_result(
 ) -> JsonObject:
     if source not in REVIEW_SOURCES:
         raise ValueError(f"unsupported reviewer source: {source}")
-    if findings not in {None, "pending"}:
-        raise ValueError("advisor-result records findings=pending; disposition findings with advisor-disposition")
-    if stage == "final" and verdict == "context-mismatch" and intake is None:
-        raise ValueError("final context-mismatch requires the advisor finding envelope")
+    if intake is None and (stage != "preflight" or verdict != "unavailable"):
+        raise ValueError("advisor success requires an immutable finding envelope")
     with mutation(identity, expected_candidate_tree=expected_candidate_tree) as transaction:
         state = _bound_instance_state(transaction.state, slug, workflow_id)
         writes: list[EvidenceWrite] = []
@@ -1353,10 +1370,7 @@ def record_advisor_result(
                 correction = _stage_unresolved(state, stage, source, rejected)
                 if rejected and correction:
                     raise WorkflowError("final appeal is blocked by unresolved final-review work")
-                legacy_recovery = isinstance(record, dict) and record.get("source") == source and (
-                    record.get("status"), record.get("findings"), "intakeEvidence" in record
-                ) == ("fix-before-commit", "addressed", False)
-                if not rejected and not legacy_recovery and isinstance(record, dict) and record.get("status") != "pending" and (
+                if not rejected and isinstance(record, dict) and record.get("status") != "pending" and (
                     not state.get("finalReviewContextMismatchEvidence") or correction):
                     raise WorkflowError("final review result already recorded for the current candidate")
                 if rejected:
@@ -1618,24 +1632,12 @@ def _finding_proof_blockers(
     return blockers
 
 
-def _disposition_evidence(
-    state: JsonObject, finding_state: JsonObject, stage: str, producer: str,
-) -> str | None:
+def _disposition_evidence(finding_state: JsonObject) -> str | None:
     current = finding_state.get("dispositionEvidenceId")
-    if isinstance(current, str) and current:
-        return current
-    if producer == "code-review":
-        legacy = state.get("codeReviewEvidence")
-    else:
-        field = "advisorPreflight" if stage == "preflight" else "finalReview"
-        record = state.get(field)
-        legacy = record.get("dispositionEvidence") if isinstance(record, dict) else None
-    return legacy if isinstance(legacy, str) and legacy else None
+    return current if isinstance(current, str) and current else None
 
 
-def _linked_disposition_document(
-    state: JsonObject, document: JsonObject, stage: str, producer: str,
-) -> JsonObject:
+def _linked_disposition_document(state: JsonObject, document: JsonObject) -> JsonObject:
     intake_id = str(document["intakeEvidenceId"])
     states = state.get("findingStates", [])
     if not isinstance(states, list):
@@ -1645,7 +1647,7 @@ def _linked_disposition_document(
         for disposition in document["dispositions"]
         if (finding_state := _finding_state(state, intake_id, disposition["finding_id"])) is not None
         and finding_state.get("status") != "pending"
-        and (evidence_id := _disposition_evidence(state, finding_state, stage, producer))
+        and (evidence_id := _disposition_evidence(finding_state))
     }
     linked = json.loads(json.dumps(document))
     if prior:
@@ -1662,9 +1664,6 @@ def _finding_state(state: JsonObject, intake_id: object, finding_id: object) -> 
 
 def _resolve_disposition_receipts(identity: RepoIdentity, transaction: LedgerMutation,
                                   state: JsonObject, document: JsonObject) -> JsonObject:
-    # Legacy inline nonbehavioral dispositions have no immutable finding intake.
-    if not document.get("intakeEvidenceId"):
-        return document
     document = json.loads(json.dumps(document))
     intake = transaction.evidence(document.get("intakeEvidenceId"))
     if not isinstance(intake, dict) or intake.get("workflowId") != state["workflowId"]:
@@ -1695,6 +1694,16 @@ def _resolve_disposition_receipts(identity: RepoIdentity, transaction: LedgerMut
         entry = _finding_state(state, document["intakeEvidenceId"], item["finding_id"])
         if entry is None:
             raise WorkflowError("mechanism binding requires the current finding intake")
+        behavior_id = item.get("behaviorId")
+        if behavior_id is not None:
+            if entry["kind"] != "behavioral" or item["status"] != "fixed":
+                raise WorkflowError("behaviorId binds a fixed behavioral finding only")
+            mapped = (_map_items(transaction.evidence(state.get("tddEvidence")))
+                      or _map_items(transaction.evidence(state.get("preflightEvidence"))) or [])
+            attack = behavior_map.item(mapped, str(behavior_id))
+            if attack.get("kind") != "contract":
+                raise WorkflowError("behaviorId must name a contract attack")
+            item.setdefault("mechanism", f"Mapped attack {behavior_id} GREEN through its recorded RED")
         if entry["kind"] != "behavioral":
             continue
         canonical = entry.get("canonicalFinding") or {
@@ -1756,6 +1765,9 @@ def _apply_finding_dispositions(
         finding_state = intake_states.get(identifier)
         if finding_state is None:
             raise WorkflowError(f"finding {identifier} has no immutable intake state")
+        if "behaviorId" in disposition:
+            finding_state["behaviorId"] = disposition["behaviorId"]
+            owned = _linked_finding_items(transaction, items=items, state=state)
         current = finding_state.get("status")
         if kind != findings[identifier].get("kind"):
             raise WorkflowError(f"finding {identifier} disposition kind differs from immutable intake")
@@ -1789,7 +1801,7 @@ def _apply_finding_dispositions(
                 owned=owned, terminals=terminals, pending=pending,
             )
         if current != "pending":
-            prior = _disposition_evidence(state, finding_state, stage, producer)
+            prior = _disposition_evidence(finding_state)
             if prior is None:
                 raise WorkflowError(f"finding {identifier} has no effective disposition evidence")
             history = finding_state.setdefault("dispositionHistory", [])
@@ -1874,16 +1886,14 @@ def advisor_disposition(
         if document is not None:
             document = _resolve_disposition_receipts(identity, transaction, state, document)
             _validate_disposition_context(identity, state, document)
-            if "intakeEvidenceId" in document:
-                document = _linked_disposition_document(state, document, stage, str(source))
+            document = _linked_disposition_document(state, document)
             write = evidence_write(str(state["workflowId"]), f"advisor-disposition-{stage}", document)
             writes.append(write)
-            if "intakeEvidenceId" in document:
-                intake_id = str(document["intakeEvidenceId"])
-                _apply_finding_dispositions(
-                    transaction, state, intake_id, document["dispositions"], stage,
-                    str(source), write.evidence_id,
-                )
+            intake_id = str(document["intakeEvidenceId"])
+            _apply_finding_dispositions(
+                transaction, state, intake_id, document["dispositions"], stage,
+                str(source), write.evidence_id,
+            )
         states = state.get("findingStates", [])
         if not isinstance(states, list):
             raise WorkflowError("recorded finding states are corrupt")
@@ -1902,24 +1912,20 @@ def advisor_disposition(
 def completion_missing(state: JsonObject) -> list[str]:
     """Canonical completion readiness shared by complete and the Stop latch."""
     missing: list[str] = [] if instance_id(state) else ["workflowId"]
-    for field in ("repoContextForge", "preflight", "verification"):
-        if state.get(field) != "passed":
-            missing.append(field)
-    for phase in EVIDENCE_PHASES:
-        field = STEP_FIELDS[phase]
-        if state.get(field) == "passed" and not state.get(f"{field}Evidence"):
-            missing.append(f"{field}Evidence")
+    for phase in WORKFLOW_SEQUENCE:
+        step = STEPS[phase]
+        if phase in {"code-review", "final-review", "tdd"}:
+            if not _allows_next(state, phase):
+                missing.append(step.field)
+        elif state.get(step.field) != "passed":
+            missing.append(step.field)
+        elif step.evidence and not state.get(f"{step.field}Evidence"):
+            missing.append(f"{step.field}Evidence")
     if state.get("verification") == "passed":
         if not state.get("qualityGateEvidence"):
             missing.append("qualityGateEvidence")
         if not state.get("qualityGateManifestId"):
             missing.append("qualityGateManifest")
-    if state.get("tdd") not in {"passed", "not-required"}:
-        missing.append("tdd")
-    if not _allows_next(state, "code-review"):
-        missing.append("codeReview")
-    if not _allows_next(state, "final-review"):
-        missing.append("finalReview")
     return missing
 
 
@@ -1978,7 +1984,7 @@ def _finding_ledger(
                                   if isinstance(finding, dict)}
         finding_id = str(entry.get("findingId"))
         claim = intakes[intake_id].get(finding_id, {}).get("claim")
-        disposition_id = _disposition_evidence(state, entry, str(entry.get("stage")), str(entry.get("producer")))
+        disposition_id = _disposition_evidence(entry)
         if disposition_id is not None and disposition_id not in dispositions:
             document = evidence_document(identity, disposition_id)
             dispositions[disposition_id] = {
@@ -2013,7 +2019,10 @@ def _context_steps(state: JsonObject) -> tuple[tuple[str, bool], ...]:
     return (("repo-context-forge", _evidence_ready(state, "repo-context-forge")),)
 
 
-def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False) -> JsonObject:
+def checkpoint(
+    identity: RepoIdentity, phase: str, *, reconsult: bool = False,
+    channel_dir: Path | None = None,
+) -> JsonObject:
     if phase not in CHECKPOINT_PHASES:
         raise ValueError(f"unsupported checkpoint phase: {phase}")
     if reconsult and phase != "preflight-advice":
@@ -2033,6 +2042,8 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False) -
         ("open-workflow", open_for_phase),
         ("advisor-stage", reconsult or state.get("nextAction") in stage_actions[phase]
          or phase == "final-review" and _review_assessed(state)),
+        ("first-consult", phase != "preflight-advice" or reconsult
+         or state.get("advisorPreflight", {}).get("status") != "completed"),
         ("passStartOid", _is_commit_oid(identity, state.get("passStartOid"))),
         *(
             _context_steps(state)
@@ -2085,7 +2096,7 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False) -
         if drift := _binding_drift(identity, state, "quality-gate"):
             missing.append(drift)
     review = state.get("codeReview") if isinstance(state.get("codeReview"), dict) else {}
-    return {
+    result: JsonObject = {
         "schemaVersion": 1,
         "phase": phase,
         "ready": not missing,
@@ -2106,6 +2117,28 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False) -
         "tdd": state.get("tdd"),
         "codeReviewStatus": review.get("status"),
     }
+    if channel_dir is not None:
+        channel_dir.mkdir(parents=True, exist_ok=True)
+        channels: list[JsonObject] = []
+        for name, field, owner in (
+            ("original-intent", "intent", None),
+            ("advisor-projection", "advisorProjection", evidence_id),
+            ("governed-design", "governedDesign", design_evidence_id),
+            ("finding-ledger", "findingLedger", None),
+            ("late-red", "lateRed", None),
+        ):
+            value = result.pop(field)
+            if not value:
+                continue
+            content = (value if isinstance(value, str) else
+                       json.dumps(value, sort_keys=True, indent=2, ensure_ascii=False))
+            path = channel_dir / (name + (".txt" if isinstance(value, str) else ".json"))
+            data = content.encode("utf-8")
+            path.write_bytes(data)
+            channels.append({"name": name, "evidenceId": owner, "bytes": len(data),
+                             "contentPath": str(path)})
+        result["channels"] = channels
+    return result
 
 
 def complete(
@@ -2238,14 +2271,10 @@ def public_status(state: JsonObject, identity: RepoIdentity | None = None, *,
     A Repo Context Forge pass is only as good as its producer evidence, so a stored
     `passed` without one is published as pending: the phase reads to every consumer the
     way it already reads to nextAction, the checkpoint, edit readiness and completion,
-    and a legacy pass cannot report graph work that has no evidence behind it. Any other
+    and an old pass cannot report graph work that has no evidence behind it. Any other
     stored status is passed through untouched; only a bare claim is downgraded.
-
-    `gitnexus` survives only as derived compatibility output for readers of the retired
-    phase, reporting that same readiness. It is never stored, never writable, and never
-    a second readiness source.
     """
-    graph_needed = recovery or fields is None or bool(fields & {"repoContextForge", "gitnexus"})
+    graph_needed = recovery or fields is None or "repoContextForge" in fields
     candidate = candidate_tree
     if identity is not None and (graph_needed or fields is None or "activeCandidateTree" in fields):
         candidate = candidate or _active_candidate_tree(identity)
@@ -2271,7 +2300,6 @@ def public_status(state: JsonObject, identity: RepoIdentity | None = None, *,
         # change the shape every reader sees while saying nothing at all.
         **({"mapSelections": selections} if selections else {}),
         "repoContextForge": stored if ready or stored != "passed" else "pending",
-        "gitnexus": "passed" if ready else "pending",
     }
     if recovery and identity is not None:
         drift = _binding_drift(identity, state, "quality-gate") if state.get("qualityGateEvidence") else None
@@ -2429,7 +2457,6 @@ def summary(identity: RepoIdentity, limit: int = 3000) -> str:
         # everywhere else in the workflow.
         + f"Steps: repo-context-forge={state.get('repoContextForge')}, "
         f"advisor-preflight={advisor.get('status')}/{advisor.get('findings')}, preflight={state.get('preflight')}, tdd={state.get('tdd')}, "
-        f"production-code={state.get('productionCode') or 'pending'}, "
         f"implementation={state.get('implementation')}, verification={state.get('verification')}, "
         f"quality-gate={'passed' if state.get('qualityGateEvidence') and not gate_drift else 'pending'}, "
         f"code-review={code_review.get('status')}/{code_review.get('findings')}, "

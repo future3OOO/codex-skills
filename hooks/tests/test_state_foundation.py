@@ -34,6 +34,15 @@ def git(repo: Path, *args: str) -> str:
 
 
 class StateFoundationTests(unittest.TestCase):
+    def test_hook_input_normalizes_session_without_loading_workflow_policy(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "-c", "import sys; from hooks.lib.hook_input import session_key; "
+             "assert session_key({'session_id': ' A/B '}) == 'a-b'; "
+             "assert 'hooks.lib.workflow_state' not in sys.modules"],
+            cwd=ROOT, capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def setUp(self) -> None:
         self.tmp = Path(tempfile.mkdtemp(prefix="workflow-state-foundation-"))
         self.codex_home = self.tmp / "codex-home"

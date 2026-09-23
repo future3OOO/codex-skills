@@ -9,7 +9,7 @@ import sys
 from contextlib import closing
 from pathlib import Path
 
-from .workflow_state import safe_slug
+from .repo_identity import safe_slug
 
 _PATCH_PATH = re.compile(
     r"^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$", re.MULTILINE
@@ -100,14 +100,12 @@ def is_explorer_continuation(payload: dict[str, object]) -> bool:
 def session_key(payload: dict[str, object]) -> str | None:
     """The session identifier as one state path segment, or None when absent.
 
-    Derived here so the hook that records an association and the hook that reads
-    it cannot drift, and so a hostile `session_id` is bounded to a single safe
+    Derived here for advisory deduplication, so a hostile `session_id` is bounded to a single safe
     segment before it ever reaches the filesystem.
 
     Absence is returned rather than defaulted. A session key names a per-session
-    set, so defaulting a missing id to any shared literal would file every
-    anonymous payload under one identity and let one repository's pass reach
-    another's Stop. Callers that want a display name for repository-scoped
+    set, so defaulting a missing id to any shared literal would merge unrelated
+    advisory epochs. Callers that want a display name for repository-scoped
     storage supply their own fallback.
     """
     value = payload.get("session_id")

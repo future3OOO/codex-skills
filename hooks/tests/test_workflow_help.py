@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Narrow forwarding contracts for temporary workflow compatibility scripts."""
+"""Public workflow help contracts."""
 from __future__ import annotations
 
 import os
@@ -10,39 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / "skills" / "repo-production-workflow" / "scripts" / "workflow.py"
-CASES = (
-    (ROOT / "skills" / "repo-production-workflow" / "scripts" / "pass-state.py", ()),
-    (ROOT / "skills" / "repo-production-workflow" / "scripts" / "verify-run.py", ("verify",)),
-    (ROOT / "skills" / "tdd" / "scripts" / "tdd-run.py", ("tdd",)),
-    (ROOT / "skills" / "code-review" / "scripts" / "record-review.py", ("record-review",)),
-    (ROOT / "skills" / "production-preflight" / "scripts" / "record-preflight.py", ("record-preflight",)),
-    (ROOT / "skills" / "production-code" / "scripts" / "record-production-code.py", ("record-production-code",)),
-)
-
-
-class WorkflowShimTests(unittest.TestCase):
-    def run_command(self, script: Path, *args: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            [sys.executable, str(script), *args],
-            cwd=ROOT,
-            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-
-    def test_shims_forward_without_owning_behavior(self) -> None:
-        for shim, canonical_prefix in CASES:
-            with self.subTest(shim=shim.name):
-                forwarded = self.run_command(shim)
-                canonical = self.run_command(WORKFLOW, *canonical_prefix)
-                self.assertEqual(
-                    (forwarded.returncode, forwarded.stdout, forwarded.stderr),
-                    (canonical.returncode, canonical.stdout, canonical.stderr),
-                )
-
-
+ADVISOR = ROOT / "skills" / "codex-advisor" / "scripts" / "ask-codex-advisor.sh"
 class CompleteHelpContractTests(unittest.TestCase):
     def run_help(self, *args: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
@@ -60,7 +28,9 @@ class CompleteHelpContractTests(unittest.TestCase):
         verbs = re.search(r"\{([a-z0-9,-]+)\}", listing.stdout)
         self.assertIsNotNone(verbs, listing.stdout)
         names = verbs.group(1).split(",")
-        self.assertIn("tdd-map", names, "TDDMAP_UNLISTED")
+        self.assertIn("record", names, "RECORD_UNLISTED")
+        for old in ("record-preflight", "record-review", "tdd-map", "advisor-result", "advisor-disposition"):
+            self.assertNotIn(old, names, f"OLD_VERB_STILL_LISTED: {old}")
         for verb in names:
             with self.subTest(verb=verb):
                 result = self.run_help(verb, "--help")
@@ -84,7 +54,7 @@ class CompleteHelpContractTests(unittest.TestCase):
                 )
                 self.assertEqual(result.stdout, bare.stdout, "POSITIONED_HELP_LOST")
 
-    def test_tdd_help_presents_the_dual_flag_surface(self) -> None:
+    def test_tdd_help_presents_only_the_mapped_flag_surface(self) -> None:
         for flag in ("--help", "-h"):
             with self.subTest(flag=flag):
                 result = self.run_help("tdd", flag)
@@ -94,8 +64,8 @@ class CompleteHelpContractTests(unittest.TestCase):
                 )
                 self.assertIn("usage:", result.stdout, "TDD_HELP_REGRESSED")
                 self.assertIn("--behavior-id", result.stdout, "TDD_HELP_REGRESSED")
-                self.assertIn("--behavior", result.stdout, "TDD_HELP_REGRESSED")
-                self.assertIn("--seam", result.stdout, "TDD_HELP_REGRESSED")
+                self.assertNotIn("--behavior ", result.stdout, "LEGACY_TDD_FLAG_RETAINED")
+                self.assertNotIn("--seam", result.stdout, "LEGACY_TDD_FLAG_RETAINED")
 
     def test_json_emission_has_one_owner(self) -> None:
         # The reporting-failure policy lives once, in command_runner: neither
@@ -132,6 +102,15 @@ class CompleteHelpContractTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("usage:", result.stdout)
+
+    def test_advisor_rejects_retired_anchor_flags_and_keeps_fresh(self) -> None:
+        result = subprocess.run(
+            [str(ADVISOR), "--packet", "/tmp/unused-packet", "--fresh"],
+            text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+        )
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("unknown argument: --packet", result.stderr, "ADVISOR_FLAGS_DRIFT")
+        self.assertIn("--fresh", result.stderr, "ADVISOR_FLAGS_DRIFT")
 
 
 if __name__ == "__main__":

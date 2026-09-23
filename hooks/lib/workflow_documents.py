@@ -9,9 +9,48 @@ import sys
 import tempfile
 import uuid
 from pathlib import Path
+from .behavior_map import initial_items
 from .state_store import utc_timestamp
 
 JsonObject = dict[str, object]
+def _unique_preflight(pairs: list[tuple[str, object]]) -> JsonObject:
+    result: JsonObject = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"preflight document repeats a section: {key}")
+        result[key] = value
+    return result
+
+
+def validate_document(value: object) -> JsonObject:
+    if not isinstance(value, dict):
+        raise ValueError("preflight document must be a JSON object")
+    errors: list[str] = []
+    unknown = sorted(set(value) - {"behaviorMap"})
+    if unknown:
+        errors.append("preflight document has unknown fields: " + ", ".join(unknown))
+    items = None
+    if "behaviorMap" in value:
+        try:
+            items = initial_items(value["behaviorMap"])
+        except ValueError as exc:
+            errors.append(str(exc))
+    else:
+        errors.append("preflight document requires behaviorMap")
+    if errors:
+        raise ValueError("; ".join(errors))
+    return {"behaviorMap": items}
+
+
+def validated_document(path: str) -> JsonObject:
+    try:
+        raw = sys.stdin.read() if path == "-" else Path(path).read_text(encoding="utf-8")
+        value = json.loads(raw, object_pairs_hook=_unique_preflight)
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"cannot read preflight JSON: {exc}") from exc
+    return validate_document(value)
+
+
 REVIEWER_RESOLVED = {"fixed", "rejected-with-evidence", "report-only"}
 REVIEWER_DISPOSITIONS = REVIEWER_RESOLVED | {"accepted-follow-up"}
 ADVISOR_RESOLVED = {"fixed", "rejected-with-evidence", "report-only"}
@@ -46,7 +85,7 @@ def load_json(path: str, *, label: str) -> JsonObject:
 def advisor_envelope(
     path: str, *, slug: str, workflow_id: str, stage: str, producer: str,
 ) -> tuple[JsonObject, str]:
-    """Validate one strict provider envelope while retaining its exact bytes."""
+    """Validate one strict provider envelope and retain its exact-byte digest."""
     try:
         raw = sys.stdin.buffer.read() if path == "-" else Path(path).read_bytes()
         text = raw.decode("utf-8")
@@ -62,36 +101,49 @@ def advisor_envelope(
         value = json.loads(text, object_pairs_hook=unique)
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise ValueError(f"cannot read advisor envelope JSON: {exc}") from exc
-    if not isinstance(value, dict) or set(value) != {"schemaVersion", "findings", "verdict"}:
+    if not isinstance(value, dict):
         raise ValueError("advisor envelope requires only schemaVersion, findings, and verdict")
+    errors: list[str] = []
+    if set(value) != {"schemaVersion", "findings", "verdict"}:
+        errors.append("advisor envelope requires only schemaVersion, findings, and verdict")
     findings, verdict = value.get("findings"), value.get("verdict")
     if type(value.get("schemaVersion")) is not int or value.get("schemaVersion") != 1 or not isinstance(findings, list):
-        raise ValueError("advisor envelope requires schemaVersion 1 and a findings array")
+        errors.append("advisor envelope requires schemaVersion 1 and a findings array")
     allowed = {"completed"} if stage == "preflight" else FINAL_ENVELOPE_VERDICTS if stage == "final" else set()
-    if verdict not in allowed:
-        raise ValueError(f"advisor envelope verdict {verdict!r} is incompatible with stage {stage}")
+    if not isinstance(verdict, str) or verdict not in allowed:
+        errors.append(f"advisor envelope verdict {verdict!r} is incompatible with stage {stage}")
     typed: list[JsonObject] = []
     identifiers: set[str] = set()
-    for position, item in enumerate(findings, 1):
+    for position, item in enumerate(findings if isinstance(findings, list) else [], 1):
         # A completed consult is never discarded over its shape: extra fields are
         # dropped and an unrecognised kind is read as behavioral, the conservative
         # default that makes the finding ride the pass as an attack obligation.
-        if not isinstance(item, dict) or not {"id", "claim", "material"} <= set(item):
-            raise ValueError(f"advisor finding {position} requires id, claim, and material")
+        if not isinstance(item, dict):
+            errors.append(f"advisor finding {position} requires id, claim, and material")
+            continue
         identifier, kind = item.get("id"), item.get("kind")
-        if not _text(identifier) or identifier in identifiers:
-            raise ValueError("advisor finding ids must be non-empty and unique")
-        if not _text(item.get("claim")) or not isinstance(item.get("material"), bool):
-            raise ValueError(f"advisor finding {identifier} requires claim and material boolean")
-        if not isinstance(kind, str) or kind not in {"behavioral", "nonbehavioral"}:
-            kind = "behavioral"
-        identifiers.add(str(identifier))
+        item_errors: list[str] = []
+        if not {"id", "claim", "material"} <= set(item):
+            item_errors.append(f"advisor finding {position} requires id, claim, and material")
         prior = item.get("priorFinding")
         if prior is not None and (not isinstance(prior, dict) or set(prior) != {"evidenceId", "id"}
                                   or not all(_text(v) for v in prior.values())):
-            raise ValueError("priorFinding requires evidenceId and id")
+            item_errors.append(f"advisor finding {identifier} priorFinding requires evidenceId and id")
+        if not _text(identifier) or identifier in identifiers:
+            item_errors.append(f"advisor finding {position} needs a non-empty unique id")
+        else:
+            identifiers.add(str(identifier))
+        if not _text(item.get("claim")) or not isinstance(item.get("material"), bool):
+            item_errors.append(f"advisor finding {identifier} requires claim and material boolean")
+        if item_errors:
+            errors.extend(item_errors)
+            continue
+        if not isinstance(kind, str) or kind not in {"behavioral", "nonbehavioral"}:
+            kind = "behavioral"
         typed.append({"id": identifier, "claim": item["claim"], "material": item["material"], "kind": kind,
                       **({"priorFinding": prior} if prior is not None else {})})
+    if errors:
+        raise ValueError("; ".join(errors))
     if stage == "final" and verdict in {"commit-ready", "fix-before-commit"} and ((verdict == "commit-ready") == any(item["material"] for item in typed)):
         raise ValueError("advisor envelope verdict is incompatible with finding materiality")
     return {
@@ -117,7 +169,15 @@ DESIGN_FILE_SHAPE = (
     '{"schemaVersion":1,"status":"present","sha256":"<64 hex>"} or '
     '{"schemaVersion":1,"status":"absent","reason":"..."}'
 )
-DOCUMENT_SHAPES = {**DISPOSITION_SHAPES, "governed-design": DESIGN_FILE_SHAPE}
+DOCUMENT_SHAPES = {
+    "preflight": '{"behaviorMap":[items with id, kind, behavior, seam, expected, redFailure, status]}',
+    "review": '{"findings":[{"id":text,"claim":text,"material":bool,"kind":behavioral or nonbehavioral}]} or {"context":object,"intakeEvidenceId":text,"dispositions":[items]}',
+    "advisor-result": '{"schemaVersion":1,"findings":[items with id, claim, material],"verdict":text}',
+    "advisor-disposition": '{"intakeEvidenceId":text,"dispositions":[measured finding dispositions]}',
+    "map": '{"items":[new items],"dispositions":[changes],"sourceBehaviorId":optional GREEN id}',
+    **DISPOSITION_SHAPES,
+    "governed-design": DESIGN_FILE_SHAPE,
+}
 DOCUMENT_SHAPE_TABLE = "\n".join(["| Surface | Expected shape |", "|---|---|", *(f"| `{name}` | {shape} |" for name, shape in DOCUMENT_SHAPES.items())])
 
 
@@ -175,16 +235,6 @@ def _gate(value: object, message: str) -> JsonObject:
         isinstance(value.get("ok"), bool),
     )):
         raise ValueError(message)
-    return value
-
-
-def gate_verdict(path: str) -> JsonObject:
-    value = _gate(
-        load_json(path, label="gate"),
-        "input is not the bundled gate's JSON verdict (gateVersion, checks, ok)",
-    )
-    if not value["ok"]:
-        raise ValueError("the gate verdict is ok=false; fix the baseline before recording production-code")
     return value
 
 
@@ -408,7 +458,7 @@ def graph_evidence_document(
         "schemaVersion": 1,
         "slug": slug,
         "workflowId": workflow_id,
-        "graph": graph,
+        "packetSha256": hashlib.sha256(Path(path).read_bytes()).hexdigest(),
         "advisorProjection": projection,
         "recordedAt": utc_timestamp(),
     }
@@ -487,75 +537,92 @@ def _finding_dispositions(value: object, allowed: set[str]) -> list[JsonObject]:
     dispositions = value
     seen: set[str] = set()
     common = {"finding_id", "status", "kind", "premise", "occurrence", "materialConsequence"}
+    errors: list[str] = []
     for item in dispositions:
-        if not isinstance(item, dict):
-            raise ValueError("each disposition must be an object")
-        identifier, status, kind = item.get("finding_id"), item.get("status"), item.get("kind")
-        if not _text(identifier):
-            raise ValueError(_disposition_error(status, "each disposition must reference a finding") if isinstance(status, str) and status in allowed else "each disposition must reference a finding")
-        if not isinstance(status, str) or status not in allowed:
-            raise ValueError(f"finding {identifier} has an invalid or duplicate disposition")
-        if identifier in seen:
-            raise ValueError(_disposition_error(status, f"finding {identifier} has a duplicate disposition"))
-        mechanism = item.get("mechanism")
-        if mechanism is not None and not (_text(mechanism) or (
-            isinstance(mechanism, dict) and set(mechanism) == {"evidenceId", "id"}
-            and all(_text(v) for v in mechanism.values())
-        )):
-            raise ValueError("mechanism requires repair prose or an evidenceId/id reference")
-        mechanism_fields = {"mechanism"} if "mechanism" in item else set()
-        if "evidenceRefs" in item:
-            refs = item["evidenceRefs"]
-            extra = {"reference"} if status == "accepted-follow-up" else set()
-            if (set(item) != {"finding_id", "status", "reason", "evidenceRefs"} | extra | mechanism_fields
-                    or not _text(item.get("reason")) or not isinstance(refs, list) or not refs
-                    or not all(_text(ref) for ref in refs)
-                    or extra and not _text(item.get("reference"))):
-                raise ValueError("receipt disposition requires finding_id, status, reason and non-empty evidenceRefs")
-            seen.add(str(identifier))
-            typed.append(dict(item))
-            continue
-        if kind not in {"behavioral", "nonbehavioral"}:
-            raise ValueError(_disposition_error(status, f"finding {identifier} kind must be behavioral or nonbehavioral"))
         try:
-            premise = _measurement(item.get("premise"), f"finding {identifier} premise")
-            occurrence = _occurrence(item.get("occurrence"))
-            consequence = _measurement(item.get("materialConsequence"), f"finding {identifier} materialConsequence")
+            if not isinstance(item, dict):
+                raise ValueError("each disposition must be an object")
+            identifier, status, kind = item.get("finding_id"), item.get("status"), item.get("kind")
+            field_errors = []
+            if not _text(identifier):
+                field_errors.append("each disposition must reference a finding")
+            if not isinstance(status, str) or status not in allowed:
+                field_errors.append(f"finding {identifier} has an invalid or duplicate disposition")
+            if _text(identifier) and identifier in seen:
+                field_errors.append(f"finding {identifier} has a duplicate disposition")
+            mechanism = item.get("mechanism")
+            if mechanism is not None and not (_text(mechanism) or (
+                isinstance(mechanism, dict) and set(mechanism) == {"evidenceId", "id"}
+                and all(_text(v) for v in mechanism.values())
+            )):
+                field_errors.append("mechanism requires repair prose or an evidenceId/id reference")
+            mechanism_fields = {"mechanism"} if "mechanism" in item else set()
+            if "evidenceRefs" in item:
+                refs = item["evidenceRefs"]
+                extra = {"reference"} if status == "accepted-follow-up" else set()
+                binding = {"behaviorId"} if "behaviorId" in item else set()
+                if (set(item) != {"finding_id", "status", "reason", "evidenceRefs"} | extra | mechanism_fields | binding
+                        or not _text(item.get("reason")) or not isinstance(refs, list) or not refs
+                        or not all(_text(ref) for ref in refs)
+                        or binding and (status != "fixed" or not _text(item["behaviorId"]))
+                        or extra and not _text(item.get("reference"))):
+                    field_errors.append("receipt disposition requires finding_id, status, reason and non-empty evidenceRefs")
+                if field_errors:
+                    raise ValueError("; ".join(field_errors))
+                seen.add(str(identifier))
+                typed.append(dict(item))
+                continue
+            if not isinstance(kind, str) or kind not in {"behavioral", "nonbehavioral"}:
+                field_errors.append(f"finding {identifier} kind must be behavioral or nonbehavioral")
+            measurements = {}
+            for field, validate in (("premise", lambda value: _measurement(value, f"finding {identifier} premise")),
+                                    ("occurrence", _occurrence),
+                                    ("materialConsequence", lambda value: _measurement(value, f"finding {identifier} materialConsequence"))):
+                try:
+                    measurements[field] = validate(item.get(field))
+                except ValueError as exc:
+                    field_errors.append(str(exc))
+            field = "reference" if status == "accepted-follow-up" else "evidence"
+            extra = {field}
+            if not _text(item.get(field)):
+                field_errors.append(f"finding {identifier} {status} requires {field}")
+            elif field == "evidence":
+                try:
+                    _refuse_temp_paths(str(item["evidence"]), f"finding {identifier} evidence")
+                except ValueError as exc:
+                    field_errors.append(str(exc))
+            if set(item) != common | extra | mechanism_fields:
+                field_errors.append(f"finding {identifier} {status} has unknown or missing fields")
+            if field_errors:
+                message = "; ".join(field_errors)
+                raise ValueError(_disposition_error(status, message) if isinstance(status, str) and status in allowed else message)
+            premise, occurrence, consequence = (measurements[field] for field in ("premise", "occurrence", "materialConsequence"))
+            if status in {"fixed", "rejected-with-evidence"} and not (
+                premise["result"].strip().lower() == "false"
+                or occurrence.get("count") == 0 and occurrence.get("complete") is True
+            ):
+                raise ValueError(_disposition_error(
+                    status, f"finding {identifier} {status} requires a false premise or zero occurrence on a complete domain",
+                ))
+            # Require the whole-domain claim's fields, not a certificate that the
+            # measurements cover it. Closure checks owning proof; review reconciles
+            # the immutable claim/domain with the operations actually executed.
+            if status == "fixed" and kind == "behavioral" and not (
+                occurrence.get("count") == 0 and occurrence.get("complete") is True
+            ):
+                raise ValueError(_disposition_error(
+                    status,
+                    f"finding {identifier} behavioral fixed requires zero occurrence on a complete domain "
+                    "covering the finding's recorded caller-reachable surface",
+                ))
+            if status == "report-only" and consequence["result"].strip().lower() != "false":
+                raise ValueError(_disposition_error(status, f"finding {identifier} report-only requires no material consequence"))
+            seen.add(str(identifier))
+            typed.append({**dict(item), "premise": premise, "occurrence": occurrence, "materialConsequence": consequence})
         except ValueError as exc:
-            raise ValueError(_disposition_error(status, str(exc))) from exc
-        field = "reference" if status == "accepted-follow-up" else "evidence"
-        extra = {field}
-        if not _text(item.get(field)):
-            raise ValueError(_disposition_error(status, f"finding {identifier} {status} requires {field}"))
-        if field == "evidence":
-            try:
-                _refuse_temp_paths(str(item["evidence"]), f"finding {identifier} evidence")
-            except ValueError as exc:
-                raise ValueError(_disposition_error(status, str(exc))) from exc
-        if set(item) != common | extra | mechanism_fields:
-            raise ValueError(_disposition_error(status, f"finding {identifier} {status} has unknown or missing fields"))
-        if status in {"fixed", "rejected-with-evidence"} and not (
-            premise["result"].strip().lower() == "false"
-            or occurrence.get("count") == 0 and occurrence.get("complete") is True
-        ):
-            raise ValueError(_disposition_error(
-                status, f"finding {identifier} {status} requires a false premise or zero occurrence on a complete domain",
-            ))
-        # Require the whole-domain claim's fields, not a certificate that the
-        # measurements cover it. Closure checks owning proof; review reconciles
-        # the immutable claim/domain with the operations actually executed.
-        if status == "fixed" and kind == "behavioral" and not (
-            occurrence.get("count") == 0 and occurrence.get("complete") is True
-        ):
-            raise ValueError(_disposition_error(
-                status,
-                f"finding {identifier} behavioral fixed requires zero occurrence on a complete domain "
-                "covering the finding's recorded caller-reachable surface",
-            ))
-        if status == "report-only" and consequence["result"].strip().lower() != "false":
-            raise ValueError(_disposition_error(status, f"finding {identifier} report-only requires no material consequence"))
-        seen.add(str(identifier))
-        typed.append({**dict(item), "premise": premise, "occurrence": occurrence, "materialConsequence": consequence})
+            errors.append(str(exc))
+    if errors:
+        raise ValueError("; ".join(errors))
     return typed
 
 
@@ -572,18 +639,20 @@ def _reviewer_finding_disposition(value: JsonObject) -> tuple[str, JsonObject | 
 
 
 def review_summary(
-    path: str, *, slug: str, workflow_id: str, resolved_model: str, review_context_id: str,
+    path: str, *, slug: str, workflow_id: str, review_context_id: str | None = None,
 ) -> tuple[JsonObject, str, str]:
-    model, context = resolved_model.strip(), review_context_id.strip()
-    if not model or not context:
-        raise ValueError("resolved model and review context id must be non-empty")
+    context = review_context_id.strip() if review_context_id is not None else None
+    if context == "":
+        raise ValueError("review context id must be non-empty when supplied")
     value = load_json(path, label="review")
     common: JsonObject = {
         "schemaVersion": 1, "slug": slug, "workflowId": workflow_id,
         "producer": "code-review", "stage": "code-review",
-        "resolvedModel": model, "reviewContextId": context, "recordedAt": utc_timestamp(),
+        "recordedAt": utc_timestamp(),
         "observationId": uuid.uuid4().hex,
     }
+    if context is not None:
+        common["reviewContextId"] = context
     if value == {"findings": [], "dispositions": []}:
         value = {"findings": []}
     if set(value) in ({"findings"}, {"findings", "implementationContextId"},
@@ -611,35 +680,45 @@ def review_summary(
         if not isinstance(findings, list):
             raise ValueError("review intake findings must be an array")
         seen: set[str] = set()
-        required = {"id", "axis", "severity", "material", "kind", "location", "claim", "evidence", "consequence", "smallest_action"}
+        required = {"id", "material", "kind", "claim"}
+        optional = {"axis", "severity", "location", "evidence", "consequence", "smallest_action", "priorFinding"}
+        retained: list[JsonObject] = []
+        errors: list[str] = []
         for item in findings:
             if not isinstance(item, dict):
-                raise ValueError("each review finding must be an object")
+                errors.append("each review finding must be an object")
+                continue
             identifier = item.get("id")
-            missing, extra = required - set(item), set(item) - required - {"priorFinding"}
+            missing, extra = required - set(item), set(item) - required - optional
             prior = item.get("priorFinding")
+            item_errors: list[str] = []
             if prior is not None and (not isinstance(prior, dict) or set(prior) != {"evidenceId", "id"}
                                       or not all(_text(v) for v in prior.values())):
-                raise ValueError("priorFinding requires evidenceId and id")
-            if len(missing) == 1 and not extra:
-                raise ValueError(f"finding {identifier} requires {next(iter(missing))}")
-            if missing or extra:
-                raise ValueError("each review finding requires only the intake fields")
+                item_errors.append("priorFinding requires evidenceId and id")
+            item_errors.extend(f"finding {identifier} requires {field}" for field in sorted(missing))
+            if extra:
+                item_errors.append("each review finding requires only the intake fields")
             if not _text(identifier) or identifier in seen:
-                raise ValueError("review finding ids must be non-empty and unique")
-            axis, kind = item.get("axis"), item.get("kind")
-            if not isinstance(axis, str) or axis not in {"Standards", "Spec"}:
-                raise ValueError(f"finding {identifier} has an invalid axis")
-            if not isinstance(kind, str) or kind not in {"behavioral", "nonbehavioral"}:
-                raise ValueError(f"finding {identifier} has an invalid kind")
-            for field in required - {"id", "axis", "material", "kind"}:
-                if not _text(item.get(field)):
-                    raise ValueError(f"finding {identifier} requires {field}")
-            if not isinstance(item.get("material"), bool):
-                raise ValueError(f"finding {identifier} requires a material boolean")
-            seen.add(str(identifier))
+                item_errors.append("review finding ids must be non-empty and unique")
+            kind = item.get("kind")
+            if "kind" in item and (not isinstance(kind, str) or kind not in {"behavioral", "nonbehavioral"}):
+                item_errors.append(f"finding {identifier} has an invalid kind")
+            if "claim" in item and not _text(item.get("claim")):
+                item_errors.append(f"finding {identifier} requires claim")
+            if "material" in item and not isinstance(item.get("material"), bool):
+                item_errors.append(f"finding {identifier} requires a material boolean")
+            if _text(identifier):
+                seen.add(str(identifier))
+            if item_errors:
+                errors.extend(item_errors)
+                continue
+            retained.append({key: item[key] for key in required})
+            if prior is not None:
+                retained[-1]["priorFinding"] = prior
+        if errors:
+            raise ValueError("; ".join(errors))
         status = "pending" if findings else "passed"
-        return {**common, "kind": "intake", "status": status, "findings": findings}, status, "pending" if findings else "none"
+        return {**common, "kind": "intake", "status": status, "findings": retained}, status, "pending" if findings else "none"
     intake_id, context, dispositions = _reviewer_finding_disposition(value)
     return {**common, "kind": "disposition", "status": "pending", "context": context, "intakeEvidenceId": intake_id, "dispositions": dispositions}, "pending", "pending"
 
@@ -653,44 +732,30 @@ def advisor_disposition_document(
 ) -> JsonObject:
     value = load_json(path, label="disposition")
     compact = set(value) == {"intakeEvidenceId", "dispositions"}
-    context = None if compact else _disposition_context(value.get("context"))
+    errors: list[str] = []
+    if not compact and set(value) != {"context", "intakeEvidenceId", "dispositions"}:
+        errors.append("disposition document requires intakeEvidenceId and dispositions")
+    context = None
+    if not compact:
+        try:
+            context = _disposition_context(value.get("context"))
+        except ValueError as exc:
+            errors.append(str(exc))
     allowed = ADVISOR_DISPOSITIONS
     common: JsonObject = {
         "schemaVersion": 1, "slug": slug, "workflowId": workflow_id,
         "stage": stage, "recordedAt": utc_timestamp(), "context": context,
     }
-    if compact or set(value) == {"context", "intakeEvidenceId", "dispositions"}:
-        intake_id = value.get("intakeEvidenceId")
-        if not _text(intake_id):
-            raise ValueError("disposition requires an intakeEvidenceId")
+    intake_id = value.get("intakeEvidenceId")
+    if not _text(intake_id):
+        errors.append("disposition requires an intakeEvidenceId")
+    try:
         dispositions = _finding_dispositions(value.get("dispositions"), allowed)
-        if compact and not all("evidenceRefs" in item for item in dispositions):
-            raise ValueError("context-free disposition requires executed evidenceRefs for every finding")
-        return {**common, "intakeEvidenceId": str(intake_id), "dispositions": dispositions}
-    if set(value) != {"context", "findings", "dispositions"}:
-        raise ValueError("disposition document requires context, findings, and dispositions")
-    findings, dispositions = value.get("findings"), value.get("dispositions")
-    if not isinstance(findings, list) or not isinstance(dispositions, list):
-        raise ValueError("disposition document requires findings and dispositions arrays")
-    if not findings:
-        raise ValueError("a document with no findings is --findings none, not addressed")
-    claims: set[str] = set()
-    for item in findings:
-        if not isinstance(item, dict):
-            raise ValueError("each finding must be an object")
-        identifier = item.get("id")
-        if not isinstance(identifier, str) or not identifier or identifier in claims:
-            raise ValueError("finding ids must be non-empty and unique")
-        if set(item) != {"id", "claim"} or not _text(item.get("claim")):
-            raise ValueError(f"finding {identifier} requires a claim")
-        claims.add(identifier)
-    typed = _finding_dispositions(dispositions, allowed)
-    if stage == "preflight" and any(item["status"] == "fixed" for item in typed):
-        raise ValueError("legacy preflight fixed requires immutable finding intake")
-    if any(str(item["finding_id"]) not in claims for item in typed):
-        raise ValueError("each disposition must reference a finding")
-    if {str(item["finding_id"]) for item in typed} != claims:
-        raise ValueError("every finding requires one lead disposition")
-    if any(item["kind"] == "behavioral" for item in typed):
-        raise ValueError("behavioral advisor findings require immutable finding intake and a map-owned attack")
-    return {**common, "findings": findings, "dispositions": typed}
+    except ValueError as exc:
+        errors.append(str(exc))
+        dispositions = []
+    if errors:
+        raise ValueError("; ".join(errors))
+    if compact and not all("evidenceRefs" in item for item in dispositions):
+        raise ValueError("context-free disposition requires executed evidenceRefs for every finding")
+    return {**common, "intakeEvidenceId": str(intake_id), "dispositions": dispositions}

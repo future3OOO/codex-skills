@@ -156,7 +156,7 @@ class ConcurrentVerificationTests(HookHarness):
         evidence_id = self.status().get("verificationLatestEvidence")
         if not isinstance(evidence_id, str):
             return []
-        result = self.state("evidence", "--evidence-id", evidence_id)
+        result = self.state("evidence", "--full", "--evidence-id", evidence_id)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return json.loads(result.stdout)["document"]["runs"]
 

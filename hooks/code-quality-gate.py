@@ -4,8 +4,8 @@
 Per-edit work is deliberately limited to the freshness/invalidation transition
 and genuinely local signals (single-file ruff lint and, in an active pass, the
 issue #212 map-ownership advisory). Full quality-gate analysis
-and its failures surface unchanged at the gate's own boundaries: the recorded
-production-code baseline and the typed quality-gate verify, plus any gate run
+and its failures surface unchanged at the gate's own boundaries: the typed
+quality-gate verify, plus any gate run
 the lead records as generic verification (issue #182 — per-edit gate runs and
 their warning attachments were measured as ~90% redundant context with zero
 acted-on repetitions).
@@ -25,9 +25,9 @@ if str(ROOT) not in sys.path:
 from hooks.lib.hook_input import edited_path, read_hook_payload, session_key  # noqa: E402
 from hooks.lib.repo_identity import RepoIdentityError, resolve_repo_identity  # noqa: E402
 from hooks.lib.state_store import (  # noqa: E402
+    advisory_changed,
     is_reviewable_path,
     is_test_path,
-    record_session_association,
 )
 from hooks.lib.workflow_state import invalidate_after_edit  # noqa: E402
 
@@ -78,14 +78,8 @@ def main() -> int:
     except (RepoIdentityError, ValueError):
         return 0
 
-    # Only where a pass exists: a repository the session merely touched has no
-    # workflow for Stop to consult, so a marker for it would be noise. The
-    # association is the only thing an anonymous payload withholds — invalidation
-    # above and the lint feedback below still run for it.
     session = session_key(payload)
     state = invalidate_after_edit(identity, relative)
-    if state is not None and session is not None:
-        record_session_association(session, identity)
 
     pieces: list[str] = []
     lint = _ruff_lines(path)
@@ -104,11 +98,12 @@ def main() -> int:
         notice = map_advisory(identity, state)
         if notice:
             pieces.append(notice)
-    if pieces:
+    context = "\n".join(pieces)
+    if context and advisory_changed(session, identity.key, "PostToolUse", context):
         _emit({
             "hookSpecificOutput": {
                 "hookEventName": "PostToolUse",
-                "additionalContext": "\n".join(pieces),
+                "additionalContext": context,
             }
         })
     return 0

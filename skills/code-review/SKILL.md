@@ -96,13 +96,14 @@ and the smallest correction.
 ## 6. Return structured output
 
 Return the reviewed checkout/workflow/tree and a Standards/Spec report with the
-actual receipt references. Write the immutable intake directly as JSON for the
-lead's `--input`; do not make the lead transcribe findings. Continuations report
+actual receipt references. Give the lead a concise JSON intake with only the
+fields the recorder reads; keep location, reproduction, consequence, and
+correction in the report. Do not make the lead transcribe findings. Continuations report
 original identities as corrected, still present or awaiting evidence, and intake
 only new findings. An empty return cannot close an earlier unresolved finding:
 
 ```json
-{"findings":[{"id":"SPEC-1","axis":"Spec","severity":"high","material":true,"kind":"behavioral","location":"path:line","claim":"...","evidence":"...","consequence":"...","smallest_action":"..."}]}
+{"findings":[{"id":"SPEC-1","material":true,"kind":"behavioral","claim":"..."}]}
 ```
 
 Material missing acceptance evidence is a Spec finding here, never prose

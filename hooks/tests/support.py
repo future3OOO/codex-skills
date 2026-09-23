@@ -9,11 +9,9 @@ import sys
 import time
 from pathlib import Path
 
-from hooks.lib.behavior_map import no_change_item
-from hooks.lib.preflight_document import BEHAVIOR_MAP_SECTION, SECTIONS
 from hooks.lib.repo_identity import RepoIdentity, resolve_repo_identity
 from hooks.lib.state_store import _active_candidate_tree
-from hooks.lib.workflow_documents import graph_evidence_document
+from hooks.lib.workflow_documents import advisor_envelope, graph_evidence_document
 from hooks.lib.workflow_state import (
     advisor_disposition,
     commit_evidence_phase,
@@ -24,6 +22,31 @@ from hooks.lib.workflow_state import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def empty_advisor_envelope(directory: Path, verdict: str) -> str:
+    path = directory / f"advisor-{verdict}.json"
+    path.write_text(json.dumps({"schemaVersion": 1, "findings": [], "verdict": verdict}), encoding="utf-8")
+    return str(path)
+
+
+def empty_advisor_intake(directory: Path, slug: str, workflow_id: str) -> dict[str, object]:
+    intake, _ = advisor_envelope(
+        empty_advisor_envelope(directory, "completed"), slug=slug,
+        workflow_id=workflow_id, stage="preflight", producer="codex-advisor",
+    )
+    return intake
+
+
+def no_change_item(evidence: str) -> dict[str, object]:
+    return {
+        "id": "BM_NO_CHANGE", "kind": "preservation",
+        "behavior": "No production behavior changes in this pass",
+        "seam": "workflow preflight evidence", "expected": "TDD is not required",
+        "redFailure": "unexpected production behavior change", "status": "omitted",
+        "evidence": evidence, "sourceRefs": [],
+    }
+
 WORKFLOW = ROOT / "skills" / "repo-production-workflow" / "scripts" / "workflow.py"
 BOOTSTRAP = ROOT / "skills" / "repo-context-forge" / "scripts" / "bootstrap.py"
 POST_EDIT = ROOT / "hooks" / "code-quality-gate.py"
@@ -159,11 +182,8 @@ def build_document(
     behavior_map: list[dict[str, object]],
 ) -> dict[str, object]:
     """A structurally valid preflight document with explicit TDD scope."""
-    document: dict[str, object] = {
-        name: "none" if name == "openQuestions" else f"{name}: {fill}"
-        for name in SECTIONS
-    }
-    document[BEHAVIOR_MAP_SECTION] = [
+    document: dict[str, object] = {}
+    document["behaviorMap"] = [
         {**item, "sourceRefs": item.get("sourceRefs", [])} for item in behavior_map
     ]
     return document
@@ -276,35 +296,14 @@ def advance_to_final_review(repo: Path, tmp: Path, design=None) -> RepoIdentity:
         assert result.returncode == 0, result.stdout + result.stderr
 
     record_advisor_result(
-        identity, slug, workflow_id, "preflight", "codex-advisor", "completed", design=design
+        identity, slug, workflow_id, "preflight", "codex-advisor", "completed",
+        design=design, intake=empty_advisor_intake(tmp, slug, workflow_id),
     )
     advisor_disposition(identity, slug, workflow_id, "preflight", "none")
     producer(
-        "record-preflight", build_no_change_document("advance to final review")
+        "record", "preflight", build_no_change_document("advance to final review")
     )
     set_phase(identity, "tdd", "not-required")
-    gate = subprocess.run(
-        [
-            sys.executable,
-            str(
-                ROOT
-                / "skills"
-                / "production-code"
-                / "scripts"
-                / "code_quality_gate.py"
-            ),
-            "check",
-            "--repo",
-            str(repo),
-            "--json",
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert gate.returncode == 0, gate.stdout + gate.stderr
-    producer("record-production-code", json.loads(gate.stdout))
-    set_phase(identity, "implementation", "passed")
     for extra in (
         ("--", sys.executable, "-c", "pass"),
         ("--kind", "quality-gate", "--base-ref", "HEAD"),

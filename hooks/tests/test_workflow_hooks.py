@@ -21,6 +21,7 @@ from hooks.lib.repo_identity import resolve_repo_identity  # noqa: E402
 from hooks.tests.support import (  # noqa: E402
     build_document,
     build_no_change_document,
+    empty_advisor_envelope,
     pending_behavior,
     record_context_forge,
     run_post_edit,
@@ -28,10 +29,10 @@ from hooks.tests.support import (  # noqa: E402
 from hooks.lib.workflow_state import record_base_oid, set_phase  # noqa: E402
 
 WORKFLOW = ROOT / "skills" / "repo-production-workflow" / "scripts" / "workflow.py"
-QUALITY_GATE = ROOT / "skills" / "production-code" / "scripts" / "code_quality_gate.py"
 INTAKE = ROOT / "hooks" / "rcf-intake-gate.py"
 RCF_BOOTSTRAP = ROOT / "skills" / "repo-context-forge" / "scripts" / "bootstrap.py"
 ADVISOR = ROOT / "skills" / "codex-advisor" / "scripts" / "ask-codex-advisor.sh"
+ADVISORY_RESET = ROOT / "hooks" / "advisory-epoch-reset.py"
 SESSION = "real-hook-session"
 
 
@@ -91,7 +92,7 @@ class HookHarness(unittest.TestCase):
 
     def state(self, *args: str, repo: Path | None = None) -> subprocess.CompletedProcess[str]:
         values = list(args)
-        if values and values[0] == "advisor-result" and "--design-declaration" not in values:
+        if values[:2] == ["record", "advisor-result"] and "--design-declaration" not in values:
             values += ["--design-declaration", str(self.design_declaration)]
         return subprocess.run(
             [sys.executable, str(WORKFLOW), *values, "--repo", str(repo or self.repo)],
@@ -176,25 +177,8 @@ class HookHarness(unittest.TestCase):
         doc_path = self.tmp / "preflight-doc.json"
         doc_path.write_text(json.dumps(document), encoding="utf-8")
         recorded = subprocess.run(
-            [sys.executable, str(WORKFLOW), "record-preflight", "--repo", str(self.repo),
+            [sys.executable, str(WORKFLOW), "record", "preflight", "--repo", str(self.repo),
              "--slug", slug, "--workflow-id", wid, "--input", str(doc_path)],
-            cwd=ROOT, env=self.env, text=True,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
-        )
-        self.assertEqual(recorded.returncode, 0, recorded.stdout + recorded.stderr)
-
-    def record_gate_evidence(self, slug: str, wid: str) -> None:
-        gate = subprocess.run(
-            [sys.executable, str(QUALITY_GATE), "check", "--repo", str(self.repo), "--json"],
-            cwd=ROOT, env=self.env, text=True,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
-        )
-        self.assertEqual(gate.returncode, 0, gate.stdout + gate.stderr)
-        gate_path = self.tmp / "gate-verdict.json"
-        gate_path.write_text(gate.stdout, encoding="utf-8")
-        recorded = subprocess.run(
-            [sys.executable, str(WORKFLOW), "record-production-code", "--repo", str(self.repo),
-             "--slug", slug, "--workflow-id", wid, "--input", str(gate_path)],
             cwd=ROOT, env=self.env, text=True,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
         )
@@ -225,26 +209,19 @@ class HookHarness(unittest.TestCase):
             wid = json.loads(begun.stdout)["workflowId"]
         record_context_forge(self.repo, self.tmp)
         transitions = (
-            ("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "preflight", "--source", "codex-advisor", "--verdict", "completed"),
-            ("advisor-disposition", "--slug", slug, "--workflow-id", wid, "--stage", "preflight", "--findings", "none"),
-            ("set-phase", "--phase", "implementation", "--status", "passed"),
+            ("record", "advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "preflight", "--source", "codex-advisor", "--input", empty_advisor_envelope(self.tmp, "completed")),
+            ("record", "advisor-disposition", "--slug", slug, "--workflow-id", wid, "--stage", "preflight", "--findings", "none"),
         )
         for transition in transitions:
-            if transition[0] == "set-phase":
-                # These tests exercise the hooks; the evidence phases advance
-                # through the real producers, whose contracts are proven in
-                # test_pass_lifecycle. Keyed on the step rather than its position,
-                # so the sequence can change without silently reordering this.
-                self.record_preflight_evidence(slug, wid)
-                self.owner_phase("tdd", "not-required")
-                self.record_gate_evidence(slug, wid)
             result = self.state(*transition)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.record_preflight_evidence(slug, wid)
+        self.owner_phase("tdd", "not-required")
         self.run_verification(slug)
         self.owner_phase("code-review", "passed", findings="none")
         tail = [
-            ("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final", "--source", "codex-advisor", "--verdict", "commit-ready"),
-            ("advisor-disposition", "--slug", slug, "--workflow-id", wid, "--stage", "final", "--findings", "none"),
+            ("record", "advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final", "--source", "codex-advisor", "--input", empty_advisor_envelope(self.tmp, "commit-ready")),
+            ("record", "advisor-disposition", "--slug", slug, "--workflow-id", wid, "--stage", "final", "--findings", "none"),
         ]
         if finish:
             tail.append(("complete",))
@@ -341,7 +318,7 @@ class WorkflowHookTests(HookHarness):
         self.assertNotIn("slug=previous", result, "OUTSIDE_GIT_SELECTED_TASK")
         self.assertEqual(self.state("history").stdout, before)
 
-    def test_post_edit_associations_prune_before_native_recovery(self) -> None:
+    def test_native_recovery_needs_no_session_association_marker(self) -> None:
         self.env.pop("CODEX_THREAD_ID", None)
         self.assertEqual(self.state("begin", "--slug", "live").returncode, 0)
         dead = self.tmp / "dead"
@@ -350,18 +327,19 @@ class WorkflowHookTests(HookHarness):
         identities = [resolve_repo_identity(p) for p in (self.repo, dead)]
         for p in (self.repo, dead):
             self.assertEqual(self.post_edit("app.py", repo=p).returncode, 0)
+        for identity in identities:
+            self.assertFalse((self.tmp / "state" / "sessions" / SESSION / f"{identity.key}.json").exists(),
+                             "WRITE_ONLY_ASSOCIATION_RETAINED")
         self.git("worktree", "remove", "--force", str(dead))
         result = subprocess.run([sys.executable, str(WORKFLOW), "prune", "--apply"],
                                 env=self.env, capture_output=True, text=True, timeout=15)
         self.assertEqual(result.returncode, 0, result.stderr)
-        fates = {entry["path"]: entry["decision"] for entry in json.loads(result.stdout)["sessions"]}
-        for identity, fate in zip(identities, ("retained", "removed")):
-            self.assertEqual(fates[f"{SESSION}/{identity.key}.json"], fate, "ASSOCIATION_PRUNING_REGRESSED")
+        self.assertNotIn("sessions", json.loads(result.stdout), "WRITE_ONLY_ASSOCIATION_PRUNING_RETAINED")
         result = self.hook_output(ROOT / "hooks/skill-discipline-rearm.py", self.repo)
-        self.assertIn("slug=live ", result, "ASSOCIATION_PRUNING_REGRESSED")
+        self.assertIn("slug=live ", result, "NATIVE_RECOVERY_REGRESSED")
         self.assertFalse(list((self.tmp / "state").rglob("active-worktree.json")))
 
-    def test_unrelated_corrupt_association_does_not_block_dispatch(self) -> None:
+    def test_unrelated_corrupt_ledger_does_not_block_dispatch(self) -> None:
         self.assertEqual(self.state("begin", "--slug", "unrelated").returncode, 0)
         self.post_edit("app.py")
         unrelated = self.second_repo("unrelated")
@@ -442,8 +420,8 @@ class WorkflowHookTests(HookHarness):
         wid = json.loads(begun.stdout)["workflowId"]
         record_context_forge(self.repo, self.tmp)
         for transition in (
-            ("advisor-result", "--slug", "tdd-ordering", "--workflow-id", wid, "--stage", "preflight", "--source", "codex-advisor", "--verdict", "completed"),
-            ("advisor-disposition", "--slug", "tdd-ordering", "--workflow-id", wid, "--stage", "preflight", "--findings", "none"),
+            ("record", "advisor-result", "--slug", "tdd-ordering", "--workflow-id", wid, "--stage", "preflight", "--source", "codex-advisor", "--input", empty_advisor_envelope(self.tmp, "completed")),
+            ("record", "advisor-disposition", "--slug", "tdd-ordering", "--workflow-id", wid, "--stage", "preflight", "--findings", "none"),
         ):
             result = self.state(*transition)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -509,9 +487,7 @@ class WorkflowHookTests(HookHarness):
         self.assertIn("F821", context)
 
     def test_uppercase_python_suffix_still_gets_lint_feedback(self) -> None:
-        # is_code_path lowercases the suffix, so module.PY is a code path; the
-        # lint guard must classify it the same way or the file gets a gate run
-        # with silently missing lint.
+        # The lint guard must classify uppercase suffixes and report the error.
         (self.repo / "module.PY").write_text("value = undefined_name\n", encoding="utf-8")
         result = self.post_edit("module.PY")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -672,8 +648,8 @@ class WorkflowHookTests(HookHarness):
         wid = json.loads(begun.stdout)["workflowId"]
         record_context_forge(self.repo, self.tmp)
         for transition in (
-            ("advisor-result", "--slug", "governance-sequence", "--workflow-id", wid, "--stage", "preflight", "--source", "codex-advisor", "--verdict", "completed"),
-            ("advisor-disposition", "--slug", "governance-sequence", "--workflow-id", wid, "--stage", "preflight", "--findings", "none"),
+            ("record", "advisor-result", "--slug", "governance-sequence", "--workflow-id", wid, "--stage", "preflight", "--source", "codex-advisor", "--input", empty_advisor_envelope(self.tmp, "completed")),
+            ("record", "advisor-disposition", "--slug", "governance-sequence", "--workflow-id", wid, "--stage", "preflight", "--findings", "none"),
         ):
             result = self.state(*transition)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -717,6 +693,63 @@ class WorkflowHookTests(HookHarness):
 class PerEditOverheadTests(HookHarness):
     """Issue 182: per-edit path carries only the cheap transition and local
     signals; full gate authority lives at the existing boundaries."""
+
+    def test_advisory_emits_on_change_and_again_after_compaction(self) -> None:
+        marker = "ADVISORY_EPOCH_LOST"
+        path = self.repo / "app.py"
+        path.write_text("value = (\n", encoding="utf-8")
+        first = self.post_edit("app.py")
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertIn("python lint findings", first.stdout, marker)
+        self.assertEqual(self.post_edit("app.py").stdout, "", marker + ": identical repeat")
+
+        path.write_text("import os\n", encoding="utf-8")
+        changed = self.post_edit("app.py")
+        self.assertEqual(changed.returncode, 0, changed.stderr)
+        self.assertIn("python lint findings", changed.stdout, marker)
+        self.assertNotEqual(changed.stdout, first.stdout, marker + ": changed content")
+
+        reset = subprocess.run(
+            [sys.executable, str(ADVISORY_RESET)], cwd=self.repo, env=self.env, text=True,
+            input=json.dumps({"cwd": str(self.repo), "session_id": SESSION, "trigger": "manual"}),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+        )
+        self.assertEqual(reset.returncode, 0, reset.stderr)
+        self.assertEqual(reset.stdout, "", marker + ": reset leaked context")
+        self.assertEqual(self.post_edit("app.py").stdout, changed.stdout,
+                         marker + ": same advice must return in a new epoch")
+        settings = json.loads((ROOT / "hooks.json").read_text())
+        self.assertIn("PostCompact", settings["hooks"], marker + ": reset not installed")
+
+    def test_pre_edit_reminder_returns_after_compaction(self) -> None:
+        begun = self.state("begin", "--slug", "pre-advisory-epoch")
+        self.assertEqual(begun.returncode, 0, begun.stderr)
+        payload = json.dumps({"cwd": str(self.repo), "session_id": SESSION,
+                              "tool_name": "apply_patch",
+                              "tool_input": {"file_path": str(self.repo / "app.py")}})
+
+        def intake() -> str:
+            result = subprocess.run(
+                [sys.executable, str(INTAKE)], cwd=self.repo, env=self.env, text=True,
+                input=payload, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return result.stdout
+
+        first = intake()
+        self.assertIn("repo-context-forge", first)
+        self.assertEqual(intake(), "", "PRE_ADVISORY_REPEAT")
+        record_context_forge(self.repo, self.tmp)
+        changed = intake()
+        self.assertIn("production preflight", changed)
+        self.assertNotEqual(changed, first, "PRE_ADVISORY_CHANGE")
+        reset = subprocess.run(
+            [sys.executable, str(ADVISORY_RESET)], cwd=self.repo, env=self.env, text=True,
+            input=json.dumps({"session_id": SESSION, "trigger": "auto"}),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+        )
+        self.assertEqual(reset.returncode, 0, reset.stderr)
+        self.assertEqual(intake(), changed, "PRE_ADVISORY_AFTER_COMPACT")
 
     def history_length(self, kind: str | None = None) -> int:
         events = json.loads(self.state("history").stdout)["events"]
@@ -805,7 +838,7 @@ class PerEditOverheadTests(HookHarness):
             "reassessment": "probe candidate deliberately carries a quality escape; non-behavioral for this fixture",
             "items": [], "dispositions": [],
         }), encoding="utf-8")
-        recorded = self.state("tdd-map", "--slug", "boundary", "--workflow-id", wid,
+        recorded = self.state("record", "map", "--slug", "boundary", "--workflow-id", wid,
                               "--input", str(update))
         self.assertEqual(recorded.returncode, 0, marker + ": " + recorded.stdout + recorded.stderr)
         self.owner_phase("implementation", "passed")
@@ -929,7 +962,6 @@ RESERVED_MISMATCH = "Reserve context-mismatch for a candidate or projection iden
 WORDING_VERDICT = ("original request's literal wording that quotes a real-Seam measurement "
                    "is answered with a verdict, never context-mismatch")
 DIFF_SECTION = "--- current-pass diff: passStartOid^{tree} -> activeCandidateTree ---"
-DEFINITIONS_SECTION = "--- invoked test definitions"
 PROBE_RULE = "retained real-Seam probe"
 
 # A test-classified module whose Seam is invoked directly in the test and again
@@ -1018,13 +1050,22 @@ class WrapperPromptTests(HookHarness):
         self.preflight_consult(env, "prompt-pre")
         self.assertNotIn(BATCH_DEMAND, self.payload(env, 1), marker)
 
+    def test_oversized_prompt_refuses_before_provider_dispatch(self) -> None:
+        env = self.wrapper_rig()
+        result = subprocess.run([str(ADVISOR_WRAPPER), "--cwd", str(self.repo), "--slug", "oversize"],
+                                cwd=ROOT, env=env, input="x" * 1_100_000, text=True,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        self.assertEqual(result.returncode, 2, "OVERSIZED_PROMPT_DISPATCHED")
+        self.assertIn("bytes_total=", result.stderr, "PROMPT_SIZE_NOT_MEASURED")
+        self.assertFalse((Path(env["CAPTURE_DIR"]) / "count").exists(), "OVERSIZED_PROMPT_DISPATCHED")
+
     def final_consult(self, env: dict[str, str], slug: str, *, intent: str | None = None,
                       edit=None, marker: str = "") -> str:
         """Advance a pass (no change unless `edit` makes one) to final review and
         return the final payload."""
         self.preflight_consult(env, slug, intent=intent, edit=edit, marker=marker)
         wid = json.loads(self.state("status").stdout)["workflowId"]
-        self.assertEqual(self.state("advisor-disposition", "--slug", slug, "--workflow-id", wid,
+        self.assertEqual(self.state("record", "advisor-disposition", "--slug", slug, "--workflow-id", wid,
                                     "--stage", "preflight", "--findings", "none").returncode, 0)
         state = json.loads(self.state("status").stdout)
         document = build_no_change_document("prompt rig")
@@ -1032,20 +1073,16 @@ class WrapperPromptTests(HookHarness):
             "evidenceId": state["governedDesignEvidence"], "id": "PRES-1"}]
         doc_path = self.tmp / "prompt-preflight.json"
         doc_path.write_text(json.dumps(document), encoding="utf-8")
-        recorded = self.state("record-preflight", "--slug", slug, "--workflow-id", wid,
+        recorded = self.state("record", "preflight", "--slug", slug, "--workflow-id", wid,
                               "--input", str(doc_path))
         self.assertEqual(recorded.returncode, 0, recorded.stdout + recorded.stderr)
         self.owner_phase("tdd", "not-required")
-        self.record_gate_evidence(slug, wid)
-        self.assertEqual(self.state("set-phase", "--phase", "implementation",
-                                    "--status", "passed").returncode, 0)
         self.run_verification(slug)
         self.owner_phase("code-review", "not-required", findings="none")
         rig = Path(env["CAPTURE_DIR"]).parent
         result = self.run_advisor(env, "--slug", slug, "--phase", "final-review",
                                   "--design-file", str(rig / "design.md"), "--", "final question")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.final_stderr = result.stderr
         count = int((Path(env["CAPTURE_DIR"]) / "count").read_text().strip())
         return self.payload(env, count)
 
@@ -1089,46 +1126,34 @@ class WrapperPromptTests(HookHarness):
         target.write_text(target.read_text(encoding="utf-8") + ADDED_ASSERTION, encoding="utf-8")
 
     def diff_section(self, payload: str) -> str:
-        """The diff the wrapper sent, with its line framing removed."""
+        """The exact diff the wrapper sent."""
         body = payload.split(DIFF_SECTION + "\n", 1)[1].split("\n=== Consult\n", 1)[0]
-        lines = body.split("\n")[1:]  # the untrusted-data framing line
-        return "".join(line[len("diff> "):] + "\n" for line in lines if line.startswith("diff> "))
+        return body.split("\n", 1)[1]
 
-    def test_a_changed_test_hunk_arrives_inside_its_enclosing_definition(self) -> None:
-        # GitNexus #12's wording pass: an assertion added inside an existing test
-        # reached the advisor as a three-line hunk with no Seam invocation.
-        marker = "TEST_HUNK_LACKS_ENCLOSING_DEFINITION"
+    def test_a_changed_test_hunk_uses_bounded_context(self) -> None:
+        marker = "TEST_HUNK_EXPANDED"
         env = self.wrapper_rig()
         self.commit_fixtures({"tests/test_app.py": TEST_MODULE.encode()})
         payload = self.final_consult(env, "test-context", edit=self.extend_test)
         # Exactly once at the outgoing boundary: the recorded repro's promise.
-        self.assertEqual(payload.count("diff> +" + ADDED_ASSERTION.rstrip("\n")), 1, marker)
-        self.assertEqual(payload.count("diff>      def test_compute_adds_one(self):"), 1, marker)
-        self.assertEqual(payload.count("diff>          direct = compute(1)  # DIRECT-SEAM-INVOCATION"), 1, marker)
+        self.assertEqual(payload.count("+" + ADDED_ASSERTION.rstrip("\n")), 1, marker)
+        self.assertNotIn("     def test_compute_adds_one(self):", self.diff_section(payload), marker)
+        self.assertNotIn("         direct = compute(1)  # DIRECT-SEAM-INVOCATION", self.diff_section(payload), marker)
         candidate = json.loads(self.state("status").stdout)["activeCandidateTree"]
         blob = subprocess.run(["git", "rev-parse", f"{candidate}:tests/test_app.py"], cwd=self.repo,
                               env=self.env, text=True, capture_output=True, check=True).stdout.strip()
-        index_line = re.search(r"^diff> index [0-9a-f]+\.\.([0-9a-f]+)", payload.split("b/tests/test_app.py", 1)[1], re.MULTILINE)
+        index_line = re.search(r"^index [0-9a-f]+\.\.([0-9a-f]+)", payload.split("b/tests/test_app.py", 1)[1], re.MULTILINE)
         self.assertIsNotNone(index_line, marker)
         self.assertTrue(blob.startswith(index_line.group(1)), marker + f": {blob} vs {index_line.group(1)}")
 
-    def test_no_invoked_definitions_follow_the_changed_test(self) -> None:
-        # #221 forwarded the setup and helper definitions a changed test hunk
-        # invokes; git's function context is the whole contract now.
-        marker = "INVOKED_DEFINITIONS_STILL_FORWARDED"
+    def test_deleted_files_are_headers_with_line_counts(self) -> None:
         env = self.wrapper_rig()
-        self.commit_fixtures({"tests/test_app.py": TEST_MODULE.encode()})
-        payload = self.final_consult(env, "no-defs", edit=self.extend_test)
-        self.assertNotIn(DEFINITIONS_SECTION, payload, marker)
-        self.assertNotIn("\ntest> ", payload, marker)
-
-    def test_no_invoked_definitions_evidence_is_emitted(self) -> None:
-        marker = "INVOKED_DEFINITIONS_EVIDENCE_STILL_EMITTED"
-        env = self.wrapper_rig()
-        self.commit_fixtures({"tests/test_app.py": TEST_MODULE.encode()})
-        self.final_consult(env, "no-defs-evidence", edit=self.extend_test)
-        self.assertIn("codex_advisor_evidence name=current-pass-diff", self.final_stderr, marker)
-        self.assertNotIn("name=invoked-test-definitions", self.final_stderr, marker)
+        self.commit_fixtures({"obsolete.py": ("legacy = 1\n" * 500).encode()})
+        payload = self.final_consult(env, "deleted-header", edit=lambda: (self.repo / "obsolete.py").unlink())
+        section = self.diff_section(payload)
+        self.assertIn("diff --git a/obsolete.py b/obsolete.py", section, "DELETION_HEADER_MISSING")
+        self.assertIn("500 lines", section, "DELETED_BODY_RETAINED")
+        self.assertNotIn("-legacy = 1", section, "DELETED_BODY_RETAINED")
 
     def test_the_transport_returns_the_diff_the_payload_carries(self) -> None:
         marker = "TRANSPORT_RETURNS_DEFINITIONS_TUPLE"
@@ -1185,7 +1210,7 @@ class WrapperPromptTests(HookHarness):
             (self.repo / "app.py").write_text(PRODUCTION_MODULE.replace("value = 1\n", "value = 2\n"), encoding="utf-8")
 
         payload = self.final_consult(env, "mixed-change", edit=edit)
-        self.assertIn("diff> +value = 2", payload, marker)
+        self.assertIn("+value = 2", self.diff_section(payload), marker)
         self.assertNotIn("PRODUCTION-FAR-LINE", payload, marker)
 
     def test_every_changed_path_appears_once_across_the_partition(self) -> None:
@@ -1204,24 +1229,13 @@ class WrapperPromptTests(HookHarness):
             (self.repo / "app.py").write_text("value = 2\n", encoding="utf-8")
 
         payload = self.final_consult(env, "partition", edit=edit)
-        headers = re.findall(r"^diff> diff --git a/(\S+) b/(\S+)$", payload, re.MULTILINE)
+        headers = re.findall(r"^diff --git a/(\S+) b/(\S+)$", self.diff_section(payload), re.MULTILINE)
         self.assertEqual(len(headers), len(set(headers)), marker + f": {headers}")
         old_paths, new_paths = [pair[0] for pair in headers], [pair[1] for pair in headers]
         self.assertEqual(old_paths.count("tests/test_app.py"), 1, marker + f": {headers}")
         self.assertEqual(new_paths.count("probe.py"), 1, marker + f": {headers}")
         for path in ("app.py", "tests/test_[glob].py", "tests/fixtures/blob.bin"):
             self.assertEqual(new_paths.count(path), 1, marker + f": {path} in {headers}")
-
-    def test_a_pass_without_test_changes_sends_gits_own_diff(self) -> None:
-        marker = "NO_TEST_DIFF_CHANGED"
-        env = self.wrapper_rig()
-        payload = self.final_consult(
-            env, "no-test-diff", edit=lambda: (self.repo / "app.py").write_text("value = 2\n", encoding="utf-8"))
-        state = json.loads(self.state("status").stdout)
-        expected = subprocess.run(
-            ["git", "diff", "--no-ext-diff", "--binary", state["passStartOid"] + "^{tree}", state["activeCandidateTree"]],
-            cwd=self.repo, env=self.env, text=True, capture_output=True, check=True).stdout
-        self.assertEqual(self.diff_section(payload), expected, marker)
 
     def ready_for_final_review(self, slug: str) -> str:
         """A pass at a ready final-review checkpoint that never consulted the advisor."""
@@ -1231,9 +1245,6 @@ class WrapperPromptTests(HookHarness):
         record_context_forge(self.repo, self.tmp)
         self.record_preflight_evidence(slug, wid)
         self.owner_phase("tdd", "not-required")
-        self.record_gate_evidence(slug, wid)
-        passed = self.state("set-phase", "--phase", "implementation", "--status", "passed")
-        self.assertEqual(passed.returncode, 0, passed.stdout + passed.stderr)
         self.run_verification(slug)
         self.owner_phase("code-review", "passed", findings="none")
         return wid
@@ -1250,7 +1261,8 @@ class WrapperPromptTests(HookHarness):
         result = self.run_advisor(env, "--slug", "keep-output", "--phase", "preflight-advice",
                                   "--design-file", str(rig / "design.md"), "--", "scope question")
         self.assertNotEqual(result.returncode, 0, marker + ": a malformed envelope was recorded")
-        self.assertIn(reply, result.stdout, marker + ": " + result.stdout + result.stderr)
+        self.assertIn("requires id, claim, and material", result.stderr, marker)
+        self.assertLessEqual(len((result.stdout + result.stderr).encode()), 2048, marker)
         self.assertNotIn("codex_advisor_complete", result.stderr, marker)
 
     def test_final_review_creates_its_session_without_a_preflight_consult(self) -> None:
@@ -1333,9 +1345,9 @@ class TollDeletionTests(HookHarness):
         record_context_forge(self.repo, self.tmp)
         if consult:
             for transition in (
-                ("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
-                 "--source", "codex-advisor", "--verdict", "completed"),
-                ("advisor-disposition", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
+                ("record", "advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
+                 "--source", "codex-advisor", "--input", empty_advisor_envelope(self.tmp, "completed")),
+                ("record", "advisor-disposition", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
                  "--findings", "none"),
             ):
                 result = self.state(*transition)
@@ -1354,8 +1366,9 @@ class TollDeletionTests(HookHarness):
 
     def workflow(self, *args: str) -> subprocess.CompletedProcess[str]:
         """workflow.py with --repo ahead of any `--` command separator."""
+        prefix = args[:2] if args and args[0] == "record" else args[:1]
         return subprocess.run(
-            [sys.executable, str(WORKFLOW), args[0], "--repo", str(self.repo), *args[1:]],
+            [sys.executable, str(WORKFLOW), *prefix, "--repo", str(self.repo), *args[len(prefix):]],
             cwd=ROOT, env=self.env, text=True,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
         )
@@ -1366,16 +1379,13 @@ class TollDeletionTests(HookHarness):
     def final_intake(self, slug: str, wid: str, findings: list, verdict: str = "commit-ready") -> subprocess.CompletedProcess[str]:
         envelope = self.tmp / f"{slug}-final.json"
         envelope.write_text(json.dumps({"schemaVersion": 1, "findings": findings, "verdict": verdict}), encoding="utf-8")
-        return self.state("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final",
+        return self.state("record", "advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final",
                           "--source", "codex-advisor", "--input", str(envelope))
 
     def advance_to_review(self, slug: str) -> str:
         wid = self.open_pass(slug)
         self.record_preflight_evidence(slug, wid)
         self.owner_phase("tdd", "not-required")
-        self.record_gate_evidence(slug, wid)
-        passed = self.state("set-phase", "--phase", "implementation", "--status", "passed")
-        self.assertEqual(passed.returncode, 0, passed.stdout + passed.stderr)
         self.run_verification(slug)
         self.owner_phase("code-review", "passed", findings="none")
         return wid
@@ -1476,7 +1486,7 @@ class TollDeletionTests(HookHarness):
         self.assertNotIn('"already-satisfied"', baseline.stdout, marker)
         self.assertIn("app.py", baseline.stderr, marker)
         state = json.loads(self.state("status").stdout)
-        document = json.loads(self.state("evidence", "--evidence-id", str(state["tddEvidence"])).stdout)["document"]
+        document = json.loads(self.state("evidence", "--full", "--evidence-id", str(state["tddEvidence"])).stdout)["document"]
         run = document["runs"][-1]
         self.assertFalse(run["valid"], marker)
         self.assertIn("app.py", str(run.get("redProofFailure")), marker)
@@ -1494,7 +1504,7 @@ class TollDeletionTests(HookHarness):
         intake = self.tmp / "material-intake.json"
         intake.write_text(json.dumps({"schemaVersion": 1, "verdict": "completed", "findings": [
             {"id": "SPEC-1", "claim": "unattacked promise", "material": True, "kind": "behavioral"}]}), encoding="utf-8")
-        consulted = self.state("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
+        consulted = self.state("record", "advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
                                "--source", "codex-advisor", "--input", str(intake))
         self.assertEqual(consulted.returncode, 0, consulted.stdout + consulted.stderr)
         intake_id = json.loads(self.state("status").stdout)["advisorPreflight"]["intakeEvidence"]
@@ -1520,7 +1530,7 @@ class TollDeletionTests(HookHarness):
         intake = self.tmp / "review-material-intake.json"
         intake.write_text(json.dumps({"schemaVersion": 1, "verdict": "completed", "findings": [
             {"id": "SPEC-1", "claim": "unattacked promise", "material": True, "kind": "behavioral"}]}), encoding="utf-8")
-        consulted = self.state("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
+        consulted = self.state("record", "advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
                                "--source", "codex-advisor", "--input", str(intake))
         self.assertEqual(consulted.returncode, 0, consulted.stdout + consulted.stderr)
         intake_id = json.loads(self.state("status").stdout)["advisorPreflight"]["intakeEvidence"]
@@ -1535,8 +1545,7 @@ class TollDeletionTests(HookHarness):
         self.assertEqual(self.verify(slug, "--kind", "quality-gate", "--base-ref", "HEAD").returncode, 0)
         review_input = self.tmp / "pending-review.json"
         review_input.write_text('{"findings": []}', encoding="utf-8")
-        review = self.workflow("record-review", "--slug", slug, "--workflow-id", wid, "--resolved-model", "test-model",
-                               "--review-context-id", "pending-finding", "--input", str(review_input))
+        review = self.workflow("record", "review", "--slug", slug, "--workflow-id", wid, "--review-context-id", "pending-finding", "--input", str(review_input))
         self.assertEqual(review.returncode, 0, marker + ": " + review.stdout + review.stderr)
         completed = self.state("complete")
         self.assertEqual(completed.returncode, 2, marker + ": " + completed.stdout)
@@ -1548,7 +1557,7 @@ class TollDeletionTests(HookHarness):
         wid = self.open_pass(slug, consult=False)
         intake = self.tmp / "empty-intake.json"
         intake.write_text('{"schemaVersion":1,"findings":[],"verdict":"completed"}', encoding="utf-8")
-        consulted = self.state("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
+        consulted = self.state("record", "advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
                                "--source", "codex-advisor", "--input", str(intake))
         self.assertEqual(consulted.returncode, 0, consulted.stdout + consulted.stderr)
         self.assertEqual(json.loads(self.state("status").stdout)["advisorPreflight"]["findings"], "none", marker)
@@ -1623,15 +1632,16 @@ class RedFirstTests(HookHarness):
         self.assertEqual(begun.returncode, 0, begun.stdout + begun.stderr)
         wid = json.loads(begun.stdout)["workflowId"]
         record_context_forge(self.repo, self.tmp)
-        consulted = self.state("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
-                               "--source", "codex-advisor", "--verdict", "completed")
+        consulted = self.state("record", "advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
+                               "--source", "codex-advisor", "--input", empty_advisor_envelope(self.tmp, "completed"))
         self.assertEqual(consulted.returncode, 0, consulted.stdout + consulted.stderr)
         self.record_preflight_evidence(slug, wid, behavior_map=behavior_map or self.two_items())
         return wid
 
     def workflow(self, *args: str) -> subprocess.CompletedProcess[str]:
+        prefix = args[:2] if args and args[0] == "record" else args[:1]
         return subprocess.run(
-            [sys.executable, str(WORKFLOW), args[0], "--repo", str(self.repo), *args[1:]],
+            [sys.executable, str(WORKFLOW), *prefix, "--repo", str(self.repo), *args[len(prefix):]],
             cwd=ROOT, env=self.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
         )
 
@@ -1647,14 +1657,14 @@ class RedFirstTests(HookHarness):
 
     def map_status(self) -> dict[str, str]:
         state = json.loads(self.state("status").stdout)
-        document = json.loads(self.state("evidence", "--evidence-id", str(state["tddEvidence"])).stdout)
+        document = json.loads(self.state("evidence", "--full", "--evidence-id", str(state["tddEvidence"])).stdout)
         items = document.get("behaviorMap") or (document.get("document") or {}).get("behaviorMap")
         return {str(entry["id"]): str(entry["status"]) for entry in items}
 
     def tdd_document(self) -> dict:
         """The recorded TDD document, read back through a fresh workflow.py process."""
         state = json.loads(self.state("status").stdout)
-        return json.loads(self.state("evidence", "--evidence-id", str(state["tddEvidence"])).stdout)["document"]
+        return json.loads(self.state("evidence", "--full", "--evidence-id", str(state["tddEvidence"])).stdout)["document"]
 
     def latest_run(self) -> dict:
         return (self.tdd_document().get("runs") or [{}])[-1]
@@ -1699,7 +1709,7 @@ class RedFirstTests(HookHarness):
         envelope = self.tmp / "tolerant.json"
         envelope.write_text(json.dumps({"schemaVersion": 1, "verdict": "completed", "findings": [
             {"id": "SPEC-1", "claim": "an unattacked promise", "material": True, "kind": "other", "severity": "high"}]}), encoding="utf-8")
-        recorded = self.state("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
+        recorded = self.state("record", "advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
                               "--source", "codex-advisor", "--input", str(envelope))
         self.assertEqual(recorded.returncode, 0, marker + ": " + recorded.stdout + recorded.stderr)
         [entry] = json.loads(self.state("status").stdout)["findingStates"]
@@ -1718,7 +1728,7 @@ class RedFirstTests(HookHarness):
         envelope = self.tmp / "nonmaterial.json"
         envelope.write_text(json.dumps({"schemaVersion": 1, "verdict": "commit-ready", "findings": [
             {"id": "SCOPE-1", "claim": "promises restated", "material": False, "kind": "nonbehavioral"}]}), encoding="utf-8")
-        final = self.state("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final",
+        final = self.state("record", "advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final",
                            "--source", "codex-advisor", "--input", str(envelope))
         self.assertEqual(final.returncode, 0, final.stdout + final.stderr)
         self.assertEqual(json.loads(self.state("status").stdout)["nextAction"], "complete-workflow", marker)
@@ -1747,15 +1757,15 @@ class RedFirstTests(HookHarness):
         finding = {"id": "F-1", "claim": "an operation is unattacked", "material": True, "kind": "behavioral"}
         envelope = self.tmp / "final-f1.json"
         envelope.write_text(json.dumps({"schemaVersion": 1, "verdict": "fix-before-commit", "findings": [finding]}), encoding="utf-8")
-        first = self.state("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final",
+        first = self.state("record", "advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final",
                            "--source", "codex-advisor", "--input", str(envelope))
         self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
         intake_id = [e["intakeEvidenceId"] for e in json.loads(self.state("status").stdout)["findingStates"] if e["findingId"] == "F-1"][0]
-        rejected = self.state("advisor-disposition", "--slug", slug, "--workflow-id", wid, "--stage", "final",
+        rejected = self.state("record", "advisor-disposition", "--slug", slug, "--workflow-id", wid, "--stage", "final",
                               "--findings", "addressed", "--input", str(self.rejection_document(wid, intake_id, "python -m unittest test_probe_a")))
         self.assertEqual(rejected.returncode, 0, rejected.stdout + rejected.stderr)
         self.first_rejection = self.finding_entry()["dispositionEvidenceId"]
-        appeal = self.state("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final",
+        appeal = self.state("record", "advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final",
                             "--source", "codex-advisor", "--input", str(envelope))
         self.assertEqual(appeal.returncode, 0, appeal.stdout + appeal.stderr)
         return wid, intake_id
@@ -1769,7 +1779,7 @@ class RedFirstTests(HookHarness):
         premature = self.state("complete")
         self.assertEqual(premature.returncode, 2, marker + ": complete ignored the re-raised measurement")
         self.assertIn("F-1", premature.stderr, marker)
-        judged = self.state("advisor-disposition", "--slug", slug, "--workflow-id", wid, "--stage", "final",
+        judged = self.state("record", "advisor-disposition", "--slug", slug, "--workflow-id", wid, "--stage", "final",
                             "--findings", "addressed", "--input", str(self.rejection_document(wid, intake_id, "python -m unittest test_probe_a -v")))
         self.assertEqual(judged.returncode, 0, marker + ": " + judged.stdout + judged.stderr)
         completed = self.state("complete")
@@ -1788,7 +1798,7 @@ class RedFirstTests(HookHarness):
         finding = {"id": "F-1", "claim": "an operation is unattacked", "material": True, "kind": "behavioral"}
         envelope = self.tmp / "final-f1.json"
         envelope.write_text(json.dumps({"schemaVersion": 1, "verdict": "fix-before-commit", "findings": [finding]}), encoding="utf-8")
-        first = self.state("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final",
+        first = self.state("record", "advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final",
                            "--source", "codex-advisor", "--input", str(envelope))
         self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
         status = json.loads(self.state("status").stdout)
@@ -1801,16 +1811,16 @@ class RedFirstTests(HookHarness):
             "command": "python -m unittest test_probe_a", "result": "count=0"},
             "materialConsequence": {"claim": "the promise could break unseen", "command": "python -m unittest test_probe_a", "result": "attacked"},
             "evidence": "test_probe_a executes the operation"}]}), encoding="utf-8")
-        rejected = self.state("advisor-disposition", "--slug", slug, "--workflow-id", wid, "--stage", "final",
+        rejected = self.state("record", "advisor-disposition", "--slug", slug, "--workflow-id", wid, "--stage", "final",
                               "--findings", "addressed", "--input", str(rejection))
         self.assertEqual(rejected.returncode, 0, rejected.stdout + rejected.stderr)
         # The advisor's one response re-raises the same finding as material.
-        appeal = self.state("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final",
+        appeal = self.state("record", "advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final",
                             "--source", "codex-advisor", "--input", str(envelope))
         self.assertEqual(appeal.returncode, 0, appeal.stdout + appeal.stderr)
         after = json.loads(self.state("status").stdout)
         self.assertNotEqual(after["nextAction"], "needs-human-owner-adjudication", marker + ": " + after["nextAction"])
-        judged = self.state("advisor-disposition", "--slug", slug, "--workflow-id", wid, "--stage", "final",
+        judged = self.state("record", "advisor-disposition", "--slug", slug, "--workflow-id", wid, "--stage", "final",
                             "--findings", "addressed", "--input", str(self.rejection_document(wid, intake_id, "python -m unittest test_probe_a -v")))
         self.assertEqual(judged.returncode, 0, marker + ": " + judged.stdout + judged.stderr)
         completed = self.state("complete")
@@ -1857,29 +1867,6 @@ class RedFirstTests(HookHarness):
         self.assertEqual(unearned.returncode, 2, marker + ": " + unearned.stdout)
         self.assertEqual(self.map_status()["BM_B"], "pending", marker)
 
-    def test_record_preflight_validates_the_text_sections(self) -> None:
-        marker = "PROSE_SECTIONS_NOT_VALIDATED"
-        slug = "prose-required"
-        begun = self.state("begin", "--slug", slug)
-        wid = json.loads(begun.stdout)["workflowId"]
-        record_context_forge(self.repo, self.tmp)
-        self.state("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
-                   "--source", "codex-advisor", "--verdict", "completed")
-        doc = self.tmp / "prose.json"
-        doc.write_text(json.dumps({"behaviorMap": self.two_items()}), encoding="utf-8")
-        bare = self.state("record-preflight", "--slug", slug, "--workflow-id", wid, "--input", str(doc))
-        self.assertEqual(bare.returncode, 2, marker + ": a map-only document was recorded")
-        self.assertIn("affectedSurface", bare.stderr, marker + ": " + bare.stderr)
-        full = build_document("prose", behavior_map=self.two_items())
-        full["openQuestions"] = "how should the seam be placed?"
-        doc.write_text(json.dumps(full), encoding="utf-8")
-        asking = self.state("record-preflight", "--slug", slug, "--workflow-id", wid, "--input", str(doc))
-        self.assertEqual(asking.returncode, 2, marker + ": an open question was recorded")
-        full["openQuestions"] = "none"
-        doc.write_text(json.dumps(full), encoding="utf-8")
-        accepted = self.state("record-preflight", "--slug", slug, "--workflow-id", wid, "--input", str(doc))
-        self.assertEqual(accepted.returncode, 0, marker + ": " + accepted.stdout + accepted.stderr)
-
     def test_status_reports_the_earned_split(self) -> None:
         marker = "EARNED_SPLIT_MISSING"
         slug = "earned-split"
@@ -1902,7 +1889,7 @@ class RedFirstTests(HookHarness):
         added.write_text(json.dumps({"sourceBehaviorId": "BM_A", "reassessment": "GREEN exposed two more promises", "items": [
             pending_behavior("BM_B", behavior="b is two", seam="app module", expected="app.b == 2", red_failure="B_NOT_TWO"),
             pending_behavior("BM_C", behavior="c is two", seam="app module", expected="app.c == 2", red_failure="C_NOT_TWO")]}), encoding="utf-8")
-        grown = self.state("tdd-map", "--slug", slug, "--workflow-id", wid, "--input", str(added))
+        grown = self.state("record", "map", "--slug", slug, "--workflow-id", wid, "--input", str(added))
         self.assertEqual(grown.returncode, 0, grown.stdout + grown.stderr)
         red_b = self.tdd(slug, "red", "BM_B", "b")
         self.assertEqual(red_b.returncode, 0, marker + ": " + red_b.stdout + red_b.stderr)
@@ -1959,7 +1946,7 @@ class RedFirstTests(HookHarness):
         envelope.write_text(json.dumps({"schemaVersion": 1, "verdict": "completed", "findings": [
             {"id": "SPEC-1", "claim": "an unattacked promise", "material": True, "kind": []},
             {"id": "SPEC-2", "claim": "another", "material": False, "kind": {"type": "note"}}]}), encoding="utf-8")
-        recorded = self.state("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
+        recorded = self.state("record", "advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
                               "--source", "codex-advisor", "--input", str(envelope))
         self.assertEqual(recorded.returncode, 0, marker + ": " + recorded.stdout + recorded.stderr)
         kinds = {e["findingId"]: e["kind"] for e in json.loads(self.state("status").stdout)["findingStates"]}
@@ -1990,18 +1977,13 @@ class RedFirstTests(HookHarness):
         begun = self.state("begin", "--slug", slug)
         wid = json.loads(begun.stdout)["workflowId"]
         record_context_forge(self.repo, self.tmp)
-        self.state("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
-                   "--source", "codex-advisor", "--verdict", "completed")
+        self.state("record", "advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
+                   "--source", "codex-advisor", "--input", empty_advisor_envelope(self.tmp, "completed"))
         before, events = self.state("status").stdout, self.events()
         doc = self.tmp / "refused.json"
-        blank = build_document("prose", behavior_map=self.two_items()); blank["invariants"] = "   "
-        doc.write_text(json.dumps(blank), encoding="utf-8")
-        hollow = self.state("record-preflight", "--slug", slug, "--workflow-id", wid, "--input", str(doc))
-        self.assertEqual(hollow.returncode, 2, marker + ": a blank section was recorded")
-        self.assertIn("invariants", hollow.stderr, marker)
         broken = build_document("prose", behavior_map=[{"id": "BROKEN"}])
         doc.write_text(json.dumps(broken), encoding="utf-8")
-        invalid = self.state("record-preflight", "--slug", slug, "--workflow-id", wid, "--input", str(doc))
+        invalid = self.state("record", "preflight", "--slug", slug, "--workflow-id", wid, "--input", str(doc))
         self.assertEqual(invalid.returncode, 2, marker + ": an invalid map was recorded")
         self.assertEqual((self.state("status").stdout, self.events()), (before, events), marker + ": a refusal mutated state")
         self.record_preflight_evidence(slug, wid, behavior_map=self.two_items())
@@ -2036,7 +2018,7 @@ class RedFirstTests(HookHarness):
         envelope = self.tmp / f"{name}.json"
         envelope.write_text(json.dumps({"schemaVersion": 1, "verdict": verdict, "findings": [
             {"id": "F-1", "claim": "an operation is unattacked", "material": material, "kind": "behavioral"}]}), encoding="utf-8")
-        return self.state("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final",
+        return self.state("record", "advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final",
                           "--source", "codex-advisor", "--input", str(envelope))
 
     def finding_entry(self) -> dict:
@@ -2054,7 +2036,7 @@ class RedFirstTests(HookHarness):
         self.owner_phase("code-review", "passed", findings="none")
         note = self.final_result(slug, wid, "final-note", "commit-ready", False)
         self.assertEqual(note.returncode, 0, note.stdout + note.stderr)
-        rejected = self.state("advisor-disposition", "--slug", slug, "--workflow-id", wid, "--stage", "final", "--findings", "addressed",
+        rejected = self.state("record", "advisor-disposition", "--slug", slug, "--workflow-id", wid, "--stage", "final", "--findings", "addressed",
                               "--input", str(self.rejection_document(wid, self.finding_entry()["intakeEvidenceId"], "python -m unittest test_probe_a")))
         self.assertEqual(rejected.returncode, 0, rejected.stdout + rejected.stderr)
         appeal = self.final_result(slug, wid, "final-reraise", "fix-before-commit", True)
@@ -2077,7 +2059,7 @@ class RedFirstTests(HookHarness):
         entry = self.finding_entry()
         self.assertEqual([(h.get("status"), h.get("evidenceId")) for h in entry.get("dispositionHistory") or []],
                          [("rejected-with-evidence", self.first_rejection)], marker + ": " + json.dumps(entry))
-        second = self.state("advisor-disposition", "--slug", "reraise-second", "--workflow-id", wid, "--stage", "final",
+        second = self.state("record", "advisor-disposition", "--slug", "reraise-second", "--workflow-id", wid, "--stage", "final",
                             "--findings", "addressed", "--input", str(self.rejection_document(wid, intake_id, "python -m unittest -v test_probe_a")))
         self.assertEqual(second.returncode, 0, marker + ": " + second.stdout + second.stderr)
         entry = self.finding_entry()
@@ -2108,7 +2090,7 @@ class RedFirstTests(HookHarness):
                   "redProof": {"runner": "unittest", "marker": "A_NOT_TWO"}}
         path = self.tmp / "orphan.json"
         path.write_text(json.dumps(build_document("orphan redProof", behavior_map=[orphan])), encoding="utf-8")
-        recorded = self.state("record-preflight", "--slug", slug, "--workflow-id", wid, "--input", str(path))
+        recorded = self.state("record", "preflight", "--slug", slug, "--workflow-id", wid, "--input", str(path))
         self.assertNotEqual(recorded.returncode, 0, marker + ": " + recorded.stdout)
 
     def test_the_edit_gate_advises_a_pending_contract_item(self) -> None:
@@ -2129,11 +2111,9 @@ class RedFirstTests(HookHarness):
         slug = "tree-binding"
         self.open_pass(slug)
         self.assertEqual(self.tdd(slug, "red", "BM_A", "a").returncode, 0)
-        head = self.rev_parse("HEAD")
         run = self.latest_run()
-        self.assertEqual(run.get("productionChanged"), [], marker + ": " + json.dumps(run)[:300])
-        self.assertEqual(run.get("headOid"), head, marker)
-        self.assertEqual(run.get("passStartOid"), head, marker)
+        self.assertEqual(run.get("candidateTree"), json.loads(self.state("status").stdout)["activeCandidateTree"], marker)
+        self.assertNotIn("productionChanged", run, marker)
         self.assertNotIn("productionChanged", self.map_item("BM_A").get("redProof", {}), marker)
 
     def test_a_late_red_records_every_changed_production_path(self) -> None:
@@ -2144,21 +2124,20 @@ class RedFirstTests(HookHarness):
         (self.repo / "extra.py").write_text("d = 1\n", encoding="utf-8")
         self.git("add", "app.py")  # a staged edit is still a changed production path
         self.assertEqual(self.tdd(slug, "red", "BM_A", "a").returncode, 0)
-        self.assertEqual(self.latest_run().get("productionChanged"), ["app.py", "extra.py"], marker)
+        self.assertNotIn("productionChanged", self.latest_run(), marker)
         self.assertEqual(self.map_item("BM_A").get("redProof", {}).get("productionChanged"), ["app.py", "extra.py"], marker)
 
     def test_a_commit_inside_the_pass_cannot_hide_a_late_red(self) -> None:
         marker = "LATE_RED_HIDDEN_BY_COMMIT"
         slug = "late-commit"
         self.open_pass(slug)
-        start = self.rev_parse("HEAD")
         (self.repo / "app.py").write_text("a = 1\nb = 1\nc = 1\n", encoding="utf-8")
         self.git("commit", "-qam", "edited inside the pass")
         self.assertEqual(self.tdd(slug, "red", "BM_A", "a").returncode, 0)
         run = self.latest_run()
-        self.assertEqual(run.get("productionChanged"), ["app.py"], marker + ": " + json.dumps(run)[:300])
-        self.assertEqual(run.get("passStartOid"), start, marker)
-        self.assertNotEqual(run.get("headOid"), start, marker)
+        self.assertEqual(self.map_item("BM_A").get("redProof", {}).get("productionChanged"), ["app.py"], marker)
+        self.assertIn("Late RED: BM_A", self.summary(), marker)
+        self.assertNotIn("productionChanged", run, marker)
 
     def test_a_declared_contract_item_cannot_baseline_after_edits(self) -> None:
         marker = "DIRTY_BASELINE_ADMITTED"
@@ -2171,7 +2150,7 @@ class RedFirstTests(HookHarness):
         self.assertEqual(baseline.returncode, 2, marker + ": " + baseline.stdout + baseline.stderr)
         self.assertEqual(self.map_status()["BM_B"], "pending", marker)
         self.assertNotIn("baselineProof", self.map_item("BM_B"), marker)
-        self.assertEqual(self.latest_run().get("productionChanged"), ["app.py"], marker)
+        self.assertIn("app.py", self.latest_run().get("redProofFailure", ""), marker)
         self.assertFalse(self.latest_run()["valid"], marker)
 
     def test_summary_names_a_late_red_and_keeps_it_after_green(self) -> None:
@@ -2208,7 +2187,6 @@ class RedFirstTests(HookHarness):
         marker = "BINDING_MEASURED_AFTER_THE_RUN"
         slug = "launch-binding"
         self.open_pass(slug)
-        start = self.rev_parse("HEAD")
         # A RED command that restores the file it was launched against before returning.
         (self.repo / "app.py").write_text("a = 1\nb = 1\nc = 1\n", encoding="utf-8")
         (self.repo / "test_probe_a.py").write_text(
@@ -2216,12 +2194,13 @@ class RedFirstTests(HookHarness):
             "class Probe(unittest.TestCase):\n"
             "    def tearDown(self): open('app.py', 'w').write('a = 1\\nb = 1\\n')\n"
             "    def test_value(self): self.assertEqual(app.a, 2, 'A_NOT_TWO')\n", encoding="utf-8")
+        launched = json.loads(self.state("status").stdout)["activeCandidateTree"]
         red = self.workflow("tdd", "--slug", slug, "--phase", "red", "--behavior-id", "BM_A",
                             "--", sys.executable, "-m", "unittest", "test_probe_a")
         self.assertEqual(red.returncode, 2, red.stdout + red.stderr)
         self.assertIn("candidate changed during reassessment", self.latest_run()["bindingError"])
         self.assertFalse(self.latest_run()["valid"])
-        self.assertEqual(self.latest_run().get("productionChanged"), ["app.py"], marker + ": " + json.dumps(self.latest_run())[:300])
+        self.assertEqual(self.latest_run().get("candidateTree"), launched, marker)
         # A RED command that commits before returning.
         (self.repo / "test_probe_b.py").write_text(
             "import app, subprocess, unittest\n"
@@ -2230,14 +2209,14 @@ class RedFirstTests(HookHarness):
             "        open('app.py', 'w').write('a = 1\\nb = 1\\nc = 3\\n')\n"
             "        subprocess.run(['git', 'commit', '-qam', 'committed by the probe'], check=True)\n"
             "    def test_value(self): self.assertEqual(app.b, 2, 'B_NOT_TWO')\n", encoding="utf-8")
+        launched = json.loads(self.state("status").stdout)["activeCandidateTree"]
         red = self.workflow("tdd", "--slug", slug, "--phase", "red", "--behavior-id", "BM_B",
                             "--", sys.executable, "-m", "unittest", "test_probe_b")
         self.assertEqual(red.returncode, 2, red.stdout + red.stderr)
         self.assertIn("candidate changed during reassessment", self.latest_run()["bindingError"])
         self.assertFalse(self.latest_run()["valid"])
         run = self.latest_run()
-        self.assertEqual(run.get("headOid"), start, marker + ": " + json.dumps(run)[:300])
-        self.assertEqual(run.get("productionChanged"), [], marker)
+        self.assertEqual(run.get("candidateTree"), launched, marker)
 
     def test_open_cycles_finish_after_a_refused_late_baseline_lands_beside_them(self) -> None:
         marker = "OPEN_CYCLES_STRANDED_BY_REFUSED_BASELINE"
@@ -2291,7 +2270,7 @@ class RedFirstTests(HookHarness):
     def map_update(self, slug: str, wid: str, name: str, document: dict) -> subprocess.CompletedProcess[str]:
         path = self.tmp / f"{name}.json"
         path.write_text(json.dumps(document), encoding="utf-8")
-        return self.workflow("tdd-map", "--slug", slug, "--workflow-id", wid, "--input", str(path))
+        return self.workflow("record", "map", "--slug", slug, "--workflow-id", wid, "--input", str(path))
 
     def test_a_failing_added_surface_runs_red_then_green(self) -> None:
         marker = "ADDED_RED_GREEN_BROKEN"
@@ -2326,8 +2305,7 @@ class RedFirstTests(HookHarness):
         intake = self.tmp / "review-intake.json"
         intake.write_text(json.dumps({"findings": [{"id": "SPEC-1", "axis": "Spec", "severity": "high", "material": True, "kind": "behavioral",
             "location": "app.py:2", "claim": "b must be two", "evidence": "b was one", "consequence": "callers read one", "smallest_action": "set b"}]}), encoding="utf-8")
-        recorded = self.state("record-review", "--slug", slug, "--workflow-id", wid, "--resolved-model", "test-model",
-                              "--review-context-id", "ctx", "--input", str(intake))
+        recorded = self.state("record", "review", "--slug", slug, "--workflow-id", wid, "--review-context-id", "ctx", "--input", str(intake))
         self.assertEqual(recorded.returncode, 0, recorded.stdout + recorded.stderr)
         summary_id = json.loads(recorded.stdout)["summaryId"]
         owned = self.map_update(slug, wid, "own-b", {"reassessment": "SPEC-1 needs an owning attack",
@@ -2341,8 +2319,7 @@ class RedFirstTests(HookHarness):
                               "occurrence": {"domain": "every reader of b", "count": 0, "complete": True,
                                              "command": measurement["command"], "result": measurement["result"]},
                               "materialConsequence": measurement, "evidence": "BM_B baselined"}]}), encoding="utf-8")
-        refused = self.state("record-review", "--slug", slug, "--workflow-id", wid, "--resolved-model", "test-model",
-                             "--review-context-id", "ctx", "--input", str(closure))
+        refused = self.state("record", "review", "--slug", slug, "--workflow-id", wid, "--review-context-id", "ctx", "--input", str(closure))
         self.assertNotEqual(refused.returncode, 0, marker + ": " + refused.stdout + refused.stderr)
         self.assertIn("baseline alone", refused.stdout + refused.stderr, marker + ": " + refused.stdout + refused.stderr)
 

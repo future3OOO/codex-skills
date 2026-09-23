@@ -56,22 +56,19 @@ marker/outcome, including native docstring lines. Use the returned `runIndex`;
 do not copy output back. One report can support several items through separate
 references without another execution; a sibling pass alone proves no other item.
 
-Keep relevant A/B cost observations with the executions. Handoff or a different
-record format does not justify replaying applicable proof or creating another test
-path. If reuse is unsupported, retain the observations and report the recording
-gap; see [recovery](#recovery-and-reassessment) when accepted proof is still needed.
+If reuse is unsupported, see [recovery](#recovery-and-reassessment).
 
 ## Map updates
 
 Interpretation reassessment and the automatic selected-input diagnostics are
 owned by [SKILL.md](SKILL.md#3-update-the-map-when-a-proof-changes-it).
 
-Add uncovered outcomes or change obligations with `tdd-map`; no-ops write nothing.
-Pass the document on stdin:
+Add uncovered outcomes or change obligations with `record map`; no-ops write nothing.
+Pass the document on stdin; `record map --help` gives its shape:
 
 ```bash
-python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" tdd-map \
-  --repo "$PWD" --slug "<task>" --workflow-id "<active-workflowId>" --input - <<'JSON'
+python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" record map \
+  --repo "$PWD" --input - <<'JSON'
 {"sourceBehaviorId": "BM_...", "reassessment": "what the proof exposed", "items": [...], "dispositions": [...]}
 JSON
 ```

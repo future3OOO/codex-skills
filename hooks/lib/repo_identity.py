@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,6 +19,11 @@ from pathlib import Path
 
 class RepoIdentityError(RuntimeError):
     """Base error for repository identity failures."""
+
+
+def safe_slug(value: str) -> str:
+    normalized = re.sub(r"[^A-Za-z0-9._-]+", "-", value.strip()).strip("-._").lower()
+    return normalized[:80] or "unnamed-workflow"
 
 
 class NotGitRepository(RepoIdentityError):

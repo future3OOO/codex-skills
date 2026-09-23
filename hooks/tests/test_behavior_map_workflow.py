@@ -24,7 +24,7 @@ from hooks.lib.workflow_state import (  # noqa: E402
     ready_for_edit,
     record_advisor_result,
 )
-from hooks.tests.support import build_document, pending_behavior, record_context_forge  # noqa: E402
+from hooks.tests.support import build_document, empty_advisor_intake, pending_behavior, record_context_forge  # noqa: E402
 
 WORKFLOW = ROOT / "skills" / "repo-production-workflow" / "scripts" / "workflow.py"
 
@@ -77,7 +77,8 @@ class BehaviorMapWorkflowTests(unittest.TestCase):
         state = json.loads(begun.stdout)
         slug, workflow_id = state["slug"], state["workflowId"]
         identity = record_context_forge(self.repo, self.tmp)
-        record_advisor_result(identity, slug, workflow_id, "preflight", "codex-advisor", "completed")
+        record_advisor_result(identity, slug, workflow_id, "preflight", "codex-advisor", "completed",
+                              intake=empty_advisor_intake(self.tmp, slug, workflow_id))
         advisor_disposition(identity, slug, workflow_id, "preflight", "none")
         payload = self.tmp / "preflight.json"
         payload.write_text(
@@ -85,7 +86,7 @@ class BehaviorMapWorkflowTests(unittest.TestCase):
             encoding="utf-8",
         )
         recorded = self.cli(
-            "record-preflight", "--slug", slug, "--workflow-id", workflow_id,
+            "record", "preflight", "--slug", slug, "--workflow-id", workflow_id,
             "--input", str(payload),
         )
         self.assertEqual(recorded.returncode, 0, recorded.stdout + recorded.stderr)
@@ -143,7 +144,7 @@ class BehaviorMapWorkflowTests(unittest.TestCase):
         payload = self.tmp / "map-update.json"
         payload.write_text(json.dumps(value), encoding="utf-8")
         return self.cli(
-            "tdd-map", "--slug", slug, "--workflow-id", workflow_id,
+            "record", "map", "--slug", slug, "--workflow-id", workflow_id,
             "--input", str(payload),
         )
 
@@ -284,14 +285,14 @@ finally:
             result = self.tdd(slug, phase, owner, script)
             self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
         state = read_workflow(resolve_repo_identity(self.repo))
-        evidence = self.cli("evidence", "--evidence-id", str(state["tddEvidence"]))
+        evidence = self.cli("evidence", "--full", "--evidence-id", str(state["tddEvidence"]))
         self.assertEqual(evidence.returncode, 0, evidence.stderr)
         before = json.loads(evidence.stdout)["document"]
         self.assertEqual([run["behaviorId"] for run in before["runs"]], ["BM_A", "BM_A", "BM_KEEP"])
         result = self.tdd(slug, "red", "BM_A", fail)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         repeated = read_workflow(resolve_repo_identity(self.repo))
-        evidence = self.cli("evidence", "--evidence-id", str(repeated["tddEvidence"]))
+        evidence = self.cli("evidence", "--full", "--evidence-id", str(repeated["tddEvidence"]))
         self.assertEqual(evidence.returncode, 0, evidence.stderr)
         after = json.loads(evidence.stdout)["document"]
         self.assertEqual(after["runs"][:-1], before["runs"], "SAME_OWNER_RED_DROPPED_RUNS")
@@ -304,13 +305,13 @@ finally:
         result = self.tdd(slug, "red", "BM_B", fail_b)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         other = read_workflow(resolve_repo_identity(self.repo))
-        evidence = self.cli("evidence", "--evidence-id", str(other["tddEvidence"]))
+        evidence = self.cli("evidence", "--full", "--evidence-id", str(other["tddEvidence"]))
         self.assertEqual(evidence.returncode, 0, evidence.stderr)
         document = json.loads(evidence.stdout)["document"]
         self.assertEqual(document["activeBehaviorId"], "BM_B")
         self.assertEqual([run["behaviorId"] for run in document["runs"]], ["BM_B"])
         self.assertEqual(other["tddCycleCount"], state["tddCycleCount"] + 1)
-        original = self.cli("evidence", "--evidence-id", str(state["tddEvidence"]))
+        original = self.cli("evidence", "--full", "--evidence-id", str(state["tddEvidence"]))
         self.assertEqual(original.returncode, 0, original.stderr)
         self.assertEqual(json.loads(original.stdout)["document"], before)
         (self.repo / "app.py").write_text("value = 2\n", encoding="utf-8")
@@ -318,7 +319,7 @@ finally:
             result = self.tdd(slug, "green", owner, script)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             state = read_workflow(resolve_repo_identity(self.repo))
-            evidence = self.cli("evidence", "--evidence-id", str(state["tddEvidence"]))
+            evidence = self.cli("evidence", "--full", "--evidence-id", str(state["tddEvidence"]))
             self.assertEqual(evidence.returncode, 0, evidence.stderr)
             self.assertEqual(json.loads(evidence.stdout)["document"]["status"], expected_status)
 
@@ -330,6 +331,7 @@ finally:
         record_advisor_result(
             identity, state["slug"], state["workflowId"],
             "preflight", "codex-advisor", "completed",
+            intake=empty_advisor_intake(self.tmp, state["slug"], state["workflowId"]),
         )
         advisor_disposition(identity, state["slug"], state["workflowId"], "preflight", "none")
 
@@ -338,7 +340,7 @@ finally:
         payload = self.tmp / "preflight.json"
         payload.write_text(json.dumps(missing), encoding="utf-8")
         refused = self.cli(
-            "record-preflight", "--slug", state["slug"],
+            "record", "preflight", "--slug", state["slug"],
             "--workflow-id", state["workflowId"], "--input", str(payload),
         )
         self.assertEqual(refused.returncode, 2, refused.stdout + refused.stderr)
@@ -350,7 +352,7 @@ finally:
         )
         payload.write_text(json.dumps(generic), encoding="utf-8")
         refused = self.cli(
-            "record-preflight", "--slug", state["slug"],
+            "record", "preflight", "--slug", state["slug"],
             "--workflow-id", state["workflowId"], "--input", str(payload),
         )
         self.assertEqual(refused.returncode, 2, refused.stdout + refused.stderr)
@@ -434,7 +436,7 @@ finally:
         identity = resolve_repo_identity(self.repo)
         state = read_workflow(identity)
         self.assertEqual(state["tdd"], "in-progress")
-        evidence = self.cli("evidence", "--evidence-id", str(state["tddEvidence"]))
+        evidence = self.cli("evidence", "--full", "--evidence-id", str(state["tddEvidence"]))
         self.assertEqual(evidence.returncode, 0, evidence.stdout + evidence.stderr)
         self.assertEqual(json.loads(evidence.stdout)["document"]["status"],
                          json.loads(assessed.stdout)["status"], "CURRENT_MAP_STATUS_STALE")

@@ -4,9 +4,10 @@ from __future__ import annotations
 import copy
 import json
 import re
-from typing import Iterable
+from typing import Callable, Iterable, TypeVar
 
 JsonObject = dict[str, object]
+T = TypeVar("T")
 INITIAL_STATUSES = frozenset({"pending", "already-satisfied", "omitted"})
 # Map proof is GREEN through its own RED; retired statuses are not admitted.
 PROOF_STATUSES = frozenset({"green"})
@@ -16,10 +17,10 @@ EVIDENCED_STATUSES = DISPOSITION_STATUSES | {"superseded", "withdrawn"}
 NEVER_GREEN = DISPOSITION_STATUSES | {"withdrawn"}
 KINDS = frozenset({"contract", "preservation"})
 REQUIRED_FIELDS = frozenset({
-    "id", "kind", "basis", "behavior", "seam", "expected", "redFailure", "status",
+    "id", "kind", "behavior", "seam", "expected", "redFailure", "status",
 })
 OPTIONAL_FIELDS = frozenset({
-    "evidence", "supersededBy", "sourceRefs", "proofCommand", "baselineProof", "supersededFrom",
+    "basis", "evidence", "supersededBy", "sourceRefs", "proofCommand", "baselineProof", "supersededFrom",
     "redCommand", "redProof", "revalidationRequired",
     "boundaryInputs", "interpretations", "interpretation", "authority",
     "proofBinding",
@@ -132,26 +133,35 @@ def _validate_red_failure(value: object, identifier: str) -> str:
     return marker
 
 
-def _source_refs(value: object, identifier: str) -> list[JsonObject] | None:
+def _source_refs(value: object, identifier: str, *, allow_unbound: bool = False) -> list[JsonObject] | None:
     if value is None:
         return None
     if not isinstance(value, list):
         raise ValueError(f"behavior {identifier} sourceRefs must be an array")
     result: list[JsonObject] = []
     seen: set[tuple[str, str, str]] = set()
+    errors: list[str] = []
     for position, raw in enumerate(value, 1):
-        if not isinstance(raw, dict) or set(raw) != {"type", "evidenceId", "id"}:
-            raise ValueError(
+        if not isinstance(raw, dict) or set(raw) not in (
+            {"type", "evidenceId", "id"}, {"type", "id"} if allow_unbound else set()
+        ):
+            errors.append(
                 f"behavior {identifier} sourceRef {position} requires only type, evidenceId, and id"
             )
+            continue
         reference_type, evidence_id, label = raw.get("type"), _text(raw.get("evidenceId")), _text(raw.get("id"))
-        if evidence_id is None or label is None or reference_type not in {"design", "finding"}:
-            raise ValueError(f"behavior {identifier} sourceRef {position} is not a valid design or finding reference")
-        key = (str(reference_type), evidence_id, str(label))
+        if (label is None or not isinstance(reference_type, str) or reference_type not in {"design", "finding"}
+                or evidence_id is None and (not allow_unbound or reference_type != "finding")):
+            errors.append(f"behavior {identifier} sourceRef {position} is not a valid design or finding reference")
+            continue
+        key = (str(reference_type), evidence_id or "", str(label))
         if key in seen:
-            raise ValueError(f"behavior {identifier} repeats {reference_type} sourceRef {label}")
+            errors.append(f"behavior {identifier} repeats {reference_type} sourceRef {label}")
+            continue
         seen.add(key)
-        result.append({"type": reference_type, "evidenceId": evidence_id, "id": label})
+        result.append({"type": reference_type, **({"evidenceId": evidence_id} if evidence_id else {}), "id": label})
+    if errors:
+        raise ValueError("; ".join(errors))
     return result
 
 
@@ -161,17 +171,24 @@ def interpretation_fields(raw: JsonObject, identifier: str) -> JsonObject:
     if not fields:
         return fields
     inputs, readings = fields.get("boundaryInputs"), fields.get("interpretations")
+    errors: list[str] = []
     if not isinstance(inputs, list) or not inputs:
-        raise ValueError(f"behavior {identifier} requires non-empty boundaryInputs")
-    try:
-        json.dumps(inputs, allow_nan=False)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"behavior {identifier} boundaryInputs must be concrete JSON values") from exc
+        errors.append(f"behavior {identifier} requires non-empty boundaryInputs")
+    else:
+        try:
+            json.dumps(inputs, allow_nan=False)
+        except (TypeError, ValueError):
+            errors.append(f"behavior {identifier} boundaryInputs must be concrete JSON values")
     if not isinstance(readings, list) or any(_text(value) is None for value in readings) or len({value.strip() for value in readings}) < 2:
-        raise ValueError(f"behavior {identifier} interpretations requires competing readings")
+        errors.append(f"behavior {identifier} interpretations requires competing readings")
     if "interpretation" in fields or "authority" in fields:
         for key in ("interpretation", "authority"):
-            fields[key] = _required(fields, key, identifier)
+            try:
+                fields[key] = _required(fields, key, identifier)
+            except ValueError as exc:
+                errors.append(str(exc))
+    if errors:
+        raise ValueError("; ".join(errors))
     return copy.deepcopy(fields)
 
 
@@ -197,109 +214,14 @@ def validate_items(
     existing = list(existing)
     seen = {str(entry["id"]) for entry in existing}
     result: list[JsonObject] = []
+    errors: list[str] = []
     for position, raw in enumerate(value, 1):
-        if not isinstance(raw, dict):
-            raise ValueError(f"behaviorMap item {position} must be an object")
-        unknown = sorted(set(raw) - REQUIRED_FIELDS - OPTIONAL_FIELDS)
-        # Maps recorded before `kind` existed still load; their items carry no
-        # contract authority. New items always declare a kind.
-        missing = sorted(REQUIRED_FIELDS - set(raw) - ({"kind"} if allow_runtime else {"status"}))
-        if missing:
-            raise ValueError(
-                f"behaviorMap item {position} is missing fields: {', '.join(missing)}"
-            )
-        if unknown:
-            raise ValueError(
-                f"behaviorMap item {position} has unknown fields: {', '.join(unknown)}"
-            )
-        identifier = _text(raw.get("id"))
-        if identifier is None or not IDENTIFIER.fullmatch(identifier):
-            raise ValueError(
-                "behavior ids must be 2-64 characters: uppercase letters, digits, _ or -"
-            )
-        if identifier in seen:
-            raise ValueError(f"behavior id is duplicated: {identifier}")
-        seen.add(identifier)
-        kind = _text(raw.get("kind"))
-        if kind not in KINDS and not (kind is None and allow_runtime):
-            raise ValueError(
-                f"behavior {identifier} kind must be one of: {', '.join(sorted(KINDS))}"
-            )
-        status = _text(raw.get("status", "pending" if not allow_runtime else None))
-        if status not in statuses:
-            raise ValueError(
-                f"behavior {identifier} status must be one of: {', '.join(sorted(statuses))}"
-            )
-        # Recorded evidence carries contract already-satisfied only from the
-        # producer (tdd --phase red), so the loading path admits it.
-        if kind == "contract" and (
-            status == "omitted" or (status == "already-satisfied" and not allow_runtime)
-        ):
-            raise ValueError(_CONTRACT_DISPOSITION_REFUSED.format(identifier))
-        if status == "withdrawn" and kind != "contract":
-            raise ValueError(_PRESERVATION_WITHDRAWN_REFUSED.format(identifier))
-        refs = _source_refs(raw.get("sourceRefs"), identifier)
-        item: JsonObject = {
-            "id": identifier,
-            **({"kind": kind} if kind is not None else {}),
-            "basis": _required(raw, "basis", identifier),
-            "behavior": _required(raw, "behavior", identifier),
-            "seam": _required(raw, "seam", identifier),
-            "expected": _required(raw, "expected", identifier),
-            "redFailure": _validate_red_failure(raw.get("redFailure"), identifier),
-            "status": status,
-            **({"sourceRefs": refs} if refs is not None else {}),
-            **interpretation_fields(raw, identifier),
-        }
-        if "evidence" in raw and not isinstance(raw.get("evidence"), str):
-            raise ValueError(f"behavior {identifier} evidence must be text")
-        # The runner stamps the exact proving command at GREEN, so the executed
-        # attack rides beside the declared one wherever the item travels.
-        if "proofCommand" in raw:
-            item["proofCommand"] = _required(raw, "proofCommand", identifier)
-        # The RED surface and its proof stay on the item, so GREEN proves the
-        # item against its own RED whichever cycle is open after a sweep.
-        if "redCommand" in raw or "redProof" in raw:
-            if not allow_runtime or not isinstance(raw.get("redProof"), dict):
-                raise ValueError(f"behavior {identifier} redCommand and redProof are recorded only by tdd --phase red")
-            if "redCommand" in raw or (raw.get("supersededFrom", status) != "pending" and "baselineProof" not in raw):
-                item["redCommand"] = _required(raw, "redCommand", identifier)
-            item["redProof"] = raw["redProof"]
-        # The producer records its baseline proof here and prose never may, so
-        # an already-satisfied item carrying it is producer-backed in every
-        # lineage; evidence text proves nothing.
-        if "revalidationRequired" in raw:
-            if not allow_runtime or raw["revalidationRequired"] is not True:
-                raise ValueError(f"behavior {identifier} revalidationRequired is producer-owned state")
-            item["revalidationRequired"] = True
-        if "proofBinding" in raw:
-            if not allow_runtime or not isinstance(raw["proofBinding"], dict):
-                raise ValueError(f"behavior {identifier} proofBinding is producer-owned")
-            item["proofBinding"] = raw["proofBinding"]
-        if "baselineProof" in raw:
-            if not allow_runtime or not isinstance(raw.get("baselineProof"), dict):
-                raise ValueError(_BASELINE_PROOF_RESERVED.format(identifier))
-            item["baselineProof"] = raw["baselineProof"]
-        # Supersession keeps the proof kind it retired, so a post-edit pass
-        # cannot be laundered into a GREEN through RED by being superseded.
-        if "supersededFrom" in raw:
-            if not allow_runtime or raw.get("supersededFrom") not in PROOF_STATUSES | {"already-satisfied", "pending"}:
-                raise ValueError(f"behavior {identifier} supersededFrom is recorded only by a tdd-map supersession")
-            item["supersededFrom"] = raw["supersededFrom"]
-        evidence = _text(raw.get("evidence"))
-        if status in EVIDENCED_STATUSES:
-            if evidence is None:
-                raise ValueError(f"behavior {identifier} status {status} requires evidence")
-            item["evidence"] = evidence
-        elif "evidence" in raw:
-            raise ValueError(
-                f"behavior {identifier} status {status} cannot carry disposition evidence"
-            )
-        if status == "superseded":
-            item["supersededBy"] = _required(raw, "supersededBy", identifier)
-        elif "supersededBy" in raw:
-            raise ValueError(f"behavior {identifier} status {status} cannot carry supersededBy")
-        result.append(item)
+        try:
+            result.append(_validated_item(raw, position, seen, statuses, allow_runtime))
+        except ValueError as exc:
+            errors.append(str(exc))
+    if errors:
+        raise ValueError("; ".join(errors))
     whole = [*existing, *result]
     resolved = terminal_items(whole)
     if terminals is not None:
@@ -312,6 +234,119 @@ def validate_items(
             "a no-change pass maps only dispositioned preservation items"
         )
     return result
+
+
+def _validated_item(
+    raw: object, position: int, seen: set[str], statuses: frozenset[str], allow_runtime: bool,
+) -> JsonObject:
+    if not isinstance(raw, dict):
+        raise ValueError(f"behaviorMap item {position} must be an object")
+    errors: list[str] = []
+
+    def checked(produce: Callable[[], T]) -> T | None:
+        try:
+            return produce()
+        except ValueError as exc:
+            errors.append(str(exc))
+            return None
+
+    unknown = sorted(set(raw) - REQUIRED_FIELDS - OPTIONAL_FIELDS)
+    missing = sorted(REQUIRED_FIELDS - set(raw) - (set() if allow_runtime else {"status"}))
+    if missing:
+        errors.append(f"behaviorMap item {position} is missing fields: {', '.join(missing)}")
+    if unknown:
+        errors.append(f"behaviorMap item {position} has unknown fields: {', '.join(unknown)}")
+    identifier = _text(raw.get("id"))
+    if identifier is None or not IDENTIFIER.fullmatch(identifier):
+        errors.append(
+            "behavior ids must be 2-64 characters: uppercase letters, digits, _ or -"
+        )
+    elif identifier in seen:
+        errors.append(f"behavior id is duplicated: {identifier}")
+    else:
+        seen.add(identifier)
+    label = identifier or f"item {position}"
+    kind = _text(raw.get("kind"))
+    if kind not in KINDS:
+        errors.append(f"behavior {label} kind must be one of: {', '.join(sorted(KINDS))}")
+    status = _text(raw.get("status", "pending" if not allow_runtime else None))
+    if status not in statuses:
+        errors.append(f"behavior {label} status must be one of: {', '.join(sorted(statuses))}")
+    # Recorded evidence carries contract already-satisfied only from the
+    # producer (tdd --phase red), so the loading path admits it.
+    if kind == "contract" and (
+        status == "omitted" or (status == "already-satisfied" and not allow_runtime)
+    ):
+        errors.append(_CONTRACT_DISPOSITION_REFUSED.format(label))
+    if status == "withdrawn" and kind != "contract":
+        errors.append(_PRESERVATION_WITHDRAWN_REFUSED.format(label))
+    refs = checked(lambda: _source_refs(raw.get("sourceRefs"), label, allow_unbound=not allow_runtime))
+    item: JsonObject = {
+        "id": label,
+        "kind": kind,
+        "behavior": checked(lambda: _required(raw, "behavior", label)),
+        "seam": checked(lambda: _required(raw, "seam", label)),
+        "expected": checked(lambda: _required(raw, "expected", label)),
+        "redFailure": checked(lambda: _validate_red_failure(raw.get("redFailure"), label)),
+        "status": status,
+        **({"sourceRefs": refs} if refs is not None else {}),
+        **(checked(lambda: interpretation_fields(raw, label)) or {}),
+    }
+    if "evidence" in raw and not isinstance(raw.get("evidence"), str):
+        errors.append(f"behavior {label} evidence must be text")
+    # The runner stamps the exact proving command at GREEN, so the executed
+    # attack rides beside the declared one wherever the item travels.
+    if "proofCommand" in raw:
+        item["proofCommand"] = checked(lambda: _required(raw, "proofCommand", label))
+    # The RED surface and its proof stay on the item, so GREEN proves the
+    # item against its own RED whichever cycle is open after a sweep.
+    if "redCommand" in raw or "redProof" in raw:
+        if not allow_runtime or not isinstance(raw.get("redProof"), dict):
+            errors.append(f"behavior {label} redCommand and redProof are recorded only by tdd --phase red")
+        else:
+            if "redCommand" in raw or (raw.get("supersededFrom", status) != "pending" and "baselineProof" not in raw):
+                item["redCommand"] = checked(lambda: _required(raw, "redCommand", label))
+            item["redProof"] = raw["redProof"]
+    # The producer records its baseline proof here and prose never may, so
+    # an already-satisfied item carrying it is producer-backed in every
+    # lineage; evidence text proves nothing.
+    if "revalidationRequired" in raw:
+        if not allow_runtime or raw["revalidationRequired"] is not True:
+            errors.append(f"behavior {label} revalidationRequired is producer-owned state")
+        else:
+            item["revalidationRequired"] = True
+    if "proofBinding" in raw:
+        if not allow_runtime or not isinstance(raw["proofBinding"], dict):
+            errors.append(f"behavior {label} proofBinding is producer-owned")
+        else:
+            item["proofBinding"] = raw["proofBinding"]
+    if "baselineProof" in raw:
+        if not allow_runtime or not isinstance(raw.get("baselineProof"), dict):
+            errors.append(_BASELINE_PROOF_RESERVED.format(label))
+        else:
+            item["baselineProof"] = raw["baselineProof"]
+    # Supersession keeps the proof kind it retired, so a post-edit pass
+    # cannot be laundered into a GREEN through RED by being superseded.
+    if "supersededFrom" in raw:
+        if not allow_runtime or raw.get("supersededFrom") not in PROOF_STATUSES | {"already-satisfied", "pending"}:
+            errors.append(f"behavior {label} supersededFrom is recorded only by a tdd-map supersession")
+        else:
+            item["supersededFrom"] = raw["supersededFrom"]
+    evidence = _text(raw.get("evidence"))
+    if status in EVIDENCED_STATUSES:
+        if evidence is None and status not in {"omitted", "withdrawn"}:
+            errors.append(f"behavior {label} status {status} requires evidence")
+        if evidence is not None:
+            item["evidence"] = evidence
+    elif "evidence" in raw:
+        errors.append(f"behavior {label} status {status} cannot carry disposition evidence")
+    if status == "superseded":
+        item["supersededBy"] = checked(lambda: _required(raw, "supersededBy", label))
+    elif "supersededBy" in raw:
+        errors.append(f"behavior {label} status {status} cannot carry supersededBy")
+    if errors:
+        raise ValueError("; ".join(errors))
+    return item
 
 
 def _required(raw: dict[str, object], field: str, identifier: str) -> str:
@@ -394,7 +429,7 @@ def apply_dispositions(
     if not isinstance(value, list):
         raise ValueError("TDD map dispositions must be an array")
     seen: set[str] = set()
-    for position, raw in enumerate(value, 1):
+    def apply_one(position: int, raw: object) -> None:
         if not isinstance(raw, dict):
             raise ValueError(f"TDD map disposition {position} must be an object")
         metadata = {"boundaryInputs", "interpretations", "interpretation", "authority"}
@@ -437,9 +472,9 @@ def apply_dispositions(
         if not revalidate and "status" not in raw:
             if set(raw) - {"id", "sourceRefs", "evidence"} - metadata or not ({"sourceRefs"} | metadata) & raw.keys():
                 raise ValueError(f"behavior {identifier} disposition requires status, revalidate or sourceRefs")
-            continue
+            return
         evidence = _text(raw.get("evidence"))
-        if evidence is None:
+        if evidence is None and status not in {"omitted", "withdrawn"}:
             raise ValueError(f"behavior {identifier} disposition requires evidence")
         if "supersededBy" in raw and status != "superseded":
             raise ValueError(f"behavior {identifier} disposition {status} cannot carry supersededBy")
@@ -449,7 +484,7 @@ def apply_dispositions(
                 mapped["status"] = "pending"
                 for field in ("redCommand", "proofCommand", "proofBinding"):
                     mapped.pop(field, None)
-                continue
+                return
             permitted = {"pending", "green", *DISPOSITION_STATUSES} if revalidate else DISPOSITION_STATUSES
             if revalidate and mapped.get("revalidationRequired") and previous == "red":
                 permitted = permitted | {"red"}
@@ -459,13 +494,13 @@ def apply_dispositions(
                 raise ValueError(f"behavior {identifier} is a {mapped.get('kind')} item at {previous}; "
                                  "only a RED contract or settled preservation can be reopened, or preservation revalidated")
             if revalidate and mapped.get("revalidationRequired"):
-                continue
+                return
             mapped["revalidationRequired"] = True
             if previous in DISPOSITION_STATUSES:
                 mapped["status"] = "pending"
                 mapped.pop("evidence", None)
                 mapped.pop("baselineProof", None)
-            continue
+            return
         if status not in EVIDENCED_STATUSES:
             raise ValueError(f"behavior {identifier} disposition must be one of: "
                              + ", ".join(sorted(EVIDENCED_STATUSES | {"pending"})))
@@ -499,7 +534,18 @@ def apply_dispositions(
         ):
             raise ValueError(f"behavior {identifier} is {previous}; only pending items can be dispositioned")
         mapped["status"] = status
-        mapped["evidence"] = evidence
+        if evidence is None:
+            mapped.pop("evidence", None)
+        else:
+            mapped["evidence"] = evidence
+    errors: list[str] = []
+    for position, raw in enumerate(value, 1):
+        try:
+            apply_one(position, raw)
+        except ValueError as exc:
+            errors.append(str(exc))
+    if errors:
+        raise ValueError("; ".join(errors))
 
 
 def _observation(proof: object) -> tuple[tuple[str, ...], str] | None:
@@ -750,19 +796,3 @@ def all_disposition_only(items: list[JsonObject]) -> bool:
         and (entry.get("status") != "already-satisfied" or producer_proved(entry))
         for entry in items
     )
-
-
-def no_change_item(evidence: str) -> JsonObject:
-    """One explicit fixture/no-change disposition for non-behavioral passes."""
-    return {
-        "id": "BM_NO_CHANGE",
-        "kind": "preservation",
-        "basis": "governing evidence",
-        "behavior": "No production behavior changes in this pass",
-        "seam": "workflow preflight evidence",
-        "expected": "TDD is not required",
-        "redFailure": "unexpected production behavior change",
-        "status": "omitted",
-        "evidence": evidence,
-        "sourceRefs": [],
-    }

@@ -18,7 +18,7 @@ if str(ROOT) not in sys.path:
 
 from hooks.lib import behavior_map  # noqa: E402
 from hooks.lib.repo_identity import resolve_repo_identity  # noqa: E402
-from hooks.lib.tdd_workflow import completion_blockers, edit_blockers  # noqa: E402
+from hooks.lib.tdd_workflow import current_map, edit_blockers  # noqa: E402
 from hooks.lib.workflow_state import read_workflow  # noqa: E402
 from hooks.tests.support import pending_behavior  # noqa: E402
 # Module alias only: binding the TestCase name here would make unittest.main
@@ -49,11 +49,11 @@ class MappedTddPolicyGateTests(unittest.TestCase):
                   "interpretation": "database truthiness", "authority": "governing requirement"}
         document["behaviorMap"][0].update(choice)
         path.write_text(json.dumps(document))
-        result = h.cli("record-preflight", "--repo", str(h.repo), "--slug", slug,
+        result = h.cli("record", "preflight", "--repo", str(h.repo), "--slug", slug,
                        "--workflow-id", workflow_id, "--input", str(path))
         self.assertEqual(result.returncode, 0, "INTERPRETATION_METADATA_REFUSED: " + result.stdout + result.stderr)
         evidence_id = json.loads(result.stdout)["evidenceId"]
-        recorded = h.cli("evidence", "--repo", str(h.repo), "--evidence-id", evidence_id)
+        recorded = h.cli("evidence", "--full", "--repo", str(h.repo), "--evidence-id", evidence_id)
         self.assertEqual(recorded.returncode, 0, recorded.stderr)
         retained = json.loads(recorded.stdout)["document"]["document"]["behaviorMap"][0]
         self.assertEqual(json.dumps({key: retained[key] for key in choice}), json.dumps(choice))
@@ -364,18 +364,18 @@ class MappedTddPolicyGateTests(unittest.TestCase):
         slug, workflow_id = h.begin_with_map([pending_behavior("BM_CHOICE")])
         path = h.tmp / f"{slug}-preflight.json"
         document = json.loads(path.read_text())
-        document["openQuestions"] = "Which truthiness governs?"
         document["behaviorMap"][0].update(boundaryInputs=["SELECT 'x'"],
                                         interpretations=["host truthiness", "database truthiness"])
         path.write_text(json.dumps(document))
-        result = h.cli("record-preflight", "--repo", str(h.repo), "--slug", slug,
+        result = h.cli("record", "preflight", "--repo", str(h.repo), "--slug", slug,
                        "--workflow-id", workflow_id, "--input", str(path))
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         state = json.loads(h.cli("status", "--repo", str(h.repo)).stdout)
         self.assertEqual(state["preflight"], "pending", "UNSETTLED_CHOICE_LOST")
         summary = h.cli("summary", "--repo", str(h.repo))
         self.assertIn(state["preflightLatestEvidence"], summary.stdout)
-        stored = h.cli("evidence", "--repo", str(h.repo), "--evidence-id", state["preflightLatestEvidence"])
+        stored = h.cli("evidence", "--full", "--repo", str(h.repo), "--evidence-id", state["preflightLatestEvidence"])
+        document["behaviorMap"][0].pop("basis", None)
         self.assertEqual(json.loads(stored.stdout)["document"]["document"], document)
         from hooks.lib.workflow_state import ready_for_edit
         ready, missing = ready_for_edit(resolve_repo_identity(h.repo), "app.py")
@@ -448,6 +448,32 @@ class MappedTddPolicyGateTests(unittest.TestCase):
                 self.assertIn("--from-evidence", result.stderr)
         self.assertEqual(counter.read_text(), "x")
 
+    def test_red_and_green_receipts_must_use_the_same_working_directory(self) -> None:
+        h = self.harness
+        slug, _ = h.begin_with_map([pending_behavior("BM_CWD", red_failure="CWD_FAIL")])
+        for name, body in (("fail", "self.fail('CWD_FAIL')"), ("pass", "self.assertTrue(True)")):
+            sub = h.repo / name
+            sub.mkdir()
+            (sub / "test_local.py").write_text(
+                "import unittest\nclass Cases(unittest.TestCase):\n"
+                f" def test_case(self): {body}\n", encoding="utf-8")
+        refs = []
+        for name in ("fail", "pass"):
+            sub = h.repo / name
+            executed = h.cli("verify", "--repo", str(h.repo), "--slug", slug, "--observed",
+                             "--run-cwd", str(sub), "--", sys.executable, "-m", "unittest", "-v", "test_local")
+            receipt = json.loads(executed.stdout.splitlines()[-1])
+            refs.append(receipt["evidenceId"] + ":" + str(receipt["runIndex"]))
+        red = h.cli("tdd", "--repo", str(h.repo), "--slug", slug, "--phase", "red",
+                    "--behavior-id", "BM_CWD", "--from-evidence", refs[0],
+                    "--test-id", "test_local.Cases.test_case")
+        self.assertEqual(red.returncode, 0, red.stdout + red.stderr)
+        green = h.cli("tdd", "--repo", str(h.repo), "--slug", slug, "--phase", "green",
+                      "--behavior-id", "BM_CWD", "--from-evidence", refs[1],
+                      "--test-id", "test_local.Cases.test_case")
+        self.assertEqual(green.returncode, 2, "CROSS_CWD_CYCLE_ACCEPTED " + green.stdout + green.stderr)
+        self.assertEqual(h.evidence()["behaviorMap"][0]["status"], "red", "CROSS_CWD_CYCLE_ACCEPTED")
+
     def test_reentry_recovers_late_interpretation_hold(self) -> None:
         h = self.harness
         slug, workflow_id = h.begin_with_map([pending_behavior("BM_HOLD")])
@@ -457,7 +483,7 @@ class MappedTddPolicyGateTests(unittest.TestCase):
                       interpretations=["symbolic name", "object id"])])
         path = h.tmp / "interrupted-update.json"
         path.write_text(json.dumps(update))
-        command = [sys.executable, str(tdd_repairs.WORKFLOW), "tdd-map", "--repo", str(h.repo),
+        command = [sys.executable, str(tdd_repairs.WORKFLOW), "record", "map", "--repo", str(h.repo),
                    "--slug", slug, "--workflow-id", workflow_id, "--input", str(path)]
         before = h.evidence()
         # Hold a real competing writer so cancellation observes an open ledger,
@@ -549,14 +575,14 @@ class MappedTddPolicyGateTests(unittest.TestCase):
             green = h.mapped_tdd(slug, "green", command)
             self.assertEqual(green.returncode, 0, green.stdout + green.stderr)
             historical_id = h.status()["tddEvidence"]
-            historical = h.ok("evidence", "--evidence-id", historical_id)
+            historical = h.ok("evidence", "--full", "--evidence-id", historical_id)
             update = h.json_file("late-input.json", dict(reassessment="new divergent input", dispositions=[
                 dict(id="BM_ATTACK", boundaryInputs=["value", "other"], interpretations=["one key", "all keys"],
                      interpretation="all keys", authority="requested read contract")]))
-            changed = h.ok("tdd-map", "--slug", slug, "--workflow-id", wid, "--input", str(update))
+            changed = h.ok("record", "map", "--slug", slug, "--workflow-id", wid, "--input", str(update))
             self.assertEqual(changed["inputEvidence"]["BM_ATTACK"]["missing"], ["other"])
             disposition = h.fixed_disposition(wid, intake, dict(h.ZERO_DOMAIN))
-            refused = h.cli("advisor-disposition", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
+            refused = h.cli("record", "advisor-disposition", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
                             "--findings", "addressed", "--input", str(disposition))
             self.assertEqual(refused.returncode, 2, "UNCOVERED_FINDING_CLOSED: " + refused.stdout + refused.stderr)
             self.assertIn("BM_ATTACK", refused.stderr)
@@ -564,10 +590,10 @@ class MappedTddPolicyGateTests(unittest.TestCase):
             green = h.mapped_tdd(slug, "green", command)
             self.assertEqual(green.returncode, 0, green.stdout + green.stderr)
             disposition = h.fixed_disposition(wid, intake, dict(h.ZERO_DOMAIN))
-            closed = h.cli("advisor-disposition", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
+            closed = h.cli("record", "advisor-disposition", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
                            "--findings", "addressed", "--input", str(disposition))
             self.assertEqual(closed.returncode, 0, closed.stdout + closed.stderr)
-            self.assertEqual(h.ok("evidence", "--evidence-id", historical_id), historical)
+            self.assertEqual(h.ok("evidence", "--full", "--evidence-id", historical_id), historical)
         finally:
             h.tearDown()
 
@@ -606,7 +632,7 @@ class MappedTddPolicyGateTests(unittest.TestCase):
         self.assertEqual(green.returncode, 0, marker + ": " + green.stdout + green.stderr)
         identity = resolve_repo_identity(self.harness.repo)
         state = read_workflow(identity)
-        self.assertEqual([b for b in completion_blockers(identity, state) if "reassess" in b.lower()], [], marker)
+        self.assertFalse(any(item.get("revalidationRequired") for item in current_map(identity, state)[0]), marker)
         self.assertEqual([b for b in edit_blockers(identity, state) if "reassess" in b.lower()], [], marker)
         second = self.harness.tdd(slug, "red", "BM_B", self.harness.write_unittest(3, "VALUE_NOT_TWO"))
         self.assertEqual(second.returncode, 0, marker + ": " + second.stdout + second.stderr)

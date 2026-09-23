@@ -7,7 +7,6 @@ import json
 import os
 import stat
 import subprocess
-import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,11 +22,6 @@ _PATH_POLICY_FILE = (
 )
 _path_policy = None
 
-CODE_SUFFIXES = {
-    ".py", ".pyi", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".sh", ".bash",
-    ".go", ".rs", ".rb", ".java", ".kt", ".kts", ".swift", ".c", ".cc", ".cpp",
-    ".h", ".hpp", ".cs", ".php", ".scala", ".sql", ".proto",
-}
 DOC_SUFFIXES = {".md", ".markdown", ".rst", ".adoc"}
 SCRATCH_PARTS = {"scratchpad", ".scratch", ".gitnexus"}
 
@@ -52,16 +46,37 @@ def repo_state_dir(identity: RepoIdentity) -> Path:
 
 
 def _session_dir(session: str) -> Path:
-    """Where one session's repository associations live.
-
-    The shared parent is secured here rather than left to the atomic writer:
-    that writer secures only the directory it writes into, and `mkdir` with
-    `parents=True` would create `sessions` itself under the process umask,
-    leaving every session id in this estate world-listable. Repository keys are
-    numeric checksums, so the literal name cannot collide with a
-    `repo_state_dir`.
-    """
+    """Secure the shared parent before writing this session's advisory epoch."""
     return secure_dir(state_root() / "sessions") / session
+
+
+def advisory_changed(session: str | None, repo_key: str, event: str, content: str) -> bool:
+    """Emit each advisory change once while this session still holds its context."""
+    if session is None:
+        return True
+    try:
+        directory = secure_dir(_session_dir(session))
+        with _flock(directory / ".advisory.lock"):
+            path = directory / "advisory-epoch.json"
+            prior = read_json(path) or {}
+            key = f"{repo_key}:{event}"
+            if prior.get(key) == content:
+                return False
+            atomic_write_json(path, {**prior, key: content})
+        return True
+    except OSError:
+        return True
+
+
+def reset_advisory_epoch(session: str | None) -> None:
+    if session is None:
+        return
+    try:
+        directory = secure_dir(_session_dir(session))
+        with _flock(directory / ".advisory.lock"):
+            (directory / "advisory-epoch.json").unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def atomic_write_bytes(path: Path, value: bytes) -> None:
@@ -112,56 +127,12 @@ def _flock(path: Path, *, blocking: bool = True) -> Iterator[bool]:
         os.close(handle)
 
 
-@contextlib.contextmanager
-def state_lock(identity: RepoIdentity) -> Iterator[None]:
-    """Serialize every writer for one repository's workflow state."""
-    with _flock(repo_state_dir(identity) / ".workflow.lock"):
-        yield
-
-
 def read_json(path: Path) -> dict[str, object] | None:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError):
         return None
     return value if isinstance(value, dict) else None
-
-
-def stop_session_swap(identity: RepoIdentity, session: str, key: str, value: str) -> str | None:
-    """Compare-and-set one per-session Stop-feedback key under the state lock.
-
-    Returns the previous value. Fail-soft: Stop feedback must never break the
-    hook, so storage errors surface on stderr and read as no-previous-value.
-    """
-    try:
-        with state_lock(identity):
-            path = repo_state_dir(identity) / "stop" / f"{session}.json"
-            session_state = read_json(path) or {}
-            previous = session_state.get(key)
-            session_state.update({"schemaVersion": 1, key: value})
-            atomic_write_json(path, session_state)
-            return previous if isinstance(previous, str) else None
-    except OSError as exc:
-        print(f"Stop session state unavailable: {exc}", file=sys.stderr)
-        return None
-
-
-def record_session_association(session: str, identity: RepoIdentity) -> None:
-    """Record that this session edited in this repository, once.
-
-    One file per repository per session, so every write has a single writer and
-    needs no lock. The marker is never rewritten: it says the session worked
-    here, which cannot become less true, and rewriting it on every edit would
-    churn the file for nothing. Fail-soft like all Stop feedback: an association
-    only routes that feedback, so a storage failure must never change the edit
-    hook's exit status, its review invalidation, or the quality gate it runs.
-    """
-    try:
-        path = _session_dir(session) / f"{identity.key}.json"
-        if not path.exists():
-            atomic_write_json(path, {"schemaVersion": 1, "repo": identity.as_dict(), "at": utc_timestamp()})
-    except OSError as exc:
-        print(f"session association unavailable: {exc}", file=sys.stderr)
 
 
 def utc_timestamp() -> str:
@@ -250,11 +221,6 @@ def is_docs_or_scratch(path: str) -> bool:
     return Path(normalized).suffix.lower() in DOC_SUFFIXES or bool(parts & SCRATCH_PARTS) or normalized.startswith("docs/")
 
 
-def is_code_path(path: str) -> bool:
-    normalized = path.replace("\\", "/")
-    return not is_docs_or_scratch(normalized) and Path(normalized).suffix.lower() in CODE_SUFFIXES
-
-
 def is_reviewable_path(path: str) -> bool:
     return not is_docs_or_scratch(path.replace("\\", "/"))
 
@@ -284,10 +250,6 @@ def is_governance_path(path: str) -> bool:
 
 def reviewable_paths(paths: Iterable[str]) -> list[str]:
     return sorted({path for path in paths if is_reviewable_path(path)})
-
-
-def code_paths(paths: Iterable[str]) -> list[str]:
-    return sorted({path for path in paths if is_code_path(path)})
 
 
 def _file_mode(path: Path) -> str | None:

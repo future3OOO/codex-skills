@@ -36,6 +36,7 @@ from hooks.tests.support import (  # noqa: E402
     POST_EDIT,
     WORKFLOW,
     build_document,
+    empty_advisor_intake,
     fixture_env,
     pending_behavior,
     run_git,
@@ -134,7 +135,8 @@ class MapAdvisoryTests(unittest.TestCase):
         self.intake()
         identity = resolve_repo_identity(self.repo)
         workflow_id = instance_id(read_workflow(identity))
-        record_advisor_result(identity, self.slug, workflow_id, "preflight", "codex-advisor", "completed")
+        record_advisor_result(identity, self.slug, workflow_id, "preflight", "codex-advisor", "completed",
+                              intake=empty_advisor_intake(self.tmp, self.slug, workflow_id))
         advisor_disposition(identity, self.slug, workflow_id, "preflight", "none")
         document = self.tmp / "preflight.json"
         document.write_text(json.dumps(build_document("map advisory fixture", behavior_map=[pending_behavior(
@@ -142,7 +144,7 @@ class MapAdvisoryTests(unittest.TestCase):
             expected="compute(1) is 3", red_failure="FIXTURE_VALUE_NOT_THREE",
         )])), encoding="utf-8")
         recorded = self.workflow(
-            "record-preflight", "--slug", self.slug, "--workflow-id", workflow_id, "--input", str(document),
+            "record", "preflight", "--slug", self.slug, "--workflow-id", workflow_id, "--input", str(document),
         )
         self.assertEqual(recorded.returncode, 0, recorded.stdout + recorded.stderr)
         self.tdd_runner("red", *runner)
@@ -237,6 +239,14 @@ class MapAdvisoryTests(unittest.TestCase):
         stored = (self.advisory_cache.read_bytes(), self.advisory_cache.stat().st_mtime_ns)
         self.assertEqual(self.hook(), ([], 1), f"{marker}: an identical result must scan once and publish nothing")
         self.assertEqual((self.advisory_cache.read_bytes(), self.advisory_cache.stat().st_mtime_ns), stored, marker)
+        compacted = subprocess.run(
+            [sys.executable, str(ROOT / "hooks" / "advisory-epoch-reset.py")],
+            cwd=self.repo, env=self.env, text=True,
+            input=json.dumps({"session_id": SESSION, "trigger": "auto"}),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+        )
+        self.assertEqual(compacted.returncode, 0, compacted.stderr)
+        self.assertEqual(self.hook(), (lines, 1), f"{marker}: held notice did not return after compaction")
         # A test-file edit is reviewable but not a production edit (the same
         # exclusion production_changes applies), so it neither advises nor scans.
         (self.repo / "tests" / "test_app.py").write_text(TESTS + "\n# touched\n", encoding="utf-8")
@@ -338,8 +348,8 @@ class MapAdvisoryTests(unittest.TestCase):
         self.assertEqual(len(lines), 1, marker)
         self.assertIn("tests/test_app.py", lines[0], marker)
 
-    def test_a_new_workflow_notifies_again(self) -> None:
-        marker = "NEW_WORKFLOW_SUPPRESSED_BY_OLD_RESULT"
+    def test_identical_notice_in_new_workflow_stays_quiet_in_same_epoch(self) -> None:
+        marker = "UNCHANGED_NOTICE_REEMITTED_IN_EPOCH"
         self.begin_pass(*UNITTEST, COMPUTE)
         self.edit_compute()
         self.assertEqual(len(self.hook()[0]), 1, marker)
@@ -352,8 +362,7 @@ class MapAdvisoryTests(unittest.TestCase):
         self.begin_pass(*UNITTEST, COMPUTE)
         self.edit_compute(3)
         lines, _ = self.hook()
-        self.assertEqual(len(lines), 1, marker)
-        self.assertIn("tests/test_app.py", lines[0], marker)
+        self.assertEqual(lines, [], marker)
 
     def test_the_hook_delivers_under_a_live_mcp_holder(self) -> None:
         # The hook path delivers the notice while a live gitnexus MCP server
