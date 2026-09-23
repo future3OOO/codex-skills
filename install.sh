@@ -16,6 +16,9 @@ done
 
 rsync -a "${EXCLUDES[@]}" "$SRC/hooks" "$SRC/skills" "$DEST/"
 cp "$SRC/AGENTS.md" "$DEST/AGENTS.md"
+# Agent roles: without one, Codex hides spawn_agent's agent_type and the
+# dispatch gate's explorer exemption cannot match. User roles are kept.
+mkdir -p "$DEST/agents" && cp "$SRC"/agents/*.toml "$DEST/agents/"
 chmod +x "$DEST"/hooks/*.py
 
 # rsync excludes stop new copies only; remove matching artifacts already live.

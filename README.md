@@ -25,6 +25,9 @@ The project is the source of truth; the estate is an install artifact.
   GitNexus hook stays live-managed).
 - `scripts/` — `estate_xform.py` + `sync-from-upstream.sh` /
   `sync-to-upstream.sh`.
+- `agents/` — agent roles install copies into `~/.codex/agents/` (user roles
+  are kept). `explorer.toml` makes Codex offer `agent_type`, which the dispatch
+  gate's pre-preflight explorer exemption needs.
 - `docs/` — historical design docs.
 - Tests exist in the repo for CI; `install.sh` excludes them from the estate.
 
