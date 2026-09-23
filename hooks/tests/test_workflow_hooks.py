@@ -378,12 +378,41 @@ class WorkflowHookTests(HookHarness):
                 decision = json.loads(result.stdout or "{}").get("hookSpecificOutput", {})
                 self.assertEqual(decision.get("permissionDecision") == "deny", denied, "UNRELATED_LEDGER_BLOCKED")
 
+    def test_installed_explorer_role_admits_exploration_before_preflight(self) -> None:
+        # Codex offers spawn_agent's agent_type only when an agent role is
+        # configured; without one a real spawn carries no agent_type and the
+        # gate's explorer exemption can never match.
+        home = self.tmp / "home"
+        (home / ".codex" / "agents").mkdir(parents=True)
+        (home / ".codex" / "agents" / "user.toml").write_text("name = \"user\"\n", encoding="utf-8")
+        env = {**self.env, "HOME": str(home), "CODEX_HOME": str(home / ".codex")}
+        install = subprocess.run(["bash", str(ROOT / "install.sh")], env=env, text=True, capture_output=True, check=False)
+        self.assertEqual(install.returncode, 0, install.stderr)
+        role = home / ".codex" / "agents" / "explorer.toml"
+        self.assertTrue(role.is_file(), "EXPLORER_ROLE_NOT_INSTALLED")
+        role_text = role.read_text(encoding="utf-8")
+        self.assertIn('name = "explorer"', role_text, "EXPLORER_ROLE_NOT_INSTALLED")
+        self.assertIn("description = ", role_text, "EXPLORER_ROLE_NOT_INSTALLED")
+        self.assertTrue((home / ".codex" / "agents" / "user.toml").is_file(), "USER_ROLE_REMOVED")
+        self.assertEqual(self.state("begin", "--slug", "explore").returncode, 0)
+        for spawn, denied in (({"agent_type": "explorer"}, False), ({"fork_turns": "none"}, True)):
+            with self.subTest(spawn=spawn):
+                result = subprocess.run(
+                    [sys.executable, str(home / ".codex" / "hooks" / "rcf-intake-gate.py")], cwd=self.repo, env=env,
+                    text=True, capture_output=True, check=False,
+                    input=json.dumps({"tool_name": "collaborationspawn_agent", "cwd": str(self.repo), "session_id": SESSION,
+                                      "tool_input": {"task_name": "explore", "message": "probe", **spawn}}),
+                )
+                decision = json.loads(result.stdout or "{}").get("hookSpecificOutput", {})
+                self.assertEqual(decision.get("permissionDecision") == "deny", denied, "EXPLORER_ROLE_NOT_INSTALLED")
+
     def test_delegation_waits_for_current_lead_proof(self) -> None:
-        def dispatch(tool: str = "collaborationspawn_agent", role: str = "default", cwd: Path | None = None) -> dict:
+        def dispatch(tool: str = "collaborationspawn_agent", role: str | None = None, cwd: Path | None = None) -> dict:
+            spawn = {"task_name": "delegate", "message": "probe", **({"agent_type": role} if role else {})}
             result = subprocess.run(
                 [sys.executable, str(INTAKE)], cwd=self.repo, env=self.env, text=True,
                 input=json.dumps({"tool_name": tool, "cwd": str(cwd or self.repo),
-                                  "session_id": SESSION, "tool_input": {"agent_type": role}}),
+                                  "session_id": SESSION, "tool_input": spawn}),
                 capture_output=True, check=False,
             )
             self.assertEqual(result.returncode, 0, result.stderr)

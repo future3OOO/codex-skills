@@ -6,6 +6,20 @@ Issue bodies own implementation scope; this record preserves decisions and their
 status. New decisions supersede earlier ones explicitly; observations and open
 acceptance gaps are not completed delivery.
 
+## 2026-09-23 — Estate ships the explorer agent role
+
+**Decision:** `install.sh` installs `agents/explorer.toml` into
+`~/.codex/agents/`, keeping user roles. Codex exposes `spawn_agent`'s
+`agent_type` only when a role is configured; the DeepSeek router roles were
+disabled on 2026-09-20, which silently removed `agent_type` and left the
+dispatch gate's pre-preflight explorer exemption unreachable. Gate behavior is
+unchanged: spawns stay blocked from preflight until verification by design.
+Dispatch tests now use real-shaped spawn payloads, and one attack runs the real
+installer before driving the installed gate.
+
+**Delivery:** Pass `explorer-role` on `fix/explorer-role-estate`. Advisor
+consults skipped at the maintainer's direction for this trivial change.
+
 ## 2026-09-21 — Session relocation via marker, kill, and resume
 
 **Decision:** [#83](https://github.com/future3OOO/codex-skills/issues/83) is
