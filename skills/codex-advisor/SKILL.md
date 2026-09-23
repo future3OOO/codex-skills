@@ -74,9 +74,10 @@ whether it is behavioral or non-behavioral.
 Run after implementation, verification, and the required native delegate code review. This independent checkpoint challenges the candidate and supplied evidence rather than trusting the lead or delegate verdict. The wrapper sends the
 recorded original request once, the checkpoint's retained advisor projection,
 the current governing-design declaration (a deepened design records as new
-evidence), and one direct `passStartOid^{tree} -> activeCandidateTree` diff:
-test-classified hunks arrive inside their enclosing definition (git function
-context), production hunks keep ordinary context. The advisor answers in order: what the
+evidence), and one direct `passStartOid^{tree} -> activeCandidateTree` diff in
+git's ordinary context, each deleted file as its header and line count. A prompt
+over the codex transport's 1,048,576 characters is refused, naming its size,
+before the provider runs. The advisor answers in order: what the
 original request and public Interface promise; which production operations can
 falsify each load-bearing promise;
 which of those are unattacked through the real Seam in the supplied evidence;
@@ -153,13 +154,17 @@ resumes through Claude and vice versa.
 
 Substitute `--design-absent "<specific reason>"` when the pass genuinely has
 no design artifact. The operator-selected default budget is 600 words, and
-budgets above 1,200 are refused. Phased consults refuse `--packet`, `--base-ref`,
-and `--fresh`; the workflow checkpoint owns payload anchors and session mode.
+budgets above 1,200 are refused. Phased consults refuse `--fresh`; the workflow
+checkpoint owns payload anchors and session mode.
 
-The prompt carries one complete schema-version-1 advisor projection and one
-direct current-pass diff. Their sizes and digests are reported on stderr as
-`codex_advisor_evidence`, and the assembled prompt reports
-`codex_advisor_prompt bytes_total`. With `--provider claude`, the claudex
+The checkpoint lists the evidence channels (intent, advisor projection, finding
+ledger, late RED, current-pass diff) in order; the wrapper frames each one it lists
+and reports its size and digest on stderr as `codex_advisor_evidence`, and the
+assembled prompt reports `codex_advisor_prompt bytes_total`. A phased consult
+records the whole envelope, then prints a digest of at most ~2KB (verdict,
+finding ids and claims, intake evidence id); `workflow.py evidence --full
+--evidence-id <intake>` reads the envelope back. If recording refuses, the whole
+answer prints and the wrapper exits 2. Provider stderr is shown as a 2000-byte tail. With `--provider claude`, the claudex
 window knobs (`CLAUDE_CODE_MAX_CONTEXT_TOKENS`, `CLAUDE_CODE_AUTO_COMPACT_WINDOW`,
 `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`) pass through to the delegate exactly when
 the alias block configures them.
@@ -167,7 +172,7 @@ the alias block configures them.
 Before the expensive consult the wrapper runs only the read-only
 `workflow.py checkpoint --phase <phase>` query. The checkpoint validates stage
 readiness, pass-owned projection evidence, governed-design identity, and the
-current candidate, then returns the create/resume mode and direct diff anchors.
+current candidate, then returns the create/resume mode and the channel manifest.
 A delayed result is recorded with that checkpoint candidate and the mutation
 transaction recaptures it before commit.
 
@@ -230,69 +235,33 @@ pending, but the immutable intake remains closable under the same workflow ID.
 
 The wrapper itself records the raw result. An intake with no material
 finding closes at recording. A material behavioral finding rides the pass as a
-map-owned attack and is dispositioned once that attack is GREEN; a
-nonbehavioral or measured-false finding is dispositioned whenever its
-measurement exists; findings block completion only:
+map-owned attack (`record preflight` refuses a map that does not own it through
+finding `sourceRefs`) and is dispositioned once that attack is GREEN; findings
+block completion only. Identity, stage, intake and context come from the active
+workflow:
 
 ```bash
-python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" \
-  advisor-disposition --repo "$PWD" --slug "<task>" --workflow-id "<active-workflowId>" --stage preflight --findings addressed --input <document>
+python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" record advisor-disposition \
+  --finding SPEC-1 --fixed --evidence-ref <evidenceId>:<runIndex> --behavior-id BM_X
+python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" record advisor-disposition \
+  --finding SPEC-2 --rejected --evidence-ref <evidenceId>:<runIndex> --reason "<measured premise and domain>"
 ```
 
-Dispositions and `pause` are bound to the active workflow instance: a slug or
-workflowId that does not match is rejected without mutating state.
-
-Use `--findings addressed` with `--input <document>` when the consult produced
-findings. The strict path carries only the immutable intake evidence identity and
-dispositions; it never restates a finding:
-
-```json
-{"context":{"workflowId":"<active-workflowId>","candidateTree":"<40-hex Git tree>","prHead":"<optional HEAD>"},"intakeEvidenceId":"<advisor intake evidence>","dispositions":[{"finding_id":"SPEC-1","status":"fixed","kind":"nonbehavioral","premise":{"claim":"...","command":"...","result":"..."},"occurrence":{"domain":"...","count":0,"complete":true,"command":"...","result":"..."},"materialConsequence":{"claim":"...","command":"...","result":"..."},"evidence":"verified correction"}]}
-```
-
-For an existing executed measurement, prefer the receipt form:
-
-```json
-{"intakeEvidenceId":"<intake>","dispositions":[{"finding_id":"SPEC-1","status":"fixed","reason":"<finding-specific premise, observed occurrence/domain and consequence judgment>","evidenceRefs":["<evidenceId>:<runIndex>"]}]}
-```
-
-The recorder derives current context and immutable finding kind, validates owned
-execution/target references, and preserves the measured judgment without copying
-commands or results. Fixed behavioral findings still require their owning attack
-GREEN through RED; a successful unrelated command is not a semantic proof. Cite
-why the referenced operations cover the finding's supported domain. Rejections
-and report-only judgments still require the measured premise/consequence reasoning.
-No execution occurs merely to disposition. Historical full-format documents remain
-supported. For that legacy form, every disposition carries `kind`, `premise`, `occurrence`, and `materialConsequence` at both stages.
-A behavioral finding rides the pass undispositioned: it directly owns Behavior
-Map attack items through finding `sourceRefs` (record-preflight refuses an
-unowned pending behavioral finding; tdd-map adds owners later), and `fixed`
-requires an owning attack GREEN through its recorded RED plus a zero-count
-complete-domain occurrence over the finding's recorded surface.
-`report-only` requires a false material consequence, and a behavioral one an
-owning attack the tdd producer proved (GREEN or recorded baseline); a command or
-evidence citing a temporary-directory path refuses. `report-only`, `rejected-with-evidence`, and `fixed` carry `evidence`; `accepted-follow-up` carries `reference`. The legacy
-findings-plus-dispositions form remains compatible for measured nonbehavioral
-results. A refusal mutates no state.
-When legacy syntax help is needed, inspect the disposition and governed-design shape table, generated from
-its installed validator declarations, with `python3 -I -c 'import sys; from pathlib import Path; sys.path.insert(0, str(Path.home() / ".codex")); from hooks.lib.workflow_documents import DOCUMENT_SHAPE_TABLE; print(DOCUMENT_SHAPE_TABLE)'`.
+`--fixed --behavior-id` mints the finding's `sourceRefs` on that item and needs it
+GREEN through its RED; a recurring finding also takes `--reason` with its mechanism. `--rejected` needs a measured false premise or zero
+occurrence, `--report-only` a false material consequence (behavioral: an owning
+attack the tdd producer proved), `--follow-up REF` its tracker reference; each
+takes `--reason`. Evidence citing a temporary-directory path refuses. The document
+forms, including `--findings none`, remain: `record advisor-disposition --help`
+prints their shapes. A refusal mutates no state.
 
 For an unavailable consult, record the full
 slug- and instance-bound command; no disposition is needed and final review
 has no unavailable route:
 
 ```bash
-python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" \
-  advisor-result --repo "$PWD" --slug "<task>" --workflow-id "<active-workflowId>" \
-  --stage preflight --source codex-advisor \
-  --verdict unavailable --reason "<measured transport failure>"
+python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" record advisor-result \
+  --stage preflight --verdict unavailable --reason "<measured transport failure>"
 ```
 
-After validating final-review output, record the final disposition the same
-way:
-
-```bash
-python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" \
-  advisor-disposition --repo "$PWD" --slug "<task>" --workflow-id "<active-workflowId>" \
-  --stage final --findings addressed --input <disposition.json>
-```
+After validating final-review output, record the final dispositions the same way.

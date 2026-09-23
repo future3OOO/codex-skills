@@ -9,6 +9,7 @@ import sys
 import tempfile
 import uuid
 from pathlib import Path
+from .behavior_map import initial_items, map_errors
 from .state_store import utc_timestamp
 
 JsonObject = dict[str, object]
@@ -28,10 +29,6 @@ DISPOSITION_REQUIREMENTS = {
 DISPOSITION_SHAPES = {status: f'{{"finding_id":non-empty text,"status":"{status}","kind":"behavioral" or "nonbehavioral"}} plus {requirements}' for status, requirements in DISPOSITION_REQUIREMENTS.items()}
 
 
-def _disposition_error(status: str, message: str) -> str:
-    return f"{message}; {status} expected shape: {DISPOSITION_SHAPES[status]}"
-
-
 def load_json(path: str, *, label: str) -> JsonObject:
     try:
         raw = sys.stdin.read() if path == "-" else Path(path).read_text(encoding="utf-8")
@@ -43,6 +40,38 @@ def load_json(path: str, *, label: str) -> JsonObject:
     return value
 
 
+def _unique(pairs: list[tuple[str, object]]) -> JsonObject:
+    result: JsonObject = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"document repeats field: {key}")
+        result[key] = value
+    return result
+
+
+def preflight_document(path: str) -> JsonObject:
+    """The contract and its Behavior Map; every violation is named in one refusal."""
+    try:
+        raw = sys.stdin.read() if path == "-" else Path(path).read_text(encoding="utf-8")
+        value = json.loads(raw, object_pairs_hook=_unique)
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        raise ValueError(f"cannot read preflight JSON: {exc}") from exc
+    if not isinstance(value, dict):
+        raise ValueError("preflight document must be a JSON object")
+    errors = [message for message, bad in (
+        (f"preflight document has unknown sections: {', '.join(sorted(set(value) - PREFLIGHT_SECTIONS))}",
+         set(value) - PREFLIGHT_SECTIONS),
+        ("preflight authoritativeContract must be non-empty text", not _text(value.get("authoritativeContract"))),
+    ) if bad] + map_errors(value.get("behaviorMap"), allow_runtime=False)
+    if errors:
+        raise ValueError("; ".join(errors))
+    return {"authoritativeContract": str(value["authoritativeContract"]).strip(),
+            "behaviorMap": initial_items(value["behaviorMap"])}
+
+
+PREFLIGHT_SECTIONS = frozenset({"authoritativeContract", "behaviorMap"})
+
+
 def advisor_envelope(
     path: str, *, slug: str, workflow_id: str, stage: str, producer: str,
 ) -> tuple[JsonObject, str]:
@@ -50,16 +79,7 @@ def advisor_envelope(
     try:
         raw = sys.stdin.buffer.read() if path == "-" else Path(path).read_bytes()
         text = raw.decode("utf-8")
-
-        def unique(pairs: list[tuple[str, object]]) -> JsonObject:
-            result: JsonObject = {}
-            for key, value in pairs:
-                if key in result:
-                    raise ValueError(f"advisor envelope repeats field: {key}")
-                result[key] = value
-            return result
-
-        value = json.loads(text, object_pairs_hook=unique)
+        value = json.loads(text, object_pairs_hook=_unique)
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise ValueError(f"cannot read advisor envelope JSON: {exc}") from exc
     if not isinstance(value, dict) or set(value) != {"schemaVersion", "findings", "verdict"}:
@@ -168,28 +188,16 @@ def design_absence(reason: str) -> JsonObject:
     return validate_design_declaration({"schemaVersion": 1, "status": "absent", "reason": reason})
 
 
-def _gate(value: object, message: str) -> JsonObject:
+def validate_gate_result(value: object) -> JsonObject:
+    """The gate verdict as recorded: its outcome and errors, the only parts any
+    reader consumes; the full findings stay in the gate's own output."""
     if not isinstance(value, dict) or not all((
         isinstance(value.get("checks"), list),
         isinstance(value.get("gateVersion"), str),
         isinstance(value.get("ok"), bool),
     )):
-        raise ValueError(message)
-    return value
-
-
-def gate_verdict(path: str) -> JsonObject:
-    value = _gate(
-        load_json(path, label="gate"),
-        "input is not the bundled gate's JSON verdict (gateVersion, checks, ok)",
-    )
-    if not value["ok"]:
-        raise ValueError("the gate verdict is ok=false; fix the baseline before recording production-code")
-    return value
-
-
-def validate_gate_result(value: object) -> JsonObject:
-    return _gate(value, "quality-gate output is not the bundled gate's JSON verdict")
+        raise ValueError("quality-gate output is not the bundled gate's JSON verdict")
+    return {"ok": value["ok"], "errors": value.get("errors") or []}
 
 
 def _text(value: object) -> bool:
@@ -428,269 +436,217 @@ def graph_evidence_document(
 _ABSOLUTE_PATH = re.compile(r"(?<![\w./-])(/[^\s'\"`;|&<>()]+)")
 
 
-def _refuse_temp_paths(text: str, label: str) -> None:
+def _temp_paths(text: object, label: str) -> list[str]:
     """A measurement cited from the temp directory is a throwaway probe, not proof
     the repository keeps; the tdd recorder refuses those targets at cycle open and
     dispositions refuse them here."""
     temp = os.path.realpath(tempfile.gettempdir())
-    for token in _ABSOLUTE_PATH.findall(text):
-        resolved = os.path.realpath(token)
-        if resolved == temp or resolved.startswith(temp + os.sep):
-            raise ValueError(
-                f"{label} cites {token}, a temporary-directory path; measurement scripts live in the repository"
-            )
+    return [f"{label} cites {token}, a temporary-directory path; measurement scripts live in the repository"
+            for token in _ABSOLUTE_PATH.findall(text if isinstance(text, str) else "")
+            if (resolved := os.path.realpath(token)) == temp or resolved.startswith(temp + os.sep)]
 
 
-def _measurement(value: object, label: str) -> JsonObject:
-    if not isinstance(value, dict) or set(value) != {"claim", "command", "result"}:
-        raise ValueError(f"{label} requires only claim, command, and result")
-    if not all(_text(value.get(field)) for field in ("claim", "command", "result")):
-        raise ValueError(f"{label} requires claim, command, and result")
-    _refuse_temp_paths(str(value["command"]), f"{label} command")
-    return dict(value)
+def _measurement(value: object, label: str) -> list[str]:
+    fields = value if isinstance(value, dict) else {}  # a wrong key set never hides a present field's violation
+    return [message for message, bad in (
+        (f"{label} requires only claim, command, and result", set(fields) != {"claim", "command", "result"}),
+        (f"{label} requires claim, command, and result", not all(_text(fields[key]) for key in fields.keys() & {"claim", "command", "result"})),
+    ) if bad] + _temp_paths(fields.get("command"), f"{label} command")
 
 
-def _occurrence(value: object) -> JsonObject:
+def _occurrence(value: object) -> list[str]:
     if not isinstance(value, dict):
-        raise ValueError("occurrence must be an object")
-    if set(value) == {"domain", "count", "complete", "command", "result"}:
-        if not all(_text(value.get(field)) for field in ("domain", "command", "result")):
-            raise ValueError("counted occurrence requires domain, command, and result")
-        if type(value.get("count")) is not int or value["count"] < 0 or not isinstance(value.get("complete"), bool):
-            raise ValueError("counted occurrence requires a non-negative count and complete boolean")
-        _refuse_temp_paths(str(value["command"]), "occurrence command")
-        return dict(value)
-    if set(value) == {"seam", "reproduction"} and _text(value.get("seam")):
-        reproduction = value.get("reproduction")
-        if isinstance(reproduction, dict) and set(reproduction) == {"command", "result"} and all(
-            _text(reproduction.get(field)) for field in ("command", "result")
-        ):
-            _refuse_temp_paths(str(reproduction["command"]), "occurrence reproduction command")
-            return {"seam": value["seam"], "reproduction": dict(reproduction)}
-    raise ValueError("occurrence requires a counted domain or real-Seam reproduction")
+        return ["occurrence must be an object"]
+    steps = value["reproduction"] if isinstance(value.get("reproduction"), dict) else {}
+    seam = set(value) == {"seam", "reproduction"} and _text(value["seam"]) and set(steps) == {"command", "result"}
+    return [message for message, bad in (
+        ("occurrence requires a counted domain or real-Seam reproduction", set(value) != {
+            "domain", "count", "complete", "command", "result"} and not (seam and all(map(_text, steps.values())))),
+        ("counted occurrence requires domain, command, and result", not all(_text(value[key]) for key in value.keys() & {"domain", "command", "result"})),
+        ("counted occurrence requires a non-negative count and complete boolean", "count" in value and (
+            type(value["count"]) is not int or value["count"] < 0) or "complete" in value and not isinstance(value["complete"], bool)),
+    ) if bad] + _temp_paths(value.get("command"), "occurrence command") + _temp_paths(
+        steps.get("command"), "occurrence reproduction command")
 
 
-def _disposition_context(value: object) -> JsonObject:
-    if not isinstance(value, dict) or set(value) not in ({"workflowId", "candidateTree"}, {"workflowId", "candidateTree", "prHead"}):
-        raise ValueError("disposition context requires workflowId, candidateTree, and optional prHead")
-    if not _text(value.get("workflowId")) or not _git_oid(value.get("candidateTree")):
-        raise ValueError("disposition context requires workflowId and a canonical candidateTree Git OID")
-    if "prHead" in value and not _git_oid(value["prHead"]):
-        raise ValueError("disposition context prHead must be a canonical Git OID")
-    return dict(value)
+def _disposition_context(value: object) -> list[str]:
+    fields = value if isinstance(value, dict) else {}
+    return [message for message, bad in (
+        ("disposition context requires workflowId, candidateTree, and optional prHead",
+         set(fields) not in ({"workflowId", "candidateTree"}, {"workflowId", "candidateTree", "prHead"})),
+        ("disposition context requires workflowId and a canonical candidateTree Git OID", "workflowId" in fields
+         and not _text(fields["workflowId"]) or "candidateTree" in fields and not _git_oid(fields["candidateTree"])),
+        ("disposition context prHead must be a canonical Git OID", "prHead" in fields and not _git_oid(fields["prHead"])),
+    ) if bad]
 
 
-def _finding_dispositions(value: object, allowed: set[str]) -> list[JsonObject]:
+def _finding_dispositions(value: object, allowed: set[str]) -> list[str]:
+    """Every disposition's violations, in order."""
     if not isinstance(value, list) or not value:
-        raise ValueError("disposition requires a non-empty dispositions array")
-    typed: list[JsonObject] = []
-    dispositions = value
+        return ["disposition requires a non-empty dispositions array"]
     seen: set[str] = set()
+    return [problem for item in value for problem in _finding_disposition(item, allowed, seen)]
+
+
+def _finding_disposition(item: object, allowed: set[str], seen: set[str]) -> list[str]:
     common = {"finding_id", "status", "kind", "premise", "occurrence", "materialConsequence"}
-    for item in dispositions:
-        if not isinstance(item, dict):
-            raise ValueError("each disposition must be an object")
-        identifier, status, kind = item.get("finding_id"), item.get("status"), item.get("kind")
-        if not _text(identifier):
-            raise ValueError(_disposition_error(status, "each disposition must reference a finding") if isinstance(status, str) and status in allowed else "each disposition must reference a finding")
-        if not isinstance(status, str) or status not in allowed:
-            raise ValueError(f"finding {identifier} has an invalid or duplicate disposition")
-        if identifier in seen:
-            raise ValueError(_disposition_error(status, f"finding {identifier} has a duplicate disposition"))
-        mechanism = item.get("mechanism")
-        if mechanism is not None and not (_text(mechanism) or (
-            isinstance(mechanism, dict) and set(mechanism) == {"evidenceId", "id"}
-            and all(_text(v) for v in mechanism.values())
-        )):
-            raise ValueError("mechanism requires repair prose or an evidenceId/id reference")
-        mechanism_fields = {"mechanism"} if "mechanism" in item else set()
-        if "evidenceRefs" in item:
-            refs = item["evidenceRefs"]
-            extra = {"reference"} if status == "accepted-follow-up" else set()
-            if (set(item) != {"finding_id", "status", "reason", "evidenceRefs"} | extra | mechanism_fields
-                    or not _text(item.get("reason")) or not isinstance(refs, list) or not refs
-                    or not all(_text(ref) for ref in refs)
-                    or extra and not _text(item.get("reference"))):
-                raise ValueError("receipt disposition requires finding_id, status, reason and non-empty evidenceRefs")
-            seen.add(str(identifier))
-            typed.append(dict(item))
-            continue
-        if kind not in {"behavioral", "nonbehavioral"}:
-            raise ValueError(_disposition_error(status, f"finding {identifier} kind must be behavioral or nonbehavioral"))
-        try:
-            premise = _measurement(item.get("premise"), f"finding {identifier} premise")
-            occurrence = _occurrence(item.get("occurrence"))
-            consequence = _measurement(item.get("materialConsequence"), f"finding {identifier} materialConsequence")
-        except ValueError as exc:
-            raise ValueError(_disposition_error(status, str(exc))) from exc
-        field = "reference" if status == "accepted-follow-up" else "evidence"
-        extra = {field}
-        if not _text(item.get(field)):
-            raise ValueError(_disposition_error(status, f"finding {identifier} {status} requires {field}"))
-        if field == "evidence":
-            try:
-                _refuse_temp_paths(str(item["evidence"]), f"finding {identifier} evidence")
-            except ValueError as exc:
-                raise ValueError(_disposition_error(status, str(exc))) from exc
-        if set(item) != common | extra | mechanism_fields:
-            raise ValueError(_disposition_error(status, f"finding {identifier} {status} has unknown or missing fields"))
-        if status in {"fixed", "rejected-with-evidence"} and not (
-            premise["result"].strip().lower() == "false"
-            or occurrence.get("count") == 0 and occurrence.get("complete") is True
-        ):
-            raise ValueError(_disposition_error(
-                status, f"finding {identifier} {status} requires a false premise or zero occurrence on a complete domain",
-            ))
-        # Require the whole-domain claim's fields, not a certificate that the
-        # measurements cover it. Closure checks owning proof; review reconciles
-        # the immutable claim/domain with the operations actually executed.
-        if status == "fixed" and kind == "behavioral" and not (
-            occurrence.get("count") == 0 and occurrence.get("complete") is True
-        ):
-            raise ValueError(_disposition_error(
-                status,
-                f"finding {identifier} behavioral fixed requires zero occurrence on a complete domain "
-                "covering the finding's recorded caller-reachable surface",
-            ))
-        if status == "report-only" and consequence["result"].strip().lower() != "false":
-            raise ValueError(_disposition_error(status, f"finding {identifier} report-only requires no material consequence"))
+    if not isinstance(item, dict):
+        return ["each disposition must be an object"]
+    identifier, status, kind = item.get("finding_id"), item.get("status"), item.get("kind")
+    known, mechanism = isinstance(status, str) and status in allowed, item.get("mechanism")
+    # Every violation is collected; identity violations keep the expected-shape hint they always carried.
+    identity = [problem for problem, bad in (
+        ("each disposition must reference a finding", not _text(identifier)),
+        (f"finding {identifier} has an invalid or duplicate disposition", not known),
+        (f"finding {identifier} has a duplicate disposition", _text(identifier) and identifier in seen),
+    ) if bad]
+    if _text(identifier):
         seen.add(str(identifier))
-        typed.append({**dict(item), "premise": premise, "occurrence": occurrence, "materialConsequence": consequence})
-    return typed
+    hint = [f"{status} expected shape: {DISPOSITION_SHAPES[status]}"] if known else []
+    problems = [*identity, *(["mechanism requires repair prose or an evidenceId/id reference"] if mechanism is not None
+                             and not (_text(mechanism) or isinstance(mechanism, dict) and set(mechanism) == {
+                                 "evidenceId", "id"} and all(_text(v) for v in mechanism.values())) else [])]
+    mechanism_fields = {"mechanism"} if "mechanism" in item else set()
+    if "evidenceRefs" in item:
+        refs = item["evidenceRefs"]
+        extra = {"reference"} if status == "accepted-follow-up" else set()
+        # Identity keys are judged above; the status-dependent shape only under a known status.
+        if (known and (set(item) - {"reason", "finding_id", "status"} != {"evidenceRefs"} | extra | mechanism_fields
+                       or extra and not _text(item.get("reference")))
+                or "reason" in item and not _text(item.get("reason")) or not isinstance(refs, list) or not refs
+                or not all(_text(ref) for ref in refs)):
+            problems.append("receipt disposition requires finding_id, status and non-empty evidenceRefs; reason is optional text")
+        return [*problems, *(hint if identity else [])]
+    premise = _measurement(item.get("premise"), f"finding {identifier} premise")
+    occurrence = [f"finding {identifier} {problem}" for problem in _occurrence(item.get("occurrence"))]
+    consequence = _measurement(item.get("materialConsequence"), f"finding {identifier} materialConsequence")
+    problems += [*([] if kind in ("behavioral", "nonbehavioral") else [f"finding {identifier} kind must be behavioral or nonbehavioral"]),
+                 *premise, *occurrence, *consequence]
+    field = "reference" if status == "accepted-follow-up" else "evidence"
+    if known and not _text(item.get(field)):  # the status decides which field and field set apply
+        problems.append(f"finding {identifier} {status} requires {field}")
+    elif field == "evidence":
+        problems += _temp_paths(item.get("evidence"), f"finding {identifier} evidence")
+    if known and set(item) - common - {field} - mechanism_fields:  # a missing field is named by its own check
+        problems.append(f"finding {identifier} {status} has unknown or missing fields")
+    # Each rule reads a measurement only when its own check passed. Require the whole-domain claim's fields,
+    # not a certificate that the measurements cover it. Closure checks owning proof; review reconciles
+    # the immutable claim/domain with the operations actually executed.
+    zero = not occurrence and item["occurrence"].get("count") == 0 and item["occurrence"].get("complete") is True
+    problems += [problem for problem, bad in (
+        (f"finding {identifier} {status} requires a false premise or zero occurrence on a complete domain",
+         status in ("fixed", "rejected-with-evidence") and not premise and not occurrence
+         and not (item["premise"]["result"].strip().lower() == "false" or zero)),
+        (f"finding {identifier} behavioral fixed requires zero occurrence on a complete domain covering the "
+         "finding's recorded caller-reachable surface", status == "fixed" and kind == "behavioral"
+         and not occurrence and not zero),
+        (f"finding {identifier} report-only requires no material consequence", status == "report-only"
+         and not consequence and item["materialConsequence"]["result"].strip().lower() != "false"),
+    ) if bad]
+    return [*problems, *hint] if problems else []
 
 
-def _reviewer_finding_disposition(value: JsonObject) -> tuple[str, JsonObject | None, list[JsonObject]]:
-    if set(value) not in ({"context", "intakeEvidenceId", "dispositions"}, {"intakeEvidenceId", "dispositions"}):
-        raise ValueError("disposition requires only context, intakeEvidenceId, and dispositions")
-    intake_id = value.get("intakeEvidenceId")
-    if not _text(intake_id):
-        raise ValueError("disposition requires an intakeEvidenceId")
-    dispositions = _finding_dispositions(value.get("dispositions"), REVIEWER_DISPOSITIONS)
-    context = (None if "context" not in value and all("evidenceRefs" in item for item in dispositions)
-               else _disposition_context(value.get("context")))
-    return str(intake_id), context, dispositions
+def _disposition_errors(value: JsonObject, allowed: set[str], *, context_free_receipts: bool) -> list[str]:
+    """One disposition document's violations. An inline disposition is judged against its context: without
+    one, a reviewer's document names the missing context and an advisor's requires executed evidenceRefs."""
+    dispositions = value.get("dispositions")
+    inline = isinstance(dispositions, list) and any(
+        isinstance(item, dict) and "evidenceRefs" not in item for item in dispositions)
+    errors = [message for message, bad in (
+        ("disposition requires only context, intakeEvidenceId, and dispositions",
+         set(value) not in ({"context", "intakeEvidenceId", "dispositions"}, {"intakeEvidenceId", "dispositions"})),
+        ("disposition requires an intakeEvidenceId", not _text(value.get("intakeEvidenceId"))),
+    ) if bad] + _finding_dispositions(dispositions, allowed)
+    if "context" in value or inline and not context_free_receipts:
+        return errors + _disposition_context(value.get("context"))
+    return errors + (["context-free disposition requires executed evidenceRefs for every finding"] if inline else [])
+
+
+def _disposition_fields(value: JsonObject) -> JsonObject:
+    return {"context": dict(value["context"]) if "context" in value else None,
+            "intakeEvidenceId": str(value["intakeEvidenceId"]), "dispositions": [dict(item) for item in value["dispositions"]]}
+
+
+def _repair_succession(succession: object) -> list[str]:
+    if not isinstance(succession, dict):
+        return ["repairSuccession requires context, findings, previousOwner and evidence"]
+    owner, refs = succession.get("previousOwner"), succession.get("findings")
+    return [problem for problem, bad in (
+        ("repairSuccession requires context, findings, previousOwner and evidence",
+         set(succession) != {"context", "findings", "previousOwner", "evidence"} or not _text(succession.get("evidence"))),
+        ("repairSuccession requires the previous implementer and reviewer", "previousOwner" in succession and (
+            not isinstance(owner, dict) or set(owner) != {"implementerContextId", "reviewerContextId"}
+            or not all(_text(v) for v in owner.values()))),
+        ("repairSuccession findings require evidenceId/id references", "findings" in succession and (
+            not isinstance(refs, list) or not refs or any(not isinstance(ref, dict) or set(ref) != {"evidenceId", "id"}
+                                                          or not all(_text(v) for v in ref.values()) for ref in refs))),
+    ) if bad] + (_disposition_context(succession["context"]) if "context" in succession else [])
 
 
 def review_summary(
-    path: str, *, slug: str, workflow_id: str, resolved_model: str, review_context_id: str,
+    path: str, *, slug: str, workflow_id: str, review_context_id: str | None,
 ) -> tuple[JsonObject, str, str]:
-    model, context = resolved_model.strip(), review_context_id.strip()
-    if not model or not context:
-        raise ValueError("resolved model and review context id must be non-empty")
     value = load_json(path, label="review")
     common: JsonObject = {
         "schemaVersion": 1, "slug": slug, "workflowId": workflow_id,
-        "producer": "code-review", "stage": "code-review",
-        "resolvedModel": model, "reviewContextId": context, "recordedAt": utc_timestamp(),
+        "producer": "code-review", "stage": "code-review", "recordedAt": utc_timestamp(),
         "observationId": uuid.uuid4().hex,
     }
+    if review_context_id is not None:
+        if not review_context_id.strip():
+            raise ValueError("--review-context-id must be non-empty")
+        common["reviewContextId"] = review_context_id.strip()
     if value == {"findings": [], "dispositions": []}:
         value = {"findings": []}
-    if set(value) in ({"findings"}, {"findings", "implementationContextId"},
-                      {"findings", "implementationContextId", "repairSuccession"}):
-        if "implementationContextId" in value:
-            if not _text(value["implementationContextId"]):
-                raise ValueError("implementationContextId must identify the actual repair author")
-            common["implementationContextId"] = value["implementationContextId"]
-        if "repairSuccession" in value:
-            succession = value["repairSuccession"]
-            if (not isinstance(succession, dict)
-                    or set(succession) != {"context", "findings", "previousOwner", "evidence"}
-                    or not _text(succession.get("evidence"))):
-                raise ValueError("repairSuccession requires context, findings, previousOwner and evidence")
-            owner, refs = succession["previousOwner"], succession["findings"]
-            if (not isinstance(owner, dict) or set(owner) != {"implementerContextId", "reviewerContextId"}
-                    or not all(_text(v) for v in owner.values())):
-                raise ValueError("repairSuccession requires the previous implementer and reviewer")
-            if (not isinstance(refs, list) or not refs or any(
-                    not isinstance(ref, dict) or set(ref) != {"evidenceId", "id"}
-                    or not all(_text(v) for v in ref.values()) for ref in refs)):
-                raise ValueError("repairSuccession findings require evidenceId/id references")
-            common["repairSuccession"] = {**succession, "context": _disposition_context(succession["context"])}
-        findings = value["findings"]
-        if not isinstance(findings, list):
-            raise ValueError("review intake findings must be an array")
-        seen: set[str] = set()
-        required = {"id", "axis", "severity", "material", "kind", "location", "claim", "evidence", "consequence", "smallest_action"}
-        for item in findings:
-            if not isinstance(item, dict):
-                raise ValueError("each review finding must be an object")
-            identifier = item.get("id")
-            missing, extra = required - set(item), set(item) - required - {"priorFinding"}
-            prior = item.get("priorFinding")
-            if prior is not None and (not isinstance(prior, dict) or set(prior) != {"evidenceId", "id"}
-                                      or not all(_text(v) for v in prior.values())):
-                raise ValueError("priorFinding requires evidenceId and id")
-            if len(missing) == 1 and not extra:
-                raise ValueError(f"finding {identifier} requires {next(iter(missing))}")
-            if missing or extra:
-                raise ValueError("each review finding requires only the intake fields")
-            if not _text(identifier) or identifier in seen:
-                raise ValueError("review finding ids must be non-empty and unique")
-            axis, kind = item.get("axis"), item.get("kind")
-            if not isinstance(axis, str) or axis not in {"Standards", "Spec"}:
-                raise ValueError(f"finding {identifier} has an invalid axis")
-            if not isinstance(kind, str) or kind not in {"behavioral", "nonbehavioral"}:
-                raise ValueError(f"finding {identifier} has an invalid kind")
-            for field in required - {"id", "axis", "material", "kind"}:
-                if not _text(item.get(field)):
-                    raise ValueError(f"finding {identifier} requires {field}")
-            if not isinstance(item.get("material"), bool):
-                raise ValueError(f"finding {identifier} requires a material boolean")
-            seen.add(str(identifier))
-        status = "pending" if findings else "passed"
-        return {**common, "kind": "intake", "status": status, "findings": findings}, status, "pending" if findings else "none"
-    intake_id, context, dispositions = _reviewer_finding_disposition(value)
-    return {**common, "kind": "disposition", "status": "pending", "context": context, "intakeEvidenceId": intake_id, "dispositions": dispositions}, "pending", "pending"
-
-
-def advisor_disposition_document(
-    path: str,
-    *,
-    slug: str,
-    workflow_id: str,
-    stage: str,
-) -> JsonObject:
-    value = load_json(path, label="disposition")
-    compact = set(value) == {"intakeEvidenceId", "dispositions"}
-    context = None if compact else _disposition_context(value.get("context"))
-    allowed = ADVISOR_DISPOSITIONS
-    common: JsonObject = {
-        "schemaVersion": 1, "slug": slug, "workflowId": workflow_id,
-        "stage": stage, "recordedAt": utc_timestamp(), "context": context,
-    }
-    if compact or set(value) == {"context", "intakeEvidenceId", "dispositions"}:
-        intake_id = value.get("intakeEvidenceId")
-        if not _text(intake_id):
-            raise ValueError("disposition requires an intakeEvidenceId")
-        dispositions = _finding_dispositions(value.get("dispositions"), allowed)
-        if compact and not all("evidenceRefs" in item for item in dispositions):
-            raise ValueError("context-free disposition requires executed evidenceRefs for every finding")
-        return {**common, "intakeEvidenceId": str(intake_id), "dispositions": dispositions}
-    if set(value) != {"context", "findings", "dispositions"}:
-        raise ValueError("disposition document requires context, findings, and dispositions")
-    findings, dispositions = value.get("findings"), value.get("dispositions")
-    if not isinstance(findings, list) or not isinstance(dispositions, list):
-        raise ValueError("disposition document requires findings and dispositions arrays")
-    if not findings:
-        raise ValueError("a document with no findings is --findings none, not addressed")
-    claims: set[str] = set()
-    for item in findings:
+    if "findings" not in value:
+        errors = _disposition_errors(value, REVIEWER_DISPOSITIONS, context_free_receipts=False)
+        if errors:
+            raise ValueError("; ".join(errors))
+        return {**common, "kind": "disposition", "status": "pending", **_disposition_fields(value)}, "pending", "pending"
+    unknown = sorted(set(value) - {"findings", "implementationContextId", "repairSuccession"})
+    findings = value["findings"]
+    errors = [message for message, bad in (
+        (f"review intake has unknown fields: {', '.join(unknown)}", unknown),
+        ("implementationContextId must identify the actual repair author",
+         "implementationContextId" in value and not _text(value["implementationContextId"])),
+    ) if bad]
+    if "repairSuccession" in value:
+        errors += _repair_succession(value["repairSuccession"])
+        errors += [] if "implementationContextId" in value else ["repairSuccession requires implementationContextId"]
+    errors += [] if isinstance(findings, list) else ["review intake findings must be an array"]
+    seen: set[str] = set()
+    for position, item in enumerate(findings if isinstance(findings, list) else [], 1):
         if not isinstance(item, dict):
-            raise ValueError("each finding must be an object")
+            errors.append(f"review finding {position} must be an object")
+            continue
         identifier = item.get("id")
-        if not isinstance(identifier, str) or not identifier or identifier in claims:
-            raise ValueError("finding ids must be non-empty and unique")
-        if set(item) != {"id", "claim"} or not _text(item.get("claim")):
-            raise ValueError(f"finding {identifier} requires a claim")
-        claims.add(identifier)
-    typed = _finding_dispositions(dispositions, allowed)
-    if stage == "preflight" and any(item["status"] == "fixed" for item in typed):
-        raise ValueError("legacy preflight fixed requires immutable finding intake")
-    if any(str(item["finding_id"]) not in claims for item in typed):
-        raise ValueError("each disposition must reference a finding")
-    if {str(item["finding_id"]) for item in typed} != claims:
-        raise ValueError("every finding requires one lead disposition")
-    if any(item["kind"] == "behavioral" for item in typed):
-        raise ValueError("behavioral advisor findings require immutable finding intake and a map-owned attack")
-    return {**common, "findings": findings, "dispositions": typed}
+        label = f"finding {identifier}" if _text(identifier) else f"review finding {position}"
+        problems = [problem for problem, bad in (
+            ("id must be non-empty and unique", not _text(identifier) or identifier in seen),
+            ("requires a non-empty claim", not _text(item.get("claim"))),
+            ("requires a material boolean", not isinstance(item.get("material"), bool)),
+            ("kind must be behavioral or nonbehavioral", item.get("kind") not in ("behavioral", "nonbehavioral")),
+        ) if bad]
+        if _text(identifier):
+            seen.add(str(identifier))
+        prior = item.get("priorFinding")
+        if prior is not None and (not isinstance(prior, dict) or set(prior) != {"evidenceId", "id"}
+                                  or not all(_text(v) for v in prior.values())):
+            problems.append("priorFinding requires evidenceId and id")
+        errors += [f"{label}: " + ", ".join(problems)] if problems else []
+    if errors:
+        raise ValueError("; ".join(errors))
+    # Reviewers may add context fields; only the ones a check reads are kept.
+    typed = [{key: item[key] for key in ("id", "claim", "material", "kind", "priorFinding") if key in item} for item in findings]
+    common.update({key: value[key] for key in ("implementationContextId", "repairSuccession") if key in value})
+    status = "pending" if typed else "passed"
+    return {**common, "kind": "intake", "status": status, "findings": typed}, status, "pending" if typed else "none"
+
+
+def advisor_disposition_document(value: JsonObject, *, slug: str, workflow_id: str, stage: str) -> JsonObject:
+    errors = (["advisor dispositions reference the recorded intake by intakeEvidenceId; the inline findings form is retired"]
+              if "findings" in value else _disposition_errors(value, ADVISOR_DISPOSITIONS, context_free_receipts=True))
+    if errors:
+        raise ValueError("; ".join(errors))
+    return {"schemaVersion": 1, "slug": slug, "workflowId": workflow_id, "stage": stage, "recordedAt": utc_timestamp(),
+            **_disposition_fields(value)}

@@ -32,7 +32,6 @@ from hooks.tests import test_behavior_map_workflow as bmw  # noqa: E402
 
 INTAKE = ROOT / "hooks" / "rcf-intake-gate.py"
 POST_EDIT = ROOT / "hooks" / "code-quality-gate.py"
-QUALITY_GATE = ROOT / "skills" / "production-code" / "scripts" / "code_quality_gate.py"
 
 
 def contract(identifier: str = "BM_CONTRACT", **fields: object) -> dict[str, object]:
@@ -40,7 +39,7 @@ def contract(identifier: str = "BM_CONTRACT", **fields: object) -> dict[str, obj
 
 
 def preservation(identifier: str = "BM_PRESERVE", **fields: object) -> dict[str, object]:
-    return pending_behavior(identifier, kind="preservation", basis="touched-Seam preservation", **fields)
+    return pending_behavior(identifier, kind="preservation", **fields)
 
 
 class ContractProofAuthorityTests(unittest.TestCase):
@@ -71,7 +70,7 @@ class ContractProofAuthorityTests(unittest.TestCase):
             encoding="utf-8",
         )
         return self.h.cli(
-            "record-preflight", "--slug", slug, "--workflow-id", workflow_id,
+            "record", "preflight", "--slug", slug, "--workflow-id", workflow_id,
             "--input", str(payload),
         )
 
@@ -159,7 +158,7 @@ class ContractProofAuthorityTests(unittest.TestCase):
         payload.write_text(json.dumps(update), encoding="utf-8")
         try:
             result = subprocess.run(
-                [sys.executable, str(bmw.WORKFLOW), "tdd-map", "--repo", str(self.repo), "--slug", slug,
+                [sys.executable, str(bmw.WORKFLOW), "record", "tdd-map", "--repo", str(self.repo), "--slug", slug,
                  "--workflow-id", workflow_id, "--input", str(payload)],
                 cwd=self.repo, env=self.h.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 check=False, timeout=60)
@@ -186,21 +185,6 @@ class ContractProofAuthorityTests(unittest.TestCase):
             "contract", marker,
         )
 
-    def record_production_code(self, slug: str, workflow_id: str) -> None:
-        gate = subprocess.run(
-            [sys.executable, str(QUALITY_GATE), "check", "--repo", str(self.repo), "--json"],
-            cwd=ROOT, env=self.h.env, text=True,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
-        )
-        self.assertEqual(gate.returncode, 0, gate.stdout + gate.stderr)
-        verdict = self.h.tmp / "gate-verdict.json"
-        verdict.write_text(gate.stdout, encoding="utf-8")
-        recorded = self.h.cli(
-            "record-production-code", "--slug", slug, "--workflow-id", workflow_id,
-            "--input", str(verdict),
-        )
-        self.assertEqual(recorded.returncode, 0, recorded.stdout + recorded.stderr)
-
     def intake_advice(self, relative: str = "app.py") -> str:
         """The real PreToolUse hook: prerequisites and obligations, never a denial."""
         hook = subprocess.run(
@@ -217,7 +201,7 @@ class ContractProofAuthorityTests(unittest.TestCase):
 
     def item_status(self, behavior_id: str) -> str:
         state = read_workflow(self.identity)
-        document = json.loads(self.h.cli("evidence", "--evidence-id", str(state["tddEvidence"])).stdout)["document"]
+        document = json.loads(self.h.cli("evidence", "--full", "--evidence-id", str(state["tddEvidence"])).stdout)["document"]
         return next(str(entry["status"]) for entry in document["behaviorMap"] if entry["id"] == behavior_id)
 
     def test_a_preservation_red_before_any_contract_green_records(self) -> None:
@@ -242,7 +226,6 @@ class ContractProofAuthorityTests(unittest.TestCase):
                               "evidence": "app.value == 1 observed through the public import"}],
         })
         self.assertEqual(dispositioned.returncode, 0, marker + ": " + dispositioned.stdout + dispositioned.stderr)
-        self.record_production_code(slug, workflow_id)
         before = {}
         for action, key in (("status", "workflowId"), ("history", "events")):
             captured = self.h.cli(action)
@@ -269,14 +252,13 @@ class ContractProofAuthorityTests(unittest.TestCase):
         self.assertEqual(payload.get("status"), "already-satisfied", marker)
         state = read_workflow(self.identity)
         self.assertNotIn("tddCycleCount", state, marker)
-        document = self.h.cli("evidence", "--evidence-id", str(state["tddEvidence"]))
+        document = self.h.cli("evidence", "--full", "--evidence-id", str(state["tddEvidence"]))
         self.assertEqual(document.returncode, 0, document.stdout + document.stderr)
         recorded = json.loads(document.stdout)["document"]
         [present] = [entry for entry in recorded["behaviorMap"] if entry["id"] == "BM_PRESENT"]
         self.assertEqual(present["status"], "already-satisfied", marker)
         self.assertIn("test_behavior_probe.BehaviorProbe.test_behavior", present["evidence"], marker)
         self.assertIsNone(recorded.get("activeBehaviorId"), marker)
-        self.record_production_code(slug, workflow_id)
         self.assertIn("contract", self.intake_advice(), marker)
         not_required = self.h.cli("tdd", "--slug", slug, "--not-required", "the mapped behavior exists")
         self.assertEqual(not_required.returncode, 0, marker + ": " + not_required.stdout + not_required.stderr)
@@ -330,7 +312,7 @@ class ContractProofAuthorityTests(unittest.TestCase):
              "--phase", "red", "--behavior-id", "BM_PRESENT", "--", *command],
             cwd=self.repo, env=self.h.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
         self.assertEqual(mixed.returncode, 0, f"{marker}: {(mixed.stderr.strip().splitlines() or [''])[-1]}")
-        document = self.h.cli("evidence", "--evidence-id", str(read_workflow(self.identity)["tddEvidence"]))
+        document = self.h.cli("evidence", "--full", "--evidence-id", str(read_workflow(self.identity)["tddEvidence"]))
         self.assertEqual(json.loads(document.stdout)["document"]["runs"][-1]["redProof"]["testsExecuted"], 1, marker)
 
     def green(self, slug: str, behavior_id: str, value: int, marker: str) -> None:
@@ -355,7 +337,7 @@ class ContractProofAuthorityTests(unittest.TestCase):
         self.assertEqual(baseline.returncode, 0, marker + ": " + (baseline.stderr.strip().splitlines() or [""])[-1])
         self.assertEqual(json.loads(baseline.stdout.strip().splitlines()[-1]).get("status"), "already-satisfied", marker)
         state = read_workflow(self.identity)
-        document = json.loads(self.h.cli("evidence", "--evidence-id", str(state["tddEvidence"])).stdout)["document"]
+        document = json.loads(self.h.cli("evidence", "--full", "--evidence-id", str(state["tddEvidence"])).stdout)["document"]
         self.assertEqual(document["runs"][-1].get("productionChanged"), [], marker)
 
     def proved_first_item(self) -> tuple[str, str]:
@@ -444,7 +426,7 @@ class ContractProofAuthorityTests(unittest.TestCase):
                          "import app; self.assertTrue(hasattr(app, 'enable_checkpoints'), 'CHECKPOINT_SEAM_ABSENT')")
         self.assertEqual(red.returncode, 0, marker + ": " + red.stdout + red.stderr)
         state = read_workflow(self.identity)
-        document = self.h.cli("evidence", "--evidence-id", str(state["tddEvidence"]))
+        document = self.h.cli("evidence", "--full", "--evidence-id", str(state["tddEvidence"]))
         run = json.loads(document.stdout)["document"]["runs"][-1]
         self.assertEqual(run["redProof"]["quality"], "assertion-reached", marker)
         slug, _ = self.h.begin_to_preflight([seam])
@@ -474,7 +456,6 @@ class ContractProofAuthorityTests(unittest.TestCase):
         superseded = self.h.update_map(slug, workflow_id, self.supersede("BM_A", "BM_B", [replacement], pending="BM_A"))
         self.assertEqual(superseded.returncode, 0, f"{marker}: {(superseded.stderr.strip().splitlines() or [''])[-1]}")
         self.assertEqual(json.loads(superseded.stdout)["pending"], ["BM_A", "BM_B"], marker)
-        self.record_production_code(slug, workflow_id)
         with self.assertRaises(WorkflowIncomplete, msg=marker) as refused:
             complete(self.identity, slug=slug, workflow_id=workflow_id)
         self.assertIn("BM_A", str(refused.exception), marker)
@@ -583,7 +564,7 @@ class ContractProofAuthorityTests(unittest.TestCase):
 
     def item_document(self) -> dict[str, object]:
         state = read_workflow(self.identity)
-        return json.loads(self.h.cli("evidence", "--evidence-id", str(state["tddEvidence"])).stdout)["document"]
+        return json.loads(self.h.cli("evidence", "--full", "--evidence-id", str(state["tddEvidence"])).stdout)["document"]
 
     def item(self, behavior_id: str) -> dict[str, object]:
         return next(entry for entry in self.item_document()["behaviorMap"] if entry["id"] == behavior_id)
@@ -847,7 +828,7 @@ class ContractProofAuthorityTests(unittest.TestCase):
         prose = {**preservation("BM_KEEP", red_failure="VALUE_WAS_NOT_ONE"),
                  "status": "already-satisfied", "evidence": "passes by inspection"}
         slug, workflow_id = self.h.begin_to_preflight([prose])
-        self.assertIn("Prose settlement (unresolved until an executed baseline): BM_KEEP", self.h.cli("summary").stdout, marker)
+        self.assertIn("Open map: already-satisfied: BM_KEEP", self.h.cli("summary").stdout, marker)
         not_required = self.h.cli("tdd", "--slug", slug, "--not-required", "nothing changed")
         self.assertEqual(not_required.returncode, 2, marker + ": " + not_required.stdout + not_required.stderr)
         self.assertIn("BM_KEEP", not_required.stderr, marker)

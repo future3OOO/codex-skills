@@ -1712,3 +1712,101 @@ Develop with the complete refreshed private N+1 estate; CLI checks and workflow
 state use its Bubblewrap bindings. The hosted chat remains global; the separate
 private continuation was stopped. No shared install or hook override occurred.
 PR #82 and #64 remain open with efficiency acceptance pending.
+
+## 2026-09-23 — Issue 96: workflow ledger ceremony removed
+
+Owning issue: [#96](https://github.com/future3OOO/codex-skills/issues/96); one pass,
+one PR. User decisions: the ~500-line target is net, not churn; `--review-context-id`
+becomes optional (recurring-repair ownership reads it); `--fresh` stays;
+`--resolved-model`, `--packet` and `--base-ref` are deleted; `getStaleIndexWarning`
+is out of scope (zero occurrences).
+
+Decisions:
+
+- Events are receipts; current state lives on the workflow row. Behavior Map items
+  and run rows are stored once as content-addressed parts, so historical evidence
+  keeps its meaning. Snapshot-era ledgers migrate in place; the `workflow.json`
+  importer is deleted. Measured: the 160-document CX4 corpus stores 811,189 of
+  4,144,618 bytes counting every part (80.43% less), readback identical.
+- One step table (`STEPS`) drives sequence, readiness, blockers and completion;
+  `productionCode`/`implementation` leave state.
+- One ingest verb, `record <kind> [--check]`; each kind's `--help` prints its shape.
+  Receipts carry only `workflowId`/`slug`/`phase`/`nextAction`. Identity defaults to
+  the active workflow. Preflight is `authoritativeContract` + `behaviorMap`.
+  Every agent-written document names all its violations in one refusal.
+- Run receipts by observation: a PreToolUse `updatedInput` rewrite (probed live on
+  Codex 0.156) turns a lone pytest/unittest command into `verify --observed`,
+  recorded in the checkout of its own working directory; `--from-evidence` binds it.
+- Advisor consults record the whole envelope and return a ~2KB digest; the checkpoint
+  owns an ordered channel manifest. Flag dispositions mint finding `sourceRefs`.
+- Hook advisories emit only when their text changed for the session in the current
+  compaction epoch; a `PostCompact` hook (fired live before `SessionStart(compact)`)
+  resets them. The map advisory's per-repo cache is replaced by that one mechanism.
+  The compaction re-arm names open steps and unresolved map items only.
+- Deleted as obsolete: the recorder/pass-state/verify-run/tdd-run shims, session
+  associations, and `benchmarks/ab_estate_benchmark.py` with its test (it drove the
+  deleted shims and already expected hook output removed by #182).
+
+- Independent review (R-1..R-11) corrected the observed runner (caller's process
+  group, streamed output, own verification key), typed-gate output (whole report
+  shown, verdict stored), snapshot-era prune, unnamed-reviewer recurrence ownership,
+  and the remaining single-error refusals.
+- A first behavioral fix is proved by its owning attack GREEN through RED; only a
+  recurrence must carry its mechanism explanation (user-approved 2026-09-23; it is
+  what #96's acceptance command requires). This supersedes the first-fix part of the
+  2026-09-20 mechanism decision: presence was enforced, content was not.
+- The final consult was refused at 1,263,540 characters (codex input limit
+  1,048,576). The advisor diff is git's ordinary diff with each deleted file as its
+  header and line count (this pass: 1,067,228 -> 726,878 bytes), and the wrapper
+  refuses an oversized prompt, naming its size, before the provider runs.
+- Ledger format 2: the tables a pre-#96 estate reads first are views over an
+  undefined SQL function, so an older reader refuses with "workflow ledger format v2
+  needs the upgraded workflow estate" and creates nothing; metadata lives in
+  `ledger_metadata`. Installing the new estate restores access; downgrade stays
+  unsupported.
+- The migration re-reads the ledger format after taking its write lock, so racing
+  first opens (a hook and the CLI) migrate once and both succeed (return review RR-2).
+- Final advisor corrections (SPEC-11/12/14/15/18): a run binds to the pass it names
+  or ran under; a bound receipt keeps `--replaces`; malformed `kind`/`mechanism` are
+  named violations, not crashes; each ownership check reads the format in one
+  transaction; contract-content and final-response mandates nothing checks are
+  deleted. SPEC-9/10/16/19/20 rejected on estate measurements (digest <= 1,918 bytes
+  over 77 envelopes; 0 of 1,390 lone test commands ran below a checkout root; all
+  2,133 events are schema 1/policy 1; map receipts <= 922 bytes over 759 maps).
+- `verify --observed` refuses any other verify flag (RR-3); the Module Shape Gate
+  keeps stating where its decision is recorded, because `production-code` consumes
+  it (RR-4).
+- Final appeal (SPEC-21..23): an unreadable ledger never stops a rewritten test
+  command; the three agent-written documents collect every independent violation
+  instead of raising at the first guard (second recurrence, repaired by the retained
+  reviewer, 0 changes over 839 recorded documents); binding observed receipts as
+  mapped RED/GREEN already worked and is now attacked.
+- The compaction re-arm drops the late and shared RED labels, which name settled
+  items; `workflow summary` and the final-review channel keep them (SPEC-25). Ids are
+  seen before an item validates and key guards are collected, so no first violation
+  hides another (SPEC-24, third recurrence of R-5, repaired at the pattern level).
+- The one-refusal validators were redesigned after a fifth recurrence (SPEC-26):
+  checkers return violations as data and never raise, each ingest entry raises once,
+  and building runs only after checking. The inline advisor findings-form (0 recorded
+  uses) and its recovery path are deleted. One pair-property attack over every
+  agent-written document replaces the enumerated combination attacks.
+- Advisor evidence channels are written as compact JSON: the final consult reached
+  1,090,252 characters (limit 1,048,576) with indented, line-prefixed JSON; compact
+  channels remove about 65K characters (the earlier investigation's recommendation).
+- A final advisor-result always records the advisor's envelope; a raw final verdict
+  is refused (RR-5: it dead-ended the pass once the inline form was retired, and a raw
+  commit-ready completed a pass with no envelope; 0 of 95 recorded finals lacked one).
+- Leaf checkers (measurement, occurrence, disposition context) name a wrong key set
+  beside the value checks of present keys instead of returning at it (SPEC-28, the
+  redesign's no-early-exit rule applied to key sets; SPEC-29 extends the property to
+  repairSuccession and nested sibling faults).
+- The late-RED channel names each changed-path list once with the items that share
+  it (26,291 -> about 4,000 characters on this pass), keeping the final consult under
+  the transport limit it reached again at 1,054,168 characters.
+
+Delivery status: independent review closed (R-1..R-11, RR-1..RR-9) and the final
+advisor returned commit-ready with no material finding (intake
+evidence-a234ab4bbaf68f7b20c090aedd3c2008). The final consult ran through this
+branch's wrapper against a copy of the state root, because the installed wrapper
+cannot bound its diff. Committed and pushed as one PR linking #96; merge awaits
+explicit authorization.

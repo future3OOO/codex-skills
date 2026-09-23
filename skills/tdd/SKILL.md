@@ -52,7 +52,7 @@ Affected preservation uses producer-owned `revalidationRequired: true`, never au
 
 ## 2. Drive One Mapped Vertical Slice
 
-Select one pending contract ID and write its RED before the production edit that satisfies it. Settle each preservation item by baselining it through `tdd --phase red` or dispositioning it through `tdd-map`, early enough that a later RED on it means a regression.
+Select one pending contract ID and write its RED before the production edit that satisfies it. Settle each preservation item by baselining it through `tdd --phase red` or dispositioning it through `record tdd-map`, early enough that a later RED on it means a regression.
 
 Use [preflight's operational definitions](../production-preflight/SKILL.md#authoritativecontract)
 and governing authority to set the expected result, then drive its discriminating
@@ -85,7 +85,7 @@ Several assertions may jointly prove one behavior; every assertion participating
 
 For a material interpretation choice, use preflight's optional `boundaryInputs`,
 `interpretations`, `interpretation` and `authority` on the same item through
-`tdd-map` dispositions. Unsettled readings keep applicable items unresolved even
+`record tdd-map` dispositions. Unsettled readings keep applicable items unresolved even
 when their inputs are represented. Removing inputs requires governing
 `evidence`; supersession must retain their obligations. Sufficient current proof
 is reused without another execution. Missing or stale input proof revalidates only
@@ -107,13 +107,12 @@ adequacy and the mandatory final advisor still applies.
 GREEN exposes implementation consequences. Inspect what the implementation actually chose - value conversions, callees, shared writers, hooks and mutation paths, and every operation whose effects could erase a rule before it is judged - and classify each material risk against the contract as needing a real probe, having reusable proof, or being unreachable. When one reveals a new load-bearing mechanism, a touched-Seam preservation or interaction behavior, or a defect, add the item before the next production edit; when it reveals nothing, record the classification and nothing else. The map advisory raises impacted-test candidates; review challenges the decisions and the omissions. Pass the document on stdin instead of a scratch file:
 
 ```bash
-python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" \
-  tdd-map --repo "$PWD" --slug <task> --workflow-id <active-workflowId> --input - <<'JSON'
-{"sourceBehaviorId": "BM_...", "reassessment": "...", "items": [...]}
+python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" record tdd-map --input - <<'JSON'
+{"sourceBehaviorId": "BM_...", "items": [...]}
 JSON
 ```
 
-The document accepts `sourceBehaviorId`, `reassessment`, `items`, and `dispositions`. Use Production Code's **Minimum Implementation Decision** to identify affected guarantees before editing; batch their reassessment after the coherent change and before closure. New independently failing outcomes need items; existing non-withdrawn attacks gain finding ownership through additive `sourceRefs`, without re-executing unchanged evidence. Source references union by full `(type,evidenceId,id)` identity; duplicate unions write nothing.
+The document accepts `sourceBehaviorId`, optional `reassessment`, `items`, and `dispositions` (`record tdd-map --help`). Use Production Code's **Minimum Implementation Decision** to identify affected guarantees before editing; batch their reassessment after the coherent change and before closure. New independently failing outcomes need items; existing non-withdrawn attacks gain finding ownership through additive `sourceRefs`, without re-executing unchanged evidence. Source references union by full `(type,evidenceId,id)` identity; duplicate unions write nothing.
 
 A disposition may carry `revalidate:true` plus evidence, or `status` plus evidence, never both; additive references can accompany either or stand alone. Supersession names `supersededBy` and preserves finding ownership. Reference-only updates preserve active cycles and downstream readiness, execute nothing, and add no acknowledgement. Requesting or finishing reassessment does not replay downstream checks solely for metadata; source edits still invalidate current-tree checks.
 
