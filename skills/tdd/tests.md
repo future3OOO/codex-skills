@@ -11,7 +11,7 @@ does not prove GREEN.
 
 Commit a probe only for regression coverage no existing check has, as the
 smallest case in an existing harness. Additional checks
-require distinct coverage or demonstrated cheaper feedback, with defect sensitivity
+require distinct coverage, with defect sensitivity
 and no narrowing of the contract; they do not replace production acceptance. Apply
 [Production Code's comparison rules](../production-code/SKILL.md#minimum-implementation-decision)
 for N/N+1 proof and conditional A/B measurements.
