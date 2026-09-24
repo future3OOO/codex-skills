@@ -9,7 +9,7 @@ from itertools import combinations
 
 from .findings import (
     Finding, RULE_DUPLICATE_BASELINE, RULE_DUPLICATE_BLOCK, RULE_DUPLICATE_SYMBOL,
-    RULE_OWNER_PRODUCTION, RULE_OWNER_TEST,
+    RULE_OWNER_PRODUCTION,
     anchor, finding_id, pass_condition,
 )
 from .snapshot import BASELINE_ROLES, EvaluationSnapshot
@@ -397,18 +397,15 @@ OWNER_PASS_CONDITION = pass_condition(
     "no responsibility has two mechanically evidenced owners, with every evidence class evaluated",
 )
 
-# The eight mechanical evidence classes: each evaluated on every run; an
+# The seven mechanical evidence classes: each evaluated on every run; an
 # entry that could not look reports its gap and the rule reads incomplete.
 OWNER_CLASSES = (
     "state-writers", "invariant-validators", "interface-overlap",
-    "lifecycle-coordinators", "parallel-entry-points", "fixture-lifecycle",
+    "lifecycle-coordinators", "parallel-entry-points",
     "forwarding-surfaces", "exact-retained",
 )
 
-_OWNER_ROLES = {RULE_OWNER_PRODUCTION: ("production",), RULE_OWNER_TEST: ("test", "test-support")}
-# Signature-equality classes fire per role family: repeated lifecycles are
-# coordinator debt in production and fixture debt in tests.
-_SIGNATURE_CLASS = {RULE_OWNER_PRODUCTION: "lifecycle-coordinators", RULE_OWNER_TEST: "fixture-lifecycle"}
+_OWNER_ROLES = {RULE_OWNER_PRODUCTION: ("production",)}
 
 _SHELL_ENV_READ = re.compile(r"\$\{([A-Z][A-Z0-9_]{3,})[:}\-]")
 _MUTATORS = frozenset({"mkdir", "rename", "rmdir", "rmtree", "unlink", "write_bytes", "write_text"})
@@ -682,7 +679,7 @@ def find_owner_competition(
 ) -> tuple[list[Finding], list[Finding], list[Finding]]:
     """The responsibility-owner rules: state findings, active candidates,
     and resolved telemetry, generated independently of duplicate detection.
-    Exact evidence is one class among eight, never an entry requirement;
+    Exact evidence is one class among seven, never an entry requirement;
     dispositions bind only through structural validation against the exact
     evaluated snapshot."""
     streams = snapshot.gap_streams()
@@ -706,7 +703,7 @@ def find_owner_competition(
         ]
         per_class: dict[str, list] = {name: [] for name in OWNER_CLASSES}
         per_class.update(groups)
-        per_class[_SIGNATURE_CLASS[rule_id]] = _signature_groups(units)
+        per_class["lifecycle-coordinators"] = _signature_groups(units)
         per_class["exact-retained"] = retained
         rule_candidates = []
         for name in OWNER_CLASSES:
@@ -725,8 +722,7 @@ def find_owner_competition(
         graph_gaps = [gap for gap in (snapshot.graph_gap, coverage_gap) if gap]
         owner_gaps = hidden + parse_gaps + list(snapshot.gitnexus_warnings) + graph_gaps
         if any(unit["changed"] for unit in units):
-            discovery = streams["baseline"] if "production" in roles else streams["baseline_roles"]
-            owner_gaps += list(discovery + streams["baseline_scope"])
+            owner_gaps += list(streams["baseline"] + streams["baseline_scope"])
         owner_gaps = tuple(dict.fromkeys(owner_gaps))
         applied, rule_resolved, consumed, notes = _apply_dispositions(
             snapshot, rule_id, records, rule_candidates, not owner_gaps
@@ -804,10 +800,8 @@ _REPAIRS = ("deepen", "replace", "consolidate")
 # per pinned case. Extending this table is parent-approved code, like promotion.
 _PINNED_VALIDATION_IDENTIFIER = "future3OOO/claude-skills#54 comment 5251048442"
 _PINNED_VALIDATION_DIGESTS = frozenset({
-    "08f61bed0d5df8b9435a38b1fb1712530bebb063d7c9b457dbe85770f97a016e",
     "d7bda52e9bff988face173e92467cc2db78d159c1564f2817075b4cd1c195de8",
     "3e96fd97af71111fc5e724f457ca5b3f32ef79fdd4d0a7a25e635ce600a0b39c",
-    "6c2fdd01db924618efc9df048884b2ef64082d5d254657e6fae4d47c92d15575",
 })
 
 

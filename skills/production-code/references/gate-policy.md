@@ -36,9 +36,9 @@ tests, build, or domain-specific gates.
   and hard rules. Typed incomplete findings are additionally surfaced as
   `QG54-ANALYSIS-INCOMPLETE`.
 - Responsibility-owner competition is warning-only structured evidence:
-  `QG54-OWNER-COMPETITION-PRODUCTION` and `QG54-OWNER-COMPETITION-TEST`
-  generate candidates independently of duplicate detection from eight
-  mechanical evidence classes, each evaluated on every run with a serialized
+  `QG54-OWNER-COMPETITION-PRODUCTION` generates candidates over production
+  source independently of duplicate detection from seven mechanical evidence
+  classes, each evaluated on every run with a serialized
   per-class ledger. Every finding carries exactly one state — `candidate`,
   `confirmed-unresolved`, or `resolved` — and only the first two are active
   warnings; `resolved` evidence lives in `resolvedFindings` as telemetry and
@@ -67,6 +67,9 @@ tests, build, or domain-specific gates.
   human decision on parent #54. Promotion keeps the finding
   `severity=warning` with its intrinsic check passed, adds an exact-ID error,
   and sets top-level `ok=false`.
+- Each warning-rule result is reported once, in `findings`; `checks` carries
+  only each rule's pass/status/gaps, and top-level `warnings` carries only
+  optional-input read failures.
 - Checks are path-aware through one stored classification per entry (role,
   parser language, human-authored/source status, test-like compatibility,
   exclusion reason). Production source remains strict; tests still fail
@@ -75,10 +78,10 @@ tests, build, or domain-specific gates.
   kept apart per role so one rule family's discovery cannot widen or dirty
   another's.
 - `--repo-context-packet` may widen owner discovery. `--gitnexus-context-json`
-  is the external graph evidence the owner rules' caller/callee scope
+  is the external graph evidence the owner rule's caller/callee scope
   requires (parent #54 decision, 2026-08-12): only a document declaring the
   evaluated base and candidate establishes that scope, so an absent, unbound,
-  stale, or malformed graph input leaves both owner rules incomplete as
+  stale, or malformed graph input leaves the owner rule incomplete as
   per-affected-rule `QG54-ANALYSIS-INCOMPLETE` evidence. The gate never
   creates reports, caches, or repository artifacts itself. In the governed
   workflow this input is supplied by `workflow.py verify --kind quality-gate`,

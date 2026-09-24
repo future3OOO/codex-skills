@@ -105,6 +105,12 @@ def owner_rule_finding(payload: dict[str, object], rule: str) -> dict[str, objec
     return findings[0]
 
 
+def incomplete_gaps(payload: dict[str, object], rule: str = "") -> list[str]:
+    """Every QG54-ANALYSIS-INCOMPLETE gap, optionally one affected rule's."""
+    return [gap for item in payload["findings"] if item["ruleId"] == "QG54-ANALYSIS-INCOMPLETE"
+            and (not rule or item["evidence"]["affectedRuleId"] == rule) for gap in item["evidence"]["gaps"]]
+
+
 def check_named(payload: dict[str, object], name: str) -> dict[str, object]:
     return next(item for item in payload["checks"] if item["name"] == name)
 
@@ -422,10 +428,14 @@ def test_large_growth_is_warning_only(repo: Path) -> None:
     code, payload, _ = run_gate(repo, "--base-ref", "HEAD")
     assert code == 0, (code, payload["errors"])
     assert payload["ok"] is True
-    assert any("QG54-GROWTH-CUMULATIVE" in warning for warning in payload["warnings"]), payload["warnings"]
     findings = [item for item in payload["findings"] if item["ruleId"] == "QG54-GROWTH-CUMULATIVE"]
     assert len(findings) == 1, payload.get("findings")
     assert findings[0]["status"] == "finding" and findings[0]["passed"] is True, findings[0]
+    # One report per finding: `findings` alone, never re-rendered as strings.
+    assert payload["warnings"] == [], "GATE_FINDING_REPORTED_TWICE"
+    assert all("warnings" not in item for item in payload["checks"]), "GATE_FINDING_REPORTED_TWICE"
+    text = run(["python3", str(SCRIPT), "check", "--repo", str(repo), "--base-ref", "HEAD"], repo).stdout
+    assert "QG54-GROWTH-CUMULATIVE" in text.split("Warnings:", 1)[1].split("\n\n", 1)[0], "TEXT_WARNINGS_HIDDEN"
 
 
 @with_repo
@@ -466,22 +476,17 @@ def test_completeness_scopes_are_rule_specific(repo: Path) -> None:
 
 @with_repo
 def test_completeness_follows_each_rule_own_role_scope(repo: Path) -> None:
-    # An unmeasured, unparseable test blob is inside the exact and TEST owner
-    # rules' scope and outside the production owner rule's. Widening one
-    # rule's roles must not dirty the other's.
+    # An unmeasured, unparseable test blob is inside the exact rules' scope
+    # and outside the production owner rule's, and no test owner rule exists.
     (repo / "tests").mkdir()
     (repo / "tests" / "blob.py").write_bytes(b"A = 1\x00\n")
     write(repo / "src" / "app.py", "VALUE = 1\n")
     code, payload, _ = run_gate(repo, "--base-ref", "HEAD")
     escapes = check_named(payload, "no-quality-escapes")
     assert escapes["status"] == "incomplete", escapes
-    assert_exact_rules(payload, {
-        "QG54-DUPLICATE-ADDED-SYMBOL": "incomplete",
-        "QG54-OWNER-COMPETITION-TEST": "incomplete",
-    })
-    # Role separation shows in the gap sets: the blob dirties the TEST rule's
-    # scope while the production rule carries only the universal graph gap.
-    assert any("blob.py" in gap for gap in owner_rule_finding(payload, "QG54-OWNER-COMPETITION-TEST")["completeness"]["gaps"])
+    assert_exact_rules(payload, {"QG54-DUPLICATE-ADDED-SYMBOL": "incomplete"})
+    assert not [item for item in payload["checks"] + payload["findings"]
+                if "QG54-OWNER-COMPETITION-TEST" in (item.get("name"), item.get("ruleId"))], "OWNER_TEST_RULE_PRESENT"
     production_gaps = owner_rule_finding(payload, "QG54-OWNER-COMPETITION-PRODUCTION")["completeness"]["gaps"]
     assert production_gaps == ["no snapshot-bound external graph evidence: caller/callee scope is unestablished"], production_gaps
     assert code == 0, (code, payload["errors"])
@@ -654,7 +659,7 @@ def _consolidation_row(repo: Path, candidate, removed, expected, name: str) -> N
 def test_varying_scaffolding_is_not_an_exact_duplicate(repo: Path) -> None:
     # Five near-identical scenario tests differing only in literals and
     # expected values. Exactness preserves literals, so this is not a
-    # duplicated implementation; fixture-lifecycle ownership belongs to #77.
+    # duplicated implementation; lifecycle ownership belongs to #77.
     cases = "\n\n".join(
         "\n".join((
             f"def test_case_{index}(tmp_path):",
@@ -735,21 +740,20 @@ def test_repeated_inline_scaffolds_are_one_owner_candidate(repo: Path) -> None:
     # Varying literals, scenarios, and expected effects do not suppress the
     # candidate when the resolved layer, callees, and ordered lifecycle
     # signature match; and no duplicate finding is required for it.
-    write(repo / "tests" / "test_lifecycle.py", _LIFECYCLE_SCAFFOLDS)
+    write(repo / "src" / "lifecycle.py", _LIFECYCLE_SCAFFOLDS)
     git(repo, "add", ".")
     git(repo, "commit", "-q", "-m", "five scaffolds")
     base = run(["git", "rev-parse", "HEAD~1"], repo).stdout.strip()
-    bound = graph_evidence(base, run(["git", "rev-parse", "HEAD"], repo).stdout.strip(), ("tests/test_lifecycle.py",))
+    bound = graph_evidence(base, run(["git", "rev-parse", "HEAD"], repo).stdout.strip(), ("src/lifecycle.py",))
     code, payload, _ = run_gate(repo, "--base-ref", base, "--gitnexus-context-json", str(bound))
-    names = {item["name"] for item in payload["checks"]}
-    assert "QG54-OWNER-COMPETITION-TEST" in names, sorted(names)
-    assert_exact_rules(payload, {**dict.fromkeys(EXACT_RULES, "passed"), "QG54-OWNER-COMPETITION-TEST": "finding"})
-    candidates = owner_findings(payload, "QG54-OWNER-COMPETITION-TEST")
+    assert_exact_rules(payload, {**dict.fromkeys(EXACT_RULES, "passed"), "QG54-OWNER-COMPETITION-PRODUCTION": "finding"})
+    candidates = owner_findings(payload, "QG54-OWNER-COMPETITION-PRODUCTION")
     assert len(candidates) == 1, candidates
     finding = candidates[0]
     assert finding["state"] == "candidate", finding
+    assert finding["region"]["evidenceClass"] == "lifecycle-coordinators", finding
     expected = [
-        ("tests/test_lifecycle.py", line_no)
+        ("src/lifecycle.py", line_no)
         for line_no, line in enumerate(_LIFECYCLE_SCAFFOLDS.splitlines(), 1)
         if line.startswith("def test_")
     ]
@@ -759,24 +763,24 @@ def test_repeated_inline_scaffolds_are_one_owner_candidate(repo: Path) -> None:
     assert code == 0 and payload["ok"] is True, (code, payload["errors"])
 
 
-def assert_no_lifecycle_candidates(repo: Path, base: str, bound: Path) -> None:
-    """The shared negative tail: zero fixture-lifecycle candidates, exact rule state."""
+def assert_no_lifecycle_candidates(repo: Path, base: str, bound: Path, exit_code: int = 0) -> None:
+    """The shared negative tail: zero lifecycle candidates, exact rule state."""
     code, payload, _ = run_gate(repo, "--base-ref", base, "--gitnexus-context-json", str(bound))
-    lifecycle = [item for item in owner_findings(payload, "QG54-OWNER-COMPETITION-TEST")
-                 if item["region"]["evidenceClass"] == "fixture-lifecycle"]
+    lifecycle = [item for item in owner_findings(payload, "QG54-OWNER-COMPETITION-PRODUCTION")
+                 if item["region"]["evidenceClass"] == "lifecycle-coordinators"]
     regions = [[(region["path"], region["displayLine"]) for region in item["region"]["regions"]]
                for item in lifecycle]
     assert regions == [], regions
-    assert_exact_rules(payload, {"QG54-OWNER-COMPETITION-TEST": "passed"})
-    assert code == 0, (code, payload["errors"])
+    assert_exact_rules(payload, {"QG54-OWNER-COMPETITION-PRODUCTION": "passed"})
+    assert code == exit_code, (code, payload["errors"])
 
 
 @with_repo
 def test_partition_boundaries_discriminate_lifecycles(repo: Path) -> None:
     # An order-preserving transfer across the try/else boundary changes the
     # exception scope, so the two scaffolds are different lifecycles and
-    # never one fixture-lifecycle candidate.
-    write(repo / "tests" / "test_partitions.py", (
+    # never one lifecycle candidate.
+    write(repo / "src" / "partitions.py", (
         "def test_finalize_guarded():\n"
         "    write_marker('r', 'armed')\n"
         "    stage = prepare('cfg')\n"
@@ -799,7 +803,7 @@ def test_partition_boundaries_discriminate_lifecycles(repo: Path) -> None:
     git(repo, "commit", "-q", "-m", "partition scaffolds")
     base = run(["git", "rev-parse", "HEAD~1"], repo).stdout.strip()
     head = run(["git", "rev-parse", "HEAD"], repo).stdout.strip()
-    bound = graph_evidence(base, head, ("tests/test_partitions.py",))
+    bound = graph_evidence(base, head, ("src/partitions.py",))
     assert_no_lifecycle_candidates(repo, base, bound)
 
 
@@ -815,13 +819,13 @@ def test_partition_wrappers_do_not_satisfy_operation_floor(repo: Path) -> None:
         "    else:\n"
         "        disable('mode')\n"
     )
-    write(repo / "tests" / "test_left.py", scaffold.format(n="left"))
-    write(repo / "tests" / "test_right.py", scaffold.format(n="right"))
+    write(repo / "src" / "left.py", scaffold.format(n="left"))
+    write(repo / "src" / "right.py", scaffold.format(n="right"))
     git(repo, "add", ".")
     git(repo, "commit", "-q", "-m", "toggles")
     base = run(["git", "rev-parse", "HEAD~1"], repo).stdout.strip()
     head = run(["git", "rev-parse", "HEAD"], repo).stdout.strip()
-    bound = graph_evidence(base, head, ("tests/test_left.py", "tests/test_right.py"))
+    bound = graph_evidence(base, head, ("src/left.py", "src/right.py"))
     assert_no_lifecycle_candidates(repo, base, bound)
 
 
@@ -883,7 +887,8 @@ def test_a_changed_file_without_units_still_needs_coverage(repo: Path) -> None:
 def test_partition_roles_discriminate_bare_except_and_finally(repo: Path) -> None:
     # Partition role is lifecycle identity: rollback on error only (bare
     # except) and rollback always (finally) never group, even with matching
-    # operation sequences and empty headers.
+    # operation sequences and empty headers. The bare except is itself a
+    # production quality escape, so the run fails on that alone.
     scaffold = (
         "def test_{n}_cleanup():\n"
         "    write_marker('r', 'armed')\n"
@@ -893,14 +898,14 @@ def test_partition_roles_discriminate_bare_except_and_finally(repo: Path) -> Non
         "    {clause}:\n"
         "        rollback(stage)\n"
     )
-    write(repo / "tests" / "test_left.py", scaffold.format(n="guarded", clause="except"))
-    write(repo / "tests" / "test_right.py", scaffold.format(n="always", clause="finally"))
+    write(repo / "src" / "left.py", scaffold.format(n="guarded", clause="except"))
+    write(repo / "src" / "right.py", scaffold.format(n="always", clause="finally"))
     git(repo, "add", ".")
     git(repo, "commit", "-q", "-m", "cleanups")
     base = run(["git", "rev-parse", "HEAD~1"], repo).stdout.strip()
     head = run(["git", "rev-parse", "HEAD"], repo).stdout.strip()
-    bound = graph_evidence(base, head, ("tests/test_left.py", "tests/test_right.py"))
-    assert_no_lifecycle_candidates(repo, base, bound)
+    bound = graph_evidence(base, head, ("src/left.py", "src/right.py"))
+    assert_no_lifecycle_candidates(repo, base, bound, exit_code=2)
 
 
 @with_repo
@@ -1024,7 +1029,6 @@ def test_absent_graph_evidence_leaves_caller_callee_scope_unestablished(repo: Pa
     code, payload, _ = run_gate(repo, "--base-ref", base)
     assert_exact_rules(payload, {
         "QG54-OWNER-COMPETITION-PRODUCTION": "incomplete",
-        "QG54-OWNER-COMPETITION-TEST": "incomplete",
     })
     rule = owner_rule_finding(payload, "QG54-OWNER-COMPETITION-PRODUCTION")
     assert any("graph evidence" in gap for gap in rule["completeness"]["gaps"]), rule
@@ -1034,7 +1038,6 @@ def test_absent_graph_evidence_leaves_caller_callee_scope_unestablished(repo: Pa
     code, payload, _ = run_gate(repo, "--base-ref", base, "--gitnexus-context-json", str(bound))
     assert_exact_rules(payload, {
         "QG54-OWNER-COMPETITION-PRODUCTION": "finding",
-        "QG54-OWNER-COMPETITION-TEST": "passed",
     })
 
     stale = graph_evidence(base, base)
@@ -1062,7 +1065,6 @@ def test_scalar_relationship_values_are_not_graph_coverage(repo: Path) -> None:
     assert any("no caller/callee symbol results" in gap for gap in rule["completeness"]["gaps"]), rule
     assert_exact_rules(payload, {
         "QG54-OWNER-COMPETITION-PRODUCTION": "incomplete",
-        "QG54-OWNER-COMPETITION-TEST": "incomplete",
     })
     assert code == 0, (code, payload["errors"])
 
@@ -1094,7 +1096,6 @@ def test_ambiguous_same_named_definitions_are_a_gap_not_a_binding(repo: Path) ->
                for gap in rule["completeness"]["gaps"]), rule
     assert_exact_rules(payload, {
         "QG54-OWNER-COMPETITION-PRODUCTION": "incomplete",
-        "QG54-OWNER-COMPETITION-TEST": "passed",
     })
     assert code == 0, (code, payload["errors"])
 
@@ -1366,9 +1367,9 @@ def test_lifecycle_signature_discriminates_the_near_misses(repo: Path) -> None:
         "    with_repo(body)",
         "",
     ))
-    write(repo / "tests" / "test_lifecycle.py", _LIFECYCLE_SCAFFOLDS + "\n\n" + near_misses)
+    write(repo / "src" / "lifecycle.py", _LIFECYCLE_SCAFFOLDS + "\n\n" + near_misses)
     code, payload, _ = run_gate(repo)
-    candidates = owner_findings(payload, "QG54-OWNER-COMPETITION-TEST")
+    candidates = owner_findings(payload, "QG54-OWNER-COMPETITION-PRODUCTION")
     assert len(candidates) == 1, json.dumps(payload["findings"], indent=2)
     owners = [region["owner"] for region in candidates[0]["region"]["regions"]]
     assert owners == [
@@ -1398,15 +1399,15 @@ def test_parameterized_single_lifecycle_owner_is_negative(repo: Path) -> None:
         "        with_repo(lambda repo: _scenario_row(repo, path, payload, expected))",
         "",
     ))
-    write(repo / "tests" / "test_rows.py", consolidated)
+    write(repo / "src" / "rows.py", consolidated)
     git(repo, "add", ".")
     git(repo, "commit", "-q", "-m", "one parameterized owner")
     base = run(["git", "rev-parse", "HEAD~1"], repo).stdout.strip()
     head = run(["git", "rev-parse", "HEAD"], repo).stdout.strip()
     code, payload, _ = run_gate(repo, "--base-ref", base,
-                                "--gitnexus-context-json", str(graph_evidence(base, head, ("tests/test_rows.py",))))
-    assert_exact_rules(payload, {"QG54-OWNER-COMPETITION-TEST": "passed"})
-    assert owner_findings(payload, "QG54-OWNER-COMPETITION-TEST") == [], payload["findings"]
+                                "--gitnexus-context-json", str(graph_evidence(base, head, ("src/rows.py",))))
+    assert_exact_rules(payload, {"QG54-OWNER-COMPETITION-PRODUCTION": "passed"})
+    assert owner_findings(payload, "QG54-OWNER-COMPETITION-PRODUCTION") == [], payload["findings"]
     assert code == 0, (code, payload["errors"])
 
 
@@ -1583,11 +1584,11 @@ def test_signature_preserves_command_discriminators(repo: Path) -> None:
         "    assert code == 0",
         "",
     ))
-    write(repo / "tests" / "test_modes.py", scaffolds)
+    write(repo / "src" / "modes.py", scaffolds)
     code, payload, _ = run_gate(repo)
     lifecycle = [
-        item for item in owner_findings(payload, "QG54-OWNER-COMPETITION-TEST")
-        if item["region"]["evidenceClass"] == "fixture-lifecycle"
+        item for item in owner_findings(payload, "QG54-OWNER-COMPETITION-PRODUCTION")
+        if item["region"]["evidenceClass"] == "lifecycle-coordinators"
     ]
     # Bare payload words under an ordinary callee stay normalized value
     # slots: the ready/failed pair is the one group the discriminators leave.
@@ -1977,14 +1978,10 @@ def test_a_test_owner_gap_does_not_dirty_the_production_owner_rule(repo: Path) -
     code, payload, _ = run_gate(repo, "--base-ref", "HEAD")
     assert_exact_rules(payload, {
         "QG54-DUPLICATE-BASELINE": "incomplete",
-        "QG54-OWNER-COMPETITION-TEST": "incomplete",
         "QG54-OWNER-COMPETITION-PRODUCTION": "incomplete",
     })
     baseline_rule = check_named(payload, "QG54-DUPLICATE-BASELINE")
     assert any("huge_helpers.py" in gap for gap in baseline_rule["gaps"]), baseline_rule
-    # Role separation shows in the gap sets: the unread test owner dirties the
-    # TEST rule while the production rule carries only the universal graph gap.
-    assert any("huge_helpers.py" in gap for gap in owner_rule_finding(payload, "QG54-OWNER-COMPETITION-TEST")["completeness"]["gaps"])
     production_gaps = owner_rule_finding(payload, "QG54-OWNER-COMPETITION-PRODUCTION")["completeness"]["gaps"]
     assert not any("huge_helpers.py" in gap for gap in production_gaps), production_gaps
     # The exact retained copy is owner-competition evidence with no duplicate
@@ -2074,14 +2071,14 @@ _SCOPE_ROWS = (
     ("skipped-oversized-baseline", None, {"src/huge.py": _OVERSIZED},
      {"src/dup.py": _UNREADABLE_OWNER}, False, (),
      {"code": 0, "owner": "huge.py",
-      "warning": "QG54-ANALYSIS-INCOMPLETE for QG54-OWNER-COMPETITION-PRODUCTION",
+      "incomplete": "QG54-OWNER-COMPETITION-PRODUCTION",
       "checks": ("QG54-OWNER-COMPETITION-PRODUCTION",)}),
     ("unmeasured-production-file", None, {}, {"src/base.py": _BINARY}, False, ("--base-ref", "HEAD"),
      {"code": 0, "growth": "src/base.py", "owner": "src/base.py",
       "checks": ("QG54-OWNER-COMPETITION-PRODUCTION", "no-quality-escapes",
                  "QG54-DUPLICATE-ADDED-SYMBOL", "QG54-DUPLICATE-ADDED-BLOCK")}),
     ("unbased-run", None, {}, {"src/app.py": "VALUE = 1\n"}, False, (),
-     {"code": 0, "growth": "no caller-supplied base", "warning": "QG54-GROWTH-CUMULATIVE",
+     {"code": 0, "growth": "no caller-supplied base", "incomplete": "QG54-GROWTH-CUMULATIVE",
       "evalGap": "no caller-supplied base"}),
     ("missing-base-ref", None, {}, {"src/app.py": "VALUE = 1\n"}, False, ("--base-ref", "deadbeef"),
      {"code": 2, "error": "base-ref not found", "growth": "", "checks": "*", "hardRules": "*"}),
@@ -2128,8 +2125,8 @@ def _scope_row(repo, config, baseline, candidate, staged, args, expect, name: st
     assert payload["ok"] is (code == 0), (name, payload["errors"])
     if "error" in expect:
         assert any(expect["error"] in item for item in payload["errors"]), (name, payload["errors"])
-    if "warning" in expect:
-        assert any(expect["warning"] in item for item in payload["warnings"]), (name, payload["warnings"])
+    if "incomplete" in expect:
+        assert incomplete_gaps(payload, expect["incomplete"]), (name, payload["findings"])
     for rule, finding_of in (
         ("growth", growth_finding),
         ("owner", lambda p: owner_rule_finding(p, "QG54-OWNER-COMPETITION-PRODUCTION")),
@@ -2378,9 +2375,8 @@ def test_captured_round_six_corpus_reports_pinned_totals() -> None:
     assert growth_finding(payload)["completeness"] == {"complete": True, "gaps": []}
     # The corpus adds new committed files; their absent baselines are not
     # discovery failures, so every rule must still read complete.
-    for rule in ("QG54-OWNER-COMPETITION-PRODUCTION", "QG54-OWNER-COMPETITION-TEST"):
-        owner_rule = owner_rule_finding(payload, rule)
-        assert owner_rule["completeness"] == {"complete": True, "gaps": []}, owner_rule
+    owner_rule = owner_rule_finding(payload, "QG54-OWNER-COMPETITION-PRODUCTION")
+    assert owner_rule["completeness"] == {"complete": True, "gaps": []}, owner_rule
     # The exact rules carry their own corpus verdict in the calibration
     # replay below, including the shell scope no tokenizer can read.
     assert all(
@@ -2390,24 +2386,12 @@ def test_captured_round_six_corpus_reports_pinned_totals() -> None:
     ), payload["checks"]
 
 
-_MANIFEST_R = ("02ebe4c3a9163497f81d05364f2d1b5624477bd6", "29e355ea3d73e5631914a1376c7ba68a64e5711e",
-               "40b6f27617e593a8b89e5b722982c834f348ed9e3eaf876ff9e47876814db830")
-_MANIFEST_G = ("65f14318cb94d995dcfe961a09eb1e4dbe374dd1", "08074c7e727d26ce62b0a3f80899de76e34818ef",
-               "854db8efcb9c9ffaf8efc26bb42475cf7bfde155567a3cbfca5a0e23919c5c0b")
-_MANIFEST_TESTFILE = "skills/production-code/scripts/test_code_quality_gate.py"
-_MANIFEST_KEY = "quality-gate:cleanup-verdict-scenario-lifecycle"
-_MANIFEST_FIVE = (
-    "test_bare_noqa_is_still_a_quality_escape", "test_js_ts_escapes_fail", "test_python_escapes_fail",
-    "test_test_any_annotations_do_not_fail_cleanup", "test_test_fake_green_escapes_still_fail",
-)
 _MANIFEST_PARENT = "future3OOO/claude-skills#54 comment 5251048442"
 # The parent decision of 2026-08-12 binds every state-changing disposition
 # record by its canonical content digest; a record cannot mint its own root.
 _PINNED_RECORD_DIGESTS = {
-    "R": "08f61bed0d5df8b9435a38b1fb1712530bebb063d7c9b457dbe85770f97a016e",
     "P1": "d7bda52e9bff988face173e92467cc2db78d159c1564f2817075b4cd1c195de8",
     "P2": "3e96fd97af71111fc5e724f457ca5b3f32ef79fdd4d0a7a25e635ce600a0b39c",
-    "G": "6c2fdd01db924618efc9df048884b2ef64082d5d254657e6fae4d47c92d15575",
 }
 
 
@@ -2426,63 +2410,24 @@ def range_graph_evidence(repo: Path, base: str, candidate: str) -> Path:
     ))
 
 
-def _lifecycle_record(base: str, candidate: str, survivor: dict[str, str] | None = None) -> dict[str, object]:
-    return {
-        "ruleId": "QG54-OWNER-COMPETITION-TEST", "responsibilityKey": _MANIFEST_KEY,
-        "disposition": "same-responsibility", "repair": "consolidate",
-        "base": base, "candidate": candidate,
-        "owners": [{"path": _MANIFEST_TESTFILE, "symbol": name} for name in _MANIFEST_FIVE],
-        **({"survivor": survivor} if survivor else {}),
-        "parentRecord": _MANIFEST_PARENT,
-    }
-
-
 def _active_states(payload: dict[str, object], rule: str) -> list[str]:
     return [item["state"] for item in owner_findings(payload, rule)]
 
 
 def test_owner_manifest_calibration_is_reproducible() -> None:
-    # The parent-pinned owner manifest (#54 comment 5251048442), verbatim:
-    # cases R, P1, P2, and G over three canonical historical diffs. Every
-    # pinned anchor is adjudicated here and every additional mechanical
-    # candidate is counted as outside-pinned-scope for parent #54 — never
-    # silently adjudicated, added to the corpus, or read as a failure.
+    # The parent-pinned owner manifest (#54 comment 5251048442) cases P1 and
+    # P2 over the canonical round-six diff. Every pinned anchor is adjudicated
+    # here and every additional mechanical candidate is counted as
+    # outside-pinned-scope for parent #54 — never silently adjudicated, added
+    # to the corpus, or read as a failure.
     published = (SCRIPT_DIR.parent / "references" / "owner-calibration.md").read_text(encoding="utf-8")
     repo = source_repo()
-    for base, candidate, digest in (_MANIFEST_R, (CORPUS_BASE, CORPUS_CANDIDATE, CORPUS_DIFF_SHA256), _MANIFEST_G):
-        for sha in (base, candidate):
-            assert run(["git", "cat-file", "-e", f"{sha}^{{commit}}"], repo).returncode == 0, sha
-        assert canonical_diff_sha256(repo, base, candidate) == digest, (base, candidate)
-        for pinned in (base, candidate, digest):
-            assert pinned in published, pinned
+    for sha in (CORPUS_BASE, CORPUS_CANDIDATE):
+        assert run(["git", "cat-file", "-e", f"{sha}^{{commit}}"], repo).returncode == 0, sha
+    assert canonical_diff_sha256(repo, CORPUS_BASE, CORPUS_CANDIDATE) == CORPUS_DIFF_SHA256
+    for pinned in (CORPUS_BASE, CORPUS_CANDIDATE, CORPUS_DIFF_SHA256):
+        assert pinned in published, pinned
     assert "unexaminedCount = 0" in published
-
-    # Case R without records: candidate generation is independent of both
-    # duplicate detection and dispositions, and the pinned five-group appears
-    # exactly, in region order, among the counted candidates.
-    payload = replay_pinned_range(*_MANIFEST_R[:2])
-    test_candidates = owner_findings(payload, "QG54-OWNER-COMPETITION-TEST")
-    five_groups = [
-        item for item in test_candidates
-        if [region["owner"] for region in item["region"]["regions"]] == list(_MANIFEST_FIVE)
-    ]
-    assert len(five_groups) == 1, [item["evidence"]["owners"] for item in test_candidates]
-    assert five_groups[0]["region"]["evidenceClass"] == "fixture-lifecycle", five_groups[0]
-    assert len(test_candidates) == 4 and not owner_findings(payload, "QG54-OWNER-COMPETITION-PRODUCTION"), (
-        [item["evidence"]["owners"] for item in test_candidates])
-
-    # Case R with the record: repeated-scaffolding RED confirms and stays
-    # active; the bare five-candidate retires into the confirmed finding.
-    r_records = [_lifecycle_record(*_MANIFEST_R[:2])]
-    assert_pinned_digest(stamp_records(r_records), "R")
-    payload = replay_pinned_range(*_MANIFEST_R[:2], records=r_records)
-    states = _active_states(payload, "QG54-OWNER-COMPETITION-TEST")
-    assert sorted(states) == ["candidate"] * 3 + ["confirmed-unresolved"], states
-    confirmed = [item for item in owner_findings(payload, "QG54-OWNER-COMPETITION-TEST")
-                 if item["state"] == "confirmed-unresolved"]
-    assert [region["owner"] for region in confirmed[0]["region"]["regions"]] == list(_MANIFEST_FIVE), confirmed
-    assert confirmed[0]["evidence"]["responsibilityKey"] == _MANIFEST_KEY, confirmed
-    assert payload["resolvedFindings"] == [], payload["resolvedFindings"]
 
     # Cases P1 and P2 over the captured round-six corpus: partial
     # consolidation stays confirmed-unresolved while distinct authority over
@@ -2509,8 +2454,8 @@ def test_owner_manifest_calibration_is_reproducible() -> None:
         CORPUS_BASE, CORPUS_CANDIDATE,
         "--gitnexus-context-json", str(range_graph_evidence(source_repo(), CORPUS_BASE, CORPUS_CANDIDATE)),
         records=corpus_records)
-    for rule in ("QG54-OWNER-COMPETITION-PRODUCTION", "QG54-OWNER-COMPETITION-TEST"):
-        assert owner_rule_finding(payload, rule)["completeness"] == {"complete": True, "gaps": []}, rule
+    assert owner_rule_finding(payload, "QG54-OWNER-COMPETITION-PRODUCTION")["completeness"] == {
+        "complete": True, "gaps": []}
     production = _active_states(payload, "QG54-OWNER-COMPETITION-PRODUCTION")
     assert sorted(production) == ["candidate"] * 5 + ["confirmed-unresolved"], production
     confirmed = [item for item in owner_findings(payload, "QG54-OWNER-COMPETITION-PRODUCTION")
@@ -2520,32 +2465,9 @@ def test_owner_manifest_calibration_is_reproducible() -> None:
         "hooks/lib/state_store.py", "skills/codex-advisor/scripts/ask-codex-advisor.sh"}, confirmed
     assert [(item["evidence"]["responsibilityKey"], item["state"]) for item in payload["resolvedFindings"]] == [
         ("session-association-marker-consumption", "resolved")], payload["resolvedFindings"]
-    assert _active_states(payload, "QG54-OWNER-COMPETITION-TEST") == ["candidate"] * 8, (
-        [item["evidence"]["owners"] for item in owner_findings(payload, "QG54-OWNER-COMPETITION-TEST")])
 
-    # Case G: consolidate-and-delete resolves. The repo-context packet names
-    # the whole base tree so owner discovery is complete — the widening
-    # direction the incompleteness action prescribes, through an existing
-    # input, never an exclusion knob.
-    listing = run(["git", "ls-tree", "-r", "--name-only", _MANIFEST_G[0]], repo).stdout
-    packet = Path(tempfile.mkdtemp(prefix="owner-packet-")) / "packet.txt"
-    packet.write_text(listing, encoding="utf-8")
-    g_records = [
-        _lifecycle_record(*_MANIFEST_G[:2], survivor={"path": _MANIFEST_TESTFILE, "symbol": "_escape_row"}),
-    ]
-    assert_pinned_digest(stamp_records(g_records), "G")
-    payload = replay_pinned_range(*_MANIFEST_G[:2],
-                                  "--repo-context-packet", str(packet),
-                                  "--gitnexus-context-json", str(range_graph_evidence(source_repo(), *_MANIFEST_G[:2])),
-                                  records=g_records)
-    assert [(item["evidence"]["responsibilityKey"], item["state"]) for item in payload["resolvedFindings"]] == [
-        (_MANIFEST_KEY, "resolved")], payload["resolvedFindings"]
-    assert _active_states(payload, "QG54-OWNER-COMPETITION-TEST") == ["candidate"] * 4, (
-        [item["evidence"]["owners"] for item in owner_findings(payload, "QG54-OWNER-COMPETITION-TEST")])
-    assert not any(_MANIFEST_KEY in warning for warning in payload["warnings"]), payload["warnings"]
-    # The published outside-pinned-scope counts are these measured volumes.
-    for count in ("| R | 3 |", "| P1/P2 | 13 |", "| G | 4 |"):
-        assert count in published, count
+    # The published outside-pinned-scope count is this measured volume.
+    assert "| P1/P2 | 5 |" in published
 
 
 def test_captured_corpus_duplicate_calibration_is_reproducible() -> None:
@@ -2644,7 +2566,7 @@ def test_skipped_baseline_scope_is_reported_not_silent(repo: Path) -> None:
     write(repo / "src" / "dup.py", _UNREADABLE_OWNER)
     code, payload, _ = run_gate(repo, "--base-ref", "HEAD")
     assert code == 0 and payload["ok"] is True, (code, payload["errors"])
-    assert any("huge.py" in warning and "baseline" in warning for warning in payload["warnings"]), payload["warnings"]
+    assert any("huge.py" in gap and "baseline" in gap for gap in incomplete_gaps(payload)), payload["findings"]
 
 
 @with_repo
@@ -2655,7 +2577,7 @@ def test_unmeasured_binary_source_change_is_never_silently_clean(repo: Path) -> 
     (repo / "src" / "unmeasured.py").write_bytes(b"def ok() -> int:\n    return 1\n\x00\x00binary\n")
     code, payload, _ = run_gate(repo, "--base-ref", "HEAD")
     assert code == 0 and payload["ok"] is True, (code, payload["errors"])
-    assert any("no line counts" in warning for warning in payload["warnings"]), payload["warnings"]
+    assert any("no line counts" in gap for gap in incomplete_gaps(payload)), payload["findings"]
 
 
 @with_repo
@@ -2901,10 +2823,8 @@ def test_growth_warning_survives_base_binding_incompleteness(repo: Path) -> None
     write(repo / "src" / "big.py", "".join(f"VALUE_{i} = {i}\n" for i in range(600)))
     code, payload, _ = run_gate(repo)
     assert payload["evaluation"]["growth"]["humanAuthored"]["net"] > 500, payload["evaluation"]["growth"]
-    incomplete = [w for w in payload["warnings"] if "QG54-ANALYSIS-INCOMPLETE" in w and "no caller-supplied base" in w]
-    growth = [w for w in payload["warnings"] if w.startswith("QG54-GROWTH-CUMULATIVE:")]
-    assert incomplete, payload["warnings"]
-    assert growth, payload["warnings"]
+    assert any("no caller-supplied base" in gap for gap in incomplete_gaps(payload, "QG54-GROWTH-CUMULATIVE")), payload["findings"]
+    assert growth_finding(payload)["evidence"]["humanAuthored"]["net"] > 500, growth_finding(payload)
     # Warning-only: the hook contract keeps exit zero.
     assert code == 0 and payload["ok"] is True, (code, payload["errors"])
 
@@ -2952,13 +2872,9 @@ def test_promotion_follows_exact_rule_id_metadata_only() -> None:
         )
         assert_exact_rules(payload, {
             "QG54-OWNER-COMPETITION-PRODUCTION": "incomplete",
-            "QG54-OWNER-COMPETITION-TEST": "incomplete",
         })
-        assert any(
-            "QG54-ANALYSIS-INCOMPLETE for QG54-OWNER-COMPETITION-PRODUCTION" in warning
-            and "gitnexus context JSON ignored" in warning
-            for warning in payload["warnings"]
-        ), payload["warnings"]
+        assert any("gitnexus context JSON ignored" in gap
+                   for gap in incomplete_gaps(payload, "QG54-OWNER-COMPETITION-PRODUCTION")), payload["findings"]
         assert payload["errors"] == [], payload["errors"]
         assert payload["ok"] is True and code == 0, (code, payload["errors"])
 
@@ -3083,8 +2999,8 @@ def test_gate_implementation_budget() -> None:
         "total_lines": 1200,
     }
     justified: dict[str, str] = {
-        "TOTAL": "complete #75 canonical evaluation, #76 exact duplication, and #77 responsibility ownership: captured base-to-candidate snapshot, typed schema-v2 findings, warning-only cumulative growth, three QG54-DUPLICATE-* rules and two QG54-OWNER-COMPETITION-* rules over one redundancy owner with disposition records, with the lexical reuse scorer deleted; 2825 ceiling operator-approved 2026-08-12",
-        "_quality_gate/redundancy.py": "the one redundancy owner the architecture mandates: exact-duplicate phases plus the responsibility phases (eight evidence classes, three finding states, disposition validation, one-owner resolution) behind runner.check",
+        "TOTAL": "complete #75 canonical evaluation, #76 exact duplication, and #77 responsibility ownership: captured base-to-candidate snapshot, typed schema-v2 findings, warning-only cumulative growth, three QG54-DUPLICATE-* rules and the QG54-OWNER-COMPETITION-PRODUCTION rule over one redundancy owner with disposition records, with the lexical reuse scorer deleted; 2825 ceiling operator-approved 2026-08-12",
+        "_quality_gate/redundancy.py": "the one redundancy owner the architecture mandates: exact-duplicate phases plus the responsibility phases (seven evidence classes, three finding states, disposition validation, one-owner resolution) behind runner.check",
         "_quality_gate/runner.py:check": "the one evaluation walk the architecture mandates: every check, warning, error, and hard rule derives from a single typed outcome column",
     }
     production_files = [SCRIPT, *sorted((SCRIPT_DIR / "_quality_gate").glob("*.py"))]

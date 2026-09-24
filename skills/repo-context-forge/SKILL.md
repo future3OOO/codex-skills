@@ -159,10 +159,8 @@ AGENTS.md — GitNexus owns required context/impact coverage.
 The packet's `<gitnexus_analysis>` already answers every `<check>` the plan
 listed — `kind="symbol_context"` entries carry their callers, `kind="symbol_impact"`
 entries their impacted files. Read those entries rather than reissuing the same
-calls. No entry carries callees, so the analysis never completes the
-callers-AND-callees requirement on its own. Spend MCP calls on what the packet
-did not fix: callees of anything you are about to edit, a symbol the plan
-omitted, and the post-edit validation below.
+calls. Spend MCP calls only on what the packet did not fix: a changed symbol
+the plan omitted, and the post-edit validation below.
 
 When you do call out:
 

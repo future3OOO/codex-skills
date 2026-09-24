@@ -4,7 +4,7 @@ from pathlib import Path
 
 from .checks import changed_file_failures, evaluate_growth, scan_quality_escapes
 from .git_scope import collect_scope
-from .findings import Finding, RULE_GROWTH, RULE_INCOMPLETE, incompleteness_findings, promoted_errors
+from .findings import Finding, incompleteness_findings, promoted_errors
 from .redundancy import find_exact_duplicates, find_owner_competition
 from .snapshot import EvaluationSnapshot
 
@@ -40,7 +40,6 @@ def check(
     growth_rule = evaluate_growth(snapshot)
     duplicate_rules, duplicates = find_exact_duplicates(snapshot)
     owner_rules, owner_candidates, owner_resolved = find_owner_competition(snapshot, duplicates)
-    duplicate_warnings = {rule.rule_id: _duplicate_warnings(rule) for rule in duplicate_rules}
     findings: list[Finding] = [growth_rule, *duplicate_rules, *duplicates, *owner_rules, *owner_candidates]
     findings.extend(incompleteness_findings(findings))
 
@@ -55,12 +54,12 @@ def check(
         "attribution": streams["attribution"] + streams["measurement"] + streams["capture"],
     }
 
-    # One walk builds checks, warnings, and errors from the typed outcomes; the
-    # hard rules derive from the same outcome column. A rule that could not see
-    # its whole scope is unknown, never a pass; a violation it did see stays a
-    # violation; an active warning-only rule keeps its intrinsic pass visible.
+    # One walk builds checks and errors from the typed outcomes; the hard rules
+    # derive from the same outcome column. A rule that could not see its whole
+    # scope is unknown, never a pass; a violation it did see stays a violation;
+    # an active warning-only rule keeps its intrinsic pass visible. Warning
+    # rules report once, as `findings`, never re-rendered as strings.
     checks: list[dict[str, object]] = []
-    warnings: list[str] = []
 
     for name, template, cap, stream in _SIMPLE_CHECKS:
         items = found[name]
@@ -79,32 +78,10 @@ def check(
             out["gaps"] = sorted(rule.gaps)
         return out
 
-    net = growth_rule.evidence["humanAuthored"]["net"]
-    # The measured growth is reported whether or not the claim is also
-    # incomplete: incompleteness qualifies the number, it does not delete it.
-    growth_warning = f"{RULE_GROWTH}: human-authored net growth {net} exceeds the 500-line review budget" if net > 500 else ""
     # One projection per exact rule ID, named by that ID: promotion, calibration,
     # and consumers all address these rules exactly, never by family or prefix.
-    checks.extend(
-        {"name": rule.rule_id, "warnings": duplicate_warnings[rule.rule_id], **projected(rule)}
-        for rule in duplicate_rules
-    )
-    owner_warnings = {rule.rule_id: _owner_warnings(rule.rule_id, owner_candidates) for rule in owner_rules}
-    checks.extend(
-        {"name": rule.rule_id, "warnings": owner_warnings[rule.rule_id], **projected(rule)}
-        for rule in owner_rules
-    )
-    checks.append({"name": "cumulative-growth", "warnings": [growth_warning] if growth_warning else [], **projected(growth_rule)})
-
-    for finding in findings:
-        if finding.rule_id == RULE_INCOMPLETE:
-            warnings.extend(f"{RULE_INCOMPLETE} for {finding.evidence['affectedRuleId']}: {gap}" for gap in finding.evidence["gaps"])
-    if growth_warning:
-        warnings.append(growth_warning)
-    for rule in duplicate_rules:
-        warnings.extend(duplicate_warnings[rule.rule_id])
-    for rule in owner_rules:
-        warnings.extend(owner_warnings[rule.rule_id])
+    checks.extend({"name": rule.rule_id, **projected(rule)} for rule in (*duplicate_rules, *owner_rules))
+    checks.append({"name": "cumulative-growth", **projected(growth_rule)})
     errors.extend(promoted_errors(findings, fail_on_warnings))
 
     outcome = {item["name"]: item["passed"] for item in checks}
@@ -163,31 +140,10 @@ def check(
             },
         },
         "errors": errors,
-        "warnings": warnings,
+        "warnings": [],
         # Retained until its documented consumer migrates; its scorer is gone.
         "gitnexusQueries": [],
     }
-
-
-def _duplicate_warnings(rule: Finding) -> list[str]:
-    """One warning per duplicate group, naming every region that carries it."""
-    return [
-        f"{rule.rule_id}: identical implementation in "
-        + ", ".join(f"{region['path']}:{region['displayLine']}" for region in group["regions"])
-        for group in rule.evidence["duplicates"]
-    ]
-
-
-def _owner_warnings(rule_id: str, candidates: list[Finding]) -> list[str]:
-    """One warning per active owner candidate, naming its evidence class and
-    every competing owner region."""
-    return [
-        " ".join(filter(None, (f"{rule_id}: {candidate.state}", candidate.region["evidenceClass"],
-                               candidate.evidence.get("responsibilityKey"),
-                               "competing owners", ", ".join(candidate.evidence["owners"]))))
-        for candidate in candidates
-        if candidate.rule_id == rule_id and candidate.state in ("candidate", "confirmed-unresolved")
-    ]
 
 
 def format_text(result: dict[str, object]) -> str:
@@ -208,5 +164,6 @@ def format_text(result: dict[str, object]) -> str:
     lines.extend([f"- {error}" for error in result["errors"]] if result["errors"] else ["- none"])
     lines.append("")
     lines.append("Warnings:")
-    lines.extend([f"- {warning}" for warning in result["warnings"]] if result["warnings"] else ["- none"])
+    active = [f"{item['ruleId']} [{item['findingId']}]" for item in result["findings"] if item["status"] == "finding"]
+    lines.extend([f"- {warning}" for warning in active + result["warnings"]] or ["- none"])
     return "\n".join(lines)

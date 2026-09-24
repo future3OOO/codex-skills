@@ -39,6 +39,9 @@ handoff.
 
 After required review, commit, push, and open/update the PR when a remote exists
 and branch/PR alignment is verified, unless the user or workflow says otherwise.
+Once the task's PR has merged, `git worktree remove` its worktree and remove its
+Repo Context Forge analysis copy. For codex-skills installation, follow
+[README](https://github.com/future3OOO/codex-skills/blob/main/README.md#scoped-updates).
 
 ## Hard Production Invariants
 
@@ -90,6 +93,8 @@ and branch/PR alignment is verified, unless the user or workflow says otherwise.
 
 - Define verifiable success criteria before editing; for multi-step work, state
   the short plan and its checks.
+- Read only the lines being changed, using search's line numbers; no whole-file
+  or multi-hundred-line dumps, and no `JSON.stringify` of whole tool results.
 - Invoke `$tdd` before every code change. Drive real Seams: RED/GREEN for changed
   behavior, preservation proof for refactors. If the change creates the Seam,
   verify its absence first, then create it and return to drive it. Absence alone
@@ -122,14 +127,8 @@ Use FFF first for raw discovery; honor packet scope when present. Use GitNexus
 MCP for graph analysis; CLI only for indexing/admin. Follow `$repo-context-forge`
 for repo selection, executed-check reuse, and required post-edit validation.
 
-Before edits:
-
-- Run upstream `impact` with tests for indexed symbols/shared contracts;
-  downstream too when moving, deepening, consolidating, or hiding behavior.
-- Obtain `context` for callers AND callees and every shared-state writer;
-  compare writer risk ratings.
-- Before a new file consumes an internal Seam, obtain its `context` and reuse
-  its existing tested owner.
+Before edits, run upstream `impact` only for changed symbols
+called from other modules; no `context` query when impact lists the callers.
 
 Never use `detect_changes` to select initial targets or as primary safety proof.
 Graph output must not shrink packet scope, the PR contract, or no-change surfaces.
@@ -160,12 +159,3 @@ Do not declare completion or switch tasks until task acceptance is reconciled,
 legitimate findings are fixed or rejected with evidence, no unresolved
 non-outdated threads remain, and required checks pass. Unrelated failures are blockers.
 Link related issues in the PR description; after merge, close them and verify closure.
-
-## Codex-Skills Only
-
-For codex-skills work only, read the checkout's `decisions.md` at start/resume.
-Before handoff, record consequential decisions, reasons, and delivery status;
-mark superseded decisions and link the owning issue or PR. Keep observations
-separate from decisions and completed work; no per-edit log.
-
-For codex-skills installation, follow [README](https://github.com/future3OOO/codex-skills/blob/main/README.md#scoped-updates).

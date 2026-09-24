@@ -21,7 +21,7 @@ BOOTSTRAP = ROOT / "skills" / "repo-context-forge" / "scripts" / "bootstrap.py"
 QUALITY_GATE = ROOT / "skills" / "production-code" / "scripts" / "code_quality_gate.py"
 CANONICAL_BOOTSTRAP = Path("/home/prop_/.local/share/repo-context-forge/current/scripts/codex_context_bootstrap.py")
 GITNEXUS = shutil.which("gitnexus")
-OWNER_RULES = ("QG54-OWNER-COMPETITION-PRODUCTION", "QG54-OWNER-COMPETITION-TEST")
+OWNER_RULES = ("QG54-OWNER-COMPETITION-PRODUCTION",)
 
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -523,7 +523,7 @@ class RepoForgeWorkflowTests(unittest.TestCase):
 
         The whole chain is real: the producer analyzes the dirty candidate, the
         bootstrap records the evidence, and typed verification must hand that
-        recorded evidence to the gate so both owner-competition rules evaluate
+        recorded evidence to the gate so the owner-competition rule evaluates
         instead of reporting the unestablished-scope gap.
         """
         self.git("branch", "-M", "main")
