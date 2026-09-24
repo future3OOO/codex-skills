@@ -182,74 +182,6 @@ class TerseReceipts(Ceremony):
         self.assertEqual(json.loads(full.stdout)["document"], evidence_document(resolve_repo_identity(self.repo), evidence_id), marker)
 
 
-class RestoredMapContracts(Ceremony):
-    def prepared(self) -> str:
-        wid = self.begin()
-        identity = resolve_repo_identity(self.repo)
-        record_advisor_result(identity, "ceremony", wid, "preflight", "codex-advisor", "completed")
-        advisor_disposition(identity, "ceremony", wid, "preflight", "none")
-        return wid
-
-    def test_new_items_require_basis_through_record(self) -> None:
-        wid = self.prepared()
-        raw = item("BM_BASIS", "BASIS_REQUIRED")
-        raw.pop("basis")
-        for basis in (None, "", "   "):
-            candidate = {**raw, **({"basis": basis} if basis is not None else {})}
-            before = self.ok("history")["events"]
-            result = self.cli("record", "preflight", "--slug", "ceremony", "--workflow-id", wid,
-                              "--input", "-", input=json.dumps({
-                                  "authoritativeContract": "basis provenance", "behaviorMap": [candidate]}))
-            self.assertEqual(result.returncode, 2, "BASIS_REQUIRED: " + result.stdout + result.stderr)
-            self.assertIn("basis", result.stderr, "BASIS_REQUIRED")
-            self.assertEqual(self.ok("history")["events"], before, "BASIS_REQUIRED")
-        self.ok("record", "preflight", "--slug", "ceremony", "--workflow-id", wid, "--input", "-",
-                input=json.dumps({"authoritativeContract": "basis provenance",
-                                  "behaviorMap": [item("BM_VALID", "VALID_FAILED")]}))
-        for basis in (None, "", "   "):
-            candidate = {**raw, "id": "BM_ADDED", **({"basis": basis} if basis is not None else {})}
-            before = self.ok("history")["events"]
-            result = self.cli("record", "tdd-map", "--slug", "ceremony", "--workflow-id", wid,
-                              "--input", "-", input=json.dumps({"items": [candidate]}))
-            self.assertEqual(result.returncode, 2, "BASIS_REQUIRED: " + result.stdout + result.stderr)
-            self.assertIn("basis", result.stderr, "BASIS_REQUIRED")
-            self.assertEqual(self.ok("history")["events"], before, "BASIS_REQUIRED")
-
-    def test_record_keeps_basis_for_preflight_and_map_addition(self) -> None:
-        wid = self.prepared()
-        basis = "requested behavior in PR #102 follow-up"
-        self.ok("record", "preflight", "--slug", "ceremony", "--workflow-id", wid, "--input", "-",
-                input=json.dumps({"authoritativeContract": "basis provenance",
-                                  "behaviorMap": [item("BM_FIRST", "FIRST_FAILED", basis=basis)]}))
-        preflight = self.ok("evidence", "--full", "--evidence-id", str(self.state()["preflightEvidence"]))["document"]
-        self.assertEqual(preflight["document"]["behaviorMap"][0].get("basis"), basis, "BASIS_DROPPED")
-        added_basis = "new review finding"
-        self.ok("record", "tdd-map", "--slug", "ceremony", "--workflow-id", wid, "--input", "-",
-                input=json.dumps({"items": [item("BM_SECOND", "SECOND_FAILED", basis=added_basis)]}))
-        tdd = self.ok("evidence", "--full", "--evidence-id", str(self.state()["tddEvidence"]))["document"]
-        self.assertEqual(tdd["behaviorMap"][1].get("basis"), added_basis, "BASIS_DROPPED")
-
-    def test_historical_item_without_basis_remains_readable(self) -> None:
-        wid = self.prepared()
-        identity = resolve_repo_identity(self.repo)
-        legacy = item("BM_OLD", "OLD_FAILED", kind="preservation", status="omitted",
-                      evidence="historical no-change item")
-        legacy.pop("basis")
-        commit_evidence_phase(identity, "ceremony", wid, "preflight", {
-            "document": {"authoritativeContract": "historical map",
-                         "behaviorMap": [legacy]}})
-        self.assertEqual(self.ok("status")["preflight"], "passed", "LEGACY_BASIS_READ_FAILED")
-        self.ok("record", "tdd-map", "--slug", "ceremony", "--workflow-id", wid, "--input", "-",
-                input=json.dumps({"items": [item("BM_NEW", "NEW_FAILED", basis="new request")],
-                                  "dispositions": [{"id": "BM_OLD", "revalidate": True,
-                                                    "evidence": "recheck historical map"}]}))
-        recorded = self.ok("evidence", "--full", "--evidence-id", str(self.state()["tddEvidence"]))["document"]
-        self.assertEqual([entry["id"] for entry in recorded["behaviorMap"]], ["BM_OLD", "BM_NEW"],
-                         "LEGACY_BASIS_READ_FAILED")
-        self.assertEqual(recorded["behaviorMap"][0]["status"], "pending", "LEGACY_BASIS_READ_FAILED")
-        self.assertNotIn("basis", recorded["behaviorMap"][0], "LEGACY_BASIS_READ_FAILED")
-
-
 class AdvisorBounded(Ceremony):
     def test_consult_returns_a_bounded_digest_and_records_the_whole_envelope(self) -> None:
         marker = "ADVISOR_OUTPUT_UNBOUNDED"
@@ -737,7 +669,8 @@ class EveryViolation(Ceremony):
         lost = self.pairs("preflight", {"authoritativeContract": "c", "behaviorMap": [
             item("BM_ONE", "ONE_FAILED", refs=[design]), item("BM_TWO", "TWO_FAILED"), item("BM_THREE", "THREE")]}, {
             "contract": (("authoritativeContract",), _DROP), "extra": (("extra",), 1),
-            "kind": (("behaviorMap", 0, "kind"), []), "behavior": (("behaviorMap", 0, "behavior"), ""),
+            "kind": (("behaviorMap", 0, "kind"), []), "basis": (("behaviorMap", 0, "basis"), _DROP),
+            "behavior": (("behaviorMap", 0, "behavior"), ""),
             "status": (("behaviorMap", 0, "status"), "sideways"), "ref": (("behaviorMap", 0, "sourceRefs", 0), 5),
             "field": (("behaviorMap", 0, "bogus"), 1), "id": (("behaviorMap", 2, "id"), "bad id"),
             "duplicate": (("behaviorMap", 1, "id"), "BM_ONE"), "seam": (("behaviorMap", 1, "seam"), "")})
@@ -779,14 +712,20 @@ class EveryViolation(Ceremony):
         document = {"intakeEvidenceId": "I", "context": context, "dispositions": [full, receipt]}
         lost += self.pairs("review", document, disposition_faults)
         lost += self.pairs("advisor-disposition", document, disposition_faults, "--stage", "preflight", "--findings", "addressed")
+        receipt["status"] = "report-only"
+        receipt.pop("reason")
+        self.assertIn("non-empty reason", self.refusal("review", document))
         self.ok("record", "preflight", "--input", "-", input=json.dumps({"authoritativeContract": "c", "behaviorMap": [
             item("BM_ONE", "ONE_FAILED"), item("BM_KEEP", "KEEP", kind="preservation"),
             item("BM_HOLD", "HOLD", kind="preservation")]}))
+        stored = self.ok("evidence", "--full", "--evidence-id", str(self.state()["preflightEvidence"]))["document"]
+        self.assertEqual(stored["document"]["behaviorMap"][0]["basis"], "fixture contract")
         lost += self.pairs("tdd-map", {"reassessment": "r", "items": [item("BM_NEW", "NEW_FAILED")], "dispositions": [
             {"id": "BM_KEEP", "status": "omitted", "evidence": "e"}, {"id": "BM_ONE", "sourceRefs": [design]},
             {"id": "BM_HOLD", "status": "omitted", "evidence": "e"}]}, {
             "extra": (("extra",), 1), "reassessment": (("reassessment",), 5),
-            "item": (("items", 0, "behavior"), ""), "item-id": (("items", 0, "id"), "BM_ONE"),
+            "item": (("items", 0, "behavior"), ""), "item-basis": (("items", 0, "basis"), _DROP),
+            "item-id": (("items", 0, "id"), "BM_ONE"),
             "unknown": (("dispositions", 0, "bogus"), 1), "status": (("dispositions", 0, "status"), "sideways"),
             "missing": (("dispositions", 1, "id"), "BM_NOPE"), "refs": (("dispositions", 1, "sourceRefs"), 5),
             "duplicate": (("dispositions", 2, "id"), "BM_KEEP")})
