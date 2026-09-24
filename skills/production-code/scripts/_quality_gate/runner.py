@@ -164,8 +164,8 @@ def format_text(result: dict[str, object]) -> str:
     # concrete finding, located (rule-level records are the `Checks` lines).
     net = result["evaluation"]["growth"]["humanAuthored"]["net"]
     active = [f"{RULE_GROWTH}: human-authored net growth {net} exceeds the 500-line review budget"] if net > 500 else []
-    active += [f"{item['ruleId']} [{item['findingId']}]: " + ", ".join(item["evidence"].get("gaps") or item["evidence"].get("owners")
-               or [f"{r['path']}:{r['displayLine']}" for g in item["evidence"].get("duplicates", ()) for r in g["regions"]])
+    active += [f"{item['ruleId']} [{item['findingId']}]{' for ' + item['evidence']['affectedRuleId'] if 'affectedRuleId' in item['evidence'] else ''}: "
+               + ", ".join(item["evidence"].get("gaps") or item["evidence"].get("owners") or [f"{r['path']}:{r['displayLine']}" for g in item["evidence"].get("duplicates", ()) for r in g["regions"]])
                for item in result["findings"] if item["status"] == "finding" and item["region"]["scope"] != "evaluation"]
     lines.extend([f"- {warning}" for warning in active + result["warnings"]] or ["- none"])
     return "\n".join(lines)
