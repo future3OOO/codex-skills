@@ -137,13 +137,14 @@ commands. Resolve them through existing user communication or authorized advice
 before dependent implementation; recording a choice does not prove behavior.
 After preflight, use the same item's [TDD reassessment](../tdd/SKILL.md), not a new preflight.
 
-Record a non-empty JSON array. Every item has these seven required fields:
+Record a non-empty JSON array. Every item has these eight required fields:
 
 ```json
 [
   {
     "id": "BM_ATOMICITY",
     "kind": "preservation",
+    "basis": "existing transaction guarantee",
     "behavior": "a caught inner failure remains atomic under the new transaction path",
     "seam": "the public operation through that path",
     "expected": "no partial inner write survives",
@@ -155,6 +156,7 @@ Record a non-empty JSON array. Every item has these seven required fields:
 
 - IDs are stable uppercase identifiers used by RED/GREEN evidence.
 - `kind` is `contract` for the requested behavior and `preservation` for what the change must keep true. List contract items first. A map with any pending item carries at least one contract item.
+- `basis` records where the item came from.
 - `redFailure` names the product failure: a behavior-specific assertion marker or the product's own exception or diagnostic. A RED is valid only when the failure is that mapped product failure; failing earlier is evidence for no item. When the entrypoint does not exist yet, exactly one atomic initial item takes its absence as RED; the independent guarantees stay pending until it exists, so map them as separate items expecting a late RED, not as items that share the existence assertion.
 - A contract item starts `pending`. A preservation item starts `pending`, `already-satisfied`, or `omitted`; optional `evidence` explains `already-satisfied` or `omitted` and is forbidden for `pending`. An authored `already-satisfied` is a claim, not proof: the item stays unresolved (named by `summary`) until `tdd --phase red` records its executed baseline after `revalidate`; prefer `pending` and run the baseline.
 - Every item is a concrete falsifier: an adversarial attack on one load-bearing public promise through its real production Seam. Derive attacks from what the design promises, not from a universal checklist: rollback/atomicity implies success, ordinary failure, supported interruption/cancellation, nested ownership, and every caller-reachable transaction-ending path; cleanup/resource ownership implies interruption and repeated or finalized lifecycle operations; persistence implies close/reopen and a second connection or process; parsers and matchers imply malformed boundaries plus the captured production corpus; shared mutable state implies every writer and material interleaving; lifecycle state machines imply repeated, out-of-order, nested, superseded, and terminal operations the Interface admits. If the Interface deliberately excludes an implication, narrow the promise explicitly instead of contradicting it.

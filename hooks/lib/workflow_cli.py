@@ -47,7 +47,8 @@ from .workflow_state import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
-ITEM_SHAPE = ('{"id":"BM_X","kind":"contract|preservation","behavior":"...","seam":"...","expected":"...",'
+ITEM_SHAPE = ('{"id":"BM_X","kind":"contract|preservation","basis":"where this item came from",'
+              '"behavior":"...","seam":"...","expected":"...",'
               '"redFailure":"MARKER","status":"pending|already-satisfied|omitted",'
               '"sourceRefs":[{"type":"finding","evidenceId":"<intake>","id":"SPEC-1"}]}')
 RECORD_SHAPES = {

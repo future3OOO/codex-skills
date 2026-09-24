@@ -16,7 +16,7 @@ EVIDENCED_STATUSES = DISPOSITION_STATUSES | {"superseded", "withdrawn"}
 NEVER_GREEN = DISPOSITION_STATUSES | {"withdrawn"}
 KINDS = frozenset({"contract", "preservation"})
 REQUIRED_FIELDS = frozenset({
-    "id", "kind", "behavior", "seam", "expected", "redFailure", "status",
+    "id", "kind", "basis", "behavior", "seam", "expected", "redFailure", "status",
 })
 OPTIONAL_FIELDS = frozenset({
     "evidence", "supersededBy", "sourceRefs", "proofCommand", "baselineProof", "supersededFrom",
@@ -211,8 +211,7 @@ def validate_items(
 ) -> list[JsonObject]:
     """Validate and return one canonical Behavior Map item list.
 
-    Every violation is named in one refusal. Recorded maps may still carry the
-    retired `basis`; it is dropped on load.
+    Every violation is named in one refusal. Recorded maps without `basis` still load.
     """
     existing = list(existing)
     errors = map_errors(value, allow_runtime=allow_runtime, existing=existing)
@@ -228,10 +227,9 @@ def _item_errors(raw: object, position: int, seen: set[str], *, allow_runtime: b
     statuses = RUNTIME_STATUSES if allow_runtime else INITIAL_STATUSES
     if not isinstance(raw, dict):
         return [f"behaviorMap item {position} must be an object"]
-    raw = {key: value for key, value in raw.items() if key != "basis"}
     # Maps recorded before `kind` existed still load; their items carry no
     # contract authority. New items always declare a kind.
-    missing = sorted(REQUIRED_FIELDS - set(raw) - ({"kind"} if allow_runtime else {"status"}))
+    missing = sorted(REQUIRED_FIELDS - set(raw) - ({"kind", "basis"} if allow_runtime else {"status"}))
     unknown = sorted(set(raw) - REQUIRED_FIELDS - OPTIONAL_FIELDS)
     identifier = _text(raw.get("id"))
     kind = _text(raw.get("kind"))
@@ -254,7 +252,8 @@ def _item_errors(raw: object, position: int, seen: set[str], *, allow_runtime: b
     ) if bad]
     if identifier is not None:
         seen.add(identifier)
-    errors += [*_required(raw, "behavior", label), *_required(raw, "seam", label), *_required(raw, "expected", label),
+    errors += [*(_required(raw, "basis", label) if not allow_runtime else []),
+               *_required(raw, "behavior", label), *_required(raw, "seam", label), *_required(raw, "expected", label),
                *_validate_red_failure(raw.get("redFailure"), label), *_source_refs(raw.get("sourceRefs"), label),
                *interpretation_errors(raw, label)]
     producer = f"behavior {label} {{}} is producer-owned state"
@@ -287,12 +286,13 @@ def _item_errors(raw: object, position: int, seen: set[str], *, allow_runtime: b
 def _item(raw: JsonObject, *, allow_runtime: bool) -> JsonObject:
     """The canonical form of an item `_item_errors` accepted."""
     kind, status = _text(raw.get("kind")), _text(raw.get("status", "pending" if not allow_runtime else None))
-    evidence = _text(raw.get("evidence"))
+    evidence, basis = _text(raw.get("evidence")), _text(raw.get("basis"))
     # The runner stamps the exact proving command at GREEN and the RED surface
     # stays on the item, so GREEN proves the item against its own RED.
     return {
         "id": _text(raw["id"]),
         **({"kind": kind} if kind is not None else {}),
+        **({"basis": basis} if basis is not None else {}),
         **{name: _text(raw[name]) for name in ("behavior", "seam", "expected", "redFailure")},
         "status": status,
         **({"sourceRefs": _refs(raw["sourceRefs"])} if raw.get("sourceRefs") is not None else {}),
@@ -736,6 +736,7 @@ def no_change_item(evidence: str) -> JsonObject:
     return {
         "id": "BM_NO_CHANGE",
         "kind": "preservation",
+        "basis": "explicit no-change disposition",
         "behavior": "No production behavior changes in this pass",
         "seam": "workflow preflight evidence",
         "expected": "TDD is not required",

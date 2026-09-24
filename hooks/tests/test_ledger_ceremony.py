@@ -78,7 +78,7 @@ print(json.dumps({"schemaVersion": 1, "verdict": "completed", "findings": [
 
 
 def item(identifier: str, marker: str, *, kind: str = "contract", refs=(), **extra) -> dict[str, object]:
-    return {"id": identifier, "kind": kind, "behavior": f"{identifier} behavior", "seam": "fixture app module",
+    return {"id": identifier, "kind": kind, "basis": "fixture contract", "behavior": f"{identifier} behavior", "seam": "fixture app module",
             "expected": "app.value is 2", "redFailure": marker, "status": "pending",
             "sourceRefs": list(refs), **extra}
 
@@ -669,7 +669,8 @@ class EveryViolation(Ceremony):
         lost = self.pairs("preflight", {"authoritativeContract": "c", "behaviorMap": [
             item("BM_ONE", "ONE_FAILED", refs=[design]), item("BM_TWO", "TWO_FAILED"), item("BM_THREE", "THREE")]}, {
             "contract": (("authoritativeContract",), _DROP), "extra": (("extra",), 1),
-            "kind": (("behaviorMap", 0, "kind"), []), "behavior": (("behaviorMap", 0, "behavior"), ""),
+            "kind": (("behaviorMap", 0, "kind"), []), "basis": (("behaviorMap", 0, "basis"), _DROP),
+            "behavior": (("behaviorMap", 0, "behavior"), ""),
             "status": (("behaviorMap", 0, "status"), "sideways"), "ref": (("behaviorMap", 0, "sourceRefs", 0), 5),
             "field": (("behaviorMap", 0, "bogus"), 1), "id": (("behaviorMap", 2, "id"), "bad id"),
             "duplicate": (("behaviorMap", 1, "id"), "BM_ONE"), "seam": (("behaviorMap", 1, "seam"), "")})
@@ -711,14 +712,20 @@ class EveryViolation(Ceremony):
         document = {"intakeEvidenceId": "I", "context": context, "dispositions": [full, receipt]}
         lost += self.pairs("review", document, disposition_faults)
         lost += self.pairs("advisor-disposition", document, disposition_faults, "--stage", "preflight", "--findings", "addressed")
+        receipt["status"] = "report-only"
+        receipt.pop("reason")
+        self.assertIn("non-empty reason", self.refusal("review", document))
         self.ok("record", "preflight", "--input", "-", input=json.dumps({"authoritativeContract": "c", "behaviorMap": [
             item("BM_ONE", "ONE_FAILED"), item("BM_KEEP", "KEEP", kind="preservation"),
             item("BM_HOLD", "HOLD", kind="preservation")]}))
+        stored = self.ok("evidence", "--full", "--evidence-id", str(self.state()["preflightEvidence"]))["document"]
+        self.assertEqual(stored["document"]["behaviorMap"][0]["basis"], "fixture contract")
         lost += self.pairs("tdd-map", {"reassessment": "r", "items": [item("BM_NEW", "NEW_FAILED")], "dispositions": [
             {"id": "BM_KEEP", "status": "omitted", "evidence": "e"}, {"id": "BM_ONE", "sourceRefs": [design]},
             {"id": "BM_HOLD", "status": "omitted", "evidence": "e"}]}, {
             "extra": (("extra",), 1), "reassessment": (("reassessment",), 5),
-            "item": (("items", 0, "behavior"), ""), "item-id": (("items", 0, "id"), "BM_ONE"),
+            "item": (("items", 0, "behavior"), ""), "item-basis": (("items", 0, "basis"), _DROP),
+            "item-id": (("items", 0, "id"), "BM_ONE"),
             "unknown": (("dispositions", 0, "bogus"), 1), "status": (("dispositions", 0, "status"), "sideways"),
             "missing": (("dispositions", 1, "id"), "BM_NOPE"), "refs": (("dispositions", 1, "sourceRefs"), 5),
             "duplicate": (("dispositions", 2, "id"), "BM_KEEP")})

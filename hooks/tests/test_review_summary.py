@@ -235,7 +235,8 @@ class ReviewSummaryTests(ReviewSummaryHarness):
             self.assertEqual(result.returncode, 0, "NONFIX_SEMANTICS_CHANGED" + result.stderr)
 
     def test_material_findings_require_intake_then_appended_disposition(self) -> None:
-        finding = {"id": "SPEC-1", "material": True, "kind": "nonbehavioral", "claim": "wrong value"}
+        finding = {"id": "SPEC-1", "material": True, "kind": "nonbehavioral", "claim": "wrong value",
+                   "location": "app.py:1"}
         path = self.tmp / "review.json"
         path.write_text(json.dumps({"findings": [{key: value for key, value in finding.items() if key != "claim"}]}), encoding="utf-8")
         missing_claim = self.record_review(path, "fresh-review-1")
@@ -246,6 +247,7 @@ class ReviewSummaryTests(ReviewSummaryHarness):
         intake = self.record_review(path, "fresh-review-1")
         self.assertEqual(intake.returncode, 0, intake.stdout + intake.stderr)
         intake_id = json.loads(intake.stdout)["summaryId"]
+        self.assertEqual(self.evidence(intake_id)["findings"][0]["location"], "app.py:1")
 
         before_events = self.event_count()
         for invalid in (

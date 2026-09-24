@@ -513,9 +513,10 @@ def _finding_disposition(item: object, allowed: set[str], seen: set[str]) -> lis
         # Identity keys are judged above; the status-dependent shape only under a known status.
         if (known and (set(item) - {"reason", "finding_id", "status"} != {"evidenceRefs"} | extra | mechanism_fields
                        or extra and not _text(item.get("reference")))
+                or known and status != "fixed" and not _text(item.get("reason"))
                 or "reason" in item and not _text(item.get("reason")) or not isinstance(refs, list) or not refs
                 or not all(_text(ref) for ref in refs)):
-            problems.append("receipt disposition requires finding_id, status and non-empty evidenceRefs; reason is optional text")
+            problems.append("receipt disposition requires finding_id, status and non-empty evidenceRefs; non-fixed status requires a non-empty reason")
         return [*problems, *(hint if identity else [])]
     premise = _measurement(item.get("premise"), f"finding {identifier} premise")
     occurrence = [f"finding {identifier} {problem}" for problem in _occurrence(item.get("occurrence"))]
@@ -637,7 +638,7 @@ def review_summary(
     if errors:
         raise ValueError("; ".join(errors))
     # Reviewers may add context fields; only the ones a check reads are kept.
-    typed = [{key: item[key] for key in ("id", "claim", "material", "kind", "priorFinding") if key in item} for item in findings]
+    typed = [{key: item[key] for key in ("id", "claim", "material", "kind", "location", "priorFinding") if key in item} for item in findings]
     common.update({key: value[key] for key in ("implementationContextId", "repairSuccession") if key in value})
     status = "pending" if typed else "passed"
     return {**common, "kind": "intake", "status": status, "findings": typed}, status, "pending" if typed else "none"
