@@ -45,7 +45,7 @@ class _SourceRepositoryUnavailable(Exception):
 
 
 def run(cmd: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(cmd, cwd=cwd, encoding="utf-8", stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+    return subprocess.run(cmd, cwd=cwd, encoding="utf-8", errors="surrogateescape", stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
 
 
 def source_repo() -> Path:
@@ -80,9 +80,10 @@ def create_repo() -> Path:
 
 
 def run_gate(repo: Path, *args: str) -> tuple[int, dict[str, object], str]:
-    res = run(["python3", str(SCRIPT), "check", "--repo", str(repo), "--json", *args], repo)
-    payload = json.loads(res.stdout)
-    return res.returncode, payload, res.stderr
+    """Text mode, so every run also renders the summary; its last line is the JSON verdict."""
+    res = run(["python3", str(SCRIPT), "check", "--repo", str(repo), *args], repo)
+    assert res.stdout, res.stderr
+    return res.returncode, json.loads(res.stdout.splitlines()[-1]), res.stdout
 
 
 def growth_totals(payload: dict[str, object]) -> dict[str, object]:
@@ -103,12 +104,6 @@ def owner_rule_finding(payload: dict[str, object], rule: str) -> dict[str, objec
     ]
     assert len(findings) == 1, findings
     return findings[0]
-
-
-def incomplete_gaps(payload: dict[str, object], rule: str = "") -> list[str]:
-    """Every QG54-ANALYSIS-INCOMPLETE gap, optionally one affected rule's."""
-    return [gap for item in payload["findings"] if item["ruleId"] == "QG54-ANALYSIS-INCOMPLETE"
-            and (not rule or item["evidence"]["affectedRuleId"] == rule) for gap in item["evidence"]["gaps"]]
 
 
 def check_named(payload: dict[str, object], name: str) -> dict[str, object]:
@@ -425,7 +420,7 @@ def test_large_growth_is_warning_only(repo: Path) -> None:
     # cumulative human-authored growth over the review budget warns, never
     # fails, and the active warning-only finding keeps its intrinsic pass.
     write(repo / "src" / "huge.py", "\n".join(f"VALUE_{i} = {i}" for i in range(801)) + "\n")
-    code, payload, _ = run_gate(repo, "--base-ref", "HEAD")
+    code, payload, text = run_gate(repo, "--base-ref", "HEAD")
     assert code == 0, (code, payload["errors"])
     assert payload["ok"] is True
     findings = [item for item in payload["findings"] if item["ruleId"] == "QG54-GROWTH-CUMULATIVE"]
@@ -434,7 +429,6 @@ def test_large_growth_is_warning_only(repo: Path) -> None:
     # One report per finding: `findings` alone, never re-rendered as strings.
     assert payload["warnings"] == [], "GATE_FINDING_REPORTED_TWICE"
     assert all("warnings" not in item for item in payload["checks"]), "GATE_FINDING_REPORTED_TWICE"
-    text = run(["python3", str(SCRIPT), "check", "--repo", str(repo), "--base-ref", "HEAD"], repo).stdout
     assert "QG54-GROWTH-CUMULATIVE" in text.split("Warnings:", 1)[1].split("\n\n", 1)[0], "TEXT_WARNINGS_HIDDEN"
 
 
@@ -519,11 +513,11 @@ def test_repeated_added_block_is_one_grouped_warning(repo: Path) -> None:
         f"def a(page, timeout_seconds, poll_interval_ms):\n{POLLING_BLOCK}\n\n"
         f"def b(page, timeout_seconds, poll_interval_ms):\n{POLLING_BLOCK}\n",
     )
-    code, payload, _ = run_gate(repo, "--base-ref", "HEAD")
+    code, payload, text = run_gate(repo, "--base-ref", "HEAD")
     findings = duplicate_findings(payload, "QG54-DUPLICATE-ADDED-BLOCK")
     assert len(findings) == 1, json.dumps(payload["findings"], indent=2)
     assert [region["displayLine"] for region in findings[0]["region"]["regions"]] == [2, 15], findings[0]
-    warnings = run(["python3", str(SCRIPT), "check", "--repo", str(repo), "--base-ref", "HEAD"], repo).stdout.split("Warnings:", 1)[1].split("\n\n", 1)[0]
+    warnings = text.split("Warnings:", 1)[1].split("\n\n", 1)[0]
     assert warnings.count("QG54-DUPLICATE-ADDED-BLOCK") == 1 and "src/polls.py:2, src/polls.py:15" in warnings, "TEXT_FINDING_UNLOCATED"
     assert_exact_rules(payload, {
         "QG54-DUPLICATE-ADDED-BLOCK": "finding", "QG54-DUPLICATE-ADDED-SYMBOL": "passed",
@@ -1499,6 +1493,16 @@ def test_deletion_without_rewiring_stays_unresolved(repo: Path) -> None:
     assert confirmed and confirmed[0]["evidence"]["oneOwnerPredicate"] is True, confirmed
     assert code == 0, (code, payload["errors"])
 
+    # Both recorded owners deleted: the record stays active with no owner left to name.
+    write(repo / "src" / "state.py", "STATE_SUFFIX = '/state'\n")
+    write(repo / "src" / "advisor.py", "ADVISOR_SUFFIX = '/advisor'\n")
+    git(repo, "add", ".")
+    git(repo, "commit", "-q", "-m", "delete both owners")
+    gone = run(["git", "rev-parse", "HEAD"], repo).stdout.strip()
+    write_disposition(repo, [{**record, "candidate": gone}])
+    code, payload, text = run_gate(repo, "--base-ref", base)
+    assert code == 0 and "QG54-OWNER-COMPETITION-PRODUCTION [" in text.split("Warnings:", 1)[1], (code, text[-300:])
+
 
 @with_repo
 def test_signature_preserves_command_discriminators(repo: Path) -> None:
@@ -2121,13 +2125,13 @@ def _scope_row(repo, config, baseline, candidate, staged, args, expect, name: st
             write(repo / path, content)
     if staged:
         git(repo, "add", ".")
-    code, payload, _ = run_gate(repo, *args)
+    code, payload, text = run_gate(repo, *args)
     assert code == expect["code"], (name, code, payload["errors"])
     assert payload["ok"] is (code == 0), (name, payload["errors"])
     if "error" in expect:
         assert any(expect["error"] in item for item in payload["errors"]), (name, payload["errors"])
     if "incomplete" in expect:
-        assert incomplete_gaps(payload, expect["incomplete"]), (name, payload["findings"])
+        assert "- QG54-ANALYSIS-INCOMPLETE [" in text and expect["incomplete"] in text, (name, text)
     for rule, finding_of in (
         ("growth", growth_finding),
         ("owner", lambda p: owner_rule_finding(p, "QG54-OWNER-COMPETITION-PRODUCTION")),
@@ -2565,9 +2569,8 @@ def test_skipped_baseline_scope_is_reported_not_silent(repo: Path) -> None:
     git(repo, "add", ".")
     git(repo, "commit", "-q", "-m", "oversized baseline")
     write(repo / "src" / "dup.py", _UNREADABLE_OWNER)
-    code, payload, _ = run_gate(repo, "--base-ref", "HEAD")
-    assert code == 0 and payload["ok"] is True, (code, payload["errors"])
-    assert any("huge.py" in gap and "baseline" in gap for gap in incomplete_gaps(payload)), payload["findings"]
+    code, payload, text = run_gate(repo, "--base-ref", "HEAD")
+    assert code == 0 and payload["ok"] is True and "huge.py" in text.split("Warnings:", 1)[1], (code, text)
 
 
 @with_repo
@@ -2576,9 +2579,8 @@ def test_unmeasured_binary_source_change_is_never_silently_clean(repo: Path) -> 
     # measurement gap must reach the verdict as a visible warning — never a
     # silent clean pass — while the run stays warning-only with exit zero.
     (repo / "src" / "unmeasured.py").write_bytes(b"def ok() -> int:\n    return 1\n\x00\x00binary\n")
-    code, payload, _ = run_gate(repo, "--base-ref", "HEAD")
-    assert code == 0 and payload["ok"] is True, (code, payload["errors"])
-    assert any("no line counts" in gap for gap in incomplete_gaps(payload)), payload["findings"]
+    code, payload, text = run_gate(repo, "--base-ref", "HEAD")
+    assert code == 0 and payload["ok"] is True and "no line counts" in text.split("Warnings:", 1)[1], (code, text)
 
 
 @with_repo
@@ -2822,8 +2824,8 @@ def test_growth_warning_survives_base_binding_incompleteness(repo: Path) -> None
     # reported - but it is not a reason to stop reporting the growth that WAS
     # measured. Incompleteness qualifies the warning; it never suppresses it.
     write(repo / "src" / "big.py", "".join(f"VALUE_{i} = {i}\n" for i in range(600)))
-    code, payload, _ = run_gate(repo)
-    assert "QG54-GROWTH-CUMULATIVE: human-authored net growth 600" in run(["python3", str(SCRIPT), "check", "--repo", str(repo)], repo).stdout, "TEXT_GROWTH_HIDDEN"
+    code, payload, text = run_gate(repo)
+    assert "QG54-GROWTH-CUMULATIVE: human-authored net growth 600" in text, "TEXT_GROWTH_HIDDEN"
     # Warning-only: the hook contract keeps exit zero.
     assert code == 0 and payload["ok"] is True, (code, payload["errors"])
 
@@ -2866,14 +2868,11 @@ def test_promotion_follows_exact_rule_id_metadata_only() -> None:
         context = repo / "broken-context.json"
         context.write_text("not json", encoding="utf-8")
         write(repo / "src" / "app.py", "def resolver(value):\n    return value\n")
-        code, payload, _ = run_gate(
+        code, payload, text = run_gate(
             repo, "--base-ref", "HEAD", "--fail-on-warnings", "--gitnexus-context-json", str(context)
         )
-        assert_exact_rules(payload, {
-            "QG54-OWNER-COMPETITION-PRODUCTION": "incomplete",
-        })
-        assert any("gitnexus context JSON ignored" in gap
-                   for gap in incomplete_gaps(payload, "QG54-OWNER-COMPETITION-PRODUCTION")), payload["findings"]
+        assert_exact_rules(payload, {"QG54-OWNER-COMPETITION-PRODUCTION": "incomplete"})
+        assert "gitnexus context JSON ignored" in text.split("Warnings:", 1)[1], text
         assert payload["errors"] == [], payload["errors"]
         assert payload["ok"] is True and code == 0, (code, payload["errors"])
 
