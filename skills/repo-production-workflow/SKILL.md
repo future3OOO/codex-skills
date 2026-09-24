@@ -206,6 +206,7 @@ verification derived in step 2. Carry applicable observations forward; run missi
 or invalidated operations, real-Seam probes of the changed Interface, and
 required lint/typecheck/build and typed gate, with
 graph reanalysis when required. Follow AGENTS.md's attack-probe and verification rules.
+Before reviewer dispatch, apply [TDD's proof and regression coverage rule](../tdd/tests.md#proof-and-regression-coverage) to the test diff: remove parallel copies of pass probes and test code without distinct regression coverage.
 CI's `contracts` job owns the full runner here and step 12 waits for it.
 Verification records only through the unified CLI runner, which executes the command it records and derives status
 per-command-latest — any distinct command whose latest run failed keeps

@@ -63,7 +63,7 @@ dependent code; do not derive the oracle from the planned implementation.
 
 **RED**
 
-- Write one test for that atomic behavior through its recorded Seam.
+- Run one probe for that atomic behavior through its recorded Seam, reusing an existing test or direct production operation. [Proof and regression coverage](tests.md#proof-and-regression-coverage) decides what test code, if any, to commit.
 - Fail with the item's declared `redFailure` only where the product outcome is absent: the assertion's behavior-specific marker, or the product's own exception or diagnostic.
 - Run `python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" tdd --repo "$PWD" --slug <task> --phase red --behavior-id <ID> -- <targeted-command>`.
 - A passing runner run baselines the item; do not manufacture a RED or edit production code for it.
