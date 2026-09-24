@@ -4,7 +4,7 @@ from pathlib import Path
 
 from .checks import changed_file_failures, evaluate_growth, scan_quality_escapes
 from .git_scope import collect_scope
-from .findings import Finding, incompleteness_findings, promoted_errors
+from .findings import RULE_GROWTH, Finding, incompleteness_findings, promoted_errors
 from .redundancy import find_exact_duplicates, find_owner_competition
 from .snapshot import EvaluationSnapshot
 
@@ -159,11 +159,13 @@ def format_text(result: dict[str, object]) -> str:
     for check_item in result["checks"]:
         outcome = "incomplete" if check_item["passed"] is None else "pass" if check_item["passed"] else "fail"
         lines.append(f"- {check_item['name']}: {outcome}")
-    lines.append("")
-    lines.append("Errors:")
+    lines += ["", "Errors:"]
     lines.extend([f"- {error}" for error in result["errors"]] if result["errors"] else ["- none"])
-    lines.append("")
-    lines.append("Warnings:")
-    active = [f"{item['ruleId']} [{item['findingId']}]" for item in result["findings"] if item["status"] == "finding"]
+    lines += ["", "Warnings:"]
+    # Measured growth stays visible even when an unbased run leaves the claim incomplete.
+    net = result["evaluation"]["growth"]["humanAuthored"]["net"]
+    active = [f"{RULE_GROWTH}: human-authored net growth {net} exceeds the 500-line review budget"] if net > 500 else []
+    active += [f"{item['ruleId']} [{item['findingId']}]" for item in result["findings"]
+               if item["status"] == "finding" and item["ruleId"] != RULE_GROWTH]
     lines.extend([f"- {warning}" for warning in active + result["warnings"]] or ["- none"])
     return "\n".join(lines)
