@@ -127,6 +127,89 @@ class ReviewSummaryHarness(unittest.TestCase):
             "--review-context-id", context, "--input", str(path),
         )
 
+
+class RestoredReviewContracts(ReviewSummaryHarness):
+    def receipt(self) -> str:
+        run = subprocess.run([sys.executable, str(WORKFLOW), "verify", "--repo", str(self.repo),
+                              "--slug", "review-summary", "--", sys.executable, "-c", "print('receipt proof')"],
+                             cwd=self.repo, env=self.env, capture_output=True, text=True)
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        result = json.loads(run.stdout.splitlines()[-1])
+        return result["evidenceId"] + ":" + str(result["runIndex"])
+
+    def test_review_location_survives_record_and_reopen(self) -> None:
+        path = self.tmp / "review.json"
+        location = "hooks/lib/workflow_documents.py:review_summary"
+        path.write_text(json.dumps({"findings": [{**self.review_finding(), "location": location}]}))
+        result = self.record_review(path)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        stored = self.evidence(json.loads(result.stdout)["summaryId"])
+        self.assertEqual(stored["findings"][0].get("location"), location, "LOCATION_DROPPED")
+
+    def test_review_location_remains_optional(self) -> None:
+        path = self.tmp / "review.json"
+        path.write_text(json.dumps({"findings": [self.review_finding()]}))
+        result = self.record_review(path)
+        self.assertEqual(result.returncode, 0, "LOCATION_BECAME_REQUIRED: " + result.stderr)
+        stored = self.evidence(json.loads(result.stdout)["summaryId"])
+        self.assertNotIn("location", stored["findings"][0], "LOCATION_BECAME_REQUIRED")
+
+    def test_nonfixed_receipt_dispositions_require_reason(self) -> None:
+        path = self.tmp / "review.json"
+        findings = [{**self.review_finding(), "id": f"R-{index}"} for index in range(1, 4)]
+        path.write_text(json.dumps({"findings": findings}))
+        intake = self.record_review(path)
+        self.assertEqual(intake.returncode, 0, intake.stderr)
+        receipt = self.receipt()
+        intake_id = json.loads(intake.stdout)["summaryId"]
+        statuses = ("rejected-with-evidence", "report-only", "accepted-follow-up")
+        valid = []
+        for index, status in enumerate(statuses, 1):
+            disposition = {"finding_id": f"R-{index}", "status": status, "evidenceRefs": [receipt]}
+            if status == "accepted-follow-up":
+                disposition["reference"] = "#97"
+            for reason in (None, "", "   "):
+                candidate = {**disposition, **({"reason": reason} if reason is not None else {})}
+                path.write_text(json.dumps({"intakeEvidenceId": intake_id, "dispositions": [candidate]}))
+                before = self.event_count()
+                result = self.record_review(path)
+                self.assertEqual(result.returncode, 2, "REASON_NOT_REQUIRED: " + result.stdout + result.stderr)
+                self.assertIn("reason", result.stderr, "REASON_NOT_REQUIRED")
+                self.assertEqual(self.event_count(), before, "REASON_NOT_REQUIRED")
+            valid.append({**disposition, "reason": "measured disposition"})
+        invalid = {key: value for key, value in valid[1].items() if key != "reason"}
+        path.write_text(json.dumps({"intakeEvidenceId": intake_id, "dispositions": [valid[0], invalid]}))
+        before = self.event_count()
+        mixed = self.record_review(path)
+        self.assertEqual(mixed.returncode, 2, "REASON_NOT_REQUIRED: " + mixed.stderr)
+        self.assertIn("reason", mixed.stderr, "REASON_NOT_REQUIRED")
+        self.assertEqual(self.event_count(), before, "REASON_NOT_REQUIRED")
+        path.write_text(json.dumps({"intakeEvidenceId": intake_id, "dispositions": [valid[0]]}))
+        accepted = self.record_review(path)
+        self.assertEqual(accepted.returncode, 0, accepted.stdout + accepted.stderr)
+        accepted_id = json.loads(accepted.stdout)["summaryId"]
+        path.write_text(json.dumps({"intakeEvidenceId": intake_id, "dispositions": [invalid]}))
+        before = self.event_count()
+        retry = self.record_review(path)
+        self.assertEqual(retry.returncode, 2, "REASON_NOT_REQUIRED: " + retry.stderr)
+        self.assertIn("reason", retry.stderr, "REASON_NOT_REQUIRED")
+        self.assertEqual(self.event_count(), before, "REASON_NOT_REQUIRED")
+        self.assertEqual(self.evidence(accepted_id)["dispositions"][0]["finding_id"], "R-1", "REASON_NOT_REQUIRED")
+        path.write_text(json.dumps({"intakeEvidenceId": intake_id, "dispositions": valid[1:]}))
+        completed = self.record_review(path)
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+
+    def test_fixed_receipt_keeps_optional_reason(self) -> None:
+        path = self.tmp / "review.json"
+        path.write_text(json.dumps({"findings": [self.review_finding()]}))
+        intake = self.record_review(path)
+        self.assertEqual(intake.returncode, 0, intake.stderr)
+        path.write_text(json.dumps({"intakeEvidenceId": json.loads(intake.stdout)["summaryId"],
+                                    "dispositions": [{"finding_id": "SPEC-1", "status": "fixed",
+                                                      "evidenceRefs": [self.receipt()]}]}))
+        result = self.record_review(path)
+        self.assertEqual(result.returncode, 0, "FIXED_REASON_REQUIRED: " + result.stdout + result.stderr)
+
 class ReviewSummaryTests(ReviewSummaryHarness):
     def test_pending_findings_allow_fresh_final_assessment_without_completion(self) -> None:
         marker = "PENDING_FINDINGS_PREVENT_FINAL_ASSESSMENT"

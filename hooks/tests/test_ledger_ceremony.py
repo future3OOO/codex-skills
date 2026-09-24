@@ -78,7 +78,7 @@ print(json.dumps({"schemaVersion": 1, "verdict": "completed", "findings": [
 
 
 def item(identifier: str, marker: str, *, kind: str = "contract", refs=(), **extra) -> dict[str, object]:
-    return {"id": identifier, "kind": kind, "behavior": f"{identifier} behavior", "seam": "fixture app module",
+    return {"id": identifier, "kind": kind, "basis": "fixture contract", "behavior": f"{identifier} behavior", "seam": "fixture app module",
             "expected": "app.value is 2", "redFailure": marker, "status": "pending",
             "sourceRefs": list(refs), **extra}
 
@@ -180,6 +180,74 @@ class TerseReceipts(Ceremony):
         full = self.cli("evidence", "--full", "--evidence-id", evidence_id)
         self.assertEqual(full.returncode, 0, f"{marker}: {full.stderr}")
         self.assertEqual(json.loads(full.stdout)["document"], evidence_document(resolve_repo_identity(self.repo), evidence_id), marker)
+
+
+class RestoredMapContracts(Ceremony):
+    def prepared(self) -> str:
+        wid = self.begin()
+        identity = resolve_repo_identity(self.repo)
+        record_advisor_result(identity, "ceremony", wid, "preflight", "codex-advisor", "completed")
+        advisor_disposition(identity, "ceremony", wid, "preflight", "none")
+        return wid
+
+    def test_new_items_require_basis_through_record(self) -> None:
+        wid = self.prepared()
+        raw = item("BM_BASIS", "BASIS_REQUIRED")
+        raw.pop("basis")
+        for basis in (None, "", "   "):
+            candidate = {**raw, **({"basis": basis} if basis is not None else {})}
+            before = self.ok("history")["events"]
+            result = self.cli("record", "preflight", "--slug", "ceremony", "--workflow-id", wid,
+                              "--input", "-", input=json.dumps({
+                                  "authoritativeContract": "basis provenance", "behaviorMap": [candidate]}))
+            self.assertEqual(result.returncode, 2, "BASIS_REQUIRED: " + result.stdout + result.stderr)
+            self.assertIn("basis", result.stderr, "BASIS_REQUIRED")
+            self.assertEqual(self.ok("history")["events"], before, "BASIS_REQUIRED")
+        self.ok("record", "preflight", "--slug", "ceremony", "--workflow-id", wid, "--input", "-",
+                input=json.dumps({"authoritativeContract": "basis provenance",
+                                  "behaviorMap": [item("BM_VALID", "VALID_FAILED")]}))
+        for basis in (None, "", "   "):
+            candidate = {**raw, "id": "BM_ADDED", **({"basis": basis} if basis is not None else {})}
+            before = self.ok("history")["events"]
+            result = self.cli("record", "tdd-map", "--slug", "ceremony", "--workflow-id", wid,
+                              "--input", "-", input=json.dumps({"items": [candidate]}))
+            self.assertEqual(result.returncode, 2, "BASIS_REQUIRED: " + result.stdout + result.stderr)
+            self.assertIn("basis", result.stderr, "BASIS_REQUIRED")
+            self.assertEqual(self.ok("history")["events"], before, "BASIS_REQUIRED")
+
+    def test_record_keeps_basis_for_preflight_and_map_addition(self) -> None:
+        wid = self.prepared()
+        basis = "requested behavior in PR #102 follow-up"
+        self.ok("record", "preflight", "--slug", "ceremony", "--workflow-id", wid, "--input", "-",
+                input=json.dumps({"authoritativeContract": "basis provenance",
+                                  "behaviorMap": [item("BM_FIRST", "FIRST_FAILED", basis=basis)]}))
+        preflight = self.ok("evidence", "--full", "--evidence-id", str(self.state()["preflightEvidence"]))["document"]
+        self.assertEqual(preflight["document"]["behaviorMap"][0].get("basis"), basis, "BASIS_DROPPED")
+        added_basis = "new review finding"
+        self.ok("record", "tdd-map", "--slug", "ceremony", "--workflow-id", wid, "--input", "-",
+                input=json.dumps({"items": [item("BM_SECOND", "SECOND_FAILED", basis=added_basis)]}))
+        tdd = self.ok("evidence", "--full", "--evidence-id", str(self.state()["tddEvidence"]))["document"]
+        self.assertEqual(tdd["behaviorMap"][1].get("basis"), added_basis, "BASIS_DROPPED")
+
+    def test_historical_item_without_basis_remains_readable(self) -> None:
+        wid = self.prepared()
+        identity = resolve_repo_identity(self.repo)
+        legacy = item("BM_OLD", "OLD_FAILED", kind="preservation", status="omitted",
+                      evidence="historical no-change item")
+        legacy.pop("basis")
+        commit_evidence_phase(identity, "ceremony", wid, "preflight", {
+            "document": {"authoritativeContract": "historical map",
+                         "behaviorMap": [legacy]}})
+        self.assertEqual(self.ok("status")["preflight"], "passed", "LEGACY_BASIS_READ_FAILED")
+        self.ok("record", "tdd-map", "--slug", "ceremony", "--workflow-id", wid, "--input", "-",
+                input=json.dumps({"items": [item("BM_NEW", "NEW_FAILED", basis="new request")],
+                                  "dispositions": [{"id": "BM_OLD", "revalidate": True,
+                                                    "evidence": "recheck historical map"}]}))
+        recorded = self.ok("evidence", "--full", "--evidence-id", str(self.state()["tddEvidence"]))["document"]
+        self.assertEqual([entry["id"] for entry in recorded["behaviorMap"]], ["BM_OLD", "BM_NEW"],
+                         "LEGACY_BASIS_READ_FAILED")
+        self.assertEqual(recorded["behaviorMap"][0]["status"], "pending", "LEGACY_BASIS_READ_FAILED")
+        self.assertNotIn("basis", recorded["behaviorMap"][0], "LEGACY_BASIS_READ_FAILED")
 
 
 class AdvisorBounded(Ceremony):

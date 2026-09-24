@@ -238,6 +238,37 @@ class AttackHarness(unittest.TestCase):
         return dict(self.env, PYTHONPATH=str(self.tmp / "outside"))
 
 
+class ReceiptReasonParity(AttackHarness):
+    def test_advisor_receipt_requires_nonfixed_reason(self) -> None:
+        slug = "receipt-reason"
+        wid = self.begin(slug)
+        envelope = self.json_file("advisor.json", {"schemaVersion": 1, "verdict": "completed", "findings": [
+            {"id": "SPEC-1", "claim": "report only", "material": True, "kind": "nonbehavioral"}]})
+        self.ok("record", "advisor-result", "--slug", slug, "--workflow-id", wid,
+                "--stage", "preflight", "--source", "codex-advisor", "--input", str(envelope))
+        intake = self.status()["advisorPreflight"]["intakeEvidence"]
+        preflight = self.json_file("preflight.json", build_document(
+            "no behavior change", behavior_map=[behavior_map.no_change_item("fixture no-change pass")]))
+        self.ok("record", "preflight", "--slug", slug, "--workflow-id", wid, "--input", str(preflight))
+        self.ok("tdd", "--slug", slug, "--not-required", "no runtime behavior")
+        receipt = self.ok("verify", "--slug", slug, "--", sys.executable, "-c", "print('receipt proof')")
+        reference = receipt["evidenceId"] + ":" + str(receipt["runIndex"])
+        item = {"finding_id": "SPEC-1", "status": "report-only", "evidenceRefs": [reference]}
+        document = self.json_file("disposition.json", {"intakeEvidenceId": intake, "dispositions": [item]})
+        before = self.ok("history")
+        refused = self.cli("record", "advisor-disposition", "--slug", slug, "--workflow-id", wid,
+                           "--stage", "preflight",
+                           "--input", str(document))
+        self.assertEqual(refused.returncode, 2, "REASON_NOT_REQUIRED: " + refused.stdout + refused.stderr)
+        self.assertIn("reason", refused.stderr, "REASON_NOT_REQUIRED")
+        self.assertEqual(self.ok("history"), before, "REASON_NOT_REQUIRED")
+        accepted = self.json_file("reason.json", {"intakeEvidenceId": intake,
+                                                "dispositions": [{**item, "reason": "measured false consequence"}]})
+        self.ok("record", "advisor-disposition", "--slug", slug, "--workflow-id", wid,
+                "--stage", "preflight",
+                "--input", str(accepted))
+
+
 class PendingAdvisorRetries(AttackHarness):
     # Captured issue #37 recorder inputs; no provider/model behavior is claimed.
     CAPTURED = {"id": "SPEC-P2", "claim": "Diagnostic marker file is absent",

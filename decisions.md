@@ -6,6 +6,22 @@ Issue bodies own implementation scope; this record preserves decisions and their
 status. New decisions supersede earlier ones explicitly; observations and open
 acceptance gaps are not completed delivery.
 
+## 2026-09-24 — Restore record CLI provenance and review metadata
+
+**Decision:** Follow up [#96](https://github.com/future3OOO/codex-skills/issues/96)
+and PR #102 by requiring a non-empty `basis` when authoring a Behavior Map item,
+while allowing previously recorded items without one to load. Retain authored
+`basis` and optional review `location` in recorded evidence; require a reason
+for non-fixed receipt dispositions, as the flag form already does. This
+supersedes #96's removal of those fields and its optional receipt reason.
+The existing `record` Interface and validators own all three rules; no ledger
+format change is needed. [#95](https://github.com/future3OOO/codex-skills/issues/95)
+and [#97](https://github.com/future3OOO/codex-skills/issues/97) are downstream
+consumers of the restored metadata.
+
+**Delivery:** Candidate on `fix/pr102-contract-restoration`; follow-up PR to be
+opened and left unmerged. Each changed behavior has an isolated CLI RED/GREEN.
+
 ## 2026-09-21 — Session relocation via marker, kill, and resume
 
 **Decision:** [#83](https://github.com/future3OOO/codex-skills/issues/83) is

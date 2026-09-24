@@ -141,6 +141,7 @@ def pending_behavior(
     return {
         "id": identifier,
         "kind": kind,
+        "basis": "test fixture behavior",
         "behavior": behavior,
         "seam": seam,
         "expected": expected,
