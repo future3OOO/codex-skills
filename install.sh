@@ -15,7 +15,7 @@ for path in AGENTS.md hooks.json hooks skills; do
 done
 
 rsync -a "${EXCLUDES[@]}" "$SRC/hooks" "$SRC/skills" "$DEST/"
-cp "$SRC/AGENTS.md" "$DEST/AGENTS.md"
+cp "$SRC/docs/agents/global-rules.md" "$DEST/AGENTS.md"
 chmod +x "$DEST"/hooks/*.py
 
 # rsync excludes stop new copies only; remove matching artifacts already live.

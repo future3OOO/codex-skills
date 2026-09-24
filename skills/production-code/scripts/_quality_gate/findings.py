@@ -12,7 +12,6 @@ RULE_DUPLICATE_SYMBOL = "QG54-DUPLICATE-ADDED-SYMBOL"
 RULE_DUPLICATE_BLOCK = "QG54-DUPLICATE-ADDED-BLOCK"
 RULE_DUPLICATE_BASELINE = "QG54-DUPLICATE-BASELINE"
 RULE_OWNER_PRODUCTION = "QG54-OWNER-COMPETITION-PRODUCTION"
-RULE_OWNER_TEST = "QG54-OWNER-COMPETITION-TEST"
 
 # Warning promotion is decided by this immutable per-exact-rule-ID metadata and
 # nothing else: never rendered text, prefixes, families, roles, or scores.
@@ -25,7 +24,6 @@ _PROMOTION_ELIGIBLE = {
     RULE_DUPLICATE_BLOCK: False,
     RULE_DUPLICATE_BASELINE: False,
     RULE_OWNER_PRODUCTION: False,
-    RULE_OWNER_TEST: False,
 }
 
 # The scope kind for each gap the gate's own producers emit. Identity uses the

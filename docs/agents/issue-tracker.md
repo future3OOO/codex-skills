@@ -39,5 +39,5 @@ about code review or PR state; otherwise use `gh issue view <number>`.
 ## Agent Discovery
 
 These files are the checked-in local setup contract for tracker-aware skills.
-They do not change root `AGENTS.md` authority. Skills that need issue tracker
+They do not change the global rules' authority. Skills that need issue tracker
 configuration read this file directly.
