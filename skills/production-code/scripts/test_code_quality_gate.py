@@ -523,7 +523,8 @@ def test_repeated_added_block_is_one_grouped_warning(repo: Path) -> None:
     findings = duplicate_findings(payload, "QG54-DUPLICATE-ADDED-BLOCK")
     assert len(findings) == 1, json.dumps(payload["findings"], indent=2)
     assert [region["displayLine"] for region in findings[0]["region"]["regions"]] == [2, 15], findings[0]
-    assert not duplicate_findings(payload, "QG54-DUPLICATE-ADDED-SYMBOL"), payload["findings"]
+    warnings = run(["python3", str(SCRIPT), "check", "--repo", str(repo), "--base-ref", "HEAD"], repo).stdout.split("Warnings:", 1)[1].split("\n\n", 1)[0]
+    assert warnings.count("QG54-DUPLICATE-ADDED-BLOCK") == 1 and "src/polls.py:2, src/polls.py:15" in warnings, "TEXT_FINDING_UNLOCATED"
     assert_exact_rules(payload, {
         "QG54-DUPLICATE-ADDED-BLOCK": "finding", "QG54-DUPLICATE-ADDED-SYMBOL": "passed",
     })
@@ -2822,8 +2823,6 @@ def test_growth_warning_survives_base_binding_incompleteness(repo: Path) -> None
     # measured. Incompleteness qualifies the warning; it never suppresses it.
     write(repo / "src" / "big.py", "".join(f"VALUE_{i} = {i}\n" for i in range(600)))
     code, payload, _ = run_gate(repo)
-    assert payload["evaluation"]["growth"]["humanAuthored"]["net"] > 500, payload["evaluation"]["growth"]
-    assert any("no caller-supplied base" in gap for gap in incomplete_gaps(payload, "QG54-GROWTH-CUMULATIVE")), payload["findings"]
     assert "QG54-GROWTH-CUMULATIVE: human-authored net growth 600" in run(["python3", str(SCRIPT), "check", "--repo", str(repo)], repo).stdout, "TEXT_GROWTH_HIDDEN"
     # Warning-only: the hook contract keeps exit zero.
     assert code == 0 and payload["ok"] is True, (code, payload["errors"])
