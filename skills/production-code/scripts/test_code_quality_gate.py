@@ -517,7 +517,7 @@ def test_repeated_added_block_is_one_grouped_warning(repo: Path) -> None:
     findings = duplicate_findings(payload, "QG54-DUPLICATE-ADDED-BLOCK")
     assert len(findings) == 1, json.dumps(payload["findings"], indent=2)
     assert [region["displayLine"] for region in findings[0]["region"]["regions"]] == [2, 15], findings[0]
-    assert warnings.count("QG54-DUPLICATE-ADDED-BLOCK") == 1 and "src/polls.py:2, src/polls.py:15" in warnings, "TEXT_FINDING_UNLOCATED"
+    assert warnings.count("QG54-DUPLICATE-ADDED-BLOCK") == 1 and f"[{findings[0]['findingId']}]: src/polls.py:2, src/polls.py:15" in warnings, "TEXT_FINDING_UNLOCATED"
     assert_exact_rules(payload, {
         "QG54-DUPLICATE-ADDED-BLOCK": "finding", "QG54-DUPLICATE-ADDED-SYMBOL": "passed",
     })
@@ -739,21 +739,20 @@ def test_repeated_inline_scaffolds_are_one_owner_candidate(repo: Path) -> None:
     git(repo, "commit", "-q", "-m", "five scaffolds")
     base = run(["git", "rev-parse", "HEAD~1"], repo).stdout.strip()
     bound = graph_evidence(base, run(["git", "rev-parse", "HEAD"], repo).stdout.strip(), ("src/lifecycle.py",))
-    code, payload, _ = run_gate(repo, "--base-ref", base, "--gitnexus-context-json", str(bound))
+    code, payload, warnings = run_gate(repo, "--base-ref", base, "--gitnexus-context-json", str(bound))
     assert_exact_rules(payload, {**dict.fromkeys(EXACT_RULES, "passed"), "QG54-OWNER-COMPETITION-PRODUCTION": "finding"})
     candidates = owner_findings(payload, "QG54-OWNER-COMPETITION-PRODUCTION")
     assert len(candidates) == 1, candidates
     finding = candidates[0]
-    assert finding["state"] == "candidate", finding
-    assert finding["region"]["evidenceClass"] == "lifecycle-coordinators", finding
+    assert (finding["state"], finding["region"]["evidenceClass"]) == ("candidate", "lifecycle-coordinators"), finding
     expected = [
         ("src/lifecycle.py", line_no)
         for line_no, line in enumerate(_LIFECYCLE_SCAFFOLDS.splitlines(), 1)
         if line.startswith("def test_")
     ]
     assert len(expected) == 5, expected
-    regions = [(region["path"], region["displayLine"]) for region in finding["region"]["regions"]]
-    assert regions == expected, (regions, expected)
+    assert [(region["path"], region["displayLine"]) for region in finding["region"]["regions"]] == expected, finding
+    assert f"[{finding['findingId']}]: " + ", ".join(f"{p}:{n}" for p, n in expected) in warnings, "TEXT_FINDING_UNLOCATED"
     assert code == 0 and payload["ok"] is True, (code, payload["errors"])
 
 
