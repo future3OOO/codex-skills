@@ -2824,7 +2824,7 @@ def test_growth_warning_survives_base_binding_incompleteness(repo: Path) -> None
     code, payload, _ = run_gate(repo)
     assert payload["evaluation"]["growth"]["humanAuthored"]["net"] > 500, payload["evaluation"]["growth"]
     assert any("no caller-supplied base" in gap for gap in incomplete_gaps(payload, "QG54-GROWTH-CUMULATIVE")), payload["findings"]
-    assert growth_finding(payload)["evidence"]["humanAuthored"]["net"] > 500, growth_finding(payload)
+    assert "QG54-GROWTH-CUMULATIVE: human-authored net growth 600" in run(["python3", str(SCRIPT), "check", "--repo", str(repo)], repo).stdout, "TEXT_GROWTH_HIDDEN"
     # Warning-only: the hook contract keeps exit zero.
     assert code == 0 and payload["ok"] is True, (code, payload["errors"])
 
