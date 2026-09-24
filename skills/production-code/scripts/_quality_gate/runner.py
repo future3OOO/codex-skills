@@ -156,15 +156,14 @@ def format_text(result: dict[str, object]) -> str:
         "",
         "Checks:",
     ]
-    for check_item in result["checks"]:
-        outcome = "incomplete" if check_item["passed"] is None else "pass" if check_item["passed"] else "fail"
-        lines.append(f"- {check_item['name']}: {outcome}")
+    lines += [f"- {c['name']}: {'incomplete' if c['passed'] is None else 'pass' if c['passed'] else 'fail'}" for c in result["checks"]]
     lines += ["", "Errors:", *([f"- {error}" for error in result["errors"]] or ["- none"]), "", "Warnings:"]
     # Measured growth stays visible even when an unbased run leaves the claim incomplete; then each
     # concrete finding, located (rule-level records are the `Checks` lines).
     net = result["evaluation"]["growth"]["humanAuthored"]["net"]
     active = [f"{RULE_GROWTH}: human-authored net growth {net} exceeds the 500-line review budget"] if net > 500 else []
-    active += [f"{item['ruleId']} [{item['findingId']}]{' for ' + item['evidence']['affectedRuleId'] if 'affectedRuleId' in item['evidence'] else ''}: "
+    active += [" ".join(filter(None, (f"{item['ruleId']} [{item['findingId']}]", item["state"] if "responsibilityKey" in item["evidence"] else None,
+               item["evidence"].get("responsibilityKey"), "for " + item["evidence"]["affectedRuleId"] if "affectedRuleId" in item["evidence"] else None))) + ": "
                + ", ".join(item["evidence"].get("gaps") or item["evidence"].get("owners") or [f"{r['path']}:{r['displayLine']}" for g in item["evidence"].get("duplicates", ()) for r in g["regions"]])
                for item in result["findings"] if item["status"] == "finding" and item["region"]["scope"] != "evaluation"]
     lines.extend([f"- {warning}" for warning in active + result["warnings"]] or ["- none"])

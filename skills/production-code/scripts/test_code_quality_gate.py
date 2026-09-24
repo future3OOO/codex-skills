@@ -1499,7 +1499,7 @@ def test_deletion_without_rewiring_stays_unresolved(repo: Path) -> None:
     gone = run(["git", "rev-parse", "HEAD"], repo).stdout.strip()
     write_disposition(repo, [{**record, "candidate": gone}])
     code, payload, warnings = run_gate(repo, "--base-ref", base)
-    assert code == 0 and "QG54-OWNER-COMPETITION-PRODUCTION [" in warnings, (code, warnings)
+    assert code == 0 and "confirmed-unresolved app-state-root-location" in warnings, ("TEXT_RECORD_UNKEYED", code, warnings)
 
 
 @with_repo
