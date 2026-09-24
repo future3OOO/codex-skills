@@ -16,109 +16,13 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from hooks.tests.support import build_no_change_document, record_context_forge  # noqa: E402
+from hooks.tests.support import COMMIT_READY, build_no_change_document, record_context_forge  # noqa: E402
 from hooks.lib.repo_identity import resolve_repo_identity  # noqa: E402
 from hooks.lib.tdd_surface import differences, identify  # noqa: E402
 from hooks.lib.workflow_state import advisor_disposition, pause, read_workflow, record_advisor_result, set_phase  # noqa: E402
 
 WORKFLOW = ROOT / "skills" / "repo-production-workflow" / "scripts" / "workflow.py"
-QUALITY_GATE = ROOT / "skills" / "production-code" / "scripts" / "code_quality_gate.py"
 SEAM = "workflow.py tdd subprocess boundary"
-
-
-class LegacyImportFreeFormTests(unittest.TestCase):
-    """The settling proof for the legacy path: production reaches map-less
-    state only through the file importer, so this test writes the real
-    pre-migration slot files (workflow.json plus a map-less preflight
-    evidence envelope), lets the CLI import them, and drives free-form
-    RED/GREEN through it."""
-
-    def test_mapless_import_admits_free_form_red_green(self) -> None:
-        tmp = Path(tempfile.mkdtemp(prefix="workflow-legacy-import-"))
-        repo = tmp / "repo"; repo.mkdir()
-        env = os.environ.copy()
-        env.update({"CODEX_WORKFLOW_STATE_ROOT": str(tmp / "state"),
-                    "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull,
-                    "PYTHONDONTWRITEBYTECODE": "1"})
-        for args in (("init", "-q"), ("config", "user.email", "t@example.invalid"),
-                     ("config", "user.name", "Harness")):
-            subprocess.run(["git", "-C", str(repo), *args], check=True, env=env,
-                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        (repo / "app.py").write_text("value = 1\n", encoding="utf-8")
-        subprocess.run(["git", "-C", str(repo), "add", "app.py"], check=True, env=env)
-        subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "base"], check=True, env=env)
-        sys.path.insert(0, str(ROOT))
-        from hooks.lib.repo_identity import resolve_repo_identity as _rri
-        identity = _rri(repo)
-        slot = tmp / "state" / identity.key
-        slot.mkdir(parents=True)
-        workflow_id = "ab" * 16
-        evidence_path = slot / "preflight-legacy.json"
-        document = build_no_change_document("legacy import")
-        document.pop("behaviorMap", None)
-        evidence_path.write_text(json.dumps({
-            "schemaVersion": 1, "slug": "legacy", "workflowId": workflow_id,
-            "document": document, "recordedAt": "2026-08-01T00:00:00+00:00",
-        }), encoding="utf-8")
-        (slot / "workflow.json").write_text(json.dumps({
-            "schemaVersion": 1, "repo": identity.as_dict(), "slug": "legacy",
-            "workflowId": workflow_id, "intent": "legacy import",
-            "createdAt": "2026-08-01T00:00:00+00:00",
-            "updatedAt": "2026-08-01T00:00:00+00:00",
-            "phase": "preflight", "nextAction": "tdd",
-            "repoContextForge": "passed", "preflight": "passed",
-            "preflightEvidence": str(evidence_path),
-            "advisorPreflight": {"source": "codex-advisor", "status": "completed", "findings": "none", "reason": None},
-            "tdd": "pending", "productionCode": "pending", "implementation": "pending",
-            "verification": "pending",
-            "codeReview": {"status": "pending", "findings": "pending"},
-            "finalReview": {"source": None, "status": "pending", "findings": "pending"},
-        }), encoding="utf-8")
-        red = subprocess.run(
-            [sys.executable, str(WORKFLOW), "tdd", "--cwd", str(repo), "--slug", "legacy",
-             "--phase", "red", "--behavior", "value must be 2", "--seam", "app import",
-             "--expected-failure", "VALUE_NOT_TWO", "--", sys.executable, "-c",
-             "import app; assert app.value == 2, 'VALUE_NOT_TWO'"],
-            cwd=str(ROOT), env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-        self.assertEqual(red.returncode, 0, red.stdout + red.stderr)
-        self.assertTrue(json.loads(red.stdout.strip().splitlines()[-1])["valid"], red.stdout)
-        (repo / "app.py").write_text("value = 2\n", encoding="utf-8")
-        green = subprocess.run(
-            [sys.executable, str(WORKFLOW), "tdd", "--cwd", str(repo), "--slug", "legacy",
-             "--phase", "green", "--behavior", "value must be 2", "--seam", "app import",
-             "--", sys.executable, "-c",
-             "import app; assert app.value == 2, 'VALUE_NOT_TWO'"],
-            cwd=str(ROOT), env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-        self.assertEqual(green.returncode, 0, green.stdout + green.stderr)
-        # Characterization (advisor P2-1): on imported-legacy state after a
-        # completed cycle, a re-RED whose command now PASSES still EXECUTES the
-        # command (run-then-decide order) and preserves state and evidence.
-        state_before = subprocess.run(
-            [sys.executable, str(WORKFLOW), "status", "--repo", str(repo)],
-            cwd=str(ROOT), env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-        evidence_before = json.loads(state_before.stdout)["tddEvidence"]
-        proof = repo / "reran.txt"
-        rerun = subprocess.run(
-            [sys.executable, str(WORKFLOW), "tdd", "--cwd", str(repo), "--slug", "legacy",
-             "--phase", "red", "--behavior", "value must be 2", "--seam", "app import",
-             "--expected-failure", "VALUE_NOT_TWO", "--", sys.executable, "-c",
-             # The proof path travels as argv, never interpolated into the
-             # source: TMPDIR may contain quotes or backslashes.
-             "import sys; open(sys.argv[1],'a').write('x'); "
-             "import app; assert app.value == 2, 'VALUE_NOT_TWO'",
-             str(proof)],
-            cwd=str(ROOT), env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-        self.assertTrue(proof.exists(), "the rerun command must actually execute (run-then-decide)")
-        self.assertEqual(rerun.returncode, 2, rerun.stdout + rerun.stderr)
-        payload = json.loads(rerun.stdout.strip().splitlines()[-1])
-        self.assertFalse(payload["valid"], payload)
-        state_after = subprocess.run(
-            [sys.executable, str(WORKFLOW), "status", "--repo", str(repo)],
-            cwd=str(ROOT), env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-        after = json.loads(state_after.stdout)
-        self.assertEqual(after["tddEvidence"], evidence_before, "a preserved invalid rerun must not move evidence")
-        self.assertEqual(after["tdd"], "passed", "a preserved invalid rerun must not regress tdd state")
-        shutil.rmtree(tmp, ignore_errors=True)
 
 
 class TddSummaryTests(unittest.TestCase):
@@ -214,7 +118,7 @@ class TddSummaryTests(unittest.TestCase):
 
     def evidence_record(self, evidence_id: str) -> dict[str, object]:
         result = self.run_script(
-            WORKFLOW, "evidence", "--repo", str(self.repo), "--evidence-id", evidence_id,
+            WORKFLOW, "evidence", "--full", "--repo", str(self.repo), "--evidence-id", evidence_id,
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         value = json.loads(result.stdout)
@@ -240,16 +144,6 @@ class TddSummaryTests(unittest.TestCase):
         w.commit_evidence_phase(
             identity, str(state["slug"]), str(state["workflowId"]), "preflight", document,
         )
-
-    def record_gate_evidence(self) -> None:
-        identity = resolve_repo_identity(self.repo)
-        gate = self.run_script(QUALITY_GATE, "check", "--repo", str(self.repo), "--json")
-        assert gate.returncode == 0, gate.stdout + gate.stderr
-        gate_path = self.tmp / "setup-gate.json"
-        gate_path.write_text(gate.stdout, encoding="utf-8")
-        recorded = self.run_script(WORKFLOW, "record-production-code", "--repo", str(self.repo), "--slug", "tdd-summary",
-                                   "--workflow-id", read_workflow(identity)["workflowId"], "--input", str(gate_path))
-        assert recorded.returncode == 0, recorded.stdout + recorded.stderr
 
     def test_red_and_green_are_bound_to_one_real_seam_and_candidate(self) -> None:
         behavior_command = (
@@ -524,7 +418,6 @@ class TddSummaryTests(unittest.TestCase):
                          "a regression mutated immutable completed evidence")
         state = json.loads(self.run_script(WORKFLOW, "status", "--repo", str(self.repo)).stdout)
         self.assertEqual(state["tdd"], "in-progress")
-        self.assertEqual(state["implementation"], "in-progress", "a recorded GREEN regression did not reopen implementation")
         self.assertEqual(state["verification"], "pending")
         self.assertEqual(state["codeReview"], {"status": "pending", "findings": "pending"})
 
@@ -601,8 +494,6 @@ class TddSummaryTests(unittest.TestCase):
 
         identity = resolve_repo_identity(self.repo)
         wid = read_workflow(identity)["workflowId"]
-        self.record_gate_evidence()
-        set_phase(identity, "implementation", "passed")
         set_phase(identity, "verification", "passed")
         pause(identity, "tdd-summary", wid, "waiting for the next tracer")
         self.assertIn("paused", read_workflow(identity))
@@ -612,7 +503,6 @@ class TddSummaryTests(unittest.TestCase):
         self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
         state = json.loads(self.run_script(WORKFLOW, "status", "--repo", str(self.repo)).stdout)
         self.assertEqual(state["tdd"], "in-progress")
-        self.assertEqual(state["implementation"], "in-progress", "a next-tracer RED did not reopen implementation")
         self.assertEqual(state["verification"], "pending")
         self.assertEqual(state["codeReview"], {"status": "pending", "findings": "pending"})
         self.assertNotIn("paused", state, "a next-tracer RED did not clear the pause")
@@ -654,7 +544,7 @@ class TddSummaryTests(unittest.TestCase):
         self.assertEqual(premature.returncode, 2, "a RED at intake bypassed the ordering gate")
         self.assertIn("requires", premature.stderr)
         state = json.loads(self.run_script(WORKFLOW, "status", "--repo", str(self.repo)).stdout)
-        self.assertEqual((state["tdd"], state["implementation"]), ("pending", "pending"))
+        self.assertEqual(state["tdd"], "pending")
 
         identity = record_context_forge(self.repo, self.tmp)
         record_advisor_result(identity, "tdd-summary", read_workflow(identity)["workflowId"], "preflight", "codex-advisor", "completed")
@@ -716,17 +606,9 @@ class TddSummaryTests(unittest.TestCase):
         doc = build_no_change_document("terminal workflow rerun")
         doc_path = self.tmp / "preflight-doc.json"
         doc_path.write_text(json.dumps(doc), encoding="utf-8")
-        recorded = self.run_script(WORKFLOW, "record-preflight", "--repo", str(self.repo), "--slug", "tdd-summary",
+        recorded = self.run_script(WORKFLOW, "record", "preflight", "--repo", str(self.repo), "--slug", "tdd-summary",
                                    "--workflow-id", wid, "--input", str(doc_path))
         self.assertEqual(recorded.returncode, 0, recorded.stdout + recorded.stderr)
-        gate = self.run_script(QUALITY_GATE, "check", "--repo", str(self.repo), "--json")
-        self.assertEqual(gate.returncode, 0, gate.stdout + gate.stderr)
-        gate_path = self.tmp / "gate-verdict.json"
-        gate_path.write_text(gate.stdout, encoding="utf-8")
-        recorded = self.run_script(WORKFLOW, "record-production-code", "--repo", str(self.repo), "--slug", "tdd-summary",
-                                   "--workflow-id", wid, "--input", str(gate_path))
-        self.assertEqual(recorded.returncode, 0, recorded.stdout + recorded.stderr)
-        set_phase(identity, "implementation", "passed")
         verified = self.run_script(WORKFLOW, "verify", "--repo", str(self.repo), "--slug", "tdd-summary",
                                    "--", sys.executable, "-c", "pass")
         self.assertEqual(verified.returncode, 0, verified.stdout + verified.stderr)
@@ -734,7 +616,8 @@ class TddSummaryTests(unittest.TestCase):
                                   "--kind", "quality-gate", "--base-ref", "HEAD")
         self.assertEqual(quality.returncode, 0, quality.stdout + quality.stderr)
         set_phase(identity, "code-review", "passed", findings="none")
-        record_advisor_result(identity, "tdd-summary", wid, "final", "codex-advisor", "commit-ready")
+        record_advisor_result(identity, "tdd-summary", wid, "final", "codex-advisor", "commit-ready",
+                              intake={**COMMIT_READY, "workflowId": wid, "stage": "final", "producer": "codex-advisor"})
         advisor_disposition(identity, "tdd-summary", wid, "final", "none")
         completed = self.run_script(WORKFLOW, "complete", "--repo", str(self.repo))
         self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
@@ -802,8 +685,6 @@ class TddSummaryTests(unittest.TestCase):
         decision_document = self.evidence_document(decision_id)
 
         identity = resolve_repo_identity(self.repo)
-        self.record_gate_evidence()
-        set_phase(identity, "implementation", "passed")
         set_phase(identity, "verification", "passed")
         pause(identity, "tdd-summary", read_workflow(identity)["workflowId"], "waiting on the scope decision")
 
@@ -825,7 +706,7 @@ class TddSummaryTests(unittest.TestCase):
         self.assertEqual(self.evidence_document(decision_id), decision_document,
                          "replacing a decision mutated immutable historical evidence")
         state = json.loads(self.run_script(WORKFLOW, "status", "--repo", str(self.repo)).stdout)
-        self.assertEqual((state["tdd"], state["implementation"]), ("in-progress", "in-progress"))
+        self.assertEqual(state["tdd"], "in-progress")
         self.assertEqual(state["verification"], "pending")
         self.assertEqual(state["codeReview"], {"status": "pending", "findings": "pending"})
         self.assertNotIn("paused", state, "the replacing RED did not clear the pause")

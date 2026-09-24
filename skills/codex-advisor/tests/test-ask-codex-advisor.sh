@@ -91,7 +91,7 @@ grep -Fq 'disallowed_tools="Read Grep Glob Skill Bash WebSearch WebFetch Edit Wr
 grep -q -- '--expected-candidate-tree "$candidate"' "$WRAPPER" \
   && { printf 'PASS  checkpoint candidate reaches advisor-result\n'; pass=$((pass + 1)); } \
   || { printf 'FAIL  checkpoint candidate is not recorded with the result\n'; fail=$((fail + 1)); }
-if grep -q 'workflow_cli" status\|repo context packet\|Repo Context Forge graph evidence\|--- unstaged diff ---\|--- staged diff ---\|--- untracked diff ---' "$WRAPPER"; then
+if grep -q 'repo context packet\|Repo Context Forge graph evidence\|--- unstaged diff ---\|--- staged diff ---\|--- untracked diff ---' "$WRAPPER"; then
   printf 'FAIL  superseded phased payload owner remains\n'; fail=$((fail + 1))
 else
   printf 'PASS  superseded phased payload owners deleted\n'; pass=$((pass + 1))
@@ -113,17 +113,9 @@ check_status "two design declarations refused" 2 "$status"
 out=$("$WRAPPER" --slug t --design-absent no --cwd "$argtmp/repo" -- q 2>&1); status=$?
 check_status "phase-less design refused" 2 "$status"
 
-printf '{}' >"$argtmp/packet.json"
-for args in \
-  '--fresh' \
-  "--packet $argtmp/packet.json" \
-  '--base-ref HEAD'; do
-  read -r -a extra <<<"$args"
-  out=$("$WRAPPER" --slug t --phase preflight-advice --design-absent no --cwd "$argtmp/repo" "${extra[@]}" -- q 2>&1); status=$?
-  check_status "phased caller choice refused ($args)" 2 "$status"
-done
-check "phased fresh names checkpoint ownership" "checkpoint stage owns create or resume mode" "$("$WRAPPER" --slug t --phase preflight-advice --design-absent no --cwd "$argtmp/repo" --fresh -- q 2>&1)"
-check "phased anchor refusal names checkpoint ownership" "checkpoint owns projection and current-pass anchors" "$("$WRAPPER" --slug t --phase preflight-advice --design-absent no --cwd "$argtmp/repo" --packet "$argtmp/packet.json" -- q 2>&1)"
+out=$("$WRAPPER" --slug t --phase preflight-advice --design-absent no --cwd "$argtmp/repo" --fresh -- q 2>&1); status=$?
+check_status "phased caller choice refused (--fresh)" 2 "$status"
+check "phased fresh names checkpoint ownership" "checkpoint stage owns create or resume mode" "$out"
 
 printf '== checkpoint and path identity\n'
 state="$argtmp/state"
@@ -253,10 +245,9 @@ check "design evidence names line framing" "framing=design-line-prefix" "$(cat "
 check "design telemetry emitted" "codex_advisor_evidence name=governing-design" "$(cat "$rigtmp/preflight.err")"
 check "canonical design declaration is retained" '"sha256"' "$(cat "$rigtmp/capture/payload-1")"
 check "current-pass diff carries the changed value" "diff> +value = 2" "$(cat "$rigtmp/capture/payload-1")"
-check "projection is framed as untrusted data" "Untrusted repository-derived projection data follows" "$(cat "$rigtmp/capture/payload-1")"
-check "diff is framed as untrusted data" "Untrusted repository diff data follows" "$(cat "$rigtmp/capture/payload-1")"
+check "projection is framed as channel-prefixed data" "advisor-projection> {" "$(cat "$rigtmp/capture/payload-1")"
 check_status "one projection section" 1 "$(count_exact "$rigtmp/capture/payload-1" '--- advisor projection (schemaVersion 1) ---')"
-check_status "one current-pass diff section" 1 "$(count_exact "$rigtmp/capture/payload-1" '--- current-pass diff: passStartOid^{tree} -> activeCandidateTree ---')"
+check_status "one current-pass diff section" 1 "$(count_exact "$rigtmp/capture/payload-1" '--- current-pass diff: passStartOid^{tree} -> activeCandidateTree;')"
 for old in 'repo context packet' 'Repo Context Forge graph evidence' '--- unstaged diff ---' '--- staged diff ---' '--- untracked diff ---' 'current Behavior Map' 'recorded TDD summary' 'recorded code-review summary'; do
   check_absent "old payload absent ($old)" "$old" "$(cat "$rigtmp/capture/payload-1")"
 done
@@ -276,12 +267,11 @@ contract = {**pending_behavior("BM_READER", red_failure="READER_NOTE_WRONG"), "s
 keep = {**contract, "id":"BM_KEEP", "kind":"preservation", "redFailure":"READER_VALUE_WRONG", "sourceRefs":[
     *refs, {"type":"design", "evidenceId":state["governedDesignEvidence"], "id":"PRES-1"}]}
 doc = build_document("scoped wrapper diagnostic", behavior_map=[contract, keep])
-doc["chosenApproach"] = "Reuse the hook correctness operation at 82 rows; limit 2048 UTF-8 bytes and 2 seconds per hook, no extra DB reads or subprocesses versus old."
-doc["riskChecks"] = "Keep fixed bounds after measurement; compare the same real-hook Interface."
-doc["proofPlan"] = "workflow.py verify -- python3 -m unittest hooks.tests.test_behavior_map_workflow.BehaviorMapWorkflowTests.test_consecutive_hook_obligations_are_bounded_without_extra_edit_work; report actual source target, scale, limit and observed value."
+doc["authoritativeContract"] = ("Reuse the hook correctness operation at 82 rows; limit 2048 UTF-8 bytes and 2 seconds per hook, "
+    "no extra DB reads or subprocesses versus old; verify through workflow.py verify and report actual source target, scale, limit and observed value.")
 open(sys.argv[3], "w", encoding="utf-8").write(json.dumps(doc))
 PY
-CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" record-preflight --repo "$rigtmp/repo" --slug scoped-rig --workflow-id "$wid" --input "$rigtmp/preflight.json" >/dev/null
+CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" record preflight --repo "$rigtmp/repo" --slug scoped-rig --workflow-id "$wid" --input "$rigtmp/preflight.json" >/dev/null
 # The value edit preceded this pass's proof, so the reader contract is proved
 # through its own RED/GREEN on the note it still lacks; the preservation item
 # baselines late on the candidate and is revalidated by the same operation later.
@@ -300,9 +290,6 @@ sys.path.insert(0, sys.argv[1])
 from hooks.tests.support import record_context_forge
 record_context_forge(Path(sys.argv[2]), Path(sys.argv[2]).parent)
 PY
-PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/skills/production-code/scripts/code_quality_gate.py" check --repo "$rigtmp/repo" --json >"$rigtmp/gate.json"
-CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" record-production-code --repo "$rigtmp/repo" --slug scoped-rig --workflow-id "$wid" --input "$rigtmp/gate.json" >/dev/null
-CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" set-phase --repo "$rigtmp/repo" --phase implementation --status passed >/dev/null
 selected_receipt=$(PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" verify --repo "$rigtmp/repo" --slug scoped-rig -- python3 -m unittest hooks.tests.test_behavior_map_workflow.BehaviorMapWorkflowTests.test_consecutive_hook_obligations_are_bounded_without_extra_edit_work 2>"$rigtmp/measurement.err"); status=$?
 check_status "declared hook resource operation verifies through the real runner" 0 "$status"
 check "selected operation reports its fixed byte limit" '"limitBytes": 2048' "$selected_receipt"
@@ -333,15 +320,15 @@ for identifier, status in (("SPEC-1", "report-only"), ("SPEC-2", "rejected-with-
     (repo.parent / f"{identifier}.json").write_text(json.dumps(doc), encoding="utf-8")
 (repo.parent / "reassess.json").write_text(json.dumps({"reassessment":"reader preservation affected", "dispositions":[{"id":"BM_KEEP", "revalidate":True, "evidence":"re-execute retained reader before closure"}]}), encoding="utf-8")
 PY
-out=$(CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" advisor-disposition --repo "$rigtmp/repo" --slug scoped-rig --workflow-id "$wid" --stage preflight --findings addressed --input "$rigtmp/SPEC-1.json" 2>&1); status=$?
+out=$(CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" record advisor-disposition --repo "$rigtmp/repo" --slug scoped-rig --workflow-id "$wid" --stage preflight --findings addressed --input "$rigtmp/SPEC-1.json" 2>&1); status=$?
 check_status "executed owning evidence settles report-only" 0 "$status"
-out=$(CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" tdd-map --repo "$rigtmp/repo" --slug scoped-rig --workflow-id "$wid" --input "$rigtmp/reassess.json" 2>&1); status=$?
+out=$(CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" record tdd-map --repo "$rigtmp/repo" --slug scoped-rig --workflow-id "$wid" --input "$rigtmp/reassess.json" 2>&1); status=$?
 check_status "settled owner enters reassessment" 0 "$status"
 out=$(run_wrapper --slug scoped-rig --phase final-review --design-file "$rigtmp/design.md" -- 'final question' 2>&1); status=$?
 check_status "pending preservation blocks ordinary final transport" 2 "$status"
 check "refusal names the unresolved owner" "BM_KEEP" "$out"
 check_status "blocked final never invokes the provider" 1 "$(cat "$rigtmp/capture/count")"
-out=$(CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" advisor-disposition --repo "$rigtmp/repo" --slug scoped-rig --workflow-id "$wid" --stage preflight --findings addressed --input "$rigtmp/SPEC-2.json" 2>&1); status=$?
+out=$(CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" record advisor-disposition --repo "$rigtmp/repo" --slug scoped-rig --workflow-id "$wid" --stage preflight --findings addressed --input "$rigtmp/SPEC-2.json" 2>&1); status=$?
 check_status "measured rejection remains reachable with pending preservation" 0 "$status"
 out=$(run_wrapper --slug scoped-rig --phase final-review --design-file "$rigtmp/design.md" -- 'final question' 2>&1); status=$?
 check_status "rejecting a finding does not erase pending preservation" 2 "$status"
@@ -375,17 +362,17 @@ check_status "final persists the new codex session id" 36 "$(cat "$rigstate/_adv
 check_status "final has one design narrative section" 1 "$(count_exact "$rigtmp/capture/payload-4" '--- governed-design narrative evidence')"
 check "final carries framed design body" "design> UNIQUE-DESIGN-BODY-MARKER" "$(cat "$rigtmp/capture/payload-4")"
 check_status "final has one projection section" 1 "$(count_exact "$rigtmp/capture/payload-4" '--- advisor projection (schemaVersion 1) ---')"
-check_status "final has one current-pass diff section" 1 "$(count_exact "$rigtmp/capture/payload-4" '--- current-pass diff: passStartOid^{tree} -> activeCandidateTree ---')"
+check_status "final has one current-pass diff section" 1 "$(count_exact "$rigtmp/capture/payload-4" '--- current-pass diff: passStartOid^{tree} -> activeCandidateTree;')"
 check "final design telemetry emitted" "codex_advisor_evidence name=governing-design" "$(cat "$rigtmp/final.err")"
 check "projection telemetry emitted" "codex_advisor_evidence name=advisor-projection" "$(cat "$rigtmp/final.err")"
-check "diff telemetry emitted" "codex_advisor_evidence name=current-pass-diff" "$(cat "$rigtmp/final.err")"
+check "diff telemetry emitted" "codex_advisor_evidence name=diff " "$(cat "$rigtmp/final.err")"
 check "completion marker emitted" "codex_advisor_complete status=0 provider=codex" "$(cat "$rigtmp/final.err")"
 python3 - "$rigtmp/capture/payload-4" "$rigtmp/selected-receipt.txt" "$rigtmp/SPEC-1.json" <<'PY'
 import json, sys
 payload, receipt, disposition = [open(path, encoding="utf-8").read() for path in sys.argv[1:]]
 assert receipt.strip() in payload, "SELECTED_RECEIPT_DROPPED"
 assert json.loads(disposition)["intakeEvidenceId"] in payload, "EXACT_INTAKE_ID_DROPPED"
-for value in ('"executedCommands"', 'python3 -m unittest test_transport_probe', '"revalidationRequired": false', 'all public app.value reads', 'the public reader returns the wrong value'):
+for value in ('"executedCommands"', 'python3 -m unittest test_transport_probe', '"revalidationRequired":false', 'all public app.value reads', 'the public reader returns the wrong value'):
     assert value in payload, "OWNERSHIP_OR_MEASUREMENT_DROPPED: " + value
 PY
 check_status "outgoing final payload retains exact ownership, commands and selected receipt" 0 "$?"

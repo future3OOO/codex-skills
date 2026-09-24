@@ -29,7 +29,6 @@ from hooks.tests.support import (  # noqa: E402
 )
 
 WORKFLOW = ROOT / "skills" / "repo-production-workflow" / "scripts" / "workflow.py"
-QUALITY_GATE = ROOT / "skills" / "production-code" / "scripts" / "code_quality_gate.py"
 INTAKE = ROOT / "hooks" / "rcf-intake-gate.py"
 
 
@@ -80,10 +79,10 @@ class MappedIntakeFailureTests(unittest.TestCase):
             [
                 sys.executable,
                 str(WORKFLOW),
-                args[0],
+                *args[:(split := 2 if args[0] == "record" else 1)],
                 "--repo",
                 str(self.repo),
-                *args[1:],
+                *args[split:],
             ],
             cwd=self.repo,
             env=self.env,
@@ -117,7 +116,7 @@ class MappedIntakeFailureTests(unittest.TestCase):
             encoding="utf-8",
         )
         recorded = self.command(
-            "record-preflight",
+            "record", "preflight",
             "--slug",
             slug,
             "--workflow-id",
@@ -149,33 +148,6 @@ class MappedIntakeFailureTests(unittest.TestCase):
             "test_app.ValueTests.test_value",
         )
         self.assertEqual(red.returncode, 0, red.stdout + red.stderr)
-
-        gate = subprocess.run(
-            [sys.executable, str(QUALITY_GATE), "check", "--repo", str(self.repo), "--json"],
-            cwd=ROOT,
-            env=self.env,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        self.assertEqual(gate.returncode, 0, gate.stdout + gate.stderr)
-        gate_path = self.tmp / "gate.json"
-        gate_path.write_text(gate.stdout, encoding="utf-8")
-        production_code = self.command(
-            "record-production-code",
-            "--slug",
-            slug,
-            "--workflow-id",
-            workflow_id,
-            "--input",
-            str(gate_path),
-        )
-        self.assertEqual(
-            production_code.returncode,
-            0,
-            production_code.stdout + production_code.stderr,
-        )
 
         current = read_workflow(identity)
         evidence_id = str(current["tddEvidence"])

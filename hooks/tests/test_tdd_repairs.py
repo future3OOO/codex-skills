@@ -122,7 +122,7 @@ class MappedTddRepairTests(unittest.TestCase):
             encoding="utf-8",
         )
         recorded = self.cli(
-            "record-preflight",
+            "record", "preflight",
             "--repo",
             str(self.repo),
             "--slug",
@@ -162,7 +162,7 @@ class MappedTddRepairTests(unittest.TestCase):
         path = self.tmp / "map-update.json"
         path.write_text(json.dumps(document), encoding="utf-8")
         return self.cli(
-            "tdd-map",
+            "record", "tdd-map",
             "--repo",
             str(self.repo),
             "--slug",
@@ -211,7 +211,6 @@ class MappedTddRepairTests(unittest.TestCase):
             behavior="value becomes three",
             expected="value is three",
             red_failure="VALUE_NOT_THREE",
-            basis="post-GREEN reassessment",
         )
         assessed = self.update_map(
             slug,
@@ -528,7 +527,7 @@ class MappedTddRepairTests(unittest.TestCase):
                     encoding="utf-8",
                 )
                 recorded = self.cli(
-                    "record-preflight", "--repo", str(self.repo), "--slug", "zero-test-marker",
+                    "record", "preflight", "--repo", str(self.repo), "--slug", "zero-test-marker",
                     "--workflow-id", workflow_id, "--input", str(preflight),
                 )
                 self.assertEqual(
@@ -551,7 +550,7 @@ class MappedTddRepairTests(unittest.TestCase):
             encoding="utf-8",
         )
         recorded = self.cli(
-            "record-preflight", "--repo", str(self.repo), "--slug", "zero-test-marker",
+            "record", "preflight", "--repo", str(self.repo), "--slug", "zero-test-marker",
             "--workflow-id", workflow_id, "--input", str(preflight),
         )
         self.assertEqual(

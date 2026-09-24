@@ -49,11 +49,11 @@ class MappedTddPolicyGateTests(unittest.TestCase):
                   "interpretation": "database truthiness", "authority": "governing requirement"}
         document["behaviorMap"][0].update(choice)
         path.write_text(json.dumps(document))
-        result = h.cli("record-preflight", "--repo", str(h.repo), "--slug", slug,
+        result = h.cli("record", "preflight", "--repo", str(h.repo), "--slug", slug,
                        "--workflow-id", workflow_id, "--input", str(path))
         self.assertEqual(result.returncode, 0, "INTERPRETATION_METADATA_REFUSED: " + result.stdout + result.stderr)
         evidence_id = json.loads(result.stdout)["evidenceId"]
-        recorded = h.cli("evidence", "--repo", str(h.repo), "--evidence-id", evidence_id)
+        recorded = h.cli("evidence", "--full", "--repo", str(h.repo), "--evidence-id", evidence_id)
         self.assertEqual(recorded.returncode, 0, recorded.stderr)
         retained = json.loads(recorded.stdout)["document"]["document"]["behaviorMap"][0]
         self.assertEqual(json.dumps({key: retained[key] for key in choice}), json.dumps(choice))
@@ -364,18 +364,17 @@ class MappedTddPolicyGateTests(unittest.TestCase):
         slug, workflow_id = h.begin_with_map([pending_behavior("BM_CHOICE")])
         path = h.tmp / f"{slug}-preflight.json"
         document = json.loads(path.read_text())
-        document["openQuestions"] = "Which truthiness governs?"
         document["behaviorMap"][0].update(boundaryInputs=["SELECT 'x'"],
                                         interpretations=["host truthiness", "database truthiness"])
         path.write_text(json.dumps(document))
-        result = h.cli("record-preflight", "--repo", str(h.repo), "--slug", slug,
+        result = h.cli("record", "preflight", "--repo", str(h.repo), "--slug", slug,
                        "--workflow-id", workflow_id, "--input", str(path))
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         state = json.loads(h.cli("status", "--repo", str(h.repo)).stdout)
         self.assertEqual(state["preflight"], "pending", "UNSETTLED_CHOICE_LOST")
         summary = h.cli("summary", "--repo", str(h.repo))
         self.assertIn(state["preflightLatestEvidence"], summary.stdout)
-        stored = h.cli("evidence", "--repo", str(h.repo), "--evidence-id", state["preflightLatestEvidence"])
+        stored = h.cli("evidence", "--full", "--repo", str(h.repo), "--evidence-id", state["preflightLatestEvidence"])
         self.assertEqual(json.loads(stored.stdout)["document"]["document"], document)
         from hooks.lib.workflow_state import ready_for_edit
         ready, missing = ready_for_edit(resolve_repo_identity(h.repo), "app.py")
@@ -457,7 +456,7 @@ class MappedTddPolicyGateTests(unittest.TestCase):
                       interpretations=["symbolic name", "object id"])])
         path = h.tmp / "interrupted-update.json"
         path.write_text(json.dumps(update))
-        command = [sys.executable, str(tdd_repairs.WORKFLOW), "tdd-map", "--repo", str(h.repo),
+        command = [sys.executable, str(tdd_repairs.WORKFLOW), "record", "tdd-map", "--repo", str(h.repo),
                    "--slug", slug, "--workflow-id", workflow_id, "--input", str(path)]
         before = h.evidence()
         # Hold a real competing writer so cancellation observes an open ledger,
@@ -549,14 +548,14 @@ class MappedTddPolicyGateTests(unittest.TestCase):
             green = h.mapped_tdd(slug, "green", command)
             self.assertEqual(green.returncode, 0, green.stdout + green.stderr)
             historical_id = h.status()["tddEvidence"]
-            historical = h.ok("evidence", "--evidence-id", historical_id)
+            historical = h.ok("evidence", "--full", "--evidence-id", historical_id)
             update = h.json_file("late-input.json", dict(reassessment="new divergent input", dispositions=[
                 dict(id="BM_ATTACK", boundaryInputs=["value", "other"], interpretations=["one key", "all keys"],
                      interpretation="all keys", authority="requested read contract")]))
-            changed = h.ok("tdd-map", "--slug", slug, "--workflow-id", wid, "--input", str(update))
+            changed = h.ok("record", "tdd-map", "--slug", slug, "--workflow-id", wid, "--input", str(update))
             self.assertEqual(changed["inputEvidence"]["BM_ATTACK"]["missing"], ["other"])
             disposition = h.fixed_disposition(wid, intake, dict(h.ZERO_DOMAIN))
-            refused = h.cli("advisor-disposition", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
+            refused = h.cli("record", "advisor-disposition", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
                             "--findings", "addressed", "--input", str(disposition))
             self.assertEqual(refused.returncode, 2, "UNCOVERED_FINDING_CLOSED: " + refused.stdout + refused.stderr)
             self.assertIn("BM_ATTACK", refused.stderr)
@@ -564,10 +563,10 @@ class MappedTddPolicyGateTests(unittest.TestCase):
             green = h.mapped_tdd(slug, "green", command)
             self.assertEqual(green.returncode, 0, green.stdout + green.stderr)
             disposition = h.fixed_disposition(wid, intake, dict(h.ZERO_DOMAIN))
-            closed = h.cli("advisor-disposition", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
+            closed = h.cli("record", "advisor-disposition", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
                            "--findings", "addressed", "--input", str(disposition))
             self.assertEqual(closed.returncode, 0, closed.stdout + closed.stderr)
-            self.assertEqual(h.ok("evidence", "--evidence-id", historical_id), historical)
+            self.assertEqual(h.ok("evidence", "--full", "--evidence-id", historical_id), historical)
         finally:
             h.tearDown()
 

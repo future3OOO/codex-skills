@@ -10,7 +10,6 @@ import time
 from pathlib import Path
 
 from hooks.lib.behavior_map import no_change_item
-from hooks.lib.preflight_document import BEHAVIOR_MAP_SECTION, SECTIONS
 from hooks.lib.repo_identity import RepoIdentity, resolve_repo_identity
 from hooks.lib.state_store import _active_candidate_tree
 from hooks.lib.workflow_documents import graph_evidence_document
@@ -137,13 +136,11 @@ def pending_behavior(
     seam: str = "public application behavior",
     expected: str = "value is two",
     red_failure: str = "VALUE_NOT_TWO",
-    basis: str = "test contract",
     kind: str = "contract",
 ) -> dict[str, object]:
     return {
         "id": identifier,
         "kind": kind,
-        "basis": basis,
         "behavior": behavior,
         "seam": seam,
         "expected": expected,
@@ -159,14 +156,8 @@ def build_document(
     behavior_map: list[dict[str, object]],
 ) -> dict[str, object]:
     """A structurally valid preflight document with explicit TDD scope."""
-    document: dict[str, object] = {
-        name: "none" if name == "openQuestions" else f"{name}: {fill}"
-        for name in SECTIONS
-    }
-    document[BEHAVIOR_MAP_SECTION] = [
-        {**item, "sourceRefs": item.get("sourceRefs", [])} for item in behavior_map
-    ]
-    return document
+    return {"authoritativeContract": f"contract: {fill}",
+            "behaviorMap": [{**item, "sourceRefs": item.get("sourceRefs", [])} for item in behavior_map]}
 
 
 def build_no_change_document(fill: str) -> dict[str, object]:
@@ -252,59 +243,17 @@ def advance_to_final_review(repo: Path, tmp: Path, design=None) -> RepoIdentity:
     state = read_workflow(identity)
     slug, workflow_id = str(state["slug"]), str(instance_id(state))
 
-    def producer(command: str, document: object) -> None:
-        path = tmp / f"{command}-input.json"
-        path.write_text(json.dumps(document), encoding="utf-8")
-        result = subprocess.run(
-            [
-                sys.executable,
-                str(WORKFLOW),
-                command,
-                "--repo",
-                str(repo),
-                "--slug",
-                slug,
-                "--workflow-id",
-                workflow_id,
-                "--input",
-                str(path),
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        assert result.returncode == 0, result.stdout + result.stderr
-
     record_advisor_result(
         identity, slug, workflow_id, "preflight", "codex-advisor", "completed", design=design
     )
     advisor_disposition(identity, slug, workflow_id, "preflight", "none")
-    producer(
-        "record-preflight", build_no_change_document("advance to final review")
+    recorded = subprocess.run(
+        [sys.executable, str(WORKFLOW), "record", "preflight", "--repo", str(repo), "--input", "-"],
+        input=json.dumps(build_no_change_document("advance to final review")),
+        capture_output=True, text=True, check=False,
     )
+    assert recorded.returncode == 0, recorded.stdout + recorded.stderr
     set_phase(identity, "tdd", "not-required")
-    gate = subprocess.run(
-        [
-            sys.executable,
-            str(
-                ROOT
-                / "skills"
-                / "production-code"
-                / "scripts"
-                / "code_quality_gate.py"
-            ),
-            "check",
-            "--repo",
-            str(repo),
-            "--json",
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert gate.returncode == 0, gate.stdout + gate.stderr
-    producer("record-production-code", json.loads(gate.stdout))
-    set_phase(identity, "implementation", "passed")
     for extra in (
         ("--", sys.executable, "-c", "pass"),
         ("--kind", "quality-gate", "--base-ref", "HEAD"),
@@ -326,6 +275,16 @@ def advance_to_final_review(repo: Path, tmp: Path, design=None) -> RepoIdentity:
         )
     set_phase(identity, "code-review", "passed", findings="none")
     return identity
+
+
+COMMIT_READY = {"schemaVersion": 1, "findings": [], "verdict": "commit-ready"}
+
+
+def commit_ready_envelope(tmp: Path) -> str:
+    """A final advisor envelope with no findings; a final result always records one."""
+    path = tmp / "commit-ready-envelope.json"
+    path.write_text(json.dumps(COMMIT_READY), encoding="utf-8")
+    return str(path)
 
 
 def record_context_forge(repo: Path, tmp: Path) -> RepoIdentity:
@@ -350,3 +309,19 @@ def record_context_forge(repo: Path, tmp: Path) -> RepoIdentity:
         ),
     )
     return identity
+
+
+def checkpoint_channels(repo: Path, env: dict[str, str] | None, phase: str, *extra: str) -> dict[str, object]:
+    """The checkpoint with each evidence channel it wrote read back by name."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as directory:
+        result = subprocess.run(
+            [sys.executable, str(WORKFLOW), "checkpoint", "--repo", str(repo), "--phase", phase,
+             "--channel-dir", directory, *extra],
+            env=env, text=True, capture_output=True, check=False)
+        assert result.returncode == 0, result.stdout + result.stderr
+        payload = json.loads(result.stdout)
+        for channel in payload.get("channels", []):
+            text = Path(channel["contentPath"]).read_text(encoding="utf-8")
+            payload[channel["name"]] = text if channel["name"] in {"intent", "diff"} else json.loads(text)
+        return payload

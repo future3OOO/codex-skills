@@ -1712,3 +1712,164 @@ Develop with the complete refreshed private N+1 estate; CLI checks and workflow
 state use its Bubblewrap bindings. The hosted chat remains global; the separate
 private continuation was stopped. No shared install or hook override occurred.
 PR #82 and #64 remain open with efficiency acceptance pending.
+
+## 2026-09-23 — Issue 96: workflow ledger ceremony removed
+
+Owning issue: [#96](https://github.com/future3OOO/codex-skills/issues/96); one pass,
+one PR. User decisions: the ~500-line target is net, not churn; `--review-context-id`
+becomes optional (recurring-repair ownership reads it); `--fresh` stays;
+`--resolved-model`, `--packet` and `--base-ref` are deleted; `getStaleIndexWarning`
+is out of scope (zero occurrences).
+
+Decisions:
+
+- Events are receipts; current state lives on the workflow row. Behavior Map items
+  and run rows are stored once as content-addressed parts, so historical evidence
+  keeps its meaning. Snapshot-era ledgers migrate in place; the `workflow.json`
+  importer is deleted. (Superseded, PR #102 review: the 811,189-byte / 80.43% figure
+  replayed documents reshaped by the new producers; the raw-document measurement and
+  its fix are below.)
+- One step table (`STEPS`) drives sequence, readiness, blockers and completion;
+  `productionCode`/`implementation` leave state.
+- One ingest verb, `record <kind> [--check]`; each kind's `--help` prints its shape.
+  Receipts carry only `workflowId`/`slug`/`phase`/`nextAction`. Identity defaults to
+  the active workflow. Preflight is `authoritativeContract` + `behaviorMap`.
+  Every agent-written document names all its violations in one refusal.
+- Run receipts by observation: a PreToolUse `updatedInput` rewrite (probed live on
+  Codex 0.156) turns a lone pytest/unittest command into `verify --observed`,
+  recorded in the checkout of its own working directory; `--from-evidence` binds it.
+  The exit code is the command's; while it records, the command's stderr is merged
+  into stdout. A command with its own redirect is never rewritten, so only the stream
+  changes (PR #102 review corrected the earlier "output unchanged" wording).
+- Advisor consults record the whole envelope and return a ~2KB digest; the checkpoint
+  owns an ordered channel manifest. Flag dispositions mint finding `sourceRefs`.
+- Hook advisories emit only when their text changed for the session in the current
+  compaction epoch; a `PostCompact` hook (fired live before `SessionStart(compact)`)
+  resets them. The map advisory's per-repo cache is replaced by that one mechanism.
+  The compaction re-arm names open steps and unresolved map items only.
+- Deleted as obsolete: the recorder/pass-state/verify-run/tdd-run shims, session
+  associations, and `benchmarks/ab_estate_benchmark.py` with its test (it drove the
+  deleted shims and already expected hook output removed by future3OOO/claude-skills#182).
+
+- Independent review (R-1..R-11) corrected the observed runner (caller's process
+  group, streamed output, own verification key), typed-gate output (whole report
+  shown, verdict stored), snapshot-era prune, unnamed-reviewer recurrence ownership,
+  and the remaining single-error refusals.
+- A first behavioral fix is proved by its owning attack GREEN through RED; only a
+  recurrence must carry its mechanism explanation (user-approved 2026-09-23; it is
+  what #96's acceptance command requires). This supersedes the first-fix part of the
+  2026-09-20 mechanism decision: presence was enforced, content was not.
+- The final consult was refused at 1,263,540 characters (codex input limit
+  1,048,576). The advisor diff is git's ordinary diff with each deleted file as its
+  header and line count (this pass: 1,067,228 -> 726,878 bytes), and the wrapper
+  refuses an oversized prompt, naming its size, before the provider runs.
+- Ledger format 2: the tables a pre-#96 estate reads first are views over an
+  undefined SQL function, so an older reader refuses with "workflow ledger format v2
+  needs the upgraded workflow estate" and creates nothing; metadata lives in
+  `ledger_metadata`. Installing the new estate restores access; downgrade stays
+  unsupported.
+- The migration re-reads the ledger format after taking its write lock, so racing
+  first opens (a hook and the CLI) migrate once and both succeed (return review RR-2).
+- Final advisor corrections (SPEC-11/12/14/15/18): a run binds to the pass it names
+  or ran under; a bound receipt keeps `--replaces`; malformed `kind`/`mechanism` are
+  named violations, not crashes; each ownership check reads the format in one
+  transaction; contract-content and final-response mandates nothing checks are
+  deleted. SPEC-9/10/16/19/20 rejected on estate measurements (digest <= 1,918 bytes
+  over 77 envelopes; 0 of 1,390 lone test commands ran below a checkout root; all
+  2,133 events are schema 1/policy 1; map receipts <= 922 bytes over 759 maps).
+- `verify --observed` refuses any other verify flag (RR-3); the Module Shape Gate
+  keeps stating where its decision is recorded, because `production-code` consumes
+  it (RR-4).
+- Final appeal (SPEC-21..23): an unreadable ledger never stops a rewritten test
+  command; the three agent-written documents collect every independent violation
+  instead of raising at the first guard (second recurrence, repaired by the retained
+  reviewer, 0 changes over 839 recorded documents); binding observed receipts as
+  mapped RED/GREEN already worked and is now attacked.
+- The compaction re-arm drops the late and shared RED labels, which name settled
+  items; `workflow summary` and the final-review channel keep them (SPEC-25). Ids are
+  seen before an item validates and key guards are collected, so no first violation
+  hides another (SPEC-24, third recurrence of R-5, repaired at the pattern level).
+- The one-refusal validators were redesigned after a fifth recurrence (SPEC-26):
+  checkers return violations as data and never raise, each ingest entry raises once,
+  and building runs only after checking. The inline advisor findings-form (0 recorded
+  uses) and its recovery path are deleted. One pair-property attack over every
+  agent-written document replaces the enumerated combination attacks.
+- Advisor evidence channels are written as compact JSON: the final consult reached
+  1,090,252 characters (limit 1,048,576) with indented, line-prefixed JSON; compact
+  channels remove about 65K characters (the earlier investigation's recommendation).
+- A final advisor-result always records the advisor's envelope; a raw final verdict
+  is refused (RR-5: it dead-ended the pass once the inline form was retired, and a raw
+  commit-ready completed a pass with no envelope; 0 of 95 recorded finals lacked one).
+- Leaf checkers (measurement, occurrence, disposition context) name a wrong key set
+  beside the value checks of present keys instead of returning at it (SPEC-28, the
+  redesign's no-early-exit rule applied to key sets; SPEC-29 extends the property to
+  repairSuccession and nested sibling faults).
+- The late-RED channel names each changed-path list once with the items that share
+  it (26,291 -> about 4,000 characters on this pass), keeping the final consult under
+  the transport limit it reached again at 1,054,168 characters.
+- PR #102 review: deletions leave the advisor diff via `--diff-filter=d`, so a file
+  replaced by a directory keeps its hunks; a map update without a reassessment binds no
+  mechanism; `--check` names no rolled-back row; LIVE advisor failures are #103.
+- Transport, fifth overflow (1,058,079 characters): each final re-sent the whole pass.
+  The ledger marks a tree as judged after every recorded final verdict (not
+  context-mismatch), not only approvals: approval-only makes a fix-before-commit chain
+  resend the whole pass (837,977 bytes, over the provider limit). Accepted trade-off
+  (SPEC-33 rejected on that measurement; its "approved" wording on SPEC-30 is
+  corrected): after compaction a later final may lack the text of hunks an earlier
+  final judged, which only the whole-pass numstat and the finding ledger still carry.
+  The next final gets the pass's numstat plus the diff since `judgedTree`, an appeal
+  the base its disputed verdict was sent. A wrapper session pointer drew five findings
+  (RR-12/14/15, SPEC-31/32) before this single ledger owner. This pass predates the
+  field; its final ran on a state copy stamped with its last final's gate tree
+  (837,977 -> 27,812 bytes).
+
+- PR #102 merge-readiness review (4 required items, README note):
+  - A pytest/unittest run verifies only when the runner reports an executed passing
+    test, the rule GREEN already used (`_pass_proof`). It applies to observed receipts,
+    `--from-evidence` and direct `verify -- <cmd>`, which also recorded
+    `pytest --co` as passed. A run whose report states no count (`-qq`,
+    `-p no:terminal`) no longer verifies. None of the 6,912 recorded exit-0 runs is
+    refused.
+  - Limit: the check uses TDD's one runner identifier (`identify`), which recognises
+    bare invocations only. A zero-test run behind a wrapper (`env`, `uv run`,
+    `timeout`, `bwrap`) still verifies. Review MR-1 stays recorded as fixed (the
+    ledger refuses re-dispositioning a terminal finding), but the wrapper fix was
+    withdrawn on zero occurrences: 0 of 478 recorded wrapped runner runs (280 exit 0)
+    executed zero tests. Two
+    attempts to parse wrappers in `_passed` each misread a command that only names a
+    runner (`echo pytest`, final advisor SPEC-34; then `bwrap --ro-bind / / echo
+    pytest`): a second shell grammar beside `identify`. Both were removed.
+  - Report only (MR-2): `verify --from-evidence` of a TDD run bound from a receipt
+    carries no output, so it now records invalid. Binding the receipt itself still
+    passes, and `verify --from-evidence` has 0 recorded uses.
+  - Evidence parts are zlib-compressed; the reader also accepts format-2 text parts.
+    Replaying the 160 raw CX4 documents stores 664,771 of 4,144,618 bytes (83.96%
+    less; 1,272,503 / 69.30% before), with 0 readback mismatches of 160. A real
+    format-2 ledger copy with text parts reads identically (318 of 318 documents).
+  - Ledger format 3. The number alone did not make a format-2 reader refuse by name
+    (it failed on `DROP TABLE` of a view). A trigger now refuses its format-2 stamp,
+    and the migration drops the views as views.
+  - Pitfall (code left as is): `format_guard` refuses every format value except 3,
+    and the migration creates it only when missing. A later format bump's own stamp
+    is refused ("format v3 needs the upgraded workflow estate", measured), so that
+    migration must drop and recreate the guard; a comment at `LEDGER_FORMAT` says so.
+  - `\r` joins the shell syntax that stops a rewrite. Over 58,230 recorded Bash
+    commands, the rewrite decisions are identical (555 rewritten).
+  - Exception to "reviewer-requested follow-ups reduce net lines" (MR-3): this
+    follow-up adds production +20 and tests +53. The four required items add
+    behavior (a count check, compression, a format guard, one character) that no
+    deletion in their scope offsets. The overlapping pre-#96 reader leg was trimmed.
+  - The final advisor's commit-ready appeal (SPEC-33 conceded) is refused by the
+    ledger's demotion guard (pre-existing at `ddd86cb`), so this pass cannot
+    `complete`; tracked in [#104](https://github.com/future3OOO/codex-skills/issues/104).
+
+Delivery status: PR #102 (closes #96). The follow-up commit answers its 30 review
+threads with fixes or measured rejections, after independent review and a final
+advisor consult on a copy of the state root (the installed wrapper cannot bound its
+diff). Merge awaits explicit authorization.
+
+Merge #102 with a merge commit, not squash or rebase (review RV-1). Two retained
+`NoEventSnapshots` tests `git archive` b838e60 (`FORMAT_TWO`), which is only on this
+branch. Measured in a main-only clone: both fail on `git archive` (exit 128) once
+b838e60 is unreachable, so a squash or rebase merge followed by deleting the branch
+turns `hooks/tests/run.sh` red on main.

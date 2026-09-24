@@ -288,7 +288,7 @@ class ExecutedSelectionsTests(unittest.TestCase):
         path = self.tmp / "preflight.json"
         path.write_text(json.dumps(document), encoding="utf-8")
         recorded = self.workflow(
-            "record-preflight", "--slug", self.slug, "--workflow-id", self.workflow_id,
+            "record", "preflight", "--slug", self.slug, "--workflow-id", self.workflow_id,
             "--input", str(path),
         )
         self.assertEqual(recorded.returncode, 0, recorded.stdout + recorded.stderr)
@@ -560,7 +560,7 @@ class ExecutedSelectionsTests(unittest.TestCase):
         }
         mapped = subprocess.run(
             [
-                sys.executable, str(WORKFLOW), "tdd-map", "--repo", str(self.repo),
+                sys.executable, str(WORKFLOW), "record", "tdd-map", "--repo", str(self.repo),
                 "--slug", self.slug, "--workflow-id", self.workflow_id, "--input", "-",
             ],
             input=json.dumps(update), cwd=self.repo, env=self.env, text=True,

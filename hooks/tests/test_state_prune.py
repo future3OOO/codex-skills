@@ -554,25 +554,18 @@ class StatePruneTests(unittest.TestCase):
         return resolve_repo_identity(repo)
 
     def dead_stop_slot(self, name: str = "stoprepo"):
-        """A classifiably dead slot holding real producer-written Stop documents.
+        """A classifiably dead slot holding the retired Stop producer's documents.
 
-        Both documents are created through the real stop_session_swap writer,
-        so the persisted shape is the producer's, and the repository is then
-        deleted to make the slot dead.
+        The documents carry the shape the retired Stop producer persisted, which
+        installed estates still hold; the repository is then deleted to make
+        the slot dead.
         """
-        from hooks.lib.state_store import stop_session_swap
         identity = self.real_repo_identity(name)
-        os.environ["CODEX_WORKFLOW_STATE_ROOT"] = str(self.root)
-        try:
-            # state_root() reads the override per call, so the real writer
-            # lands in this test's synthetic root with no reload tricks.
-            stop_session_swap(identity, "sess-a", "blockFingerprint", "abc123")
-            # The resolution path writes an empty fingerprint, so an empty
-            # string is a real producer payload and must stay removable.
-            stop_session_swap(identity, "sess-b", "blockFingerprint", "")
-        finally:
-            os.environ.pop("CODEX_WORKFLOW_STATE_ROOT", None)
         slot = self.root / identity.key
+        (slot / "stop").mkdir(parents=True)
+        (slot / "stop" / "sess-a.json").write_text('{"blockFingerprint": "abc123", "schemaVersion": 1}\n')
+        # An empty fingerprint was a real producer payload and stays removable.
+        (slot / "stop" / "sess-b.json").write_text('{"blockFingerprint": "", "schemaVersion": 1}\n')
         (slot / "workflow.json").write_text(json.dumps({
             "schemaVersion": 1, "workflowId": "w-dead",
             "repo": identity.as_dict(),
@@ -627,19 +620,16 @@ class StatePruneTests(unittest.TestCase):
     def test_session_associations_follow_their_repositorys_liveness(self) -> None:
         """Producer-written associations retire with a confirmed-absent root only.
 
-        Both markers are created through the real record_session_association
-        writer; one repository is then deleted. Malformed session data is
-        preserved untouched.
+        The markers carry the shape the retired association writer persisted,
+        which installed estates still hold; one repository is then deleted.
+        Malformed session data is preserved untouched.
         """
-        from hooks.lib.state_store import record_session_association
         dead = self.real_repo_identity("deadrepo")
         live = self.real_repo_identity("liverepo")
-        os.environ["CODEX_WORKFLOW_STATE_ROOT"] = str(self.root)
-        try:
-            record_session_association("sess-b", dead)
-            record_session_association("sess-b", live)
-        finally:
-            os.environ.pop("CODEX_WORKFLOW_STATE_ROOT", None)
+        (self.root / "sessions" / "sess-b").mkdir(parents=True)
+        for identity in (dead, live):
+            (self.root / "sessions" / "sess-b" / f"{identity.key}.json").write_text(json.dumps(
+                {"schemaVersion": 1, "repo": identity.as_dict(), "at": "2026-09-01T00:00:00+00:00"}))
         shutil.rmtree(self.tmp / "deadrepo")
         malformed = self.root / "sessions" / "sess-b" / "marker.json"
         malformed.write_text('{"kept":true}\n', encoding="utf-8")
@@ -818,7 +808,7 @@ class SQLiteStatePruneTests(unittest.TestCase):
         self.assertIn("repository identity", report["reason"])
         self.assertTrue((copied / "workflow.sqlite3").exists())
 
-    def test_unsupported_event_schema_is_not_pruned(self) -> None:
+    def test_unsupported_state_schema_is_not_pruned(self) -> None:
         """An authoritative but unreadable ledger is preserved whole."""
         for index in range(6):
             self.begin(f"pass-{index}")
@@ -827,8 +817,8 @@ class SQLiteStatePruneTests(unittest.TestCase):
         connection = sqlite3.connect(database)
         try:
             connection.execute(
-                "UPDATE workflow_events SET state_schema_version = 999 "
-                "WHERE event_id = (SELECT MAX(event_id) FROM workflow_events)"
+                "UPDATE workflows SET state_json = json_set(state_json, '$.schemaVersion', 999) "
+                "WHERE workflow_id = (SELECT workflow_id FROM workflow_events ORDER BY event_id DESC LIMIT 1)"
             )
             connection.commit()
         finally:
@@ -843,7 +833,7 @@ class SQLiteStatePruneTests(unittest.TestCase):
         )
         self.assertEqual(report["store"], "unknown")
         self.assertEqual(report["status"], "skipped")
-        self.assertIn("event schema or policy", report["reason"])
+        self.assertIn("invalid state", report["reason"])
         self.assertEqual(hashlib.sha256(database.read_bytes()).hexdigest(), before)
 
     def test_configured_symlinked_state_root_is_traversed(self) -> None:

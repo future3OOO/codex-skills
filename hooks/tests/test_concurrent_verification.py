@@ -96,8 +96,6 @@ class ConcurrentVerificationTests(HookHarness):
         record_context_forge(self.repo, self.tmp)
         self.record_preflight_evidence(slug, wid)
         self.owner_phase("tdd", "not-required")
-        self.record_gate_evidence(slug, wid)
-        self.owner_phase("implementation", "passed")
         return slug
 
     def verify(self, slug: str, *extra: str, env_extra: dict[str, str] | None = None) -> subprocess.Popen[str]:
@@ -156,7 +154,7 @@ class ConcurrentVerificationTests(HookHarness):
         evidence_id = self.status().get("verificationLatestEvidence")
         if not isinstance(evidence_id, str):
             return []
-        result = self.state("evidence", "--evidence-id", evidence_id)
+        result = self.state("evidence", "--full", "--evidence-id", evidence_id)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return json.loads(result.stdout)["document"]["runs"]
 

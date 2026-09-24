@@ -1,6 +1,7 @@
 import fcntl
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -15,7 +16,6 @@ WRAPPER = ROOT / "skills/codex-advisor/scripts/ask-codex-advisor.sh"
 SKILL = ROOT / "skills/codex-advisor/SKILL.md"
 WORKFLOW = ROOT / "skills/repo-production-workflow/scripts/workflow.py"
 BOOTSTRAP = ROOT / "skills/repo-context-forge/scripts/bootstrap.py"
-QUALITY_GATE = ROOT / "skills/production-code/scripts/code_quality_gate.py"
 sys.path.insert(0, str(ROOT))
 
 
@@ -52,6 +52,11 @@ def run_advisor(
         os.killpg(process.pid, signal.SIGKILL)
         process.communicate()
         raise
+    intake = re.match(r"verdict=\S+ findings=\d+ intake=(evidence-[0-9a-f]+)\n", stdout)
+    if process.returncode == 0 and intake:
+        # A phased consult prints a digest; the envelope is read back where it was recorded.
+        recorded = run_workflow("evidence", "--full", "--repo", str(cwd), "--evidence-id", intake.group(1), cwd=cwd, env=env)
+        stdout = json.loads(recorded.stdout)["document"]["raw"]
     return subprocess.CompletedProcess(args, process.returncode, stdout, stderr)
 
 
@@ -95,7 +100,7 @@ class AdvisorDirectMeasurementTest(unittest.TestCase):
             repo = temporary / "repo"
             repo.mkdir()
             env = os.environ | {
-                "CLAUDE_WORKFLOW_STATE_ROOT": str(temporary / "state"),
+                "CODEX_WORKFLOW_STATE_ROOT": str(temporary / "state"),
                 "PYTHONPYCACHEPREFIX": str(temporary / "pycache"),
             }
             for command in (
@@ -196,7 +201,7 @@ class AdvisorDirectMeasurementTest(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, marker + "\n" + result.stdout + result.stderr)
             sid = next(
-                (Path(env["CLAUDE_WORKFLOW_STATE_ROOT"]) / "_advisor-sessions").glob("*.sid")
+                (Path(env["CODEX_WORKFLOW_STATE_ROOT"]) / "_advisor-sessions").glob("*.sid")
             ).read_text(encoding="utf-8").strip()
             transcript = next(
                 (Path(env["HOME"]) / ".claude" / "projects").rglob(f"{sid}.jsonl")
@@ -236,7 +241,7 @@ class AdvisorSecurityBoundaryTest(unittest.TestCase):
             repo = temporary / "repo"
             repo.mkdir()
             env = os.environ | {
-                "CLAUDE_WORKFLOW_STATE_ROOT": str(temporary / "state"),
+                "CODEX_WORKFLOW_STATE_ROOT": str(temporary / "state"),
                 "PYTHONPYCACHEPREFIX": str(temporary / "pycache"),
             }
             for command in (
@@ -301,7 +306,7 @@ class AdvisorSecurityBoundaryTest(unittest.TestCase):
                 cwd=repo, env=env,
             )
             sid = next(
-                (Path(env["CLAUDE_WORKFLOW_STATE_ROOT"]) / "_advisor-sessions").glob("*.sid")
+                (Path(env["CODEX_WORKFLOW_STATE_ROOT"]) / "_advisor-sessions").glob("*.sid")
             ).read_text(encoding="utf-8").strip()
             tools = advisor_tool_names(env, sid) if result.returncode == 0 else []
             return result, tools, hook_marker.exists()
@@ -314,7 +319,7 @@ class AdvisorSecurityBoundaryTest(unittest.TestCase):
             repo = temporary / "repo"
             repo.mkdir()
             env = os.environ | {
-                "CLAUDE_WORKFLOW_STATE_ROOT": str(temporary / "state"),
+                "CODEX_WORKFLOW_STATE_ROOT": str(temporary / "state"),
                 "PYTHONPYCACHEPREFIX": str(temporary / "pycache"),
             }
             for command in (
@@ -362,24 +367,15 @@ class AdvisorSecurityBoundaryTest(unittest.TestCase):
             )
             workflow_id = str(state["workflowId"])
             run_workflow(
-                "advisor-disposition", "--repo", str(repo), "--slug", slug,
+                "record", "advisor-disposition", "--repo", str(repo), "--slug", slug,
                 "--workflow-id", workflow_id, "--stage", "preflight", "--findings", "none",
                 cwd=repo, env=env,
             )
-            sections = (
-                "affectedSurface", "authoritativeContract", "invariants", "proofPlan",
-                "reusePath", "chosenApproach", "rejectedAlternatives", "touchpoints",
-                "verify", "update", "modularityPlan", "riskChecks", "openQuestions",
-            )
-            document: dict[str, object] = {
-                name: "none" if name == "openQuestions" else "final evidence-scope probe"
-                for name in sections
-            }
+            document: dict[str, object] = {"authoritativeContract": "final evidence-scope probe"}
             document["behaviorMap"] = [
                 {
                     "id": "BM_FINAL_PROBE",
                     "kind": "preservation",
-                    "basis": "configured-provider probe setup",
                     "behavior": "the final-review evidence contract is observable",
                     "seam": "ask-codex-advisor.sh final-review CLI Interface",
                     "expected": "the final provider receives one projection and one diff",
@@ -392,7 +388,7 @@ class AdvisorSecurityBoundaryTest(unittest.TestCase):
             preflight_path = temporary / "preflight.json"
             preflight_path.write_text(json.dumps(document), encoding="utf-8")
             run_workflow(
-                "record-preflight", "--repo", str(repo), "--slug", slug,
+                "record", "preflight", "--repo", str(repo), "--slug", slug,
                 "--workflow-id", workflow_id, "--input", str(preflight_path),
                 cwd=repo, env=env,
             )
@@ -400,21 +396,6 @@ class AdvisorSecurityBoundaryTest(unittest.TestCase):
                 "tdd", "--repo", str(repo), "--slug", slug,
                 "--not-required", "probe setup changes no production behavior",
                 cwd=repo, env=env,
-            )
-            gate = run_checked(
-                [sys.executable, str(QUALITY_GATE), "check", "--repo", str(repo), "--json"],
-                cwd=repo, env=env,
-            )
-            gate_path = temporary / "gate.json"
-            gate_path.write_text(gate.stdout, encoding="utf-8")
-            run_workflow(
-                "record-production-code", "--repo", str(repo), "--slug", slug,
-                "--workflow-id", workflow_id, "--input", str(gate_path),
-                cwd=repo, env=env,
-            )
-            run_workflow(
-                "set-phase", "--repo", str(repo), "--phase", "implementation",
-                "--status", "passed", cwd=repo, env=env,
             )
             run_workflow(
                 "verify", "--repo", str(repo), "--slug", slug, "--",
@@ -440,7 +421,7 @@ class AdvisorSecurityBoundaryTest(unittest.TestCase):
                 cwd=repo, env=env,
             )
             sid = next(
-                (Path(env["CLAUDE_WORKFLOW_STATE_ROOT"]) / "_advisor-sessions").glob("*.sid")
+                (Path(env["CODEX_WORKFLOW_STATE_ROOT"]) / "_advisor-sessions").glob("*.sid")
             ).read_text(encoding="utf-8").strip()
             transcript = next(
                 (Path(env["HOME"]) / ".claude" / "projects").rglob(f"{sid}.jsonl")
@@ -476,11 +457,7 @@ class AdvisorSecurityBoundaryTest(unittest.TestCase):
         self.assertFalse(tools, marker + ": " + ", ".join(tools))
         self.assertIn("mode=resume", result.stderr, marker)
         self.assertEqual(prompt.count("--- advisor projection (schemaVersion 1) ---"), 1, marker)
-        self.assertEqual(
-            prompt.count("--- current-pass diff: passStartOid^{tree} -> activeCandidateTree ---"),
-            1,
-            marker,
-        )
+        self.assertEqual(prompt.count("--- current-pass diff: passStartOid^{tree} -> activeCandidateTree;"), 1, marker)
         self.assertIn(str(before["activeCandidateTree"]), prompt, marker)
 
     def test_final_review_requires_only_supplied_evidence(self) -> None:
@@ -572,7 +549,7 @@ class AdvisorSecurityBoundaryTest(unittest.TestCase):
             repo = Path(directory) / "repo"
             repo.mkdir()
             env = os.environ | {
-                "CLAUDE_WORKFLOW_STATE_ROOT": str(Path(directory) / "state"),
+                "CODEX_WORKFLOW_STATE_ROOT": str(Path(directory) / "state"),
                 "PYTHONPYCACHEPREFIX": str(Path(directory) / "pycache"),
             }
             run_checked(["git", "init", "-q"], cwd=repo, env=env)
@@ -586,7 +563,7 @@ class AdvisorSecurityBoundaryTest(unittest.TestCase):
                 cwd=repo, env=env,
             )
             sid = next(
-                (Path(env["CLAUDE_WORKFLOW_STATE_ROOT"]) / "_advisor-sessions").glob("*.sid")
+                (Path(env["CODEX_WORKFLOW_STATE_ROOT"]) / "_advisor-sessions").glob("*.sid")
             ).read_text(encoding="utf-8").strip()
             tools = advisor_tool_names(env, sid)
         self.assertEqual(result.returncode, 0, marker + result.stdout + result.stderr)
@@ -603,7 +580,7 @@ class AdvisorConcurrentSessionTest(unittest.TestCase):
             repo = temporary / "repo"
             repo.mkdir()
             env = os.environ | {
-                "CLAUDE_WORKFLOW_STATE_ROOT": str(temporary / "state"),
+                "CODEX_WORKFLOW_STATE_ROOT": str(temporary / "state"),
                 "PYTHONPYCACHEPREFIX": str(temporary / "pycache"),
             }
             for command in (
@@ -640,8 +617,8 @@ class AdvisorConcurrentSessionTest(unittest.TestCase):
             self.assertEqual(forged.returncode, 0, forged.stdout + forged.stderr)
             state = json.loads(run_workflow("status", "--repo", str(repo), cwd=repo, env=env).stdout)
             sid_file = (
-                Path(env["CLAUDE_WORKFLOW_STATE_ROOT"]) / "_advisor-sessions"
-                / f"{state['repo']['key']}-{slug}-{state['workflowId']}.sid"
+                Path(env["CODEX_WORKFLOW_STATE_ROOT"]) / "_advisor-sessions"
+                / f"{state['repo']['key']}-{slug}-{state['workflowId']}.codex.sid"
             )
             common = [
                 str(WRAPPER), "--slug", slug, "--phase", "preflight-advice",
@@ -728,13 +705,13 @@ class AdvisorConcurrentSessionTest(unittest.TestCase):
             intake = str(state["advisorPreflight"]["intakeEvidence"])
             evidence = json.loads(
                 run_workflow(
-                    "evidence", "--repo", str(repo), "--evidence-id", intake,
+                    "evidence", "--full", "--repo", str(repo), "--evidence-id", intake,
                     cwd=repo, env=env,
                 ).stdout
             )
-            self.assertEqual(
-                json.loads(evidence["document"]["raw"]), json.loads(success_stdout), marker,
-            )
+            raw = json.loads(evidence["document"]["raw"])  # the winner's digest names its recorded envelope
+            self.assertTrue(success_stdout.startswith(
+                f"verdict={raw['verdict']} findings={len(raw['findings'])} intake={intake}\n"), marker)
 
 
 class AdvisorBudgetContractTest(unittest.TestCase):
@@ -786,7 +763,7 @@ class AdvisorPhaseLessPayloadContractTest(unittest.TestCase):
             env = os.environ | {
                 "HOME": directory,
                 "CLAUDE_HOME": str(temporary / "claude"),
-                "CLAUDE_WORKFLOW_STATE_ROOT": str(temporary / "state"),
+                "CODEX_WORKFLOW_STATE_ROOT": str(temporary / "state"),
             }
             for option in (("--packet", str(packet)), ("--base-ref", "HEAD")):
                 with self.subTest(option=option[0]):
@@ -801,11 +778,7 @@ class AdvisorPhaseLessPayloadContractTest(unittest.TestCase):
                         text=True,
                     )
                     self.assertEqual(result.returncode, 2, marker)
-                    self.assertIn(
-                        "phase-less consults do not accept --packet or --base-ref",
-                        result.stderr,
-                        marker,
-                    )
+                    self.assertIn("unknown argument", result.stderr, marker)
             self.assertFalse(
                 (temporary / "state" / "_advisor-sessions").exists(), marker
             )

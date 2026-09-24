@@ -7,7 +7,6 @@ import json
 import os
 import stat
 import subprocess
-import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -51,19 +50,6 @@ def repo_state_dir(identity: RepoIdentity) -> Path:
     return secure_dir(state_root() / identity.key)
 
 
-def _session_dir(session: str) -> Path:
-    """Where one session's repository associations live.
-
-    The shared parent is secured here rather than left to the atomic writer:
-    that writer secures only the directory it writes into, and `mkdir` with
-    `parents=True` would create `sessions` itself under the process umask,
-    leaving every session id in this estate world-listable. Repository keys are
-    numeric checksums, so the literal name cannot collide with a
-    `repo_state_dir`.
-    """
-    return secure_dir(state_root() / "sessions") / session
-
-
 def atomic_write_bytes(path: Path, value: bytes) -> None:
     secure_dir(path.parent)
     descriptor, name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
@@ -80,12 +66,8 @@ def atomic_write_bytes(path: Path, value: bytes) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def atomic_write_text(path: Path, value: str) -> None:
-    atomic_write_bytes(path, value.encode("utf-8"))
-
-
 def atomic_write_json(path: Path, value: object) -> None:
-    atomic_write_text(path, json.dumps(value, sort_keys=True, indent=2, ensure_ascii=False) + "\n")
+    atomic_write_bytes(path, (json.dumps(value, sort_keys=True, indent=2, ensure_ascii=False) + "\n").encode("utf-8"))
 
 
 @contextlib.contextmanager
@@ -112,56 +94,12 @@ def _flock(path: Path, *, blocking: bool = True) -> Iterator[bool]:
         os.close(handle)
 
 
-@contextlib.contextmanager
-def state_lock(identity: RepoIdentity) -> Iterator[None]:
-    """Serialize every writer for one repository's workflow state."""
-    with _flock(repo_state_dir(identity) / ".workflow.lock"):
-        yield
-
-
 def read_json(path: Path) -> dict[str, object] | None:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError):
         return None
     return value if isinstance(value, dict) else None
-
-
-def stop_session_swap(identity: RepoIdentity, session: str, key: str, value: str) -> str | None:
-    """Compare-and-set one per-session Stop-feedback key under the state lock.
-
-    Returns the previous value. Fail-soft: Stop feedback must never break the
-    hook, so storage errors surface on stderr and read as no-previous-value.
-    """
-    try:
-        with state_lock(identity):
-            path = repo_state_dir(identity) / "stop" / f"{session}.json"
-            session_state = read_json(path) or {}
-            previous = session_state.get(key)
-            session_state.update({"schemaVersion": 1, key: value})
-            atomic_write_json(path, session_state)
-            return previous if isinstance(previous, str) else None
-    except OSError as exc:
-        print(f"Stop session state unavailable: {exc}", file=sys.stderr)
-        return None
-
-
-def record_session_association(session: str, identity: RepoIdentity) -> None:
-    """Record that this session edited in this repository, once.
-
-    One file per repository per session, so every write has a single writer and
-    needs no lock. The marker is never rewritten: it says the session worked
-    here, which cannot become less true, and rewriting it on every edit would
-    churn the file for nothing. Fail-soft like all Stop feedback: an association
-    only routes that feedback, so a storage failure must never change the edit
-    hook's exit status, its review invalidation, or the quality gate it runs.
-    """
-    try:
-        path = _session_dir(session) / f"{identity.key}.json"
-        if not path.exists():
-            atomic_write_json(path, {"schemaVersion": 1, "repo": identity.as_dict(), "at": utc_timestamp()})
-    except OSError as exc:
-        print(f"session association unavailable: {exc}", file=sys.stderr)
 
 
 def utc_timestamp() -> str:

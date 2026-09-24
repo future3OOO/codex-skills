@@ -1,6 +1,7 @@
 """Parse Codex hook input at one boundary."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -9,7 +10,6 @@ import sys
 from contextlib import closing
 from pathlib import Path
 
-from .workflow_state import safe_slug
 
 _PATCH_PATH = re.compile(
     r"^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$", re.MULTILINE
@@ -97,20 +97,41 @@ def is_explorer_continuation(payload: dict[str, object]) -> bool:
     return roles == [("explorer",)]
 
 
-def session_key(payload: dict[str, object]) -> str | None:
-    """The session identifier as one state path segment, or None when absent.
+def emit(event: str, **fields: object) -> None:
+    """Write one hook's JSON answer; a closed reader never fails the tool call."""
+    try:
+        os.write(sys.stdout.fileno(), (json.dumps({"hookSpecificOutput": {"hookEventName": event, **fields}}) + "\n").encode())
+    except (OSError, ValueError):
+        pass
 
-    Derived here so the hook that records an association and the hook that reads
-    it cannot drift, and so a hostile `session_id` is bounded to a single safe
-    segment before it ever reaches the filesystem.
 
-    Absence is returned rather than defaulted. A session key names a per-session
-    set, so defaulting a missing id to any shared literal would file every
-    anonymous payload under one identity and let one repository's pass reach
-    another's Stop. Callers that want a display name for repository-scoped
-    storage supply their own fallback.
-    """
-    value = payload.get("session_id")
-    if not isinstance(value, str) or not value.strip():
+def _heard(session: object) -> Path | None:
+    """This session's record of what each advisory last said; no session, no record."""
+    if not isinstance(session, str) or not session.strip():
         return None
-    return safe_slug(value)[:40]
+    from .state_store import state_root
+    return state_root() / "_advisories" / (hashlib.sha256(session.encode()).hexdigest()[:32] + ".json")
+
+
+def advise(event: str, session: object, advisories: dict[str, str]) -> None:
+    """Emit each named advisory only when its text changed since this session last
+    heard it in the current compaction epoch; an empty text records silence, so a
+    cleared advisory that returns is announced again. A failed record repeats, never loses."""
+    from .state_store import atomic_write_json, read_json
+    record = _heard(session)
+    heard = (read_json(record) or {}) if record is not None else {}
+    digests = {name: hashlib.sha256(text.encode()).hexdigest() for name, text in advisories.items()}
+    fresh = [name for name in advisories if heard.get(name) != digests[name]]
+    if record is not None and fresh:
+        try:
+            atomic_write_json(record, {**heard, **digests})
+        except OSError:
+            pass
+    if text := "\n".join(advisories[name] for name in fresh if advisories[name]):
+        emit(event, additionalContext=text)
+
+
+def reset_advisories(session: object) -> None:
+    """Compaction spends every held advisory; the next one is heard again."""
+    if (record := _heard(session)) is not None:
+        record.unlink(missing_ok=True)

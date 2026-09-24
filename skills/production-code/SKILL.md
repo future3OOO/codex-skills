@@ -85,7 +85,7 @@ Use the request/map already in context; load missing evidence once at implementa
 Resolve ownership placement inside that decision:
 
 1. Prove whether the required behavior already exists. If a named Interface already provides it and real test-surface evidence verifies the requirement, make no production change.
-2. Choose the responsible owner. Consume production preflight's `moduleShape` decision. When the turn required no preflight, deepen the existing Module; proposing a new Module or Seam requires preflight first. Delete every surface the change supersedes.
+2. Choose the responsible owner. Consume production preflight's Module-shape decision (in `authoritativeContract`). When the turn required no preflight, deepen the existing Module; proposing a new Module or Seam requires preflight first. Delete every surface the change supersedes.
 3. Inside that owner, reuse a capability whose Interface already owns the required semantics, invariant, or failure policy: standard library; native platform, runtime, datastore, or protocol; or an already-installed dependency. These are peers; choose by authority, not list order.
 4. Treat the changed Implementation as bloated. **Reduce it first.** Delete duplication and consolidate existing owners before adding code. Every change targets fewer lines; justify necessary growth against the actual requirement. Preserve production behaviour and useful assertions. Moving complexity or compressing formatting does not count.
 
@@ -94,7 +94,7 @@ Implementation mechanism never chooses placement: a library or native capability
 The decision is complete only when one outcome is recorded:
 
 - Existing behavior: name its owning Interface and real test-surface evidence; plan no production change.
-- Change required: name the responsible owner, preflight's selected `moduleShape` when preflight ran, Interface and test surface, existing capability to reuse or why custom Implementation is required, minimum changed surface, and every superseded surface to delete.
+- Change required: name the responsible owner, preflight's Module-shape decision when preflight ran, Interface and test surface, existing capability to reuse or why custom Implementation is required, minimum changed surface, and every superseded surface to delete.
 
 ## Core Standard
 

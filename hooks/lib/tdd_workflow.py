@@ -21,21 +21,16 @@ from .command_runner import (
 from .repo_identity import RepoIdentity, resolve_repo_identity
 from .state_store import (
     _active_candidate_tree,
-    atomic_write_json,
     tree_manifest,
     production_changes,
-    read_json,
-    repo_state_dir,
     utc_timestamp,
 )
-from .workflow_documents import load_json
 from .workflow_state import (
     NO_INSTANCE_ID,
     TDD_CLOSED,
     WorkflowError,
     _executed_selections,
     _head_oid,
-    annotate_tdd_evidence,
     bound_state,
     commit_tdd,
     evidence_document,
@@ -43,7 +38,6 @@ from .workflow_state import (
     execution_receipt,
     instance_id,
     run_recorded_baseline,
-    safe_slug,
 )
 
 JsonObject = dict[str, object]
@@ -59,7 +53,7 @@ def _tdd_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--repo", "--cwd", dest="repo", default=".")
-    parser.add_argument("--slug", required=True)
+    parser.add_argument("--slug")
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--phase", choices=("red", "green"))
     mode.add_argument("--not-required", metavar="REASON")
@@ -70,15 +64,6 @@ def _tdd_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seam", default="")
     parser.add_argument("--expected-failure", default="")
     parser.add_argument("--timeout", type=int, default=900)
-    return parser
-
-
-def _map_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="workflow tdd-map")
-    parser.add_argument("--repo", "--cwd", dest="repo", default=".")
-    parser.add_argument("--slug", required=True)
-    parser.add_argument("--workflow-id", required=True)
-    parser.add_argument("--input", required=True)
     return parser
 
 
@@ -240,20 +225,15 @@ def _not_required(
     return 0
 
 
-def _workflow_id_of(state: JsonObject) -> str:
-    value = instance_id(state)
-    if value is None:
-        raise WorkflowError(NO_INSTANCE_ID)
-    return str(value)
-
-
-def _active_candidate(identity: RepoIdentity, value: str) -> tuple[JsonObject, str, str]:
-    state = bound_state(identity, safe_slug(value))
+def _active_candidate(identity: RepoIdentity, value: str | None) -> tuple[JsonObject, str, str]:
+    state = bound_state(identity, value)
     if state.get("revalidation"):
         raise WorkflowError(TDD_CLOSED)
     if state.get("preflight") != "passed" or not state.get("preflightEvidence"):
         raise WorkflowError("tdd requires recorded preflight evidence")
-    return state, str(state["slug"]), _workflow_id_of(state)
+    if (workflow_id := instance_id(state)) is None:
+        raise WorkflowError(NO_INSTANCE_ID)
+    return state, str(state["slug"]), str(workflow_id)
 
 
 def _candidate_drift(
@@ -876,7 +856,6 @@ def _run_tdd(values: list[str]) -> int:
     return 2
 
 
-_ADVISORY_FILE = "map-advisory.json"
 _ADVISORY_TIMEOUT = 10
 # Git permits control bytes in a path and the graph can surface one verbatim, so
 # escape them before the path reaches the one-line notice.
@@ -887,13 +866,11 @@ def map_advisory(identity: RepoIdentity, state: JsonObject) -> str | None:
     """After a successful production edit, name the impacted tests the map does
     not own, or a short gap when that cannot be decided against this pass's
     index. Advisory only: it returns at most one notice line for the caller to
-    deliver and writes one disposable file, and never raises into the edit it
-    follows."""
-    workflow_id = str(state.get("workflowId") or "")
+    deliver and never raises into the edit it follows."""
     try:
         snapshot = state.get("passStartSnapshot")
         if not isinstance(snapshot, dict) or not snapshot:
-            return _advisory_publish(identity, workflow_id, "the pass-start index identity was not recorded", {})
+            return _advisory_publish("the pass-start index identity was not recorded", {})
         root = Path(identity.root)
         impacted, gap = _impacted_tests(snapshot, root)
         owned = _owned_scopes(identity, state, root)
@@ -903,9 +880,9 @@ def map_advisory(identity: RepoIdentity, state: JsonObject) -> str | None:
             node = (str(entry.get("id") or "").split(":", 2)[2:] or [""])[0]
             if path and not _is_owned(path, node, owned):
                 unowned[path] = unowned.get(path, 0) + 1
-        return _advisory_publish(identity, workflow_id, gap, unowned)
+        return _advisory_publish(gap, unowned)
     except (OSError, ValueError, KeyError, TypeError, AttributeError, json.JSONDecodeError, subprocess.SubprocessError):
-        return _advisory_publish(identity, workflow_id, "the advisory could not complete", {})
+        return _advisory_publish("the advisory could not complete", {})
 
 
 def _impacted_tests(snapshot: JsonObject, root: Path) -> tuple[list[JsonObject], str | None]:
@@ -1006,26 +983,10 @@ def _is_owned(path: str, node: str, scopes: list[tuple[str, str, bool]]) -> bool
     return False
 
 
-def _advisory_publish(
-    identity: RepoIdentity, workflow_id: str, gap: str | None, unowned: dict[str, int]
-) -> str | None:
-    """Write the canonical result and return one notice line only when it changed
-    and has something to report; an identical result is silent (returns None) and
-    writes nothing."""
+def _advisory_publish(gap: str | None, unowned: dict[str, int]) -> str | None:
+    """The one notice line, or None when there is nothing to report; the hook
+    delivers it only when it changed for this session."""
     paths = {name: unowned[name] for name in sorted(unowned)}
-    canonical = {"workflowId": workflow_id, "gap": gap, "paths": paths}
-    try:
-        store = repo_state_dir(identity) / _ADVISORY_FILE
-        prior = read_json(store)
-        if prior == canonical:
-            return None
-        atomic_write_json(store, canonical)
-    except OSError:
-        # The disposable dedup cache could not be resolved or written. Report
-        # that as a gap through the one-line notice rather than failing the edit
-        # or retrying the same writer, so the edit's outcome and state are
-        # untouched.
-        return "map advisory: gap, the advisory cache could not be written"
     if not gap and not paths:
         return None
     sort = sorted(paths)
@@ -1043,12 +1004,8 @@ def _advisory_publish(
     return f"map advisory: {report}"
 
 
-def _map_update(values: list[str]) -> int:
-    args = _map_parser().parse_args(values)
-    identity = resolve_repo_identity(args.repo)
-    state = bound_state(identity, safe_slug(args.slug))
-    if instance_id(state) != args.workflow_id:
-        raise WorkflowError("--workflow-id does not match the active workflow instance")
+def map_update(identity: RepoIdentity, state: JsonObject, value: JsonObject) -> JsonObject:
+    """Apply one Behavior Map update document to the active workflow's map."""
     current, preflight_document = _evidence_pair(identity, state)
     items = behavior_map.recorded_map(current, preflight_document)
     if items is None:
@@ -1060,28 +1017,37 @@ def _map_update(values: list[str]) -> int:
         and entry.get("status") in {"rejected-with-evidence", "report-only"}
     )
 
-    value = load_json(args.input, label="TDD map update")
     allowed = {"sourceBehaviorId", "reassessment", "items", "dispositions"}
-    unknown = sorted(set(value) - allowed)
-    if unknown:
-        raise ValueError("TDD map update has unknown fields: " + ", ".join(unknown))
-    reassessment = value.get("reassessment")
-    if not isinstance(reassessment, str) or not reassessment.strip():
-        raise ValueError("TDD map update requires a non-empty reassessment")
-    additions = value.get("items", [])
-    if not isinstance(additions, list):
-        raise ValueError("TDD map update items must be an array")
-    dispositions = value.get("dispositions", [])
-    if not isinstance(dispositions, list):
-        raise ValueError("TDD map update dispositions must be an array")
-    source = value.get("sourceBehaviorId")
-    if source is not None and behavior_map.item(items, str(source)).get("status") not in behavior_map.PROOF_STATUSES:
-        raise ValueError("sourceBehaviorId must name a GREEN item")
-
+    additions, dispositions, source = value.get("items", []), value.get("dispositions", []), value.get("sourceBehaviorId")
+    # Every violation of the update is named in one refusal; nothing is applied until all pass.
+    errors = [problem for problem, bad in (
+        ("TDD map update has unknown fields: " + ", ".join(sorted(set(value) - allowed)), set(value) - allowed),
+        ("TDD map update reassessment must be text", not isinstance(value.get("reassessment", ""), str)),
+        ("TDD map update items must be an array", not isinstance(additions, list)),
+        ("TDD map update dispositions must be an array", not isinstance(dispositions, list)),
+    ) if bad]
     updated = behavior_map.clone(items)
-    if dispositions:
-        behavior_map.apply_dispositions(updated, dispositions, settled_findings=settled_findings)
-    added_items = behavior_map.added_items(additions, updated) if additions else []
+    ids = [str(raw.get("id")).strip() for raw in dispositions if isinstance(raw, dict)] if isinstance(dispositions, list) else []
+    if not (unique := len(ids) == len(set(ids))):
+        errors.append("TDD map dispositions require unique behavior ids")
+    for raw in dispositions if isinstance(dispositions, list) else []:
+        try:
+            # A repeated id applies nothing, so each disposition is judged against the recorded map alone.
+            behavior_map.apply_dispositions(updated if unique else behavior_map.clone(items), [raw],
+                                            settled_findings=settled_findings)
+        except ValueError as exc:
+            errors.append(str(exc))
+    additions = additions if isinstance(additions, list) and additions else []
+    recorded = {str(entry["id"]): entry for entry in items}
+    errors += (behavior_map.map_errors(additions, allow_runtime=False, existing=updated) if additions else []) + [
+        message for message, bad in (
+            (f"behavior id is not in the recorded map: {source}", source is not None and str(source) not in recorded),
+            ("sourceBehaviorId must name a GREEN item", source is not None and str(source) in recorded
+             and recorded[str(source)].get("status") not in behavior_map.PROOF_STATUSES),
+        ) if bad]
+    if errors:
+        raise ValueError("; ".join(errors))
+    added_items = behavior_map.validate_items(additions, allow_runtime=False, existing=updated) if additions else []
     updated.extend(added_items)
     input_checks = {}
     candidate_tree = None
@@ -1111,11 +1077,13 @@ def _map_update(values: list[str]) -> int:
     if source is not None:
         reassessed |= {str(source)}
     if reassessed or json.dumps(updated, sort_keys=True) != json.dumps(items, sort_keys=True):
-        document = {**(current or _map_doc(
+        # A diagnosis describes its own update; an update without one inherits none.
+        document = {**{key: field for key, field in (current or _map_doc(
             slug=str(state["slug"]), workflow_id=str(state["workflowId"]),
             items=items, status=status, kind="map",
-        )), "behaviorMap": updated, "status": status, "reassessment": reassessment.strip(), "dispositions": dispositions,
-            "sourceBehaviorId": source, "updatedAt": utc_timestamp()}
+        )).items() if key != "reassessment"}, "behaviorMap": updated, "status": status, "dispositions": dispositions,
+            "sourceBehaviorId": source, "updatedAt": utc_timestamp(),
+            **({"reassessment": value["reassessment"].strip()} if str(value.get("reassessment", "")).strip() else {})}
         if input_checks:
             document["inputEvidence"] = input_checks
         active = document.get("activeBehaviorId")
@@ -1136,35 +1104,13 @@ def _map_update(values: list[str]) -> int:
             set(entry) & {"boundaryInputs", "interpretations", "interpretation", "authority"}
             for entry in dispositions
         ) and set(behavior_map.unresolved(items)) != set(unresolved)
-        if before == after and not review_changed and not interpretation_progress:
-            _, evidence_id = annotate_tdd_evidence(
-                identity, str(state["slug"]), str(state["workflowId"]), document,
-                expected_evidence_id=current_evidence_id, reassessed=reassessed,
-            )
-        else:
-            action = "in-progress" if unresolved else "passed"
-            _, evidence_id = commit_tdd(
-                identity, str(state["slug"]), str(state["workflowId"]), document, action,
-                expected_evidence_id=current_evidence_id,
-                review_changed=review_changed, reassessed=reassessed,
-            )
-    _emit_json(
-        {
-            "summaryId": evidence_id,
-            "status": status,
-            "pending": unresolved,
+        # A None action annotates the evidence under the same binding without a lifecycle change.
+        quiet = before == after and not review_changed and not interpretation_progress
+        _, evidence_id = commit_tdd(
+            identity, str(state["slug"]), str(state["workflowId"]), document,
+            None if quiet else "in-progress" if unresolved else "passed",
+            expected_evidence_id=current_evidence_id, review_changed=review_changed, reassessed=reassessed,
+        )
+    return {"summaryId": evidence_id, "status": status, "pending": unresolved,
             "added": [entry["id"] for entry in added_items],
-            **({"inputEvidence": input_checks} if input_checks else {}),
-        }
-    )
-    return 0
-
-
-def run_tdd(values: list[str]) -> int:
-    """Public entry for the workflow CLI's mapped-or-legacy TDD verb."""
-    return _run_tdd(values)
-
-
-def run_map_update(values: list[str]) -> int:
-    """Public entry for the workflow CLI's Behavior Map update verb."""
-    return _map_update(values)
+            **({"inputEvidence": input_checks} if input_checks else {})}

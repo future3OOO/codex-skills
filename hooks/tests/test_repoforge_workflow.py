@@ -27,7 +27,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from hooks.lib.workflow_documents import graph_evidence_document  # noqa: E402
-from hooks.tests.support import build_no_change_document, fixture_env, graph_packet  # noqa: E402
+from hooks.tests.support import build_no_change_document, checkpoint_channels, fixture_env, graph_packet  # noqa: E402
 
 
 @unittest.skipUnless(CANONICAL_BOOTSTRAP.is_file(), "real Repo Context Forge source is unavailable")
@@ -130,7 +130,7 @@ class RepoForgeWorkflowTests(unittest.TestCase):
         return json.loads(result.stdout)
 
     def evidence(self, evidence_id: str) -> dict[str, object]:
-        result = self.pass_state("evidence", "--evidence-id", evidence_id)
+        result = self.pass_state("evidence", "--full", "--evidence-id", evidence_id)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return json.loads(result.stdout)
 
@@ -207,7 +207,7 @@ class RepoForgeWorkflowTests(unittest.TestCase):
         connection = sqlite3.connect(database)
         try:
             connection.execute(
-                "UPDATE metadata SET value = ? WHERE key = 'repo_key'",
+                "UPDATE ledger_metadata SET value = ? WHERE key = 'repo_key'",
                 ("different-repository",),
             )
             connection.commit()
@@ -429,9 +429,9 @@ class RepoForgeWorkflowTests(unittest.TestCase):
         declaration = self.tmp / "design-absent.json"
         declaration.write_text(json.dumps({"schemaVersion": 1, "status": "absent", "reason": "test pass has no governing design"}), encoding="utf-8")
         for step in (
-            ("advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
+            ("record", "advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "preflight",
              "--source", "codex-advisor", "--verdict", "completed", "--design-declaration", str(declaration)),
-            ("advisor-disposition", "--slug", slug, "--workflow-id", wid,
+            ("record", "advisor-disposition", "--slug", slug, "--workflow-id", wid,
              "--stage", "preflight", "--findings", "none"),
         ):
             result = self.pass_state(*step)
@@ -439,8 +439,7 @@ class RepoForgeWorkflowTests(unittest.TestCase):
         # This suite proves growth-per-cycle accounting, not candidate policy;
         # its free-form tdd() plumbing rides the legacy path, so the fixture
         # commits a map-less pre-Behavior-Map preflight - a setup shortcut
-        # producing the imported-legacy document shape (the real importer path
-        # is proven by LegacyImportFreeFormTests) - inside the suite's own
+        # producing the legacy document shape - inside the suite's own
         # state-root environment. Setup only.
         document = build_no_change_document("issue-106 typed verification fixture")
         document.pop("behaviorMap", None)
@@ -481,20 +480,10 @@ class RepoForgeWorkflowTests(unittest.TestCase):
         """The real recorders between recorded context evidence and typed verification."""
         self.advance_to_tdd()
         state = self.status()
-        slug, wid = str(state["slug"]), str(state["workflowId"])
-        gate = subprocess.run(
-            [sys.executable, str(QUALITY_GATE), "check", "--repo", str(self.repo), "--json"],
-            cwd=self.repo, env=self.env, text=True,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
-        )
-        self.assertEqual(gate.returncode, 0, gate.stdout + gate.stderr)
-        baseline = self.tmp / "baseline-gate.json"
-        baseline.write_text(gate.stdout, encoding="utf-8")
+        slug = str(state["slug"])
         for step in (
             ("tdd", "--slug", slug, "--not-required",
              "fixture pass proves evidence wiring, not a fixture behavior change"),
-            ("record-production-code", "--slug", slug, "--workflow-id", wid, "--input", str(baseline)),
-            ("set-phase", "--phase", "implementation", "--status", "passed"),
         ):
             result = self.pass_state(*step)
             self.assertEqual(result.returncode, 0, " ".join(step) + "\n" + result.stdout + result.stderr)
@@ -510,8 +499,16 @@ class RepoForgeWorkflowTests(unittest.TestCase):
         self.assertTrue(runs, "typed verification recorded no run")
         return verified, runs[-1]
 
-    def owner_states(self, gate_payload: dict[str, object]) -> dict[str, dict[str, object]]:
-        """Each owner rule's per-evaluation state finding from the gate verdict."""
+    def owner_states(self, run: dict[str, object]) -> dict[str, dict[str, object]]:
+        """Each owner rule's finding from the bundled gate over the graph context verify handed it."""
+        recorded = self.status()["repoContextForgeEvidence"]
+        self.assertEqual((run["graphEvidenceId"], "--gitnexus-context-json" in str(run["command"])), (recorded, True))
+        context = self.tmp / "gate-context.json"
+        context.write_text(json.dumps(self.evidence(recorded)["document"]["gateContext"]), encoding="utf-8")
+        gate = subprocess.run([sys.executable, str(QUALITY_GATE), "check", "--repo", str(self.repo), "--base-ref",
+                               str(run["baseRef"]), "--json", "--gitnexus-context-json", str(context)],
+                              env=self.env, text=True, capture_output=True, check=False)
+        gate_payload = json.loads(gate.stdout)
         states = {
             str(item["ruleId"]): item
             for item in gate_payload["findings"]
@@ -537,7 +534,7 @@ class RepoForgeWorkflowTests(unittest.TestCase):
         verified, run = self.typed_quality_gate_run("main")
         self.assertEqual(verified.returncode, 0, verified.stdout + verified.stderr)
         self.assertIsNone(run["bindingError"], run["bindingError"])
-        for rule_id, finding in sorted(self.owner_states(run["gate"]).items()):
+        for rule_id, finding in sorted(self.owner_states(run).items()):
             gaps = finding["completeness"]["gaps"]
             self.assertNotEqual(finding["status"], "incomplete", f"{rule_id} could not evaluate: {gaps}")
             self.assertTrue(finding["completeness"]["complete"], f"{rule_id} gaps: {gaps}")
@@ -560,7 +557,7 @@ class RepoForgeWorkflowTests(unittest.TestCase):
 
         verified, run = self.typed_quality_gate_run("main")
         self.assertEqual(verified.returncode, 0, verified.stdout + verified.stderr)
-        for rule_id, finding in sorted(self.owner_states(run["gate"]).items()):
+        for rule_id, finding in sorted(self.owner_states(run).items()):
             self.assertEqual(finding["status"], "incomplete", f"{rule_id}: {finding}")
             self.assertIn(
                 "external graph evidence is stale: it does not name the evaluated snapshot",
@@ -602,14 +599,10 @@ class RepoForgeWorkflowTests(unittest.TestCase):
             (projection["expectedCandidateTree"], projection["indexedCandidateTree"]),
             (state["activeCandidateTree"], state["activeCandidateTree"]),
         )
-        checkpoint_result = self.pass_state("checkpoint", "--phase", "preflight-advice")
-        self.assertEqual(
-            checkpoint_result.returncode, 0,
-            checkpoint_result.stdout + checkpoint_result.stderr,
-        )
-        checkpoint = json.loads(checkpoint_result.stdout)
-        self.assertEqual(checkpoint["advisorProjectionEvidence"], evidence_id)
-        self.assertEqual(checkpoint["advisorProjection"], projection)
+        checkpoint = checkpoint_channels(self.repo, self.env, "preflight-advice")
+        [channel] = [c for c in checkpoint["channels"] if c["name"] == "advisor-projection"]
+        self.assertEqual(channel["evidenceId"], evidence_id)
+        self.assertEqual(checkpoint["advisor-projection"], projection)
 
     @unittest.skipUnless(GITNEXUS, "the real GitNexus CLI is unavailable")
     def test_mutation_and_status_responses_share_graph_candidate_readiness(self) -> None:
@@ -629,14 +622,8 @@ class RepoForgeWorkflowTests(unittest.TestCase):
         self.assertEqual(paused.returncode, 0, paused.stdout + paused.stderr)
         mutation, status = json.loads(paused.stdout), self.status()
         self.assertEqual(
-            (
-                mutation["activeCandidateTree"], mutation["repoContextForge"], mutation["gitnexus"],
-                status["activeCandidateTree"], status["repoContextForge"], status["gitnexus"],
-            ),
-            (
-                status["activeCandidateTree"], "pending", "pending",
-                mutation["activeCandidateTree"], "pending", "pending",
-            ),
+            (mutation["nextAction"], status["repoContextForge"], status["gitnexus"]),
+            ("repo-context-forge", "pending", "pending"),
             marker + json.dumps({"mutation": mutation, "status": status}, sort_keys=True),
         )
 

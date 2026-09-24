@@ -270,12 +270,12 @@ def _retain_recent(owners: dict[Path, tuple[str, datetime]], entries: list[dict[
 
 
 def _producer_stop_document(path: Path) -> bool:
-    """Whether this `<session>.json` holds what the current Stop producer wrote.
+    """Whether this `<session>.json` holds what the retired Stop producer wrote.
 
-    `stop_session_swap` writes schemaVersion 1 plus one of the fields its
-    callers set, updating the object in place, so extra keys are the producer's
-    too. An empty fingerprint is a real payload: the resolution path clears the
-    field by writing "". Unparseable bytes or another schema are not this
+    That producer wrote schemaVersion 1 plus one of the fields its callers set,
+    updating the object in place, so extra keys were the producer's too. An
+    empty fingerprint is a real payload: the resolution path clears the field
+    by writing "". Unparseable bytes or another schema are not this
     contract's to delete. The caller owns the filename test, so the two
     preserved cases keep separate reported reasons.
     """
@@ -432,7 +432,7 @@ def _retire_sessions(root: Path, retired: dict[str, str], pinned: set[str], appl
 
 
 def _retire_associations(root: Path, apply: bool) -> list[dict[str, str]]:
-    """Session-association markers follow their repository's liveness.
+    """Session-association markers left by the retired writer follow their repository's liveness.
 
     Each sessions/<session>/<key>.json embeds the repository identity its
     writer recorded; a confirmed-absent root retires the marker, anything

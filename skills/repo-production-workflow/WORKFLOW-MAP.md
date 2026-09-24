@@ -14,9 +14,8 @@ flowchart LR
     P --> M{map has a pending item?}
     M -->|yes| TR[mapped contract RED, preservation items settled first]
     M -->|no: every item already-satisfied or omitted| NR[tdd --not-required]
-    TR --> PC[production-code]
-    NR --> PC
-    PC --> I[implementation]
+    TR --> I[implementation]
+    NR --> I
     I -->|every contract RED| TG[mapped GREEN]
     I -->|not-required map| V
     TG --> TM[map update when a proof exposes a new obligation]
@@ -41,23 +40,26 @@ flowchart LR
 
 ## State Interface
 
-One repository-scoped SQLite event ledger records accepted transitions, logical evidence, review manifests, and complete canonical resulting state. A disposable projection names the active workflow and latest event; reads repair it from the ledger when it is missing, dangling, or stale. See [Workflow state root](https://github.com/future3OOO/claude-skills/blob/main/README.md#workflow-state-root) for which root holds it.
+One repository-scoped SQLite ledger records accepted transitions as receipts (their evidence and manifest links), logical evidence, review manifests, and each workflow's current state on its workflow row. Behavior Map items and run rows are stored once as content-addressed parts, so an evidence id keeps its original meaning after later map changes. See [Workflow state root](https://github.com/future3OOO/claude-skills/blob/main/README.md#workflow-state-root) for which root holds it.
 
 ```text
 workflow begin                 # assigns and activates a random workflowId
 workflow status|summary        # active canonical state
-workflow history               # ordered accepted events and logical references
-workflow evidence              # read one logical evidence record
-workflow set-phase             # lead-owned implementation and trivial review
-workflow record-preflight      # validates 13 text sections + Behavior Map
-workflow record-production-code # validates the bundled gate verdict (optional; nothing waits on it)
+workflow history               # ordered accepted receipts and logical references
+workflow evidence [--full]     # one evidence record's metadata, or its document
+workflow set-phase             # trivial code review only
+workflow record <kind> [--check] [--input -|path]
+                               # preflight|review|advisor-result|advisor-disposition|tdd-map;
+                               # `record <kind> --help` prints the accepted shape
 workflow tdd                   # mapped RED/GREEN or records not-required
-workflow tdd-map               # dispositions and post-GREEN map updates
-workflow verify                # generic commands or typed final-tree quality gate
-workflow record-review         # delegate review intake, lead dispositions, tree manifest
-workflow advisor-result|advisor-disposition
+workflow verify                # generic commands, typed quality gate, --observed, --from-evidence
 workflow pause|checkpoint|complete|prune
 ```
+
+Mutation receipts carry only `workflowId`, `slug`, `phase` and `nextAction`;
+`status` returns full state. Identity defaults to the active workflow; an explicit
+`--slug`/`--workflow-id` that disagrees refuses. Every refusal names all of a
+document's violations at once and mutates nothing.
 
 A documentation-only pull request takes the CI job's cheap lane, decided by
 `.github/scripts/pr_scope.py` from the pull-request delta and governed by step 9.
@@ -73,7 +75,7 @@ never includes a database path, SQLite table or column name, journal detail, or
 other storage mechanism. With no authoritative workflow it prints no JSON,
 returns exit 2, names `no active workflow`, and creates no state.
 
-Repo Context Forge, preflight, production-code, TDD, verification, review, and
+Repo Context Forge, preflight, TDD, verification, review, and
 addressed advisor dispositions record only with their native validated documents
 as logical evidence, inserted in the same SQLite transaction as the accepted event; a
 findings-none advisor disposition intentionally carries no document, and a
@@ -86,7 +88,7 @@ Exit 2 alone does not prove a refusal: the verification, TDD, and review
 producers each document a path that commits first and returns 2 after — a
 command that failed after being recorded, an invalid TDD run recorded as
 `reopen` or `in-progress`, and a review whose material findings remain
-unresolved. Repo Context Forge, preflight, production-code, and verification keep their
+unresolved. Repo Context Forge, preflight, and verification keep their
 accepted reference only while producer-recorded as passed — every other transition drops
 it, so a bare replay can never resurrect prior evidence. TDD and code review
 instead keep a current producer reference across their own non-passed states —
@@ -95,7 +97,7 @@ later run can validate or supersede it. Only TDD's in-progress reference serves
 GREEN's validation of the RED it follows. TDD entry demands recorded preflight
 evidence and, for new governed passes, a mapped behavior ID. Each producer stamps
 the workflow instance into its evidence and the ledger keeps its logical
-identity, so a passed Repo Context Forge, preflight, production-code, or
+identity, so a passed Repo Context Forge, preflight, or
 verification phase without one — legacy state, or a bare library claim — reads
 pending at completion, never success. Evidence proves the output exists, not
 that the analysis is good; fabrication remains deception and stays covered by
@@ -126,34 +128,16 @@ are accepted, production editing stays closed, and completing again restores
 the terminal state. The read-only `checkpoint` query reports consult
 readiness for the advisor phases without mutating anything.
 
-`complete` requires:
-
-- Repo Context Forge completed, carrying its producer graph evidence;
-- advisor preflight completed with findings dispositioned, or explicitly
-  unavailable with a measured reason;
-- production preflight completed with a non-empty Behavior Map;
-- every contract map item GREEN, baseline `already-satisfied`, or `withdrawn`;
-- every preservation map item GREEN, already satisfied, or omitted with evidence (the recorder validates the evidence structurally; its truth is a lead-owned obligation the reviews check) - a superseded item of either kind instead needs a GREEN terminal replacement - judged by `behavior_map` inside `complete()`'s transaction;
-- no pending proof gap;
-- TDD passed or not required;
-- production-code recorded;
-- implementation and verification passed;
-- preflight, production-code, and verification each carrying their producer's
-  evidence reference;
-- code review recorded (delegate intake, or not required) with material findings addressed;
-- a context-matched final review from `codex-advisor` whose effective findings
-  are terminal: the immutable raw verdict remains evidence, but
-  `fix-before-commit` is not a veto after closure;
-- no pending final rejection appeal and no re-raised finding awaiting its second disposition;
-- the reviewable working tree unchanged since the recorded lead review.
-
-The historical `pass-state.py`, recorder, TDD, and verification scripts are temporary compatibility adapters. They call the same unified CLI Module and contain no persistence or path logic; new callers use `workflow.py` directly.
+`complete` requires every step in the step table (`STEPS` in
+`hooks/lib/workflow_state.py`, the one source for sequence, readiness, blockers and
+completion) with its producer evidence, a closed Behavior Map judged inside the
+transaction, dispositioned material findings, a context-matched final review whose
+effective findings are terminal, and an unchanged reviewable tree since the lead review.
 
 ## Edit invalidation
 
 ```text
 production Edit/Write/apply_patch
-  -> implementation = in-progress
   -> verification = pending
   -> codeReview = pending
   -> finalReview = pending
@@ -226,54 +210,17 @@ session and defers the rest here.
 | Hook | Role |
 |---|---|
 | `PreToolUse(Edit\|Write\|apply_patch)` | Advise, never refuse: name what the pass has not recorded and admit the edit; docs, scratch, and non-repository paths are silent; test-like paths skip only the RED advice |
-| `PostToolUse(Edit\|Write\|apply_patch)` | Invalidate downstream readiness, record the session's repository association where a pass exists, then return quality feedback — the gate run carries the pass's recorded base OID as `--base-ref` when bootstrap recorded one, so growth warnings read branch-cumulative per edit; with no recorded base the hook derives nothing and the gate reports the base-binding gap |
-| `SessionStart(compact)` | Restore the full workflow chain and bounded current summary from committed SQLite state |
+| `PreToolUse(Bash)` | Rewrite a lone pytest/unittest command to `workflow.py verify --observed -- <command>`: the same exit code, plus a receipt in the checkout of the command's own working directory; while it records, the command's stderr is merged into stdout |
+| `PostToolUse(Edit\|Write\|apply_patch)` | Invalidate downstream readiness, then return single-file lint and the map advisory |
+| `PostCompact` | Forget which advisories this session has heard, so each returns once after compaction |
+| `SessionStart(compact)` | Restore the discipline line and the pass's open work from committed SQLite state |
 
-The session association marker: `PostToolUse` records one immutable marker per repository
-per session under `sessions/<session>/<repo-key>.json` in the state root,
-written only where a workflow already exists, and identity comes from the edited
-path through the same resolver the edit gate uses — no hook gains Git awareness,
-and a storage failure only prints to stderr, never changing a hook's exit
-status, its review invalidation, or the quality gate it runs. Those associations
-replace the candidate set rather than extending it: the session `cwd` slot is
-consulted only by a session that recorded no association at all, whose behaviour
-is unchanged. A payload whose `session_id` is missing, null, not a string, empty,
-or only whitespace belongs to no session: it is rejected before any key is
-derived, so it records no association and reads none, and therefore keeps that
-`cwd` fallback — the association key is never defaulted to a shared literal,
-because every anonymous payload would then share one identity and one
-repository's pass could reach another's Stop.
+Every hook advisory is keyed per session and emitted only when its text changed
+since that session last heard it in the current compaction epoch; identical repeats
+emit nothing.
 
-For an admitted non-blank string id the key is `safe_slug(session_id)[:40]`, and
-that transform is lossy rather than injective. In order it trims surrounding
-whitespace, replaces each run of characters outside `[A-Za-z0-9._-]` with a
-single `-`, strips leading and trailing `-`, `.` and `_`, lowercases, caps at 80
-characters, substitutes the literal `unnamed-workflow` when nothing survives, and
-is then cut to 40. Distinct ids therefore **can** collide — by case, by any
-character outside that allowed set (`.`, `_` and internal `-` are preserved), by
-edge characters alone, beyond 40 characters, and, for non-blank ids whose whole
-content is removed by that replacement and edge stripping, on the
-`unnamed-workflow` literal itself. A blank id never reaches this transform at
-all; it is refused by the admission check above.
-
-Per-session isolation is thus a property of the ids this harness supplies, not a
-guarantee of the key: they are lowercase hexadecimal UUIDs and so are fixed
-points of the whole transform — measured across 644 recorded sessions, none
-altered by it and none sharing a key. Any future id source must be injective
-under the transform exactly as written above, or introduce a collision-resistant
-encoding here before it is trusted. The repository-scoped per-session feedback file keeps its own `unknown` display name, which cannot cross
-repositories.
-
-A pass this session never edited in is not reported; the feedback path emits bounded context
-containing changed-code status and the workflow summary per consulted slot, and
-deduplicates identical rendered context per session and slot. When Git reports
-no changed code and no workflow state exists, that path emits nothing. The
-payload it reads was captured on Claude Code 2.1.220 and is kept as a test
-fixture; the delegate release is the `CODEX_ADVISOR_ACTIVE` environment
-variable.
-
-There is no Bash command matcher, Git hook, command classifier, protected-path
-parser, candidate-tree gate, approval marker, nonce, or evidence graph.
+There is no Git hook, protected-path parser, candidate-tree gate, approval marker,
+nonce, or evidence graph.
 
 ## Ordinary summaries
 

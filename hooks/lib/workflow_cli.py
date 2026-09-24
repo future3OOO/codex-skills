@@ -5,28 +5,28 @@ import argparse
 import json
 import os
 import shlex
+import subprocess
 import sys
 import tempfile
-from collections.abc import Callable
 from pathlib import Path
 
-from ._workflow_db import LedgerError, history
+from ._workflow_db import CHECK_ONLY, LedgerError, _canonical, history, read_evidence
 from .behavior_map import interpretation_pending
-from .preflight_document import validated_document
-from .command_runner import emit_json as _emit_json, print_output as _print_output, run as _run, run_entry as _run_entry
-from .repo_identity import RepoIdentity, RepoIdentityError, resolve_repo_identity
+from .command_runner import _tail, emit_json as _emit_json, print_output as _print_output, run as _run, run_entry as _run_entry
+from .repo_identity import RepoIdentity, RepoIdentityError, resolve_repo_identity, try_resolve_repo_identity
 from .state_prune import prune
 from .state_store import _active_candidate_tree, repo_state_dir, state_root, tree_manifest, utc_timestamp
+from .tdd_surface import identify
 from .workflow_documents import (
-    advisor_disposition_document,
+    DOCUMENT_SHAPE_TABLE,
     advisor_envelope,
     design_declaration,
-    gate_verdict,
+    load_json,
+    preflight_document,
     review_summary,
     validate_gate_result,
 )
 from .workflow_state import (
-    NO_INSTANCE_ID,
     WorkflowError,
     advisor_disposition,
     begin,
@@ -37,52 +37,44 @@ from .workflow_state import (
     commit_verification,
     complete,
     evidence_document,
-    evidence_record,
-    instance_id,
+    execution_receipt,
     pause,
     public_status,
     read_workflow,
     record_advisor_result,
-    safe_slug,
     set_phase,
     summary,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
-LEAD_PHASES = {"implementation", "code-review"}
-PRODUCER_OWNED = {
-    "repo-context-forge": "repo-context-forge is producer-owned; run the Repo Context Forge bootstrap",
-    "gitnexus": "gitnexus is no longer a workflow step; Repo Context Forge records the graph "
-                "evidence automatically, so there is nothing to transition",
-    "preflight": "preflight is recorder-owned; use workflow record-preflight",
-    "production-code": "production-code is recorder-owned; use workflow record-production-code",
-    "verification": "verification is runner-owned; use workflow verify",
+ITEM_SHAPE = ('{"id":"BM_X","kind":"contract|preservation","behavior":"...","seam":"...","expected":"...",'
+              '"redFailure":"MARKER","status":"pending|already-satisfied|omitted",'
+              '"sourceRefs":[{"type":"finding","evidenceId":"<intake>","id":"SPEC-1"}]}')
+RECORD_SHAPES = {
+    "preflight": f'{{"authoritativeContract":"text","behaviorMap":[{ITEM_SHAPE}]}}',
+    "review": ('intake {"findings":[{"id":"R-1","claim":"...","material":true,"kind":"behavioral|nonbehavioral",'
+               '"priorFinding":{"evidenceId":"...","id":"..."}}],"implementationContextId":"optional"} or '
+               'disposition {"intakeEvidenceId":"...","dispositions":[{"finding_id":"R-1","status":"fixed|'
+               'rejected-with-evidence|report-only|accepted-follow-up","reason":"...","evidenceRefs":["E:0"]}]}'),
+    "advisor-result": ('the advisor envelope {"schemaVersion":1,"findings":[{"id":"SPEC-1","claim":"...",'
+                       '"material":true,"kind":"behavioral|nonbehavioral"}],"verdict":"completed|commit-ready|'
+                       'fix-before-commit|context-mismatch"}, or --verdict unavailable --reason TEXT'),
+    "advisor-disposition": ("--finding F --fixed|--rejected|--report-only|--follow-up REF --evidence-ref E:i "
+                            "[--behavior-id BM] [--reason TEXT]; or --stage S --findings none; or --input "
+                            '{"intakeEvidenceId":"...","context":{...},"dispositions":[...]}, each disposition:\n'
+                            + DOCUMENT_SHAPE_TABLE),
+    "tdd-map": (f'{{"sourceBehaviorId":"BM_GREEN","items":[{ITEM_SHAPE}],"dispositions":['
+                '{"id":"BM_X","sourceRefs":[...]} | {"id":"BM_X","status":"omitted|superseded|withdrawn",'
+                '"supersededBy":"BM_Y"} | {"id":"BM_X","revalidate":true,"evidence":"why"}],"reassessment":"optional"}'),
 }
+DISPOSITION_FLAGS = {"fixed": "fixed", "rejected": "rejected-with-evidence", "report_only": "report-only"}
 
 
-def _repo(command: argparse.ArgumentParser) -> None:
+def _repo(command: argparse.ArgumentParser, *, instance: bool = False) -> argparse.ArgumentParser:
     command.add_argument("--repo", "--cwd", dest="repo", default=".")
-    command.add_argument("--compact", action="store_true", help="return a compact mutation receipt")
-
-
-def _instance(command: argparse.ArgumentParser) -> None:
-    command.add_argument("--slug", required=True)
-    command.add_argument("--workflow-id", required=True)
-
-
-def _instance_command(
-    commands: argparse._SubParsersAction[argparse.ArgumentParser],
-    name: str,
-    help_text: str,
-) -> argparse.ArgumentParser:
-    command = commands.add_parser(name, help=help_text)
-    _repo(command)
-    _instance(command)
-    return command
-
-
-def _document_command(command: argparse.ArgumentParser) -> argparse.ArgumentParser:
-    command.add_argument("--input", required=True)
+    if instance:
+        command.add_argument("--slug")
+        command.add_argument("--workflow-id")
     return command
 
 
@@ -90,118 +82,83 @@ def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(prog="workflow", description=__doc__)
     commands = result.add_subparsers(dest="command", required=True)
 
-    command = commands.add_parser("begin", help="start and activate a workflow pass")
-    _repo(command)
+    command = _repo(commands.add_parser("begin", help="start and activate a workflow pass"))
     command.add_argument("--slug", required=True)
-    # Multi-KB request text does not survive being a shell argument, which is why
-    # callers reach for a summary. The group refuses both at once rather than
-    # inventing precedence between two sources of the same field.
     source = command.add_mutually_exclusive_group()
     source.add_argument("--intent", default="")
     source.add_argument("--intent-file")
 
-    for name in ("status", "summary"):
-        command = commands.add_parser(name)
-        _repo(command)
-        if name == "status":
-            command.add_argument("--fields", help="comma-separated fields; default is full status")
-
-    command = commands.add_parser(
-        "paths",
-        help="print the resolved workflow-state paths for this repository; "
-             "with --workflow-id also prints the governing-design path",
-    )
-    _repo(command)
+    command = _repo(commands.add_parser("status"))
+    command.add_argument("--fields", help="comma-separated fields; default is full status")
+    _repo(commands.add_parser("summary"))
+    command = _repo(commands.add_parser("paths", help="print the resolved workflow-state paths; "
+                                        "with --workflow-id also the governing-design path"))
     command.add_argument("--workflow-id")
-
-    command = commands.add_parser("history", help="read ordered accepted events")
-    _repo(command)
+    command = _repo(commands.add_parser("history", help="read ordered accepted events"))
     command.add_argument("--workflow-id")
-
-    command = commands.add_parser("evidence", help="read a logical evidence record")
-    _repo(command)
+    command = _repo(commands.add_parser("evidence", help="evidence metadata; --full for the document"))
     command.add_argument("--evidence-id", required=True)
+    command.add_argument("--full", action="store_true")
 
-    command = commands.add_parser("set-phase", help="record a lead-owned phase")
-    _repo(command)
+    command = _repo(commands.add_parser("set-phase", help="record code-review not-required"), instance=True)
     command.add_argument("--phase", required=True)
     command.add_argument("--status", required=True)
     command.add_argument("--findings")
-    command.add_argument("--slug")
-    command.add_argument("--workflow-id")
-
-    command = _instance_command(commands, "advisor-result", "record a completed advisor result")
-    command.add_argument("--stage", required=True)
-    command.add_argument("--source", required=True)
-    command.add_argument("--verdict")
-    command.add_argument("--input")
-    command.add_argument("--findings")
-    command.add_argument("--reason")
-    command.add_argument("--design-declaration", required=True)
-    command.add_argument("--expected-candidate-tree")
-
-    command = _instance_command(commands, "advisor-disposition", "record lead disposition of advisor findings")
-    command.add_argument("--stage", required=True)
-    command.add_argument("--findings", required=True)
-    command.add_argument("--input")
-
-    command = _instance_command(commands, "pause", "record an instance-bound honest wait")
+    command = _repo(commands.add_parser("pause", help="record an honest wait"), instance=True)
     command.add_argument("--reason", required=True)
-
-    command = commands.add_parser("checkpoint", help="query advisor readiness without mutation")
-    _repo(command)
+    command = _repo(commands.add_parser("checkpoint", help="query advisor readiness without mutation"))
     command.add_argument("--phase", required=True)
     command.add_argument("--reconsult", action="store_true", help="user-authorized repeat preflight consultation")
-
-    command = commands.add_parser("complete", help="complete a ready workflow")
-    _repo(command)
-    command.add_argument("--slug")
-    command.add_argument("--workflow-id")
-
-    _document_command(_instance_command(commands, "record-preflight", "validate and record production preflight"))
-    _document_command(_instance_command(commands, "record-production-code", "validate and record the pre-edit quality gate"))
-
-    # Registered for top-level discovery only: the tdd verbs' flag surfaces are
-    # owned by tdd_workflow, which main() routes to before this parser ever
-    # sees the arguments. tdd-map is a completion-required producer, so its
-    # discovery is a deliberate addition to the baseline listing.
+    command.add_argument("--channel-dir", help="write the advisor evidence channels here and list them in order")
+    _repo(commands.add_parser("complete", help="complete a ready workflow"), instance=True)
     commands.add_parser("tdd", help="run and record one real RED/GREEN candidate")
-    commands.add_parser("tdd-map", help="record Behavior Map reassessments and dispositions")
 
-    command = commands.add_parser("verify", help="execute and record typed verification")
-    _repo(command)
-    command.add_argument("--slug", required=True)
+    command = _repo(commands.add_parser("verify", help="execute and record typed verification"), instance=True)
     command.add_argument("--kind", choices=("generic", "quality-gate"), default="generic")
     command.add_argument("--base-ref")
     command.add_argument("--replaces", help="failed generic evidence-id:zero-based-run-index")
     command.add_argument("--reason")
     command.add_argument("--timeout", type=int, default=900)
+    command.add_argument("--observed", action="store_true", help="run a command transparently, keeping its receipt")
+    command.add_argument("--from-evidence", help="bind an executed receipt evidence-id:run-index as verification")
     command.add_argument("runner_command", nargs=argparse.REMAINDER)
 
-    command = _document_command(_instance_command(commands, "record-review", "validate and record the code review"))
-    command.add_argument("--resolved-model", required=True)
-    command.add_argument("--review-context-id", required=True)
+    record = commands.add_parser("record", help="validate and record one document; --check records nothing")
+    kinds = record.add_subparsers(dest="kind", required=True)
+    for kind, shape in RECORD_SHAPES.items():
+        command = _repo(kinds.add_parser(kind, epilog=f"accepted shape: {shape}",
+                                         formatter_class=argparse.RawDescriptionHelpFormatter), instance=True)
+        command.add_argument("--check", action="store_true", help="validate against the ledger without recording")
+        command.add_argument("--input", help="document path, or - for stdin")
+        if kind == "review":
+            command.add_argument("--review-context-id")
+        elif kind == "advisor-result":
+            command.add_argument("--stage", required=True)
+            command.add_argument("--source", default="codex-advisor")
+            command.add_argument("--verdict")
+            command.add_argument("--reason")
+            command.add_argument("--design-declaration")
+            command.add_argument("--expected-candidate-tree")
+        elif kind == "advisor-disposition":
+            command.add_argument("--stage")
+            command.add_argument("--findings", choices=("none", "addressed"))
+            command.add_argument("--finding")
+            status = command.add_mutually_exclusive_group()
+            for flag in DISPOSITION_FLAGS:
+                status.add_argument(f"--{flag.replace('_', '-')}", action="store_true")
+            status.add_argument("--follow-up", metavar="REFERENCE")
+            command.add_argument("--evidence-ref", action="append", default=[])
+            command.add_argument("--behavior-id")
+            command.add_argument("--reason")
 
     command = commands.add_parser("prune", help="report or apply workflow-state retirement")
     command.add_argument("--apply", action="store_true")
-
     return result
 
 
-
-
-
 def _intent(args: argparse.Namespace) -> str:
-    """The task text exactly as the caller sent it: no stripping, no truncation.
-
-    Both file and stdin intake decode raw bytes as UTF-8 rather than reading text:
-    the locale's codec would make the record depend on the environment that started
-    the pass, and text mode would translate CRLF and lone CR to LF, so a request
-    pasted from a Windows editor would be recorded as something it never said.
-    U+0000 is refused rather than recorded: the advisor payload carries this text
-    through a shell variable, which cannot hold that character, so accepting it
-    would promise a custody the rest of the chain silently breaks.
-    """
+    """The task text exactly as the caller sent it: raw UTF-8, no newline translation;
+    U+0000 is refused because the consult payload cannot carry it."""
     if args.intent_file is not None:
         text = Path(args.intent_file).read_bytes().decode("utf-8")
     else:
@@ -211,32 +168,65 @@ def _intent(args: argparse.Namespace) -> str:
     return text
 
 
-def _emit_mutation(
-    identity: RepoIdentity, operation: Callable[[str], dict[str, object]], *, compact: bool = False,
-) -> None:
-    """Bind full-state output before its mutation can commit."""
-    candidate = _active_candidate_tree(identity)
-    state = operation(candidate)
-    fields = ({key for key in state if key.endswith("Evidence")} | {
-        "schemaVersion", "workflowId", "slug", "activeCandidateTree", "phase", "nextAction",
-        "advisorPreflight", "codeReview", "finalReview", "verification", "tdd",
-        "repoContextForge", "gitnexus", "bindingError", "qualityGateManifestId",
-    }) if compact else None
-    _emit_json(public_status(state, identity, fields=fields, candidate_tree=candidate, recovery=compact))
+def _receipt(state: dict[str, object], identity: RepoIdentity) -> dict[str, object]:
+    """A mutation's whole answer: which pass, where it stands, what comes next
+    (derived against the current tree, so a stale binding is never advertised)."""
+    return public_status(state, identity, fields={"workflowId", "slug", "phase", "nextAction"}, recovery=True)
 
 
-def _state(identity: RepoIdentity) -> dict[str, object]:
-    value = read_workflow(identity)
-    if value is None:
-        raise WorkflowError("no active workflow")
-    return value
+def _command(values: list[str]) -> list[str]:
+    command = values[1:] if values and values[0] == "--" else values
+    if not command:
+        raise ValueError("a command is required after --")
+    return command
 
 
-def _workflow_id(state: dict[str, object]) -> str:
-    value = instance_id(state)
-    if value is None:
-        raise WorkflowError(NO_INSTANCE_ID)
-    return value
+def _passed(command: str, exit_code: object, output: str) -> bool:
+    """Exit 0, and for a pytest/unittest command a runner-reported executed passing
+    test: a run that executed none (collect-only, --fixtures, an empty discover), or
+    reported no count (-qq), verifies nothing. The runner is TDD's (`identify`), which
+    recognises bare invocations only."""
+    from .tdd_workflow import _pass_proof
+    return exit_code == 0 and _pass_proof(identify(shlex.split(command)), output, baseline=False, exit_code=0)[0] is not None
+
+
+def _observed(command: list[str]) -> int:
+    """Run a hook-rewritten test command as asked; at the root of a checkout with an
+    open workflow, also keep its receipt. The exit code is the command's; while a
+    receipt is kept, its stderr is merged into stdout."""
+    identity = try_resolve_repo_identity(os.getcwd())
+    state = None
+    if identity is not None and str(Path.cwd().resolve()) == identity.root:
+        try:
+            state = read_workflow(identity)
+        except LedgerError as exc:  # an unreadable ledger never stops the command
+            print(f"workflow receipt not recorded: {exc}", file=sys.stderr)
+    if state is None or state.get("phase") == "complete" and not state.get("revalidation"):
+        return subprocess.run(command, check=False).returncode
+    binding_error = None
+    try:
+        tree_before: dict[str, str] | None = tree_manifest(identity)
+    except RuntimeError as exc:
+        tree_before, binding_error = None, str(exc)
+    # In the caller's process group, streaming as it runs: a kill of the tool call
+    # stops the command, and the output arrives when it would have directly.
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    chunks: list[bytes] = []
+    for chunk in iter(lambda: process.stdout.read1(65536), b""):
+        chunks.append(chunk)
+        sys.stdout.buffer.write(chunk)
+        sys.stdout.flush()
+    raw, exit_code, timed_out = b"".join(chunks), process.wait(), False
+    run = _run_entry(raw, exit_code, timed_out, kind="observed", command=shlex.join(command), outputBytes=len(raw),
+                     **({"bindingError": binding_error} if binding_error else {}))
+    run["valid"] = binding_error is None and _passed(run["command"], exit_code, run["outputTail"])
+    try:
+        _, evidence_id, recorded = commit_verification(identity, state["slug"], state["workflowId"], run,
+                                                       tree_before=tree_before)
+        print(f"workflow receipt {evidence_id}:{recorded['runIndex']}", file=sys.stderr)
+    except (LedgerError, ValueError, OSError) as exc:
+        print(f"workflow receipt not recorded: {exc}", file=sys.stderr)
+    return exit_code
 
 
 def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
@@ -244,9 +234,21 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
         raise ValueError("--replaces and a non-empty --reason are required together")
     if args.replaces and args.kind != "generic":
         raise ValueError("only generic verification can replace a failed invocation")
-    state = bound_state(identity, safe_slug(args.slug))
-    slug = str(state["slug"])
-    workflow_id = _workflow_id(state)
+    state = bound_state(identity, args.slug, args.workflow_id)
+    slug, workflow_id = str(state["slug"]), str(state["workflowId"])
+    if args.from_evidence:
+        if args.runner_command or args.kind != "generic":
+            raise ValueError("--from-evidence binds a recorded receipt and takes no command")
+        receipt, manifest = execution_receipt(identity, state, args.from_evidence)
+        run = {key: receipt[key] for key in ("command", "exitCode", "timedOut", "outputBytes") if key in receipt}
+        run.update(kind="generic", sourceReference=args.from_evidence,
+                   valid=_passed(str(receipt.get("command", "")), receipt.get("exitCode"), str(receipt.get("outputTail", ""))),
+                   at=utc_timestamp(), **({"replaces": args.replaces, "replacementReason": args.reason.strip()}
+                                          if args.replaces else {}))
+        state, evidence_id, recorded = commit_verification(identity, slug, workflow_id, run, tree_before=manifest)
+        _emit_json({"evidenceId": evidence_id, "runIndex": recorded["runIndex"], "valid": recorded["valid"],
+                    "verification": state["verification"]})
+        return 0 if recorded["valid"] is True else 2
 
     # The tree this run's result will describe. The recorder compares it with
     # the tree at commit; a run that could not sample it is recorded invalid.
@@ -264,21 +266,11 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
             raise ValueError("quality-gate verification requires --base-ref")
         if args.runner_command:
             raise ValueError("quality-gate verification runs the bundled gate and accepts no command")
-        command = [
-            sys.executable,
-            str(ROOT / "skills" / "production-code" / "scripts" / "code_quality_gate.py"),
-            "check",
-            "--repo",
-            str(identity.root),
-            "--base-ref",
-            args.base_ref,
-            "--json",
-        ]
+        command = [sys.executable, str(ROOT / "skills" / "production-code" / "scripts" / "code_quality_gate.py"),
+                   "check", "--repo", str(identity.root), "--base-ref", args.base_ref, "--json"]
         # The pass's recorded Repo Context Forge evidence, handed to the gate
-        # unchanged when it carries the producer's snapshot-bound gate context.
-        # The gate's own binding check adjudicates match, stale, or absent; a
-        # document without that context simply attaches nothing, and the gate
-        # names the absence.
+        # unchanged when it carries the producer's snapshot-bound gate context;
+        # the gate's own binding check adjudicates match, stale, or absent.
         recorded = state.get("repoContextForgeEvidence")
         graph_document = evidence_document(identity, recorded if isinstance(recorded, str) else None)
         graph_context = (
@@ -298,20 +290,21 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
     else:
         if args.base_ref:
             raise ValueError("--base-ref belongs to --kind quality-gate")
-        command = args.runner_command[1:] if args.runner_command and args.runner_command[0] == "--" else args.runner_command
-        if not command:
-            raise ValueError("a command is required after --")
+        command = _command(args.runner_command)
 
     try:
         raw, exit_code, timed_out = _run(command, identity, args.timeout)
     finally:
         if graph_context_path is not None:
             os.unlink(graph_context_path)
-    valid = binding_error is None and not timed_out and exit_code == 0
+    valid = binding_error is None and not timed_out and _passed(shlex.join(command), exit_code, _tail(raw))
     gate: dict[str, object] | None = None
+    shown = raw
     if args.kind == "quality-gate":
         try:
             gate = validate_gate_result(json.loads(raw.decode("utf-8")))
+            # The lead reads the gate's whole report; the ledger keeps its verdict.
+            raw = (json.dumps(gate, sort_keys=True) + "\n").encode()
             valid = valid and gate.get("ok") is True
             errors = gate.get("errors")
             capture = next(
@@ -323,9 +316,7 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
             )
             if binding_error is None and capture is not None:
                 # Drift and outright capture failure are one condition here: the gate
-                # never held a tree still, so nothing it reports binds to one. Only the
-                # drift shape has a settled name; the rest carry the gate's own words
-                # rather than being attributed to a cause the runner cannot know.
+                # never held a tree still, so nothing it reports binds to one.
                 binding_error = (
                     "reviewable tree changed during the quality-gate run"
                     if capture.startswith("candidate capture drift:")
@@ -342,15 +333,12 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
     if args.replaces:
         run.update(replaces=args.replaces, replacementReason=args.reason.strip())
     if args.kind == "quality-gate":
-        run["baseRef"] = args.base_ref
-        run["gate"] = gate
-        run["bindingError"] = binding_error
-        run["graphEvidenceId"] = graph_evidence_id
+        run.update(baseRef=args.base_ref, gate=gate, bindingError=binding_error, graphEvidenceId=graph_evidence_id)
     elif binding_error is not None:
         run["bindingError"] = binding_error
     state, evidence_id, recorded = commit_verification(identity, slug, workflow_id, run, tree_before=tree_before)
 
-    _print_output(raw)
+    _print_output(shown)
     _emit_json({
         "evidenceId": evidence_id,
         "exitCode": exit_code,
@@ -362,57 +350,114 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
         "treeManifestId": recorded.get("treeManifestId"),
     })
     if recorded["valid"] is not True:
-        reason = recorded.get("bindingError") or "verification command failed"
+        reason = recorded.get("bindingError") or ("verification command failed" if exit_code else "the runner reported no executed test")
         print(f"{reason}; verification stays pending until its rerun is green", file=sys.stderr)
         return 2
     return 0
 
 
-def _record_phase(args: argparse.Namespace, identity: RepoIdentity, phase: str, key: str, value: object) -> int:
-    slug = safe_slug(args.slug)
-    document = {
-        "schemaVersion": 1,
-        "slug": slug,
-        "workflowId": args.workflow_id,
-        key: value,
-        "recordedAt": utc_timestamp(),
-    }
-    pending = phase == "preflight" and any(
-        interpretation_pending(item)
-        for item in value.get("behaviorMap", [])
-    )
-    status = "pending" if pending else "passed"
-    state, evidence_id = commit_evidence_phase(identity, slug, args.workflow_id, phase, document, status=status)
-    recorded = {"evidenceId": evidence_id, "status": status}
-    if phase == "preflight":
-        # The plan-commit gate re-presents the contract: the builder reads the recorded
-        # task text back here instead of building the rest of the pass from recall.
-        recorded["intent"] = state.get("intent")
-    _emit_json(recorded)
-    return 2 if pending else 0
+def _document(args: argparse.Namespace, label: str) -> dict[str, object]:
+    if not args.input:
+        raise ValueError(f"record {args.kind} requires --input <path|->")
+    return load_json(args.input, label=label)
+
+
+def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
+    """One ingest seam; --check runs the whole recording and rolls it back."""
+    CHECK_ONLY.set(args.check)
+    state = bound_state(identity, args.slug, args.workflow_id)
+    slug, workflow_id = str(state["slug"]), str(state["workflowId"])
+    def emit(receipt: dict[str, object]) -> None:  # a rolled-back --check names none of its rows
+        _emit_json({key: value for key, value in receipt.items() if key not in {"evidenceId", "summaryId"}}
+                   | {"checked": True} if args.check else receipt)
+    if args.kind == "preflight":
+        if not args.input:
+            raise ValueError("record preflight requires --input <path|->")
+        document = preflight_document(args.input)
+        pending = any(interpretation_pending(item) for item in document["behaviorMap"])
+        status = "pending" if pending else "passed"
+        _, evidence_id = commit_evidence_phase(identity, slug, workflow_id, "preflight", {
+            "schemaVersion": 1, "slug": slug, "workflowId": workflow_id, "document": document,
+            "recordedAt": utc_timestamp()}, status=status)
+        emit({"evidenceId": evidence_id, "status": status})
+        return 2 if pending else 0
+    if args.kind == "review":
+        if not args.input:
+            raise ValueError("record review requires --input <path|->")
+        document, status, findings = review_summary(
+            args.input, slug=slug, workflow_id=workflow_id, review_context_id=args.review_context_id)
+        state, evidence_id = commit_review(identity, slug, workflow_id, document, status, findings)
+        emit({"summaryId": evidence_id, "status": state["codeReview"]["status"]})
+        return 0
+    if args.kind == "tdd-map":
+        from .tdd_workflow import map_update
+        emit(map_update(identity, state, _document(args, "TDD map update")))
+        return 0
+    candidate = _active_candidate_tree(identity)
+    if args.kind == "advisor-result":
+        if args.input == "-" and args.design_declaration == "-":
+            raise ValueError("only one of --input and --design-declaration can read stdin")
+        intake, verdict = None, args.verdict
+        if args.input is not None:
+            if args.verdict is not None or args.reason is not None:
+                raise ValueError("record advisor-result --input derives the verdict; --verdict/--reason are for unavailable")
+            intake, verdict = advisor_envelope(args.input, slug=slug, workflow_id=workflow_id,
+                                               stage=args.stage, producer=args.source)
+        elif verdict is None:
+            raise ValueError("record advisor-result requires --input or --verdict unavailable --reason")
+        expected = args.expected_candidate_tree
+        if expected is not None and expected != candidate:
+            raise WorkflowError("active candidate changed after the advisor checkpoint")
+        state = record_advisor_result(
+            identity, slug, workflow_id, args.stage, args.source, verdict, reason=args.reason,
+            design=design_declaration(args.design_declaration) if args.design_declaration else None,
+            intake=intake, expected_candidate_tree=expected or candidate)
+    else:
+        flag = None
+        if args.finding is not None:
+            status = next((DISPOSITION_FLAGS[name] for name in DISPOSITION_FLAGS if getattr(args, name)),
+                          "accepted-follow-up" if args.follow_up else None)
+            if status is None or not args.evidence_ref or args.input is not None:
+                raise ValueError("--finding needs one of --fixed/--rejected/--report-only/--follow-up, "
+                                 "at least one --evidence-ref, and no --input")
+            if status != "fixed" and not (args.reason and args.reason.strip()):
+                raise ValueError(f"{status} needs --reason with the measured judgment")
+            flag = {"finding": args.finding, "status": status, "evidenceRefs": args.evidence_ref,
+                    "reason": (args.reason or "").strip() or None, "reference": args.follow_up,
+                    "behaviorId": args.behavior_id}
+        elif args.behavior_id or args.evidence_ref:
+            raise ValueError("--behavior-id and --evidence-ref belong to --finding")
+        document = None if flag is not None or args.input is None else load_json(args.input, label="disposition")
+        findings = args.findings or ("none" if flag is None and document is None else "addressed")
+        state = advisor_disposition(identity, slug, workflow_id, args.stage, findings,
+                                    document=document, flag=flag, expected_candidate_tree=candidate)
+    emit(_receipt(state, identity))
+    return 0
 
 
 def _dispatch(args: argparse.Namespace) -> int:
     if args.command == "prune":
         _emit_json(prune(apply=args.apply))
         return 0
+    if args.command == "verify" and args.observed:
+        defaults = {"repo": ".", "slug": None, "workflow_id": None, "kind": "generic", "base_ref": None,
+                    "replaces": None, "reason": None, "timeout": 900, "from_evidence": None}
+        if given := [name for name, value in defaults.items() if getattr(args, name) != value]:
+            raise ValueError("--observed takes only a command; drop " + ", ".join(f"--{n.replace('_', '-')}" for n in given))
+        return _observed(_command(args.runner_command))
 
     identity = resolve_repo_identity(args.repo)
     if args.command == "begin":
-        intent = _intent(args)
-        state = begin(identity, args.slug, intent)
-        # The caller just supplied the intent; the receipt names the pass, never echoes it.
-        _emit_json(public_status(state, fields={"schemaVersion", "workflowId", "slug", "activeCandidateTree", "phase", "nextAction"}))
+        _emit_json(public_status(begin(identity, args.slug, _intent(args)), fields={
+            "schemaVersion", "workflowId", "slug", "activeCandidateTree", "phase", "nextAction"}))
     elif args.command == "status":
-        fields = set(args.fields.split(",")) if args.fields else None
-        _emit_json(public_status(_state(identity), identity, fields=fields))
+        state = read_workflow(identity)
+        if state is None:
+            raise WorkflowError("no active workflow")
+        _emit_json(public_status(state, identity, fields=set(args.fields.split(",")) if args.fields else None))
     elif args.command == "paths":
         directory = repo_state_dir(identity)
-        out: dict[str, object] = {
-            "stateRoot": str(state_root()),
-            "repoKey": identity.key,
-            "repoStateDir": str(directory),
-        }
+        out: dict[str, object] = {"stateRoot": str(state_root()), "repoKey": identity.key, "repoStateDir": str(directory)}
         if args.workflow_id:
             out["designPath"] = str(directory / "designs" / f"{args.workflow_id}.md")
         _emit_json(out)
@@ -421,129 +466,41 @@ def _dispatch(args: argparse.Namespace) -> int:
     elif args.command == "history":
         _emit_json(history(identity, args.workflow_id))
     elif args.command == "evidence":
-        value = evidence_record(identity, args.evidence_id)
+        value = read_evidence(identity, args.evidence_id)
         if value is None:
             raise WorkflowError("evidence not found")
-        _emit_json(value)
+        document = value.pop("document")
+        _emit_json({**value, "document": document} if args.full else {
+            **value, "bytes": len(_canonical(document).encode()), "fields": sorted(document)})
     elif args.command == "set-phase":
-        phase = args.phase
-        if phase in PRODUCER_OWNED:
-            raise ValueError(PRODUCER_OWNED[phase])
-        if phase not in LEAD_PHASES:
-            raise ValueError("set-phase is lead-owned only for implementation and code-review not-required")
-        if phase == "code-review" and (args.status != "not-required" or args.findings != "none"):
-            raise ValueError("code-review passed is recorder-owned; lead-owned set-phase permits only not-required with findings none")
-        _emit_mutation(identity, lambda candidate: set_phase(
-            identity,
-            phase,
-            args.status,
-            findings=args.findings,
-            slug=args.slug,
-            workflow_id=args.workflow_id,
-            expected_candidate_tree=candidate,
-        ), compact=args.compact)
-    elif args.command == "advisor-result":
-        intake = None
-        verdict = args.verdict
-        if args.input is not None:
-            if any(value is not None for value in (args.verdict, args.findings, args.reason)):
-                raise ValueError("advisor-result --input derives verdict and findings; legacy verdict fields are incompatible")
-            intake, verdict = advisor_envelope(
-                args.input,
-                slug=safe_slug(args.slug),
-                workflow_id=args.workflow_id,
-                stage=args.stage,
-                producer=args.source,
-            )
-        elif verdict is None:
-            raise ValueError("advisor-result requires --input or legacy --verdict")
-        def record(candidate: str) -> dict[str, object]:
-            expected = args.expected_candidate_tree
-            if expected is not None and expected != candidate:
-                raise WorkflowError("active candidate changed after the advisor checkpoint")
-            return record_advisor_result(
-                identity,
-                args.slug,
-                args.workflow_id,
-                args.stage,
-                args.source,
-                verdict,
-                findings=args.findings,
-                reason=args.reason,
-                design=design_declaration(args.design_declaration),
-                intake=intake,
-                expected_candidate_tree=expected or candidate,
-            )
-
-        _emit_mutation(identity, record, compact=args.compact)
-    elif args.command == "advisor-disposition":
-        if args.findings == "addressed" and args.input is None:
-            raise ValueError("an addressed disposition requires --input with the lead's disposition document")
-        if args.findings == "none" and args.input is not None:
-            raise ValueError("--input records an addressed disposition; findings none carries no document")
-        document = advisor_disposition_document(
-            args.input,
-            slug=safe_slug(args.slug),
-            workflow_id=args.workflow_id,
-            stage=args.stage,
-        ) if args.input else None
-        _emit_mutation(identity, lambda candidate: advisor_disposition(
-            identity,
-            args.slug,
-            args.workflow_id,
-            args.stage,
-            args.findings,
-            document=document,
-            expected_candidate_tree=candidate,
-        ), compact=args.compact)
+        if (args.phase, args.status, args.findings) != ("code-review", "not-required", "none"):
+            raise ValueError("set-phase records only --phase code-review --status not-required --findings none; "
+                             "producers record every other step")
+        _emit_json(_receipt(set_phase(identity, "code-review", "not-required", findings="none", slug=args.slug,
+                                      workflow_id=args.workflow_id,
+                                      expected_candidate_tree=_active_candidate_tree(identity)), identity))
     elif args.command == "pause":
-        _emit_mutation(identity, lambda candidate: pause(
-            identity, args.slug, args.workflow_id, args.reason,
-            expected_candidate_tree=candidate,
-        ), compact=args.compact)
+        _emit_json(_receipt(pause(identity, args.slug, args.workflow_id, args.reason,
+                                  expected_candidate_tree=_active_candidate_tree(identity)), identity))
     elif args.command == "checkpoint":
-        _emit_json(checkpoint(identity, args.phase, reconsult=args.reconsult))
+        _emit_json(checkpoint(identity, args.phase, reconsult=args.reconsult, channel_dir=args.channel_dir))
     elif args.command == "complete":
-        _emit_mutation(identity, lambda candidate: complete(
-            identity, slug=args.slug, workflow_id=args.workflow_id,
-            expected_candidate_tree=candidate,
-        ), compact=args.compact)
-    elif args.command == "record-preflight":
-        return _record_phase(args, identity, "preflight", "document", validated_document(args.input))
-    elif args.command == "record-production-code":
-        return _record_phase(args, identity, "production-code", "gate", gate_verdict(args.input))
+        _emit_json(_receipt(complete(identity, slug=args.slug, workflow_id=args.workflow_id,
+                                     expected_candidate_tree=_active_candidate_tree(identity)), identity))
     elif args.command == "verify":
         return _verify(args, identity)
-    elif args.command == "record-review":
-        slug = safe_slug(args.slug)
-        if _workflow_id(bound_state(identity, slug)) != args.workflow_id:
-            raise WorkflowError("--workflow-id does not match the active workflow instance")
-        document, status, findings = review_summary(
-            args.input,
-            slug=slug,
-            workflow_id=args.workflow_id,
-            resolved_model=args.resolved_model,
-            review_context_id=args.review_context_id,
-        )
-        state, evidence_id = commit_review(identity, slug, args.workflow_id, document, status, findings)
-        _emit_json({"summaryId": evidence_id, "status": state["codeReview"]["status"]})
-    else:
-        raise ValueError(f"unsupported workflow command: {args.command}")
+    elif args.command == "record":
+        return _record(args, identity)
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     values = list(sys.argv[1:] if argv is None else argv)
     try:
-        # The TDD verbs' parsing travels with their implementation: the domain
-        # module owns both flag surfaces (mapped and imported-legacy), so they
-        # are routed before this module's stricter argparse ever sees them.
+        # The TDD verb's parsing travels with its implementation.
         if values and values[0] == "tdd":
-            from .tdd_workflow import run_tdd
-            return run_tdd(values[1:])
-        if values and values[0] == "tdd-map":
-            from .tdd_workflow import run_map_update
-            return run_map_update(values[1:])
+            from .tdd_workflow import _run_tdd
+            return _run_tdd(values[1:])
         return _dispatch(parser().parse_args(values))
     except (RepoIdentityError, LedgerError, WorkflowError, ValueError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)

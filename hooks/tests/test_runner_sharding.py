@@ -104,7 +104,7 @@ class RunnerShardingTests(RunnerAttack):
         # Class and method selectors are forms the Interface admits and a caller
         # writes, so each is attacked here rather than only through the unloadable
         # id elsewhere. Each selection is paired with the id sizing it.
-        method = module + ".LegacyImportFreeFormTests.test_mapless_import_admits_free_form_red_green"
+        method = module + ".TddSummaryTests.test_red_and_green_are_bound_to_one_real_seam_and_candidate"
         selections = ((path, module), (module, module),
                       (module + ".TddSummaryTests", module + ".TddSummaryTests"),
                       (method, method))

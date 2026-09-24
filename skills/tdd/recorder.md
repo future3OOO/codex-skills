@@ -9,13 +9,12 @@ State records proof, never authorizes delivery.
 ## RED and GREEN
 
 ```bash
-python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" tdd \
-  --repo "$PWD" --slug "<task>" --phase red --behavior-id "BM_..." \
-  -- <targeted-command>
-python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" tdd \
-  --repo "$PWD" --slug "<task>" --phase green --behavior-id "BM_..." \
-  -- <targeted-command>
+python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" tdd --phase red --behavior-id "BM_..." -- <targeted-command>
+python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" tdd --phase green --behavior-id "BM_..." -- <targeted-command>
 ```
+
+A lone pytest/unittest command already ran is a receipt; bind it with
+`--from-evidence <evidenceId>:<runIndex> --test-id <test>` instead of rerunning.
 
 The map supplies the behavior, Seam, expected outcome and `redFailure` marker or
 product diagnostic. Direct pytest/unittest RED requires an executed test whose
@@ -66,13 +65,12 @@ gap; see [recovery](#recovery-and-reassessment) when accepted proof is still nee
 Interpretation reassessment and the automatic selected-input diagnostics are
 owned by [SKILL.md](SKILL.md#3-update-the-map-when-a-proof-changes-it).
 
-Add uncovered outcomes or change obligations with `tdd-map`; no-ops write nothing.
-Pass the document on stdin:
+Add uncovered outcomes or change obligations with `record tdd-map`; no-ops write
+nothing, and a refusal names every violation at once:
 
 ```bash
-python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" tdd-map \
-  --repo "$PWD" --slug "<task>" --workflow-id "<active-workflowId>" --input - <<'JSON'
-{"sourceBehaviorId": "BM_...", "reassessment": "what the proof exposed", "items": [...], "dispositions": [...]}
+python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" record tdd-map --input - <<'JSON'
+{"sourceBehaviorId": "BM_...", "items": [...], "dispositions": [...]}
 JSON
 ```
 
@@ -133,9 +131,7 @@ Use `--not-required` only when every map item is already satisfied by an execute
 governing evidence:
 
 ```bash
-python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" tdd \
-  --repo "$PWD" --slug "<task>" \
-  --not-required "<specific reason no production behavior edit is required>"
+python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" tdd --not-required "<specific reason>"
 ```
 
 Pending items and proof gaps forbid this path; it cannot replace valid RED/GREEN.

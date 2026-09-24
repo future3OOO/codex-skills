@@ -25,7 +25,6 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from hooks.lib.repo_identity import resolve_repo_identity  # noqa: E402
-from hooks.lib.state_store import repo_state_dir  # noqa: E402
 from hooks.lib.workflow_state import (  # noqa: E402
     advisor_disposition,
     instance_id,
@@ -142,7 +141,7 @@ class MapAdvisoryTests(unittest.TestCase):
             expected="compute(1) is 3", red_failure="FIXTURE_VALUE_NOT_THREE",
         )])), encoding="utf-8")
         recorded = self.workflow(
-            "record-preflight", "--slug", self.slug, "--workflow-id", workflow_id, "--input", str(document),
+            "record", "preflight", "--slug", self.slug, "--workflow-id", workflow_id, "--input", str(document),
         )
         self.assertEqual(recorded.returncode, 0, recorded.stdout + recorded.stderr)
         self.tdd_runner("red", *runner)
@@ -168,9 +167,12 @@ class MapAdvisoryTests(unittest.TestCase):
             # indexed symbol, so the producer reports a partial analysis.
             (self.repo / "extra.py").write_text("def helper():\n    return 1\n", encoding="utf-8")
 
-    @property
-    def advisory_cache(self) -> Path:
-        return repo_state_dir(resolve_repo_identity(self.repo)) / "map-advisory.json"
+    def forget_heard(self) -> None:
+        """Compaction's reset: the PostCompact hook spends every held advisory."""
+        reset = subprocess.run([sys.executable, str(ROOT / "hooks" / "skill-discipline-rearm.py")], env=self.env,
+                               input=json.dumps({"hook_event_name": "PostCompact", "session_id": SESSION}),
+                               text=True, capture_output=True, check=False)
+        self.assertEqual((reset.returncode, reset.stdout), (0, ""), reset.stderr)
 
     # --- the advisory's delivery, its graph calls counted at the real CLI ----
 
@@ -223,20 +225,16 @@ class MapAdvisoryTests(unittest.TestCase):
         self.begin_pass(*UNITTEST, COMPUTE)
         self.edit_compute()
         before = self.status()
-        self.assertFalse(self.advisory_cache.is_file(), f"{marker}: cache present before any advisory")
         lines, scans = self.hook()
         self.assertEqual(len(lines), 1, marker)
         self.assertEqual(lines[0].count("tests/test_app.py"), 1, f"{marker}: {lines[0]}")
         self.assertIn("2 impacted tests not owned by the map", lines[0], marker)
         self.assertNotIn("gap", lines[0], marker)
         self.assertEqual(scans, 1, f"{marker}: {scans} detect-changes launches")
-        self.assertTrue(self.advisory_cache.is_file(), f"{marker}: advisory did not write its cache")
         after = self.status()
         self.assertEqual((after["tdd"], after["passStartSnapshot"]),
                          (before["tdd"], before["passStartSnapshot"]), marker)
-        stored = (self.advisory_cache.read_bytes(), self.advisory_cache.stat().st_mtime_ns)
         self.assertEqual(self.hook(), ([], 1), f"{marker}: an identical result must scan once and publish nothing")
-        self.assertEqual((self.advisory_cache.read_bytes(), self.advisory_cache.stat().st_mtime_ns), stored, marker)
         # A test-file edit is reviewable but not a production edit (the same
         # exclusion production_changes applies), so it neither advises nor scans.
         (self.repo / "tests" / "test_app.py").write_text(TESTS + "\n# touched\n", encoding="utf-8")
@@ -279,10 +277,10 @@ class MapAdvisoryTests(unittest.TestCase):
         self.assertIn("tests/test_app.py", lines[0], marker)
 
     def test_each_gap_cause_is_named_and_never_blocks_the_pass(self) -> None:
-        # tests.test_app owns every impacted test, so only a gap can speak. Three
-        # causes are raised one at a time — an unindexed file (partial analysis),
-        # an unwritable cache with the index intact, a swept pass-start index —
-        # each named by its own reason; the GREEN then records normally.
+        # tests.test_app owns every impacted test, so only a gap can speak. Two
+        # causes are raised one at a time — an unindexed file (partial analysis)
+        # and a swept pass-start index — each named by its own reason; the GREEN
+        # then records normally.
         marker = "GAP_MISATTRIBUTED_OR_BLOCKING"
         self.begin_pass(*UNITTEST, "tests.test_app")
         self.edit_compute(unindexed=True)
@@ -290,15 +288,6 @@ class MapAdvisoryTests(unittest.TestCase):
         self.assertEqual((len(lines), scans), (1, 1), f"{marker}: {lines}")
         self.assertIn("gap, the graph analysis is", lines[0], marker)
         (self.repo / "extra.py").unlink()
-        before = self.status()["tdd"]
-        # The atomic write cannot replace a directory, so the cache write fails.
-        self.advisory_cache.unlink(missing_ok=True)
-        self.advisory_cache.mkdir()
-        lines, _ = self.hook()
-        self.assertEqual(len(lines), 1, f"{marker}: {lines}")
-        self.assertIn("gap, the advisory cache could not be written", lines[0], marker)
-        self.assertEqual(self.status()["tdd"], before, marker)
-        self.advisory_cache.rmdir()
         shutil.rmtree(Path(str(self.status()["passStartSnapshot"]["indexPath"])), ignore_errors=True)
         lines, _ = self.hook()
         self.assertEqual(len(lines), 1, f"{marker}: {lines}")
@@ -388,7 +377,7 @@ class MapAdvisoryTests(unittest.TestCase):
             self.assertIn("app.py", ctx_text, marker)
             self.assertIsNone(srv.poll(), f"{marker}: MCP holder died before the hook")
 
-            self.advisory_cache.unlink(missing_ok=True)
+            self.forget_heard()
             lines, _ = self.hook()
             self.assertIsNone(srv.poll(), f"{marker}: MCP holder died during the hook")
             self.assertEqual(len(lines), 1, f"{marker}: no notice under the MCP holder")
@@ -410,7 +399,7 @@ class MapAdvisoryTests(unittest.TestCase):
         marker = "EDIT_FAILS_ON_CLOSED_STDOUT"
         self.begin_pass(*UNITTEST, COMPUTE)
         self.edit_compute()
-        self.advisory_cache.unlink(missing_ok=True)
+        self.forget_heard()
         payload = json.dumps({"tool_input": {"file_path": str(self.repo / "app.py")}, "session_id": SESSION})
         proc = subprocess.Popen(
             [str(POST_EDIT)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
