@@ -4,10 +4,14 @@ A strong test is a real probe of one **independently-failable observable outcome
 
 A behavior test survives internal refactoring: if observable behavior is unchanged but the test breaks, the test is coupled to implementation. Several assertions are valid when they jointly prove one behavior; one assertion can still hide an over-broad behavior.
 
-**Pass proof versus regression coverage.** RED/GREEN proves this pass; committing every probe is not required. Keep an uncommitted probe in the task worktree and runnable until pass completion so its recorded command can be rerun.
-A direct-operation probe must print or assert its observed outcome; exit 0 alone does not prove GREEN.
-For regression coverage, retain the real probe where practical or reuse an existing check; add only the smallest discriminating assertion or case in its harness for an uncovered contract. Additional checks require distinct coverage or demonstrated cheaper feedback, defect sensitivity, and no narrowing of the contract; they do not replace production acceptance. New classes or files require a demonstrated Seam-access gap; helpers must remove duplicated setup.
-Apply [Production Code's comparison rules](../production-code/SKILL.md#minimum-implementation-decision) for N/N+1 proof and conditional A/B measurements.
+RED/GREEN probes need not be committed. Keep uncommitted probes runnable
+in a Git-ignored path in the task worktree until pass completion.
+
+Retain the real probe as the regression test where practical. Additional checks
+require distinct coverage or demonstrated cheaper feedback, with defect sensitivity
+and no narrowing of the contract; they do not replace production acceptance. Apply
+[Production Code's comparison rules](../production-code/SKILL.md#minimum-implementation-decision)
+for N/N+1 proof and conditional A/B measurements.
 
 ## What a slice must prove
 
