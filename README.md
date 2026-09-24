@@ -89,8 +89,8 @@ rsync -acR --backup --backup-dir="$backup" -- "${paths[@]}" "$estate/" &&
 The global rules install under a different name, so never list them in `paths`:
 
 ```bash
-mkdir -p "$backup" && cp -- "$estate/AGENTS.md" "$backup/" &&
-  cp -- docs/agents/global-rules.md "$estate/AGENTS.md" && cmp -- docs/agents/global-rules.md "$estate/AGENTS.md"
+rsync -a --backup --backup-dir="$backup" -- docs/agents/global-rules.md "$estate/AGENTS.md" &&
+  cmp -- docs/agents/global-rules.md "$estate/AGENTS.md"
 ```
 
 Back up and remove only explicitly owned obsolete files. Record the source SHA,
