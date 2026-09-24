@@ -46,6 +46,12 @@ Standalone exploration or review with no governed pass and no described work —
 python3 "$HOME/.codex/skills/repo-context-forge/scripts/bootstrap.py" --repo "$PWD"
 ```
 
+The bootstrap takes 30–60 s on a cold cache. Start it with the command tool's
+longest wait (`yield_time_ms` 30000) and, if it is still running, wait on it
+once with a long poll (`write_stdin` with `yield_time_ms` 120000; it returns as
+soon as the bootstrap exits). Do not poll in short intervals: every check is a
+model turn that re-sends the whole context.
+
 2. Treat the script output as the initial repository context packet for the
 current task. The output begins with `REPO_CONTEXT_FORGE_REQUIRED_INTAKE`; that
 banner is the enforced startup contract and must be reported before any code
