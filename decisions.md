@@ -1873,3 +1873,31 @@ Merge #102 with a merge commit, not squash or rebase (review RV-1). Two retained
 branch. Measured in a main-only clone: both fail on `git archive` (exit 128) once
 b838e60 is unreachable, so a squash or rebase merge followed by deleting the branch
 turns `hooks/tests/run.sh` red on main.
+
+## 2026-09-24 — PR #102 post-merge review follow-up
+
+Owning review: [ops-review-fleet on PR #102](https://github.com/future3OOO/codex-skills/pull/102#pullrequestreview-5297649589)
+(edited after merge to cover 239f7ca). Each of its 7 findings was measured on main 9eee492.
+
+Decisions:
+
+- The advisor diff takes deleted paths from git's own quoted `--numstat`, so a deleted
+  file named with a newline can no longer inject lines (a fake `diff --git` header or a
+  `+` line) into the advisor evidence. The channel is byte-identical to main on 8,106
+  recorded commit pairs across 106 local repositories (452 with deletions); 0 of 10,887
+  deleted paths in those histories need quoting.
+- The PostCompact advisory reset fails open on a filesystem error, as `advise()` already
+  does for the same unusable record, instead of exiting 1. The re-arm sequence is proved
+  to fail on a reset that exits 0 without removing the record.
+- `test_a_migration_between_prelock_reads_is_survived` asserts the racing migration's exit
+  status outside the SQLite trace callback, which swallows exceptions: with a broken racer,
+  main's version passed and this one fails.
+- Rejected with measurements (no code): the `sleep(1)` race schedule (both racers were in
+  the contested write-lock wait at COMMIT in 40 of 40 replays, 20 with 48 CPU spinners on
+  24 CPUs; an open-file barrier would be weaker, preflight advisor SPEC-1); the
+  `behavior_map` serialization escape (9 malformed shapes through `record tdd-map`,
+  0 tracebacks); the streaming-test hang (the tested regression returns when the child
+  exits); quoted shell syntax skipped by the observed rewrite (0 of 58,230 recorded
+  commands; such a command still runs, without a receipt).
+
+Delivery status: in progress on `fix/pr102-review-followup`; merge awaits explicit authorization.
