@@ -22,13 +22,16 @@ import tempfile
 import threading
 import time
 import unittest
+import zlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from hooks.lib._workflow_db import _ensure_authority, _open_connection, _schema, database_path  # noqa: E402
+from hooks.lib._workflow_db import (  # noqa: E402
+    FORMAT_REFUSAL, LEDGER_FORMAT, _ensure_authority, _open_connection, _schema, database_path,
+)
 from hooks.lib.repo_identity import resolve_repo_identity  # noqa: E402
 from hooks.lib.workflow_documents import advisor_envelope  # noqa: E402
 from hooks.lib.workflow_state import (  # noqa: E402
@@ -44,6 +47,8 @@ POST_TOOL = ROOT / "hooks" / "code-quality-gate.py"
 REARM = ROOT / "hooks" / "skill-discipline-rearm.py"
 # The pass base: its hooks/lib wrote every snapshot-era ledger this change migrates.
 SNAPSHOT_ERA = "ddd86cbf72a38f2840f6208aca71887171e12590"
+# The last commit writing format-2 ledgers, whose evidence parts are plain text.
+FORMAT_TWO = "b838e607948da5e01ee1f5ec496bc6ff86c9435b"
 TEST_APP = (
     "import unittest\nimport app\n\n\nclass AppTest(unittest.TestCase):\n"
     "    def test_value(self):\n        self.assertEqual(app.value, 2, 'VALUE_NOT_TWO')\n"
@@ -315,11 +320,11 @@ class ChannelManifest(Ceremony):
 
 
 class NoEventSnapshots(Ceremony):
-    def snapshot_era_cli(self) -> Path:
-        archive = subprocess.run(["git", "-C", str(ROOT), "archive", SNAPSHOT_ERA, "hooks/lib",
+    def snapshot_era_cli(self, commit: str = SNAPSHOT_ERA) -> Path:
+        archive = subprocess.run(["git", "-C", str(ROOT), "archive", commit, "hooks/lib",
                                   "skills/repo-production-workflow/scripts/workflow.py"],
                                  capture_output=True, check=True).stdout
-        target = self.tmp / "snapshot-era"
+        target = self.tmp / f"cli-{commit[:7]}"
         with tarfile.open(fileobj=io.BytesIO(archive)) as bundle:
             bundle.extractall(target, filter="data")
         return target / "skills" / "repo-production-workflow" / "scripts" / "workflow.py"
@@ -372,26 +377,44 @@ class NoEventSnapshots(Ceremony):
 
     def test_an_older_reader_refuses_the_migrated_ledger(self) -> None:
         marker = "OLDER_READER_MISREADS_LEDGER"
-        old = self.snapshot_era_cli()
-        fresh = self.repo
-        self.begin(fresh)
-        migrated = self.make_repo("migrated")
-        begun = subprocess.run([sys.executable, str(old), "begin", "--slug", "old", "--intent", "n"],
-                               cwd=migrated, env=self.env, capture_output=True, text=True)
-        self.assertEqual(begun.returncode, 0, begun.stderr)
-        for repo in (fresh, migrated):
-            self.repo = repo
+        pre96, format_two = self.snapshot_era_cli(), self.snapshot_era_cli(FORMAT_TWO)
+        self.begin()
+        legs = [(self.repo, pre96), (self.repo, format_two)]  # each reader: a fresh ledger and the one it wrote
+        for name, old in (("migrated", pre96), ("format-two", format_two)):
+            legs.append((self.make_repo(name), old))
+            begun = subprocess.run([sys.executable, str(old), "begin", "--slug", "old", "--intent", "n"],
+                                   cwd=legs[-1][0], env=self.env, capture_output=True, text=True)
+            self.assertEqual(begun.returncode, 0, begun.stderr)
+        for self.repo, old in legs:
             evidence_id = self.ok("verify", "--", sys.executable, "-c", "pass")["evidenceId"]
             stored = self.ok("evidence", "--full", "--evidence-id", evidence_id)
             for args in (("status",), ("history",), ("summary",), ("evidence", "--evidence-id", evidence_id),
                          ("begin", "--slug", "again", "--intent", "n")):
-                result = subprocess.run([sys.executable, str(old), *args], cwd=repo, env=self.env,
+                result = subprocess.run([sys.executable, str(old), *args], cwd=self.repo, env=self.env,
                                         capture_output=True, text=True)
-                self.assertEqual(result.returncode, 2, f"{marker}: {repo.name} {args[0]} exit {result.returncode}")
-                self.assertIn("workflow ledger format v2 needs the upgraded workflow estate", result.stderr,
-                              f"{marker}: {repo.name} {args[0]}: {result.stderr[-300:]}")
-                self.assertNotIn("parts", result.stdout, f"{marker}: {args[0]} returned stored part references")
+                where = f"{marker}: {old.parents[3].name} reader, {self.repo.name} {args[0]}"
+                self.assertEqual(result.returncode, 2, f"{where} exit {result.returncode}")
+                self.assertIn(FORMAT_REFUSAL, result.stderr, f"{where}: {result.stderr[-300:]}")
+                self.assertNotIn("parts", result.stdout, f"{where} returned stored part references")
             self.assertEqual(self.ok("evidence", "--full", "--evidence-id", evidence_id), stored, marker)
+
+    def test_a_format_two_ledger_reads_back_its_text_parts(self) -> None:
+        marker = "TEXT_PART_UNREAD"
+        old = self.snapshot_era_cli(FORMAT_TWO)
+
+        def run(*args: str) -> dict[str, object]:
+            result = subprocess.run([sys.executable, str(old), *args], cwd=self.repo, env=self.env,
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, f"{args[0]}: {result.stderr[-300:]}")
+            return json.loads(result.stdout.strip().splitlines()[-1])
+        run("begin", "--slug", "old", "--intent", "n")
+        evidence_id = str(run("verify", "--", sys.executable, "-c", "print('TEXT_PART')")["evidenceId"])
+        stored = run("evidence", "--full", "--evidence-id", evidence_id)
+        with sqlite3.connect(database_path(resolve_repo_identity(self.repo))) as connection:
+            kinds = {row[0] for row in connection.execute("SELECT typeof(part_json) FROM evidence_parts")}
+        self.assertEqual(kinds, {"text"}, "the format-2 writer stored no text part")
+        self.assertIn("TEXT_PART", json.dumps(stored), marker)
+        self.assertEqual(self.ok("evidence", "--full", "--evidence-id", evidence_id), stored, marker)
 
     def test_racing_first_opens_migrate_once(self) -> None:
         marker = "MIGRATION_RACE_LOST"
@@ -414,8 +437,8 @@ class NoEventSnapshots(Ceremony):
             out, err = racer.communicate(timeout=60)
             self.assertEqual(racer.returncode, 0, f"{marker}: {err[-300:]}")
             self.assertEqual(json.loads(out)["slug"], "old", marker)
-        self.assertEqual(holder.execute("SELECT value FROM ledger_metadata WHERE key = 'format'").fetchone(), ("2",),
-                         marker)
+        self.assertEqual(holder.execute("SELECT value FROM ledger_metadata WHERE key = 'format'").fetchone(),
+                         (LEDGER_FORMAT,), marker)
         holder.close()
         refused = subprocess.run([sys.executable, str(old), "status"], cwd=self.repo, env=self.env,
                                  capture_output=True, text=True)
@@ -459,7 +482,8 @@ class EvidenceParts(Ceremony):
         with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as connection:
             for (table,) in connection.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall():
                 for row in connection.execute(f"SELECT * FROM {table}"):
-                    count += any(isinstance(value, str) and needle in value for value in row)
+                    count += any(needle in (zlib.decompress(value).decode() if isinstance(value, bytes) else value)
+                                 for value in row if isinstance(value, (str, bytes)))
         return count
 
     def test_items_and_runs_are_stored_once_and_history_keeps_its_meaning(self) -> None:
@@ -844,6 +868,10 @@ class ObservedCapture(Ceremony):
                           f"{command} test_*.py", f"{command} # note", f"{command} ~/tests", f"{command} test_{{a,b}}"):
             self.assertNotIn("updatedInput", self.hook(unchanged, self.repo), f"{marker}: rewrote {unchanged!r}")
 
+    def test_a_carriage_return_stays_with_the_shell(self) -> None:
+        # bash passes `-q\rtests` to pytest as one argument; split, it would select tests
+        self.assertNotIn("updatedInput", self.hook("pytest -q\rtests", self.repo), "CARRIAGE_RETURN_REWRITTEN")
+
 
 class ObservedDrift(Ceremony):
     def test_a_run_spanning_an_edit_binds_nothing(self) -> None:
@@ -858,6 +886,31 @@ class ObservedDrift(Ceremony):
         bound = self.cli("verify", "--from-evidence", f"{state['verificationLatestEvidence']}:{run['runIndex']}")
         self.assertNotEqual(bound.returncode, 0, marker)
         self.assertEqual(self.state()["verification"], "pending", marker)
+
+    def test_a_run_that_executed_no_tests_binds_nothing(self) -> None:
+        marker = "ZERO_TEST_RUN_PROMOTED"
+        self.begin()
+        (self.repo / ".git" / "info" / "exclude").write_text(".pytest_cache/\n", encoding="utf-8")
+        (self.tmp / "empty").mkdir()
+        pytest = (sys.executable, "-m", "pytest")
+        for command in ((*pytest, "--collect-only", "-q"), (*pytest, "--co"), (*pytest, "--collectonly"),
+                        (*pytest, "--cache-show"), (*pytest, "--fixtures"), (*pytest, "-VV"),
+                        (sys.executable, "-m", "unittest", "discover", "-s", str(self.tmp / "empty"))):
+            direct = self.cli("verify", "--", *command)
+            self.cli("verify", "--observed", "--", *command)
+            receipt = str(self.state()["verificationLatestEvidence"])
+            run = evidence_document(resolve_repo_identity(self.repo), receipt)["runs"][-1]
+            self.assertNotIn("bindingError", run, f"fixture drift: {run.get('bindingError')}")
+            bound = self.cli("verify", "--from-evidence", f"{receipt}:{run['runIndex']}")
+            self.assertEqual((run["valid"], bound.returncode, direct.returncode), (False, 2, 2),
+                             f"{marker}: {' '.join(command[1:])} exit {run['exitCode']}")
+            self.assertNotEqual(self.state()["verification"], "passed", marker)
+
+    def test_a_command_naming_a_runner_is_not_a_runner_run(self) -> None:
+        self.begin()
+        for command in (("echo", "pytest"), ("echo", sys.executable, "-m", "unittest"), ("env", "echo", "pytest"),
+                        ("timeout", "5", "echo", "pytest"), (sys.executable, "-c", "print('ok')", "pytest")):
+            self.assertEqual(self.cli("verify", "--", *command).returncode, 0, f"RUNNER_ARGUMENT_REFUSED: {command}")
 
     def test_a_run_binds_to_the_pass_it_names_or_ran_under(self) -> None:
         marker = "RUN_CREDITED_TO_ANOTHER_PASS"

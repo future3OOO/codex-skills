@@ -1726,8 +1726,9 @@ Decisions:
 - Events are receipts; current state lives on the workflow row. Behavior Map items
   and run rows are stored once as content-addressed parts, so historical evidence
   keeps its meaning. Snapshot-era ledgers migrate in place; the `workflow.json`
-  importer is deleted. Measured: the 160-document CX4 corpus stores 811,189 of
-  4,144,618 bytes counting every part (80.43% less), readback identical.
+  importer is deleted. (Superseded, PR #102 review: the 811,189-byte / 80.43% figure
+  replayed documents reshaped by the new producers; the raw-document measurement and
+  its fix are below.)
 - One step table (`STEPS`) drives sequence, readiness, blockers and completion;
   `productionCode`/`implementation` leave state.
 - One ingest verb, `record <kind> [--check]`; each kind's `--help` prints its shape.
@@ -1737,6 +1738,9 @@ Decisions:
 - Run receipts by observation: a PreToolUse `updatedInput` rewrite (probed live on
   Codex 0.156) turns a lone pytest/unittest command into `verify --observed`,
   recorded in the checkout of its own working directory; `--from-evidence` binds it.
+  The exit code is the command's; while it records, the command's stderr is merged
+  into stdout. A command with its own redirect is never rewritten, so only the stream
+  changes (PR #102 review corrected the earlier "output unchanged" wording).
 - Advisor consults record the whole envelope and return a ~2KB digest; the checkpoint
   owns an ordered channel manifest. Flag dispositions mint finding `sourceRefs`.
 - Hook advisories emit only when their text changed for the session in the current
@@ -1819,7 +1823,53 @@ Decisions:
   field; its final ran on a state copy stamped with its last final's gate tree
   (837,977 -> 27,812 bytes).
 
+- PR #102 merge-readiness review (4 required items, README note):
+  - A pytest/unittest run verifies only when the runner reports an executed passing
+    test, the rule GREEN already used (`_pass_proof`). It applies to observed receipts,
+    `--from-evidence` and direct `verify -- <cmd>`, which also recorded
+    `pytest --co` as passed. A run whose report states no count (`-qq`,
+    `-p no:terminal`) no longer verifies. None of the 6,912 recorded exit-0 runs is
+    refused.
+  - Limit: the check uses TDD's one runner identifier (`identify`), which recognises
+    bare invocations only. A zero-test run behind a wrapper (`env`, `uv run`,
+    `timeout`, `bwrap`) still verifies. Review MR-1 stays recorded as fixed (the
+    ledger refuses re-dispositioning a terminal finding), but the wrapper fix was
+    withdrawn on zero occurrences: 0 of 478 recorded wrapped runner runs (280 exit 0)
+    executed zero tests. Two
+    attempts to parse wrappers in `_passed` each misread a command that only names a
+    runner (`echo pytest`, final advisor SPEC-34; then `bwrap --ro-bind / / echo
+    pytest`): a second shell grammar beside `identify`. Both were removed.
+  - Report only (MR-2): `verify --from-evidence` of a TDD run bound from a receipt
+    carries no output, so it now records invalid. Binding the receipt itself still
+    passes, and `verify --from-evidence` has 0 recorded uses.
+  - Evidence parts are zlib-compressed; the reader also accepts format-2 text parts.
+    Replaying the 160 raw CX4 documents stores 664,771 of 4,144,618 bytes (83.96%
+    less; 1,272,503 / 69.30% before), with 0 readback mismatches of 160. A real
+    format-2 ledger copy with text parts reads identically (318 of 318 documents).
+  - Ledger format 3. The number alone did not make a format-2 reader refuse by name
+    (it failed on `DROP TABLE` of a view). A trigger now refuses its format-2 stamp,
+    and the migration drops the views as views.
+  - Pitfall (code left as is): `format_guard` refuses every format value except 3,
+    and the migration creates it only when missing. A later format bump's own stamp
+    is refused ("format v3 needs the upgraded workflow estate", measured), so that
+    migration must drop and recreate the guard; a comment at `LEDGER_FORMAT` says so.
+  - `\r` joins the shell syntax that stops a rewrite. Over 58,230 recorded Bash
+    commands, the rewrite decisions are identical (555 rewritten).
+  - Exception to "reviewer-requested follow-ups reduce net lines" (MR-3): this
+    follow-up adds production +20 and tests +53. The four required items add
+    behavior (a count check, compression, a format guard, one character) that no
+    deletion in their scope offsets. The overlapping pre-#96 reader leg was trimmed.
+  - The final advisor's commit-ready appeal (SPEC-33 conceded) is refused by the
+    ledger's demotion guard (pre-existing at `ddd86cb`), so this pass cannot
+    `complete`; tracked in [#104](https://github.com/future3OOO/codex-skills/issues/104).
+
 Delivery status: PR #102 (closes #96). The follow-up commit answers its 30 review
 threads with fixes or measured rejections, after independent review and a final
 advisor consult on a copy of the state root (the installed wrapper cannot bound its
 diff). Merge awaits explicit authorization.
+
+Merge #102 with a merge commit, not squash or rebase (review RV-1). Two retained
+`NoEventSnapshots` tests `git archive` b838e60 (`FORMAT_TWO`), which is only on this
+branch. Measured in a main-only clone: both fail on `git archive` (exit 128) once
+b838e60 is unreachable, so a squash or rebase merge followed by deleting the branch
+turns `hooks/tests/run.sh` red on main.

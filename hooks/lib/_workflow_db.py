@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import sqlite3
+import zlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator, NoReturn, Sequence
@@ -21,10 +22,12 @@ DATABASE_NAME = "workflow.sqlite3"
 DATABASE_FILES = frozenset({DATABASE_NAME, *(f"{DATABASE_NAME}{suffix}" for suffix in ("-journal", "-wal", "-shm"))})
 AUTHORITY = "sqlite-event-ledger-v1"
 STATE_SCHEMA_VERSION = 1
-# Format 2 keeps state on workflow rows and evidence lists as parts. The tables an
-# older estate reads first become views over a function no SQLite build defines,
-# so its first read fails naming the format and its schema script creates nothing.
-LEDGER_FORMAT = "2"
+# Format 3 keeps state on workflow rows and evidence lists as zlib-compressed parts
+# (a format-2 ledger's text parts still read). The tables a pre-#96 estate reads first
+# are views over a function no SQLite build defines, and a trigger refuses the format
+# a format-2 estate stamps first, so either fails naming the format and writes nothing.
+# Bumping this: the migration must drop and recreate format_guard.
+LEDGER_FORMAT = "3"
 FORMAT_REFUSAL = f"workflow ledger format v{LEDGER_FORMAT} needs the upgraded workflow estate"
 POLICY_VERSION = 1
 BUSY_TIMEOUT_MS = 2500
@@ -251,7 +254,7 @@ def _validate_state_identity(identity: RepoIdentity, state: JsonObject) -> None:
 def _snapshot_era(connection: sqlite3.Connection) -> bool:
     return any(row["name"] == "state_json" for row in connection.execute("PRAGMA table_info(workflow_events)"))
 def _ensure_authority(connection: sqlite3.Connection, identity: RepoIdentity) -> None:
-    """Stamp a new ledger, or bring an older one to format v2; either commits whole
+    """Stamp a new ledger, or bring an older one to this format; either commits whole
     or leaves the ledger untouched. Each check reads one snapshot, and the locked one
     repeats it: a racing opener may migrate the ledger between reads."""
     connection.execute("BEGIN")
@@ -285,8 +288,12 @@ def _ensure_authority(connection: sqlite3.Connection, identity: RepoIdentity) ->
             )
             connection.execute("ALTER TABLE workflow_events DROP COLUMN state_json")
         connection.execute("INSERT OR REPLACE INTO ledger_metadata(key, value) VALUES ('format', ?)", (LEDGER_FORMAT,))
+        connection.execute(
+            "CREATE TRIGGER IF NOT EXISTS format_guard BEFORE INSERT ON ledger_metadata "
+            f"WHEN NEW.key = 'format' AND NEW.value <> '{LEDGER_FORMAT}' BEGIN SELECT RAISE(ABORT, '{FORMAT_REFUSAL}'); END"
+        )
         for name in ("metadata", "active_projection", "migration_records"):
-            connection.execute(f"DROP TABLE IF EXISTS {name}")
+            connection.execute(f"DROP {_object(connection, name) or 'table'} IF EXISTS {name}")
             connection.execute(f'CREATE VIEW {name} AS SELECT "{FORMAT_REFUSAL}"()')
         connection.commit()
     except Exception:
@@ -334,7 +341,7 @@ def _insert_evidence(connection: sqlite3.Connection, writes: Sequence[EvidenceWr
             connection.executemany(
                 """INSERT INTO evidence_parts(part_id, workflow_id, part_json) VALUES (?, ?, ?)
                    ON CONFLICT(part_id) DO NOTHING""",
-                ((part_id, write.workflow_id, text) for part_id, text in parts),
+                ((part_id, write.workflow_id, zlib.compress(text.encode())) for part_id, text in parts),
             )
             holder[key] = {"parts": [part_id for part_id, _ in parts]}
         connection.execute(
@@ -363,7 +370,7 @@ def _document(connection: sqlite3.Connection, text: str) -> JsonObject:
             ).fetchall()) if ids else {}
             if not set(ids) <= set(rows):
                 raise LedgerError("stored evidence references a missing part")
-            holder[key] = [json.loads(rows[part_id]) for part_id in ids]
+            holder[key] = [json.loads(zlib.decompress(rows[i]) if isinstance(rows[i], bytes) else rows[i]) for i in ids]
     return value
 def _insert_manifests(connection: sqlite3.Connection, writes: Sequence[ManifestWrite]) -> None:
     for write in writes:

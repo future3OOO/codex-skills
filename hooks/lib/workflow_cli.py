@@ -12,10 +12,11 @@ from pathlib import Path
 
 from ._workflow_db import CHECK_ONLY, LedgerError, _canonical, history, read_evidence
 from .behavior_map import interpretation_pending
-from .command_runner import emit_json as _emit_json, print_output as _print_output, run as _run, run_entry as _run_entry
+from .command_runner import _tail, emit_json as _emit_json, print_output as _print_output, run as _run, run_entry as _run_entry
 from .repo_identity import RepoIdentity, RepoIdentityError, resolve_repo_identity, try_resolve_repo_identity
 from .state_prune import prune
 from .state_store import _active_candidate_tree, repo_state_dir, state_root, tree_manifest, utc_timestamp
+from .tdd_surface import identify
 from .workflow_documents import (
     DOCUMENT_SHAPE_TABLE,
     advisor_envelope,
@@ -180,9 +181,19 @@ def _command(values: list[str]) -> list[str]:
     return command
 
 
+def _passed(command: str, exit_code: object, output: str) -> bool:
+    """Exit 0, and for a pytest/unittest command a runner-reported executed passing
+    test: a run that executed none (collect-only, --fixtures, an empty discover), or
+    reported no count (-qq), verifies nothing. The runner is TDD's (`identify`), which
+    recognises bare invocations only."""
+    from .tdd_workflow import _pass_proof
+    return exit_code == 0 and _pass_proof(identify(shlex.split(command)), output, baseline=False, exit_code=0)[0] is not None
+
+
 def _observed(command: list[str]) -> int:
     """Run a hook-rewritten test command as asked; at the root of a checkout with an
-    open workflow, also keep its receipt. Output and exit code are the command's."""
+    open workflow, also keep its receipt. The exit code is the command's; while a
+    receipt is kept, its stderr is merged into stdout."""
     identity = try_resolve_repo_identity(os.getcwd())
     state = None
     if identity is not None and str(Path.cwd().resolve()) == identity.root:
@@ -206,9 +217,9 @@ def _observed(command: list[str]) -> int:
         sys.stdout.buffer.write(chunk)
         sys.stdout.flush()
     raw, exit_code, timed_out = b"".join(chunks), process.wait(), False
-    run = _run_entry(raw, exit_code, timed_out, kind="observed", command=shlex.join(command),
-                     valid=binding_error is None and exit_code == 0, outputBytes=len(raw),
+    run = _run_entry(raw, exit_code, timed_out, kind="observed", command=shlex.join(command), outputBytes=len(raw),
                      **({"bindingError": binding_error} if binding_error else {}))
+    run["valid"] = binding_error is None and _passed(run["command"], exit_code, run["outputTail"])
     try:
         _, evidence_id, recorded = commit_verification(identity, state["slug"], state["workflowId"], run,
                                                        tree_before=tree_before)
@@ -230,7 +241,8 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
             raise ValueError("--from-evidence binds a recorded receipt and takes no command")
         receipt, manifest = execution_receipt(identity, state, args.from_evidence)
         run = {key: receipt[key] for key in ("command", "exitCode", "timedOut", "outputBytes") if key in receipt}
-        run.update(kind="generic", valid=receipt.get("exitCode") == 0, sourceReference=args.from_evidence,
+        run.update(kind="generic", sourceReference=args.from_evidence,
+                   valid=_passed(str(receipt.get("command", "")), receipt.get("exitCode"), str(receipt.get("outputTail", ""))),
                    at=utc_timestamp(), **({"replaces": args.replaces, "replacementReason": args.reason.strip()}
                                           if args.replaces else {}))
         state, evidence_id, recorded = commit_verification(identity, slug, workflow_id, run, tree_before=manifest)
@@ -285,7 +297,7 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
     finally:
         if graph_context_path is not None:
             os.unlink(graph_context_path)
-    valid = binding_error is None and not timed_out and exit_code == 0
+    valid = binding_error is None and not timed_out and _passed(shlex.join(command), exit_code, _tail(raw))
     gate: dict[str, object] | None = None
     shown = raw
     if args.kind == "quality-gate":
@@ -338,7 +350,7 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
         "treeManifestId": recorded.get("treeManifestId"),
     })
     if recorded["valid"] is not True:
-        reason = recorded.get("bindingError") or "verification command failed"
+        reason = recorded.get("bindingError") or ("verification command failed" if exit_code else "the runner reported no executed test")
         print(f"{reason}; verification stays pending until its rerun is green", file=sys.stderr)
         return 2
     return 0

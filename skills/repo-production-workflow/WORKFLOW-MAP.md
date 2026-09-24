@@ -210,7 +210,7 @@ session and defers the rest here.
 | Hook | Role |
 |---|---|
 | `PreToolUse(Edit\|Write\|apply_patch)` | Advise, never refuse: name what the pass has not recorded and admit the edit; docs, scratch, and non-repository paths are silent; test-like paths skip only the RED advice |
-| `PreToolUse(Bash)` | Rewrite a lone pytest/unittest command to `workflow.py verify --observed -- <command>`: the same output and exit code, plus a receipt in the checkout of the command's own working directory |
+| `PreToolUse(Bash)` | Rewrite a lone pytest/unittest command to `workflow.py verify --observed -- <command>`: the same exit code, plus a receipt in the checkout of the command's own working directory; while it records, the command's stderr is merged into stdout |
 | `PostToolUse(Edit\|Write\|apply_patch)` | Invalidate downstream readiness, then return single-file lint and the map advisory |
 | `PostCompact` | Forget which advisories this session has heard, so each returns once after compaction |
 | `SessionStart(compact)` | Restore the discipline line and the pass's open work from committed SQLite state |

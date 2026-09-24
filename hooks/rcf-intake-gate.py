@@ -6,7 +6,8 @@ the edit through; the recorder binds every later RED to the tree it ran on,
 so order of proof is evidence the reviews weigh, not a verdict on keystrokes.
 A shell command that is exactly one pytest/unittest invocation is rewritten to
 run through `workflow verify --observed`, which keeps its receipt in the
-checkout where it runs and leaves its output and exit code unchanged.
+checkout where it runs and returns its exit code; while it keeps a receipt,
+the command's stderr is merged into stdout.
 """
 from __future__ import annotations
 
@@ -37,7 +38,7 @@ from hooks.lib.workflow_state import (  # noqa: E402
 
 
 WORKFLOW = ROOT / "skills" / "repo-production-workflow" / "scripts" / "workflow.py"
-SHELL_SYNTAX = re.compile(r"[;&|<>`$()\n\\]")
+SHELL_SYNTAX = re.compile(r"[;&|<>`$()\n\r\\]")
 # Unquoted, these the shell would expand or drop; quoted, they reach the runner verbatim.
 SHELL_EXPANSION = re.compile(r"[*?\[\]{}~#]")
 

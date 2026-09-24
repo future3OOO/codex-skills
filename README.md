@@ -89,6 +89,11 @@ Back up and remove only explicitly owned obsolete files. Record the source SHA,
 selected paths and backup location; run the relevant existing probe against the
 installed entrypoint. Leave other estate paths unchanged.
 
+Update `hooks/` and `skills/` together when a change migrates the workflow ledger:
+the first new-estate read migrates it, and an old post-edit hook
+(`code-quality-gate.py`) then exits 1 with a traceback, where the old CLI refuses
+by name.
+
 ### External tool updates
 
 `./install.sh` does not upgrade GitNexus, Repo Context Forge or SoulForge, and
