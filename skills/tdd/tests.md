@@ -6,8 +6,11 @@ A behavior test survives internal refactoring: if observable behavior is unchang
 
 RED/GREEN probes need not be committed. Keep uncommitted probes runnable
 in a Git-ignored path in the task worktree until pass completion.
+A direct-operation probe must print or assert its outcome; exit 0 alone
+does not prove GREEN.
 
-Retain the real probe as the regression test where practical. Additional checks
+Commit a probe only for regression coverage no existing check has, as the
+smallest case in an existing harness. Additional checks
 require distinct coverage or demonstrated cheaper feedback, with defect sensitivity
 and no narrowing of the contract; they do not replace production acceptance. Apply
 [Production Code's comparison rules](../production-code/SKILL.md#minimum-implementation-decision)

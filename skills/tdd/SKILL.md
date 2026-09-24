@@ -23,7 +23,7 @@ Before selecting the first slice, read [tests.md](tests.md). Before naming a RED
 
 Tests serve the task's behavior surface. Do not test unrelated unchanged behavior. When the change wraps, replaces, intercepts, or reroutes an existing production Seam, preserving every material success, failure, input-form, state, and atomicity guarantee the new path can alter is task behavior.
 
-A **Seam** is the public Interface or externally observable product boundary where behavior is driven and observed without substituting an interior path. Name it before probing. When the contract is inferred from repository convention or an analogue, the RED must exercise an input that distinguishes the plausible interpretations.
+A **Seam** is the public Interface or externally observable product boundary where behavior is driven and observed without substituting an interior path. When the contract is inferred from repository convention or an analogue, the RED must exercise an input that distinguishes the plausible interpretations.
 
 Make the real Seam drivable: establish its required runtime and collaborators; use `/codebase-design` to expose the production Interface when needed. If the change creates the Seam, prove its absence as narrowly allowed by the Core Rule, create it, then return and drive every required behavior through it. Setup or entrypoint absence never substitutes for executed behavior proof.
 
