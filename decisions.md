@@ -19,8 +19,9 @@ format change is needed. [#95](https://github.com/future3OOO/codex-skills/issues
 and [#97](https://github.com/future3OOO/codex-skills/issues/97) are downstream
 consumers of the restored metadata.
 
-**Delivery:** Candidate on `fix/pr102-contract-restoration`; follow-up PR to be
-opened and left unmerged. Each changed behavior has an isolated CLI RED/GREEN.
+**Delivery:** [PR #106](https://github.com/future3OOO/codex-skills/pull/106) is
+open on `fix/pr102-contract-restoration` and left unmerged. Each changed behavior
+has an isolated CLI RED/GREEN.
 
 ## 2026-09-21 — Session relocation via marker, kill, and resume
 
