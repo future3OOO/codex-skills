@@ -30,8 +30,8 @@ Killing the process mid `safe_bulk_insert` left rows 1-3 committed under the
 arm's backup snapshots and only row 1 under G5 and G6. One arm; the sentence's
 effect on agent behavior is unmeasured until an arm reruns.
 
-**Status:** Docs-only PR on `docs/editable-code-not-constraint`. No merge or
-installation.
+**Status:** Docs-only [PR #113](https://github.com/future3OOO/codex-skills/pull/113);
+independent review clean after two fixes. No merge or installation.
 
 ## 2026-09-21 — Session relocation via marker, kill, and resume
 
