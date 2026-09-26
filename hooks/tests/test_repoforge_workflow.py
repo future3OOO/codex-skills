@@ -538,6 +538,9 @@ class RepoForgeWorkflowTests(unittest.TestCase):
             gaps = finding["completeness"]["gaps"]
             self.assertNotEqual(finding["status"], "incomplete", f"{rule_id} could not evaluate: {gaps}")
             self.assertTrue(finding["completeness"]["complete"], f"{rule_id} gaps: {gaps}")
+        # The summary verify prints is that graph-backed evaluation.
+        self.assertIn("- QG54-OWNER-COMPETITION-PRODUCTION: pass", verified.stdout, "VERIFY_SUMMARY_WITHOUT_GRAPH")
+        self.assertNotIn("graph evidence", verified.stdout, "VERIFY_SUMMARY_WITHOUT_GRAPH")
 
     @unittest.skipUnless(GITNEXUS, "the real GitNexus CLI is unavailable")
     def test_evidence_bound_to_a_different_snapshot_keeps_the_owner_rules_incomplete(self) -> None:
