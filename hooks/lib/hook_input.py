@@ -7,7 +7,7 @@ import os
 import re
 import sqlite3
 import sys
-from contextlib import closing
+from contextlib import closing, suppress
 from pathlib import Path
 
 
@@ -134,4 +134,5 @@ def advise(event: str, session: object, advisories: dict[str, str]) -> None:
 def reset_advisories(session: object) -> None:
     """Compaction spends every held advisory; the next one is heard again."""
     if (record := _heard(session)) is not None:
-        record.unlink(missing_ok=True)
+        with suppress(OSError):  # an unwritable record fails open, as in advise()
+            record.unlink(missing_ok=True)

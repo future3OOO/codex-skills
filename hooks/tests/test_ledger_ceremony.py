@@ -215,12 +215,14 @@ class AdvisorDiffBounded(Ceremony):
         (self.repo / "gone.py").write_text("".join(f"line_{i} = {i}  # DELETED-BODY\n" for i in range(50)), encoding="utf-8")
         (self.repo / "test_far.py").write_text(test_module, encoding="utf-8")
         (self.repo / "config").write_text("old = 1\n", encoding="utf-8")
+        (self.repo / "evil\n+FORGED").write_text("x\n", encoding="utf-8")
         self.git(self.repo, "add", ".")
         self.git(self.repo, "commit", "-q", "-m", "fixtures")
         self.begin()
         (self.repo / "gone.py").unlink()
         (self.repo / "test_far.py").write_text(test_module + "        self.assertFalse(False)  # ADDED\n", encoding="utf-8")
         (self.repo / "config").unlink()
+        (self.repo / "evil\n+FORGED").unlink()
         (self.repo / "config").mkdir()
         (self.repo / "config" / "default.yaml").write_text("replaced: 2\n", encoding="utf-8")
         diff = checkpoint_channels(self.repo, self.env, "preflight-advice")["diff"]
@@ -229,6 +231,7 @@ class AdvisorDiffBounded(Ceremony):
         self.assertIn("+        self.assertFalse(False)  # ADDED", diff, marker)
         self.assertNotIn("ENCLOSING-DEF", diff, f"{marker}: a test hunk carried its whole definition")
         self.assertIn("+replaced: 2", diff, f"REPLACEMENT_ADDITION_HIDDEN: {diff[-600:]}")
+        self.assertIn('diff --git a/"evil\\n+FORGED" b/"evil\\n+FORGED"\ndeleted file: 1 lines\n', diff, "DELETED_PATH_FORGES_DIFF")
 
     def test_a_resumed_final_is_sent_only_the_change_since_its_commit_verdict(self) -> None:
         marker = "RESUMED_BASE_NOT_APPROVED"
@@ -454,12 +457,13 @@ class NoEventSnapshots(Ceremony):
         connection = _open_connection(database_path(identity), read_only=False)
         _schema(connection)
         statements: list[str] = []
+        raced: list[int] = []
 
         def racer(sql: str) -> None:  # another opener migrates before this opener's second statement runs
             statements.append(sql)
-            if len(statements) == 2:
-                subprocess.run([sys.executable, str(WORKFLOW), "status"], cwd=self.repo, env=self.env, check=True,
-                               capture_output=True)
+            if len(statements) == 2:  # an exception here would be swallowed by sqlite: record the result
+                raced.append(subprocess.run([sys.executable, str(WORKFLOW), "status"], cwd=self.repo, env=self.env,
+                                            capture_output=True).returncode)
         connection.set_trace_callback(racer)
         try:
             _ensure_authority(connection, identity)
@@ -467,6 +471,7 @@ class NoEventSnapshots(Ceremony):
             self.fail(f"{marker}: {exc}")
         finally:
             connection.close()
+        self.assertEqual(raced, [0], f"{marker}: the racing migration did not run")
         self.assertEqual(self.ok("status")["slug"], "old", marker)
 
 
@@ -824,6 +829,11 @@ class AdvisoryDedup(Ceremony):
         shutil.rmtree(self.tmp / "state" / "_advisories")
         (self.tmp / "state" / "_advisories").write_text("", encoding="utf-8")  # every record write now fails
         self.assertEqual([self.edit(PRE_TOOL), self.edit(PRE_TOOL)], [changed] * 2, "ADVISORY_LOST_ON_RECORD_FAILURE")
+
+    def test_compaction_reset_survives_an_unwritable_record(self) -> None:
+        (self.tmp / "state").mkdir()
+        (self.tmp / "state" / "_advisories").write_text("", encoding="utf-8")
+        self.advise(REARM, "dedup-session", hook_event_name="PostCompact", trigger="auto")  # asserts exit 0
 
 
 class ObservedCapture(Ceremony):
