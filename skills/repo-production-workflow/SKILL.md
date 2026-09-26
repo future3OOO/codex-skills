@@ -22,7 +22,7 @@ bindings current and report unavailable comparisons under
 
 ## One stable workflow
 
-Follow [AGENTS.md](../../AGENTS.md#production-repo-workflow) for isolation and pass reuse.
+Follow AGENTS.md's Production Repo Workflow section for isolation and pass reuse.
 After creating or selecting the task worktree, move this session's root into
 it before `begin` — the session checkout is the pass's `--repo`, and only a
 rooted session gives delegates, hooks, and advisors the same checkout:
@@ -349,10 +349,9 @@ on the affected delta, and repeat final review. Reuse applicable evidence.
 ### 12. Delivery and reviewer completion
 
 After the final advisor finds the candidate ready, commit, push, and open/update
-the PR when intended for integration. Run the
-[reviewer completion gate](../../AGENTS.md#reviewer-findings-and-completion) on the
-current head. Merge only with explicit maintainer authorization; passing checks
-and reviews do not authorize merge.
+the PR when intended for integration. Run AGENTS.md's reviewer completion gate
+(Reviewer Findings And Completion) on the current head. Merge only with explicit
+maintainer authorization; passing checks and reviews do not authorize merge.
 Keep the pass active through reviewer closure; corrections repeat only the
 affected steps, including verification and independent review.
 
