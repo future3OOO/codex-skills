@@ -12,7 +12,7 @@ from pathlib import Path
 
 from ._workflow_db import CHECK_ONLY, LedgerError, _canonical, history, read_evidence
 from .behavior_map import interpretation_pending
-from .command_runner import MAX_CAPTURE, _tail, emit_json as _emit_json, print_output as _print_output, run as _run, run_entry as _run_entry
+from .command_runner import _tail, emit_json as _emit_json, print_output as _print_output, run as _run, run_entry as _run_entry
 from .repo_identity import RepoIdentity, RepoIdentityError, resolve_repo_identity, try_resolve_repo_identity
 from .state_prune import prune
 from .state_store import _active_candidate_tree, repo_state_dir, state_root, tree_manifest, utc_timestamp
@@ -303,11 +303,10 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
     shown = raw
     if args.kind == "quality-gate":
         try:
-            # Text mode: the gate's summary for the lead (its head when over the output cap:
-            # verdict, checks and errors come first), then its JSON verdict line for the ledger.
+            # Text mode: the whole summary for the lead, then the JSON verdict line for the ledger.
             summary, _, verdict = raw.rstrip(b"\n").rpartition(b"\n")
             gate = validate_gate_result(json.loads(verdict.decode("utf-8")))
-            shown, raw = (summary.rstrip(b"\n") + b"\n")[:MAX_CAPTURE], (json.dumps(gate, sort_keys=True) + "\n").encode()
+            shown, raw = summary.rstrip(b"\n") + b"\n", (json.dumps(gate, sort_keys=True) + "\n").encode()
             valid = valid and gate.get("ok") is True
             errors = gate.get("errors")
             capture = next(
@@ -341,7 +340,7 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
         run["bindingError"] = binding_error
     state, evidence_id, recorded = commit_verification(identity, slug, workflow_id, run, tree_before=tree_before)
 
-    _print_output(shown)
+    _print_output(shown, whole=gate is not None)
     _emit_json({
         "evidenceId": evidence_id,
         "exitCode": exit_code,

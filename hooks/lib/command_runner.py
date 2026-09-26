@@ -123,8 +123,8 @@ def mute_stdout() -> None:
         os.close(descriptor)
 
 
-def print_output(raw: bytes) -> None:
-    output = _tail(raw)
+def print_output(raw: bytes, *, whole: bool = False) -> None:
+    output = raw.decode("utf-8", errors="replace") if whole else _tail(raw)
     if output:
         try:
             print(output, end="" if output.endswith("\n") else "\n")
