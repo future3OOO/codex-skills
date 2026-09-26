@@ -11,7 +11,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from . import behavior_map, tdd_surface
+from . import behavior_map, proof_gaps, tdd_surface
 from .command_runner import (
     emit_json as _emit_json,
     print_output as _print_output,
@@ -662,6 +662,15 @@ def _run_tdd(values: list[str]) -> int:
 
     if proof is not None and binding.get("productionChanged"):
         proof = {**proof, "productionChanged": binding["productionChanged"]}
+    gaps, ran = None, None
+    # The check reruns the proof, so a proof with effects outside the checkout repeats them; opt out there.
+    if (not legacy and phase == "green" and valid and receipt is None and not nonexecuting
+            and os.environ.get("WORKFLOW_PROOF_GAPS") != "off"):
+        # Lines other items' current GREEN proofs ran live on their map binding: committed with the GREEN, dropped on reopen.
+        others = [entry["proofBinding"]["ranLines"] for entry in items if entry["id"] != args.behavior_id
+                  and entry.get("status") == "green" and "ranLines" in entry.get("proofBinding", {})]
+        gaps, ran = proof_gaps.report(identity, command, env, mapped, binding["candidateTree"],
+                                      str(state.get("passStartOid") or "HEAD"), others)
     fields: dict[str, object] = {
         "phase": phase,
         "command": command_text,
@@ -673,6 +682,8 @@ def _run_tdd(values: list[str]) -> int:
     else:
         fields["behaviorId"] = args.behavior_id
         fields["expectedFailure"] = expected if phase == "red" else None
+        if gaps is not None:
+            fields["proofGaps"] = gaps
         if proof is not None:
             fields["passProof" if phase == "green" else "redProof"] = proof
         elif proof_error:
@@ -725,7 +736,8 @@ def _run_tdd(values: list[str]) -> int:
         updated_item = behavior_map.item(updated, args.behavior_id)
         if baseline or (phase == "green" and valid):
             updated_item["proofBinding"] = {"candidateTree": binding["candidateTree"],
-                                             "command": command_text, "testId": args.test_id}
+                                             "command": command_text, "testId": args.test_id,
+                                             **({"ranLines": ran} if ran else {})}
         doc_kind = "cycle"
         if baseline:
             updated_item["status"] = "already-satisfied"
@@ -817,6 +829,8 @@ def _run_tdd(values: list[str]) -> int:
         payload["behaviorId"] = args.behavior_id
     if input_check is not None:
         payload["inputEvidence"] = input_check
+    if gaps and len(gaps) > 1:  # the lead hears only of gaps; the run entry keeps the summary for review
+        payload["proofGaps"] = gaps
     if baseline:
         payload["status"] = "already-satisfied"
     _emit_json(payload)

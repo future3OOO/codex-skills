@@ -2935,6 +2935,7 @@ class WorkflowRecovery(AttackHarness):
         self.add_claim(slug, wid, "BM_SECOND")
         counter = self.tmp / "executions"
         self.env["PROBE_COUNTER"] = str(counter)
+        self.env["WORKFLOW_PROOF_GAPS"] = "off"  # the check reruns the proof; this counts executions
         (self.repo / "test_actual.py").write_text(
             "import app,os,unittest\nfrom pathlib import Path\n"
             "p=Path(os.environ['PROBE_COUNTER']); p.write_text(p.read_text()+'x' if p.exists() else 'x')\n"
@@ -2964,6 +2965,7 @@ class WorkflowRecovery(AttackHarness):
         self.add_claim(slug, wid, "BM_CLASS")
         counter = self.tmp / "executions"
         self.env["PROBE_COUNTER"] = str(counter)
+        self.env["WORKFLOW_PROOF_GAPS"] = "off"  # the check reruns the proof; this counts executions
         (self.repo / "test_actual.py").write_text(
             "import app,os,unittest\nfrom pathlib import Path\n"
             "p=Path(os.environ['PROBE_COUNTER']); p.write_text(p.read_text()+'x' if p.exists() else 'x')\n"
@@ -3007,6 +3009,7 @@ class WorkflowRecovery(AttackHarness):
         self.add_claim(slug, wid, "BM_SKIPPED")
         counter = self.tmp / "executions"
         self.env["PROBE_COUNTER"] = str(counter)
+        self.env["WORKFLOW_PROOF_GAPS"] = "off"  # the check reruns the proof; this counts executions
         (self.repo / "app.py").write_text("value = 1\nlabel = 'waiting'\n")
         (self.repo / "test_batch.py").write_text(
             "import app,os,unittest\nfrom pathlib import Path\n"
