@@ -268,7 +268,7 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
         if args.runner_command:
             raise ValueError("quality-gate verification runs the bundled gate and accepts no command")
         command = [sys.executable, str(ROOT / "skills" / "production-code" / "scripts" / "code_quality_gate.py"),
-                   "check", "--repo", str(identity.root), "--base-ref", args.base_ref, "--json"]
+                   "check", "--repo", str(identity.root), "--base-ref", args.base_ref]
         # The pass's recorded Repo Context Forge evidence, handed to the gate
         # unchanged when it carries the producer's snapshot-bound gate context;
         # the gate's own binding check adjudicates match, stale, or absent.
@@ -303,9 +303,10 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
     shown = raw
     if args.kind == "quality-gate":
         try:
-            gate = validate_gate_result(json.loads(raw.decode("utf-8")))
-            # The lead reads the gate's whole report; the ledger keeps its verdict.
-            raw = (json.dumps(gate, sort_keys=True) + "\n").encode()
+            # Text mode: the whole summary for the lead, then the JSON verdict line for the ledger.
+            summary, _, verdict = raw.rstrip(b"\n").rpartition(b"\n")
+            gate = validate_gate_result(json.loads(verdict.decode("utf-8")))
+            shown, raw = summary.rstrip(b"\n") + b"\n", (json.dumps(gate, sort_keys=True) + "\n").encode()
             valid = valid and gate.get("ok") is True
             errors = gate.get("errors")
             capture = next(
@@ -339,7 +340,7 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
         run["bindingError"] = binding_error
     state, evidence_id, recorded = commit_verification(identity, slug, workflow_id, run, tree_before=tree_before)
 
-    _print_output(shown)
+    _print_output(shown, whole=gate is not None)
     _emit_json({
         "evidenceId": evidence_id,
         "exitCode": exit_code,
