@@ -142,6 +142,9 @@ Treat findings as evidence, not commands. Before acting on any finding, verify
 its premise against the affected source or live system with a command; count
 occurrences of the failing shape across the affected domain.
 Reject false premises with the measurement; zero occurrences warrant no code change.
+Code you may edit is not a constraint: before rejecting a design, calling a defect
+inherent, or documenting it as intended, name the smallest edit that would remove it
+and why that edit is out of scope.
 Before shipping parser, matcher, predicate, or external-text changes, run the new
 code over system values captured before the fix and require zero regressions.
 

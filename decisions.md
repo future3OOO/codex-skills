@@ -6,6 +6,33 @@ Issue bodies own implementation scope; this record preserves decisions and their
 status. New decisions supersede earlier ones explicitly; observations and open
 acceptance gaps are not completed delivery.
 
+## 2026-09-25 — Editable code is not a constraint
+
+**Decision:** AGENTS.md's findings rules add one sentence: before rejecting a
+design or calling a defect inherent, name the smallest edit to code you may
+change that would remove it and why that edit is out of scope ("smallest" bars
+a strawman edit). It sits beside the premise/occurrence checks, which govern
+finding dispositions and, through codex-advisor, architecture-family decisions.
+That pointer named the repo's `CLAUDE.md`, which Codex runs do not load; it now
+names `AGENTS.md`. Rejected: separate transaction-doctrine, preflight, diagnose
+and disposition clauses (one error restated at four sites) and an advisor change
+(the advisor raised it three times: SPEC-2, SPEC-F3, SPEC-R2).
+
+**Observed:** The SX no-cut arm (SWE-2 High, reward 1) treated sqlite-utils' own
+per-batch `with self.db.conn:` commit as fixed four times: it rejected SAVEPOINT
+checkpoints in its design, marked SPEC-2 fixed as "an inherent, documented
+limitation" and SPEC-F3 fixed as "inherent to sqlite-utils chunked commits",
+and rejected SPEC-R2 because transient batch visibility "cannot be removed
+without abandoning streaming inserts". Passing savepoint arms (G5, G6) route
+`insert_chunk` through a checkpoint-aware `_transaction()` and still stream: a
+second connection saw only row 1 throughout, where the arm exposed each batch.
+Killing the process mid `safe_bulk_insert` left rows 1-3 committed under the
+arm's backup snapshots and only row 1 under G5 and G6. One arm; the sentence's
+effect on agent behavior is unmeasured until an arm reruns.
+
+**Status:** Docs-only [PR #113](https://github.com/future3OOO/codex-skills/pull/113);
+independent review clean after two fixes. No merge or installation.
+
 ## 2026-09-21 — Session relocation via marker, kill, and resume
 
 **Decision:** [#83](https://github.com/future3OOO/codex-skills/issues/83) is
