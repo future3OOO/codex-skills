@@ -752,7 +752,7 @@ def test_repeated_inline_scaffolds_are_one_owner_candidate(repo: Path) -> None:
     ]
     assert len(expected) == 5, expected
     assert [(region["path"], region["displayLine"]) for region in finding["region"]["regions"]] == expected, finding
-    assert f"[{finding['findingId']}]: " + ", ".join(f"{p}:{n}" for p, n in expected) in warnings, "TEXT_FINDING_UNLOCATED"
+    assert f"[{finding['findingId']}] candidate lifecycle-coordinators: " + ", ".join(f"{p}:{n}" for p, n in expected) in warnings, "TEXT_FINDING_UNLOCATED"
     assert code == 0 and payload["ok"] is True, (code, payload["errors"])
 
 
@@ -1499,7 +1499,7 @@ def test_deletion_without_rewiring_stays_unresolved(repo: Path) -> None:
     gone = run(["git", "rev-parse", "HEAD"], repo).stdout.strip()
     write_disposition(repo, [{**record, "candidate": gone}])
     code, payload, warnings = run_gate(repo, "--base-ref", base)
-    assert code == 0 and "confirmed-unresolved app-state-root-location" in warnings, ("TEXT_RECORD_UNKEYED", code, warnings)
+    assert code == 0 and "confirmed-unresolved disposition app-state-root-location" in warnings, ("TEXT_RECORD_UNKEYED", code, warnings)
 
 
 @with_repo

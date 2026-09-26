@@ -12,7 +12,7 @@ from pathlib import Path
 
 from ._workflow_db import CHECK_ONLY, LedgerError, _canonical, history, read_evidence
 from .behavior_map import interpretation_pending
-from .command_runner import _tail, emit_json as _emit_json, print_output as _print_output, run as _run, run_entry as _run_entry
+from .command_runner import MAX_CAPTURE, _tail, emit_json as _emit_json, print_output as _print_output, run as _run, run_entry as _run_entry
 from .repo_identity import RepoIdentity, RepoIdentityError, resolve_repo_identity, try_resolve_repo_identity
 from .state_prune import prune
 from .state_store import _active_candidate_tree, repo_state_dir, state_root, tree_manifest, utc_timestamp
@@ -268,7 +268,7 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
         if args.runner_command:
             raise ValueError("quality-gate verification runs the bundled gate and accepts no command")
         command = [sys.executable, str(ROOT / "skills" / "production-code" / "scripts" / "code_quality_gate.py"),
-                   "check", "--repo", str(identity.root), "--base-ref", args.base_ref, "--json"]
+                   "check", "--repo", str(identity.root), "--base-ref", args.base_ref]
         # The pass's recorded Repo Context Forge evidence, handed to the gate
         # unchanged when it carries the producer's snapshot-bound gate context;
         # the gate's own binding check adjudicates match, stale, or absent.
@@ -303,9 +303,11 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
     shown = raw
     if args.kind == "quality-gate":
         try:
-            gate = validate_gate_result(json.loads(raw.decode("utf-8")))
-            # The lead reads the gate's whole report; the ledger keeps its verdict.
-            raw = (json.dumps(gate, sort_keys=True) + "\n").encode()
+            # Text mode: the gate's summary for the lead (its head when over the output cap:
+            # verdict, checks and errors come first), then its JSON verdict line for the ledger.
+            summary, _, verdict = raw.rstrip(b"\n").rpartition(b"\n")
+            gate = validate_gate_result(json.loads(verdict.decode("utf-8")))
+            shown, raw = (summary.rstrip(b"\n") + b"\n")[:MAX_CAPTURE], (json.dumps(gate, sort_keys=True) + "\n").encode()
             valid = valid and gate.get("ok") is True
             errors = gate.get("errors")
             capture = next(

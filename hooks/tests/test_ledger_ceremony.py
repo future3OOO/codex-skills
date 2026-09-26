@@ -1014,11 +1014,19 @@ class ObservedInWorkflow(Ceremony):
     def test_the_typed_gate_shows_its_warnings(self) -> None:
         marker = "GATE_WARNINGS_HIDDEN"
         self.begin()
-        body = "    total = 0\n    for item in items:\n        total += item * 2\n        total -= 1\n    return total\n"
-        (self.repo / "alpha.py").write_text("def alpha(items):\n" + body, encoding="utf-8")
-        (self.repo / "beta.py").write_text("def beta(items):\n" + body, encoding="utf-8")
-        gate = self.cli("verify", "--kind", "quality-gate", "--base-ref", "HEAD")
-        self.assertIn("QG54-OWNER-COMPETITION", gate.stdout, f"{marker}: {gate.stdout[-400:]}")
+        body = "    total = 0\n    for item in items:\n        total += item * 2\n        total -= 1\n        total += 3\n        total *= 2\n    return total\n"
+        for name in ("alpha", "beta", "gamma"):  # a JSON report over the 16,000-byte output cap
+            (self.repo / f"{name}.py").write_text(f"def {name}(items):\n" + body, encoding="utf-8")
+        (self.repo / "escape.py").write_text("X = 1  # TO" + "DO later\n", encoding="utf-8")
+        printed = self.cli("verify", "--kind", "quality-gate", "--base-ref", "HEAD").stdout
+        self.assertTrue(printed.startswith("Production Code Quality Gate\nverdict: fail"), f"GATE_SUMMARY_NOT_SHOWN: {printed[:80]}")
+        self.assertIn("- no-quality-escapes: fail (escape.py:1)", printed, "GATE_SUMMARY_NOT_SHOWN")
+        self.assertIn("- QG54-OWNER-COMPETITION-PRODUCTION [", printed, marker)
+        for index in range(150):  # a text summary over the cap keeps its head: verdict, checks, errors
+            (self.repo / f"copy_{index:03d}_{'x' * 60}.py").write_text(f"def copy{index}(items):\n" + body, encoding="utf-8")
+        printed = self.cli("verify", "--kind", "quality-gate", "--base-ref", "HEAD").stdout
+        self.assertIn("verdict: fail", printed[:120], "GATE_SUMMARY_HEAD_CUT")
+        self.assertIn("- no-quality-escapes: fail (escape.py:1)", printed, "GATE_SUMMARY_HEAD_CUT")
         run = evidence_document(resolve_repo_identity(self.repo), str(self.state()["verificationLatestEvidence"]))["runs"][-1]
         self.assertEqual(set(run["gate"]), {"ok", "errors"}, marker)
 
