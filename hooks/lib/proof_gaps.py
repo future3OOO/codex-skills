@@ -42,7 +42,7 @@ def report(identity: RepoIdentity, command: list[str], env: dict[str, str] | Non
     try:
         with tempfile.TemporaryDirectory(prefix="proof-gaps-") as scratch:
             return _report(identity, command, env, item, green_tree, pass_start, others, Path(scratch))
-    except (OSError, RuntimeError, ValueError, SyntaxError) as error:
+    except (OSError, RuntimeError, ValueError, SyntaxError, KeyError, TypeError) as error:
         return [f"{PREFIX} not run ({type(error).__name__}: {error})"], []
 
 
@@ -69,7 +69,8 @@ def _report(identity, command, env, item, green_tree, pass_start, others, scratc
 
     base = observe("b1")
     if base["exit"] != 0:
-        return [f"{PREFIX} not run (the proof exited {base['exit']} on a copy of the candidate)"], []
+        cause = "hit the time budget" if base["exit"] is None else f"exited {base['exit']}"
+        return [f"{PREFIX} not run (the proof {cause} on a copy of the candidate)"], []
     if not base["lines"] and not base["events"]:
         return [f"{PREFIX} not run - the observer saw no execution (the interpreter ignored PYTHONPATH or started no Python)"], []
     ran = base["lines"] & {f"{p}:{n}" for p, lines in since_start.items() for n in lines}
@@ -77,12 +78,15 @@ def _report(identity, command, env, item, green_tree, pass_start, others, scratc
     share = Counter(line for lines in others for line in lines)
     owned = {line for line in ran if share[line] < max(2, SHARE * len(others))}
     targets = {p: {n for n in lines if f"{p}:{n}" in owned} for p, lines in since_start.items()}
+    if ran and not owned:
+        return [f"{PREFIX} not run - other items' GREEN proofs already run every changed line this proof runs"], sorted(ran)
     if not any(targets.values()):
         return [f"{PREFIX} not run - the proof ran none of the changed lines in its copy (it may import the checkout "
                 "through an absolute path or an installed package)"], sorted(ran)
     second = observe("b2")
     if second["exit"] != 0:
-        return [f"{PREFIX} not run (a second unchanged run of the proof exited {second['exit']}; its outcome is not repeatable)"], sorted(ran)
+        cause = "hit the time budget" if second["exit"] is None else f"exited {second['exit']}; its outcome is not repeatable"
+        return [f"{PREFIX} not run (a second unchanged run of the proof {cause})"], sorted(ran)
     noise = {(e[0], e[1]) for e in set(base["events"]) ^ set(second["events"])}
     sites = sorted((path, site) for path, lines in targets.items() for site in _sites(identity, path) if site[1] in lines)
     sites = random.Random(str(item.get("id"))).sample(sites, min(MAX_BREAKS, len(sites)))
@@ -93,8 +97,8 @@ def _report(identity, command, env, item, green_tree, pass_start, others, scratc
         path, where = site
         broken = _mutate((Path(identity.root) / path).read_text(encoding="utf-8"), where)
         seen = observe(f"m{sites.index(site)}", timeout, (path, broken))
-        if seen["exit"] != 0:
-            return site, "caught", None
+        if seen["exit"] != 0:  # a run the shared budget cut short proves nothing; a break that hangs stops earlier
+            return site, "skipped" if seen["exit"] is None and deadline - time.monotonic() < 1 else "caught", None
         difference = _difference(base, seen, noise)
         return site, "survived" if difference else "quiet", difference
 
@@ -161,7 +165,7 @@ def _observe(identity, command, env, copy: Path, out: Path, changed: dict[str, s
                "TMPDIR": str(out / "tmp"), "PYTHONDONTWRITEBYTECODE": "1"}
     begun = time.monotonic()
     _, code, timed_out = run(argv, dataclasses.replace(identity, root=CanonicalRoot(str(copy))), timeout, runtime)
-    seen = {"exit": 124 if timed_out else code, "seconds": time.monotonic() - begun, "lines": set(), "events": []}
+    seen = {"exit": None if timed_out else code, "seconds": time.monotonic() - begun, "lines": set(), "events": []}
     for report_file in sorted(out.glob("*.json")):
         data = json.loads(report_file.read_text(encoding="utf-8"))
         seen["lines"] |= set(data["lines"])

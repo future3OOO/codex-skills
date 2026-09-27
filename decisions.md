@@ -1946,7 +1946,8 @@ Decisions:
   AUC 0.82 on 159 frozen blind-labelled survivors (29/114 real caught at p >= 0.7, 1/45 false).
 - Owned lines, not lines since the item's RED (supersedes SPEC-5's rule): replaying armSX-none's 71
   GREENs, since-RED flagged 3 of 24 labelled weak items; owned lines 9/24 and 7/24 (two runs) with no
-  flagged item labelled not weak, median 4.4 s per GREEN; all changed lines 9/24 with 1 false flag and a
+  flagged item labelled not weak, median 4.4 s per GREEN (shipped map-binding version, after the PR #116
+  review fixes: 10/24, 0 false, median 4.5 s, max 13.8 s); all changed lines 9/24 with 1 false flag and a
   28 s maximum. 30 breaks instead of 12 caught 10/24 at twice the time.
 - Only returned and raised values are observed: 113 of 114 labelled real gaps and every flagged replay
   line came through them, so printed-output and database observation were removed.

@@ -160,6 +160,11 @@ class ProofGapTests(unittest.TestCase):
         lines = self.greens(slug, {"BM_N": FAILS}, BRANCHY)["BM_N"]
         self.assertTrue(any("calc.py:3" in line for line in lines[1:]), "EARLIER_PASS_OWNS_LINES: " + json.dumps(lines))
 
+    def test_proof_owning_no_changed_line_is_told_so(self) -> None:
+        slug, _ = self.h.begin_with_map([self.item(i, "OWNED_FAILED") for i in ("BM_A", "BM_B", "BM_C")])
+        summary = self.greens(slug, {"BM_A": FAILS, "BM_B": FAILS, "BM_C": FAILS}, BRANCHY)["BM_C"][0]
+        self.assertTrue("other items" in summary and "ran none" not in summary, "OWNS_NONE_MISREPORTED: " + summary)
+
     def test_only_items_still_green_own_lines(self) -> None:
         # A and B went GREEN on scale, then their proofs regressed: they no longer count toward C's ownership.
         slug, _ = self.h.begin_with_map([self.item(i, "OWNED_FAILED") for i in ("BM_A", "BM_B", "BM_C")])
@@ -205,19 +210,47 @@ class ProofGapTests(unittest.TestCase):
                         "OPT_OUT_IGNORED: " + json.dumps([counter.read_text(), payload.get("proofGaps")]))
 
     def test_slow_proof_is_bounded(self) -> None:
+        # The proof sleeps past the check's budget only when the check reruns it.
         slug, _ = self.h.begin_with_map([self.item("BM_H", "HANG_FAILED")])
-        loop = "def scale(x):\n    n = 0\n    while n < x:\n        n += 1\n    return n\n"
         command = self.proof("test_slow", FAILS, "HANG_FAILED")
         path = self.h.repo / "test_slow.py"
-        path.write_text("import time\ntime.sleep(12)\n" + path.read_text())
+        path.write_text("import os, time\nif os.environ.get('PROOF_GAPS_OUT'):\n    time.sleep(70)\n" + path.read_text())
         red = self.h.tdd(slug, "red", "BM_H", command)
         self.assertEqual(red.returncode, 0, red.stdout + red.stderr)
-        (self.h.repo / "calc.py").write_text(loop)
-        path.write_text(path.read_text().replace(FAILS, WEAK))
+        self.calc.write_text(BRANCHY)
         started = time.monotonic()
         green = self.h.tdd(slug, "green", "BM_H", command)
         elapsed = time.monotonic() - started
         self.assertTrue(elapsed < 90 and green.returncode == 0, "SLOW_PROOF_UNBOUNDED: " + json.dumps(elapsed))
+        summary = (self.h.evidence()["runs"][-1].get("proofGaps") or [""])[0]
+        self.assertTrue("time budget" in summary and "124" not in summary, "BUDGET_MISREPORTED: " + summary)
+
+    def test_budget_cut_break_is_not_caught(self) -> None:
+        # No break can fail this weak proof; it is slow only under the check, so the budget cuts some breaks short.
+        slug, _ = self.h.begin_with_map([self.item("BM_K", "CUT_FAILED")])
+        command = self.proof("test_cut", FAILS, "CUT_FAILED")
+        path = self.h.repo / "test_cut.py"
+        path.write_text("import os, time\nif os.environ.get('PROOF_GAPS_OUT'):\n    time.sleep(15)\n" + path.read_text())
+        dead = "".join(f"    v{n} = {n}\n" for n in range(8))
+        _, payload = self.cycle(slug, "BM_K", command, "def scale(x):\n" + dead + BRANCHY.split("\n", 1)[1],
+                                weaken=("test_cut", WEAK))
+        summary = self.gaps(payload)[0]
+        self.assertTrue(" 0 caught" in summary, "BUDGET_CUT_COUNTED_CAUGHT: " + summary)
+
+    def test_malformed_observer_report_keeps_green(self) -> None:
+        slug, _ = self.h.begin_with_map([self.item("BM_M", "BAD_FAILED")])
+        command = self.proof("test_bad", FAILS, "BAD_FAILED")
+        path = self.h.repo / "test_bad.py"
+        path.write_text("import os\nout = os.environ.get('PROOF_GAPS_OUT')\nif out:\n"
+                        "    open(os.path.join(out, 'bad.json'), 'w').write('{\"lines\": []}')\n" + path.read_text())
+        red = self.h.tdd(slug, "red", "BM_M", command)
+        self.assertEqual(red.returncode, 0, red.stdout + red.stderr)
+        self.calc.write_text(BRANCHY)
+        green = self.h.tdd(slug, "green", "BM_M", command)
+        evidence = self.h.evidence()
+        summary = (evidence["runs"][-1].get("proofGaps") or [""])[0]
+        self.assertTrue(green.returncode == 0 and evidence["behaviorMap"][0]["status"] == "green" and "not run" in summary,
+                        "MALFORMED_REPORT_ABORTED_GREEN: " + json.dumps([green.returncode, summary, green.stderr[-300:]]))
 
     def test_change_without_production_python_runs_the_proof_once(self) -> None:
         counter = self.h.tmp / "executions"
