@@ -356,6 +356,20 @@ transport failure may be recorded unavailable, but cannot approve preflight or
 complete final review. Ordinary documentation, scratch, and
 non-repository work keeps the lightweight exception; governance docs still
 reset downstream review readiness. There is no Stop hook; `workflow.py summary --repo <checkout>` restores identity,
-the next action and open work without a full-map reload. Use `status --fields
+the next invocation and open work without a full-map reload. Use the emitted
+invocation and its producer's help; phase labels are not command names. Keep the
+returned evidence IDs and supported receipt documents across continuation.
+Incoming findings can be recorded while verification is pending; that receipt
+does not certify review. Bash edits are observed from actual Git changes after
+the tool runs; prose and quoted operators are not edit paths. Structured edits
+retain their explicit paths. Use the task repository as the tool workdir.
+
+Locate the file or symbol first; read the returned path, never a filename inferred
+from its concept. Retain that owner path with its supported command across resumes.
+Keep searches separate from independent actions; handle expected no-match results
+explicitly. Serialize ledger mutations and stop dependent batches on unexpected
+failure (`set -euo pipefail`; Python `check=True`). Replay from fresh isolated state
+and print the imported N/N+1 implementation. Reuse the retained context packet;
+its skill owns exact-symbol queries and external graph output. Use `status --fields
 <comma-separated-fields>` for missing facts. Resume the same pass.
 [WORKFLOW-MAP.md](WORKFLOW-MAP.md) owns the hook roles. Unavailable blast-radius impact is reported as `unknown`.

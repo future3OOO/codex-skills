@@ -166,6 +166,16 @@ omitted, and the post-edit validation below.
 
 When you do call out:
 
+- Name the unanswered dependency question first. Reuse the retained packet and
+  prior applicable results; do not repeat its executed checks on resume.
+- Resolve the exact symbol UID and file from the packet or `context` before
+  `impact`. Use that UID as the target, and verify the returned symbol and repo.
+  A same-named test helper is not evidence about the production owner.
+- Query only the missing caller, callee, writer or required impact direction.
+  Broaden traversal only when an observed dependency requires it.
+- Retain full graph responses outside the checkout and conversation. Inspect
+  them there; report only the relevant direct consumers, risk, gaps and evidence
+  path. Never dump transitive graphs or truncated JSON into agent context.
 - if a GitNexus MCP call says the repo is missing or stale, rerun the bootstrap
   with `--gitnexus-mode auto`, then retry using the new `<gitnexus_status><repo>`
 - do not call `gitnexus_list_repos` during normal recovery; the packet repo is
@@ -192,32 +202,37 @@ graph proof, or a stale index. Skip docs-only work and small leaf edits touching
 no shared contract or indexed symbol; state the skip reason and rely on targeted
 tests plus the production-code gate.
 
-After editing the real source checkout, do not rely on the analysis checkout's
-GitNexus repo. Re-analyze the edited source checkout before final change
-detection:
+For standalone work without a workflow, refresh the source index when needed:
 
 ```bash
 gitnexus analyze --force --skip-agents-md "$(git rev-parse --show-toplevel)"
 gitnexus status
 ```
 
-For this post-edit call, the source checkout's absolute path overrides the packet
-`<gitnexus_status><repo>` value. Then call `mcp__gitnexus__detect_changes` with
-`repo` set to that path (`git rev-parse --show-toplevel`) and
-`scope: "unstaged"`. Apply the checkout-cleanup rule above. `gitnexus clean --force`
-removes only the index and registry entry, not other generated artifacts.
+Use that source path as the repo for targeted checks. Apply the checkout-cleanup
+rule above. `gitnexus clean --force` removes only the index and registry entry,
+not other generated artifacts.
 
-On a governed pass, also rerun the bootstrap wrapper with the same
-`--workflow-slug` and `--revalidate` after the final production edits, before
-typed quality-gate verification. `--revalidate` is the fast post-intake form:
+On a governed pass, use `workflow.py summary` to check the retained graph's
+applicability. Documentation and Python comment corrections with unchanged
+parsed code and source positions can reuse it; the projection keeps its original
+indexed tree and names the current reuse candidate. Current quality and review
+still run. Changed code, positions, paths, modes or dependencies require the
+bootstrap wrapper with the same `--workflow-slug` and `--revalidate` before typed
+quality-gate verification. That wrapper owns the governed candidate index and
+executed checks: do not also force-index the source checkout or repeat those
+checks. Use the refreshed packet's exact repo selector for any remaining gap.
+`detect_changes` is optional supplemental evidence for a named question; scope
+it to the actual delta and retain its full output externally like other graph
+responses. `--revalidate` is the post-intake form:
 it refuses without an active governed workflow, forces `--mode local`, and
 skips the SoulForge map rebuild (`--map-build never`) — the one heavy producer
 phase the gate never consumes — while the producer still analyzes the dirty
 candidate and re-records the graph evidence with a gate-shaped context bound
 to the measured snapshot tree. The typed runner hands that context to the
 gate, whose binding check alone adjudicates match, stale, or absent. Evidence
-recorded before the last edit stays honestly stale, so the re-run is what lets
-the owner-competition rules evaluate. The remaining revalidation cost is the
+whose inputs changed stays stale, so the re-run lets the owner-competition rules
+evaluate. The remaining revalidation cost is the
 producer's GitNexus phase; reducing it below the current ~30s is producer-side
 work tracked on issue #182.
 

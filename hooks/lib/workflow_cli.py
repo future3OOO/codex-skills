@@ -14,7 +14,7 @@ from ._workflow_db import CHECK_ONLY, LedgerError, _canonical, history, read_evi
 from .command_runner import _tail, emit_json as _emit_json, print_output as _print_output, run as _run, run_entry as _run_entry
 from .repo_identity import RepoIdentity, RepoIdentityError, resolve_repo_identity, try_resolve_repo_identity
 from .state_prune import prune
-from .state_store import _active_candidate_tree, repo_state_dir, state_root, tree_manifest, utc_timestamp
+from .state_store import _active_candidate_tree, analysis_unchanged, repo_state_dir, state_root, tree_manifest, utc_timestamp
 from .tdd_surface import identify
 from .workflow_documents import (
     DOCUMENT_SHAPE_TABLE,
@@ -281,6 +281,10 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
             else None
         )
         if isinstance(graph_context, dict):
+            candidate = _active_candidate_tree(identity)
+            indexed = str(graph_context.get("candidate", ""))
+            if indexed != candidate and analysis_unchanged(identity, indexed, candidate):
+                graph_context = {**graph_context, "candidate": candidate, "reusedFromCandidate": indexed}
             graph_evidence_id = str(recorded)
             handle = tempfile.NamedTemporaryFile(
                 "w", encoding="utf-8", prefix="quality-gate-graph-", suffix=".json", delete=False,

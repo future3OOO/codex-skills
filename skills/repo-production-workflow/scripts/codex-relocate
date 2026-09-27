@@ -3,15 +3,13 @@
 
 Usage: codex-relocate <abs-path> [thread-id] [note]
 
-Remote-hosted sessions (app-server socket): turn/start moves the canonical
-root (cwd + workspace roots) immediately; the injected continuation turn
-still runs on the OLD environment, and the turn AFTER that lands in the
-new root — a one-turn lag. Pass workdir=<abs-path> on exec calls during
-the gap turn, or verify with pwd on the following turn.
+Remote-hosted sessions (app-server socket): turn/start requests a new root.
+Acceptance is pending until a subsequent native turn confirms its cwd and
+hook repository; a socket acknowledgement does not establish relocation.
 
-Self-hosted sessions (any profile): no socket exists, so this arms the
-resume loop in the launching shell (CODEX_RELOC_LOOP must be set — the
-codex/codexs wrappers export it), persists directory trust in
+Native sessions use the owned launcher's resume loop even when a shared
+daemon socket exists. The codex/codexs wrappers launch without that daemon
+and export CODEX_RELOC_LOOP plus CODEX_RELOC_SHELL_PID. This persists trust in
 ~/.codex/config.toml, writes ~/.codex/reloc/<shell-pid>, and terminates
 the host TUI ~10s later. The wrapper resumes the same thread at
 <abs-path> in the SAME pane. Run this as the LAST action of a turn —
@@ -147,7 +145,11 @@ def main():
     if tid != "self" and any(c.isspace() for c in tid):
         sys.exit(f"thread id must not contain whitespace: {tid}")
     mycwd = os.getcwd()
-    if tid == "self" and os.environ.get("CODEX_RELOC_LOOP") == "1":
+    if (os.environ.get("CODEX_RELOC_LOOP") == "1"
+            and os.environ.get("CODEX_RELOC_SHELL_PID")
+            and not os.environ.get("CODEX_APP_SERVER_SOCK")):
+        if tid not in {"self", os.environ.get("CODEX_THREAD_ID")}:
+            sys.exit("the native resume loop can relocate only its calling thread")
         return self_hosted(cwd, tid, note, "pane session: using its own resume loop")
     last_err = "no app-server socket found — session is not remote-hosted"
     for path in sockets():
@@ -162,7 +164,8 @@ def main():
             except Exception as e:
                 sys.exit(f"turn/start outcome unconfirmed on {path} ({e}); verify the thread state")
             if "error" in r: sys.exit(f"turn/start rejected on {path}: {r['error']}")
-            print(f"relocation accepted: thread {found} -> {cwd} (via {path})")
+            print(f"relocation requested: thread {found} -> {cwd} (via {path}); "
+                  "pending until the next native turn confirms its cwd and hook repository")
             return
         except Exception as e:
             last_err = f"{path}: {e}"; continue
@@ -261,57 +264,39 @@ def self_hosted(cwd, tid, note, why):
     """Fallback for self-hosted TUI sessions: arm the resume loop in the
     launching shell and kill this host so the pane resumes the thread at
     the new root."""
-    _trust_dir(cwd)
-    # codex may canonicalize -C before its trust lookup — cover both spellings.
-    real = os.path.realpath(cwd)
-    if real != cwd:
-        _trust_dir(real)
     if tid == "self":
         tid = os.environ.get("CODEX_THREAD_ID", "")
     if any(c.isspace() for c in tid):
         sys.exit(f"thread id must not contain whitespace: {tid}")
+    hint = f"codex resume -C {shlex.quote(cwd)} {shlex.quote(tid)}"
+    if os.environ.get("CODEX_RELOC_LOOP") != "1":
+        sys.exit(f"no native resume loop ({why}); from your terminal run: {hint}")
     host = shell = None
+    launcher = os.environ.get("CODEX_RELOC_SHELL_PID")
     p = str(os.getppid())
+    child = None
     while p and p != "1":
         try:
             comm = open(f"/proc/{p}/comm").read().strip()
         except OSError:
             break
-        if host is None:
-            if comm == "codex":
-                host = int(p)
-        elif comm in ("bash", "zsh", "fish", "sh"):
-            shell = int(p); break
+        if p == launcher and comm in ("bash", "zsh", "fish", "sh"):
+            shell, host = int(p), child
+            break
+        child = int(p)
         try:
             p = open(f"/proc/{p}/stat").read().rsplit(")", 1)[1].split()[1]
         except (OSError, IndexError):
             break
     if not host or not shell:
-        sys.exit(f"thread not reachable on any socket ({why}); "
-                 f"and no codex host + interactive shell found in ancestors — "
-                 f"cannot self-relocate")
-    try:
-        shell_cwd = os.path.realpath(f"/proc/{shell}/cwd")
-    except OSError:
-        shell_cwd = None
-    if shell_cwd == os.path.realpath(cwd):
-        sys.exit(f"session already rooted at {cwd}")
+        sys.exit(f"no owned native launcher in this process ancestry ({why}); "
+                 f"resume from your terminal: {hint}")
     if not tid:
         sys.exit("no thread id (pass it or export CODEX_THREAD_ID)")
-    # The wrapper exports CODEX_RELOC_LOOP into the codex session env, which
-    # every tool call (and this script) inherits. The shell's /proc environ is
-    # exec-time only and never carries invocation-scoped vars.
-    if os.environ.get("CODEX_RELOC_LOOP") != "1":
-        prof = None
-        try:
-            cmdl = open(f"/proc/{host}/cmdline", "rb").read().decode(errors="replace").split("\0")
-            prof = cmdl[cmdl.index("--profile") + 1] if "--profile" in cmdl else None
-        except (OSError, ValueError, IndexError):
-            prof = None
-        hint = f"codex --profile {shlex.quote(prof)} resume -C {shlex.quote(cwd)} {shlex.quote(tid)}" if prof \
-               else f"codex resume -C {shlex.quote(cwd)} {shlex.quote(tid)}"
-        sys.exit(f"thread not reachable on any socket ({why}); this session's "
-                 f"shell has no resume loop. From THIS pane run: {hint}")
+    _trust_dir(cwd)
+    real = os.path.realpath(cwd)
+    if real != cwd:
+        _trust_dir(real)
     d = os.path.expanduser("~/.codex/reloc")
     os.makedirs(d, exist_ok=True)
     # UTF-8 + surrogateescape: under a non-UTF-8 locale argv decodes to

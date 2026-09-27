@@ -5,17 +5,24 @@
 # check; markers older than 900s or missing an epoch are ignored. Sessions
 # launched directly by herdr/tmux bypass these functions entirely.
 
+_codex_native() {
+  local a daemon=(--no-daemon)
+  for a in "$@"; do
+    [ "$a" = -- ] && break
+    [ "$a" = --no-daemon ] && daemon=()
+  done
+  CODEX_RELOC_LOOP=1 CODEX_RELOC_SHELL_PID=$BASHPID command codex "${daemon[@]}" "$@"
+}
+
 # In-place relocation loop (any profile): a session that ran
 # ~/.codex/bin/codex-relocate wrote ~/.codex/reloc/<this-shell-pid> and killed
 # its TUI; resume the same thread at the new root in this same pane, reusing
 # the launch args (profile/model flags). CODEX_RELOC_LOOP is exported into the
 # session env so the agent can tell the loop is armed before killing.
 _codex_reloc_loop() {
-  local m="$HOME/.codex/reloc/$$" wt tid epoch note stuck=0
+  local m="$HOME/.codex/reloc/$BASHPID" wt tid epoch note stuck=0
   while [ -f "$m" ]; do
-    # Marker line 1 is the stable "<cwd> <tid> <epoch>" contract — panes whose
-    # shells sourced an older copy read exactly that and nothing else. The
-    # continuation note lives on line 2+ (optional; absent under old scripts).
+    # Read target, thread and epoch, then the optional continuation note.
     note=""
     { read -r wt tid epoch && { IFS= read -r -d '' note || true; } } < "$m" || break
     rm -f "$m" || stuck=1
@@ -26,10 +33,9 @@ _codex_reloc_loop() {
     # 10# forces base-10 (leading zeros crash arithmetic); {1,18} stays
     # under int64 — wider digits wrap and a bogus marker resumes
     # (measured: 99999999999999999999 resumed).
-    # "--" keeps a flag-shaped note (e.g. "--help") from being parsed as an
-    # option — confirmed eaten without it, which drops the pane to a shell.
+    # "--" keeps a flag-shaped note from being parsed as an option.
     [[ "$epoch" =~ ^[0-9]{1,18}$ ]] && [ $(( $(date +%s) - 10#$epoch )) -le 900 ] &&
-      CODEX_RELOC_LOOP=1 command codex "$@" resume -C "$wt" "$tid" ${note:+-- "$note"}
+      _codex_native "$@" resume -C "$wt" "$tid" ${note:+-- "$note"}
     [ "$stuck" = 1 ] && break
   done
 }
@@ -57,20 +63,11 @@ _codex_is_tui() {
 codex() {
   _codex_is_tui "$@" || { command codex "$@"; return; }
   local rargs=() a; for a in "$@"; do [ "$a" = "resume" ] && break; rargs+=("$a"); done
-  CODEX_RELOC_LOOP=1 command codex "$@"
+  _codex_native "$@"
   local rc=$?
   _codex_reloc_loop "${rargs[@]}"
   return $rc
 }
-_codexs_run() {
-  _codex_is_tui "$@" || { command codex --profile codexs "$@"; return; }
-  local rargs=(--profile codexs)
-  for a in "$@"; do [ "$a" = "resume" ] && break; rargs+=("$a"); done
-  CODEX_RELOC_LOOP=1 command codex --profile codexs "$@"
-  local rc=$?
-  _codex_reloc_loop "${rargs[@]}"
-  return $rc
-}
-codexs()        { _codexs_run "$@"; }
-codexs-high()   { _codexs_run -m swe-2-high "$@"; }
-codexs-medium() { _codexs_run -m swe-2-medium "$@"; }
+codexs()        { codex --profile codexs "$@"; }
+codexs-high()   { codexs -m swe-2-high "$@"; }
+codexs-medium() { codexs -m swe-2-medium "$@"; }

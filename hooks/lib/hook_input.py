@@ -14,11 +14,6 @@ from pathlib import Path
 _PATCH_PATH = re.compile(
     r"^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$", re.MULTILINE
 )
-# Shell writes observed from the Codex Bash tool: > / >> redirects and tee.
-# Deliberately narrow — cp/mv/sed -i are not claimed until seen from Codex.
-_BASH_WRITE = re.compile(
-    r'(?:>>?|tee\s+(?:-\S+\s+)*)\s*(?:"([^"]+)"|\'([^\']+)\'|([^\s;|&]+))'
-)
 
 
 def read_hook_payload() -> dict[str, object]:
@@ -52,10 +47,6 @@ def edited_path(payload: dict[str, object]) -> Path | None:
     if tool_name == "apply_patch":
         match = _PATCH_PATH.search(command)
         return _resolve(match.group(1).strip(), cwd) if match else None
-    if tool_name == "Bash":
-        match = _BASH_WRITE.search(command)
-        target = next((g for g in match.groups() if g), None) if match else None
-        return _resolve(target, cwd) if target else None
     return None
 
 

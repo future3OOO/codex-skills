@@ -11,6 +11,9 @@ on:
 jobs:
   contracts:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -31,6 +34,9 @@ jobs:
           git config --global user.name "Gate Suite"
       - name: Scope the pull-request delta
         id: scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_PREVIOUS_HEAD: ${{ github.event.before }}
         # A documentation-only delta takes the cheap lane below. The decision is
         # a tested script, not workflow logic; missing comparison history reads
         # as the production lane, never as an empty documentation-only delta.
@@ -39,7 +45,7 @@ jobs:
           lane="$(python3 .github/scripts/pr_scope.py . "${base:-${{ github.event.before }}}")"
           echo "$lane" | tee -a "$GITHUB_OUTPUT"
       - name: Documentation contract checks
-        if: steps.scope.outputs.lane == 'docs'
+        if: steps.scope.outputs.lane == 'docs' || steps.scope.outputs.lane == 'correction'
         # The tests that assert on repository Markdown still run on the cheap
         # lane; lint, the full runner, and the production delta gate do not.
         env:
@@ -58,7 +64,7 @@ jobs:
           pip install ruff==0.16.2
           ruff check --isolated --select E9,F .
       - name: Integrated package contracts
-        if: steps.scope.outputs.lane != 'docs'
+        if: steps.scope.outputs.lane != 'docs' && steps.scope.outputs.lane != 'correction'
         # pytest is pinned here, next to its consumer: the suite exercises the
         # public pytest RED-reach contract through the real runner and would
         # silently skip those checks if the dependency vanished.
