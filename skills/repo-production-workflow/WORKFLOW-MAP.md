@@ -56,8 +56,12 @@ workflow verify                # generic commands, typed quality gate, --observe
 workflow pause|checkpoint|complete|prune
 ```
 
-Mutation receipts carry only `workflowId`, `slug`, `phase` and `nextAction`;
-`status` returns full state. Identity defaults to the active workflow; an explicit
+Mutation receipts include identity, the operation result and `next`: its bound
+`command`, any authored `input`, optional producer `help` and finding bindings.
+Summary renders the same navigation. Observed execution identifies its kind and
+supplies a ready verification-binding command on success; a failed observation
+leaves verification unchanged. Dry-run recording publishes no continuation or
+committed reference. `status` returns full state. Identity defaults to the active workflow; an explicit
 `--slug`/`--workflow-id` that disagrees refuses. Every refusal names all of a
 document's violations at once and mutates nothing.
 

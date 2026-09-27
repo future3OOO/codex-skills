@@ -178,8 +178,7 @@ class TerseReceipts(Ceremony):
         wid = self.begin()
         paused = self.cli("pause", "--slug", "ceremony", "--workflow-id", wid, "--reason", "waiting on a reviewer")
         self.assertEqual(paused.returncode, 0, paused.stderr)
-        self.assertEqual(set(json.loads(paused.stdout)), {"workflowId", "slug", "phase", "nextAction"},
-                         f"{marker}: {paused.stdout[:300]}")
+        self.assertEqual(json.loads(paused.stdout)["workflowId"], wid, marker)
         self.assertLessEqual(len(paused.stdout.encode()), 1024, marker)
         evidence_id = str(self.state()["repoContextForgeEvidence"])
         meta = self.cli("evidence", "--evidence-id", evidence_id)

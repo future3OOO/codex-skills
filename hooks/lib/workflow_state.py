@@ -15,6 +15,7 @@ from typing import Callable, Sequence
 
 from . import behavior_map, tdd_surface
 from ._workflow_db import (
+    CHECK_ONLY,
     EvidenceWrite,
     LedgerError,
     LedgerMutation,
@@ -2423,13 +2424,20 @@ def _latest_verification_command(identity: RepoIdentity, state: JsonObject) -> s
     return f" Verified by: {command[:120] + ' […]' if len(command) > 120 else command}."
 
 
-def _next_invocation(identity: RepoIdentity, state: JsonObject) -> str:
-    """Render the selected action through its owner; never infer a producer name."""
+def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObject | None = None) -> JsonObject:
+    """Bind the selected operation once for command results and recovery."""
     scripts = Path(__file__).resolve().parents[2] / "skills"
     cli = [sys.executable, str(scripts / "repo-production-workflow/scripts/workflow.py")]
     bound = ["--repo", str(identity.root), "--slug", str(state["slug"]),
              "--workflow-id", str(state["workflowId"])]
     action = state.get("nextAction")
+    if receipt is not None and receipt.get("kind") == "observed":
+        if receipt.get("valid") is True:
+            return {"command": shlex.join([*cli, "verify", *bound, "--from-evidence",
+                                          f"{receipt['evidenceId']}:{receipt['runIndex']}"])}
+        return {"command": None, "input": "correct the failed operation; observation leaves verification unchanged"}
+    if state.get("phase") == "complete" and not state.get("revalidation"):
+        return {"command": None}
     if action == "repo-context-forge":
         command = [sys.executable, str(Path.home() / ".codex/skills/repo-context-forge/scripts/bootstrap.py"),
                    "--repo", str(identity.root), "--workflow-slug", str(state["slug"]),
@@ -2437,7 +2445,7 @@ def _next_invocation(identity: RepoIdentity, state: JsonObject) -> str:
         if not state.get("repoContextForgeEvidence"):
             request = shlex.join([*cli, "status", "--repo", str(identity.root), "--fields", "intent"])
             reader = shlex.join([sys.executable, "-c", "import json,sys; print(json.load(sys.stdin)['intent'], end='')"])
-            return "\nNext invocation: " + shlex.join([*command, "--mode", "intent"]) + f' --intent "$({request} | {reader})"\n'
+            return {"command": shlex.join([*command, "--mode", "intent"]) + f' --intent "$({request} | {reader})"'}
         command += ["--revalidate"]
     elif action == "verification":
         command = [*cli, "verify", *bound, "--kind", "quality-gate", "--base-ref",
@@ -2451,7 +2459,7 @@ def _next_invocation(identity: RepoIdentity, state: JsonObject) -> str:
             command = [str(scripts / "codex-advisor/scripts/ask-codex-advisor.sh"), "--slug", str(state["slug"]),
                        "--phase", "final-review", "--cwd", str(identity.root)]
             command += ["--design-file", str(design)] if design.is_file() else ["--design-absent", str(declaration["reason"])]
-            return "\nNext invocation (supply the review question on stdin): " + shlex.join(command) + "\n"
+            return {"command": shlex.join(command), "input": "review question on stdin"}
         command = [*cli, "paths", "--repo", str(identity.root), "--workflow-id", str(state["workflowId"])]
     elif action in {"preflight", "tdd", "run-mapped-tdd", "code-review", "classify-current-findings",
                     "close-current-findings", "address-review-findings"}:
@@ -2460,19 +2468,32 @@ def _next_invocation(identity: RepoIdentity, state: JsonObject) -> str:
         if producer is None:
             pending = next((f for f in state.get("findingStates", []) if _finding_unresolved(f)), {})
             producer = ["record", "review" if pending.get("producer") == "code-review" else "advisor-disposition"]
-        command = [*cli, *producer, "--help"]
+        command = [*cli, *producer, *bound] if "record" in producer else [*cli, *producer, *bound[:4]]
+        operation: JsonObject = {"command": shlex.join(command + (["--input", "-"] if "record" in producer else [])),
+                                "help": shlex.join([*cli, *producer, "--help"]),
+                                "input": {
+                                    "review": "independent review intake or measured disposition on stdin",
+                                    "preflight": "preflight contract and Behavior Map on stdin",
+                                    "advisor-disposition": "measured finding disposition on stdin",
+                                    "tdd": "--phase, --behavior-id and real command after --",
+                                }[producer[-1]]}
+        pending = [{"intakeEvidenceId": f["intakeEvidenceId"], "findingId": f["findingId"], "kind": f.get("kind")}
+                   for f in state.get("findingStates", []) if _finding_unresolved(f)]
+        if pending:
+            operation["findings"] = pending
+        return operation
     else:
         command = [*cli, "status", "--repo", str(identity.root)]
-    hint = ""
-    if command[-1] == "--help":
-        operation = command[:-1] + ["--repo", str(identity.root), "--slug", str(state["slug"])]
-        if "record" in command:
-            operation += ["--workflow-id", str(state["workflowId"]), "--input", "-"]
-        hint = "After preparing the required proof/document: " + shlex.join(operation) + "\n"
-        pending = [f"{f['intakeEvidenceId']}:{f['findingId']}" for f in state.get("findingStates", []) if _finding_unresolved(f)]
-        if pending:
-            hint += "Finding receipt bindings: " + ", ".join(pending) + "\n"
-    return "\nNext invocation: " + shlex.join(command) + "\n" + hint
+    return {"command": shlex.join(command)}
+
+
+def operation_receipt(state: JsonObject, identity: RepoIdentity, **details: object) -> JsonObject:
+    """Return the committed operation's result and its current continuation."""
+    if CHECK_ONLY.get():
+        return details
+    current = public_status(state, identity, recovery=True,
+                            fields={"schemaVersion", "workflowId", "slug", "phase", "nextAction", "activeCandidateTree"})
+    return {**current, "next": next_operation(identity, {**state, **current}, details), **details}
 
 
 def summary(identity: RepoIdentity, limit: int = 3000, *, labels: bool = True) -> str:
@@ -2490,6 +2511,7 @@ def summary(identity: RepoIdentity, limit: int = 3000, *, labels: bool = True) -
     records = {"advisor-preflight": f"{advisor.get('status')}/{advisor.get('findings')}",
                "code-review": f"{code_review.get('status')}/{code_review.get('findings')}",
                "final-review": f"{final_review.get('status')}/{final_review.get('findings')}"}
+    operation = next_operation(identity, state)
     mechanisms = ""
     shown: set[str] = set()
     excerpt_budget = 600
@@ -2509,7 +2531,8 @@ def summary(identity: RepoIdentity, limit: int = 3000, *, labels: bool = True) -
     text = (
         f"Active workflow: slug={state.get('slug')} workflowId={state.get('workflowId')} "
         f"candidate={state.get('activeCandidateTree')} phase={state.get('phase')} next={state.get('nextAction')}. "
-        + _next_invocation(identity, state)
+        + "\nNext invocation: " + str(operation["command"] or "none; workflow complete") + "\n"
+        + "".join(f"{key}: {value}\n" for key, value in operation.items() if key != "command")
         + (f"Binding: {gate_drift}. " if gate_drift else "")
         + " ".join(f"{field}={state[field]}" for field in (
             "preflightLatestEvidence", "tddEvidence", "verificationLatestEvidence", "qualityGateManifestId") if state.get(field)) + ". "

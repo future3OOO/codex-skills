@@ -37,6 +37,7 @@ from .workflow_state import (
     complete,
     evidence_document,
     execution_receipt,
+    operation_receipt as _receipt,
     pause,
     public_status,
     read_workflow,
@@ -170,12 +171,6 @@ def _intent(args: argparse.Namespace) -> str:
     return text
 
 
-def _receipt(state: dict[str, object], identity: RepoIdentity) -> dict[str, object]:
-    """A mutation's whole answer: which pass, where it stands, what comes next
-    (derived against the current tree, so a stale binding is never advertised)."""
-    return public_status(state, identity, fields={"workflowId", "slug", "phase", "nextAction"}, recovery=True)
-
-
 def _command(values: list[str]) -> list[str]:
     command = values[1:] if values and values[0] == "--" else values
     if not command:
@@ -223,9 +218,15 @@ def _observed(command: list[str]) -> int:
                      **({"bindingError": binding_error} if binding_error else {}))
     run["valid"] = binding_error is None and _passed(run["command"], exit_code, run["outputTail"])
     try:
-        _, evidence_id, recorded = commit_verification(identity, state["slug"], state["workflowId"], run,
-                                                       tree_before=tree_before)
-        print(f"workflow receipt {evidence_id}:{recorded['runIndex']}", file=sys.stderr)
+        state, evidence_id, recorded = commit_verification(identity, state["slug"], state["workflowId"], run,
+                                                           tree_before=tree_before)
+        receipt = _receipt(state, identity, kind="observed", evidenceId=evidence_id,
+                           runIndex=recorded["runIndex"], valid=recorded["valid"])
+        print(f"workflow observed receipt {evidence_id}:{recorded['runIndex']}; verification={state['verification']}", file=sys.stderr)
+        if receipt["next"]["command"]:
+            print("Next invocation: " + receipt["next"]["command"], file=sys.stderr)
+        else:
+            print(receipt["next"]["input"], file=sys.stderr)
     except (LedgerError, ValueError, OSError) as exc:
         print(f"workflow receipt not recorded: {exc}", file=sys.stderr)
     return exit_code
@@ -248,8 +249,8 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
                    at=utc_timestamp(), **({"replaces": args.replaces, "replacementReason": args.reason.strip()}
                                           if args.replaces else {}))
         state, evidence_id, recorded = commit_verification(identity, slug, workflow_id, run, tree_before=manifest)
-        _emit_json({"evidenceId": evidence_id, "runIndex": recorded["runIndex"], "valid": recorded["valid"],
-                    "verification": state["verification"]})
+        _emit_json(_receipt(state, identity, evidenceId=evidence_id, runIndex=recorded["runIndex"],
+                           valid=recorded["valid"], kind="generic", verification=state["verification"]))
         return 0 if recorded["valid"] is True else 2
 
     # The tree this run's result will describe. The recorder compares it with
@@ -345,7 +346,7 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
     state, evidence_id, recorded = commit_verification(identity, slug, workflow_id, run, tree_before=tree_before)
 
     _print_output(shown)
-    _emit_json({
+    _emit_json(_receipt(state, identity, **{
         "evidenceId": evidence_id,
         "exitCode": exit_code,
         "kind": args.kind,
@@ -354,7 +355,7 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
         "runIndex": recorded["runIndex"],
         "workflowId": workflow_id,
         "treeManifestId": recorded.get("treeManifestId"),
-    })
+    }))
     if recorded["valid"] is not True:
         reason = recorded.get("bindingError") or ("verification command failed" if exit_code else "the runner reported no executed test")
         print(f"{reason}; verification stays pending until its rerun is green", file=sys.stderr)
@@ -381,10 +382,10 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
             raise ValueError("record preflight requires --input <path|->")
         document = preflight_document(args.input)
         status = "passed"  # Approval records once; unsettled items remain TDD obligations.
-        _, evidence_id = commit_evidence_phase(identity, slug, workflow_id, "preflight", {
+        state, evidence_id = commit_evidence_phase(identity, slug, workflow_id, "preflight", {
             "schemaVersion": 1, "slug": slug, "workflowId": workflow_id, "document": document,
             "recordedAt": utc_timestamp()}, status=status)
-        emit({"evidenceId": evidence_id, "status": status})
+        emit(_receipt(state, identity, evidenceId=evidence_id, status=status))
         return 0
     if args.kind == "review":
         if not args.input:
@@ -392,7 +393,7 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
         document, status, findings = review_summary(
             args.input, slug=slug, workflow_id=workflow_id, review_context_id=args.review_context_id)
         state, evidence_id = commit_review(identity, slug, workflow_id, document, status, findings)
-        emit({"summaryId": evidence_id, "status": state["codeReview"]["status"]})
+        emit(_receipt(state, identity, summaryId=evidence_id, status=state["codeReview"]["status"]))
         return 0
     if args.kind == "tdd-map":
         from .tdd_workflow import map_update
@@ -454,8 +455,7 @@ def _dispatch(args: argparse.Namespace) -> int:
 
     identity = resolve_repo_identity(args.repo)
     if args.command == "begin":
-        _emit_json(public_status(begin(identity, args.slug, _intent(args)), fields={
-            "schemaVersion", "workflowId", "slug", "activeCandidateTree", "phase", "nextAction"}))
+        _emit_json(_receipt(begin(identity, args.slug, _intent(args)), identity))
     elif args.command == "status":
         state = read_workflow(identity)
         if state is None:

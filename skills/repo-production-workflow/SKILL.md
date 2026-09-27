@@ -356,8 +356,10 @@ transport failure may be recorded unavailable, but cannot approve preflight or
 complete final review. Ordinary documentation, scratch, and
 non-repository work keeps the lightweight exception; governance docs still
 reset downstream review readiness. There is no Stop hook; `workflow.py summary --repo <checkout>` restores identity,
-the next invocation and open work without a full-map reload. Use the emitted
-invocation and its producer's help; phase labels are not command names. Keep the
+the next invocation and open work without a full-map reload. Continue from the operation
+result's `next.command`; `next.input` names any judgment or document still needed.
+Use `next.help` only for an unfamiliar input, then retain it. Summary renders the same
+operation on resume. Phase labels are not command names. Keep the
 returned evidence IDs and supported receipt documents across continuation.
 Incoming findings can be recorded while verification is pending; that receipt
 does not certify review. Bash edits are observed from actual Git changes after
