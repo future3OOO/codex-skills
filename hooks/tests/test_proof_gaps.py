@@ -137,6 +137,17 @@ class ProofGapTests(unittest.TestCase):
         self.assertTrue(len(lines) == 1 and " 0 gaps" in lines[0] and "caught" in lines[0],
                         "CLEAN_SUMMARY_MISSING: " + json.dumps(lines))
 
+    def test_exception_whose_text_raises_is_observed(self) -> None:
+        bad = "class Bad(Exception):\n    def __str__(self):\n        raise RuntimeError('no text')\n"
+        self.calc.write_text(bad + "def scale(x):\n    if x < 0:\n        raise Bad()\n")
+        self.h.git("commit", "-q", "-am", "bad")
+        slug, _ = self.h.begin_with_map([self.item("BM_X", "STR_FAILED")])
+        check = "isinstance(self.assertRaises(calc.Bad, calc.scale, -1), object) and"
+        _, payload = self.cycle(slug, "BM_X", self.proof("test_x", f"{check} {FAILS}", "STR_FAILED"),
+                                bad + "def scale(x):\n    if x < 0:\n        raise Bad()\n    return x * 2\n")
+        summary = (self.h.evidence()["runs"][-1].get("proofGaps") or [""])[0]
+        self.assertTrue("breaks" in summary, "STR_EXCEPTION_NOT_OBSERVED: " + summary)
+
     def greens(self, slug: str, checks: dict[str, str], code: str) -> dict[str, list[str]]:
         """RED every item's proof, land `code`, then weaken each proof's FAILS check and record its GREEN."""
         commands = {i: self.proof(f"test_{i.lower()}", check, "OWNED_FAILED") for i, check in checks.items()}

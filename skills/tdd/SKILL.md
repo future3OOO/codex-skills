@@ -106,7 +106,7 @@ adequacy and the mandatory final advisor still applies.
 
 A valid mapped GREEN also runs an advisory proof-gap check: the proof is rerun on
 scratch copies with small breaks on the changed production `.py` lines it owns (lines
-fewer than a quarter of other items' proofs run), and each break it still passes on
+run by fewer than two, or a quarter, of other items' proofs, whichever is more), and each break it still passes on
 whose returned or raised values changed is judged by TypeSafe Jev against `expected`.
 The run entry keeps the summary; the payload shows `proofGaps` only when a gap or
 review-band line exists. A listed gap is an assertion the proof lacks; add it or record

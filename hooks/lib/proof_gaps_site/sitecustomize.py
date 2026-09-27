@@ -34,7 +34,7 @@ if _OUT and hasattr(sys, "monitoring"):
         callee_changed, caller_changed = code.co_filename in _FILES, caller.f_code.co_filename in _FILES
         if (caller.f_code.co_filename in _TESTS and code.co_filename not in _TESTS) or (callee_changed and not caller_changed):
             try:
-                text = repr(value)
+                text = f"{type(value).__name__}: {value}" if kind == "exc" else repr(value)
             except Exception as error:  # an object whose repr raises is itself an observation
                 text = f"<repr raised {type(error).__name__}>"
             _events.append([code.co_qualname, kind, _NOISE.sub("#", text.replace(_COPY, "<root>")[:300])])
@@ -43,7 +43,7 @@ if _OUT and hasattr(sys, "monitoring"):
     _M.register_callback(4, _M.events.LINE, _line)
     _M.register_callback(4, _M.events.PY_RETURN, lambda code, offset, value: _seen(code, value, "ret"))
     _M.register_callback(4, _M.events.PY_YIELD, lambda code, offset, value: _seen(code, value, "yield"))
-    _M.register_callback(4, _M.events.PY_UNWIND, lambda code, offset, error: _seen(code, f"{type(error).__name__}: {error}", "exc"))
+    _M.register_callback(4, _M.events.PY_UNWIND, lambda code, offset, error: _seen(code, error, "exc"))
     _M.set_events(4, _M.events.LINE | _M.events.PY_RETURN | _M.events.PY_YIELD | _M.events.PY_UNWIND)
 
     @atexit.register
