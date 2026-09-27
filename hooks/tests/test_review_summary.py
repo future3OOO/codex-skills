@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from hooks.tests.support import approve_preflight
 from hooks.tests.support import build_no_change_document, record_context_forge  # noqa: E402
 from hooks.lib.repo_identity import resolve_repo_identity  # noqa: E402
 from hooks.lib.state_store import _active_candidate_tree  # noqa: E402
@@ -55,6 +56,7 @@ class ReviewSummaryHarness(unittest.TestCase):
         advisor_disposition(identity, "review-summary", read_workflow(identity)["workflowId"], "preflight", "none")
         doc_path = self.tmp / "setup-preflight.json"
         doc_path.write_text(json.dumps(build_no_change_document("suite setup")), encoding="utf-8")
+        approve_preflight(self.repo, json.loads(doc_path.read_text()))
         recorded = subprocess.run(
             [sys.executable, str(WORKFLOW), "record", "preflight", "--repo", str(self.repo), "--slug", "review-summary",
              "--workflow-id", read_workflow(identity)["workflowId"], "--input", str(doc_path)],

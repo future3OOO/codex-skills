@@ -4,7 +4,7 @@ set -euo pipefail
 umask 077
 
 usage() {
-  printf 'Usage: %s --slug <name> [--provider codex|claude] [--phase preflight-advice|final-review] [--reconsult] [--cwd path] [--design-file file | --design-absent reason] [--budget words] [--codex-model model] [--codex-effort effort] [--fresh] -- "question"\n' "$0" >&2
+  printf 'Usage: %s --slug <name> [--provider codex|claude] [--phase preflight-advice|final-review] [--reconsult] [--preflight-file draft.json] [--cwd path] [--design-file file | --design-absent reason] [--budget words] [--codex-model model] [--codex-effort effort] [--fresh] -- "question"\n' "$0" >&2
   printf '  Phased consults derive payload, candidate anchors, and create/resume mode from workflow checkpoint; phase-less consults carry only the question.\n' >&2
   printf '  Default budget: 600 words; values above 1200 are refused.\n' >&2
   printf '  Trust: phase-less consults match the lead; phased consults are isolated and evidence-only.\n' >&2
@@ -17,7 +17,7 @@ if [[ -n "${CODEX_ADVISOR_ACTIVE:-}${ADVISOR_ACTIVE:-}" ]]; then
 fi
 
 slug=""; phase=""; cwd="$PWD"; design_file=""; design_absent=""; budget=600; fresh=0; question=""
-reconsult_args=()
+reconsult_args=(); preflight_file=""; draft_args=()
 provider="${CODEX_ADVISOR_PROVIDER:-${ADVISOR_PROVIDER:-codex}}"
 codex_model="${CODEX_ADVISOR_MODEL:-gpt-6-astra}"
 codex_effort="${CODEX_ADVISOR_EFFORT:-xhigh}"
@@ -34,6 +34,7 @@ while [[ $# -gt 0 ]]; do
     --budget) budget="${2:?missing --budget value}"; shift 2 ;;
     --fresh) fresh=1; shift ;;
     --reconsult) reconsult_args=(--reconsult); shift ;;
+    --preflight-file) preflight_file="${2:?missing --preflight-file value}"; shift 2 ;;
     --) shift; question="$*"; break ;;
     -h|--help) usage ;;
     *) printf 'error: unknown argument: %s\n' "$1" >&2; usage ;;
@@ -133,6 +134,13 @@ PY
   fi
 fi
 
+if [[ "$phase" == preflight-advice ]]; then
+  [[ -n "$preflight_file" ]] || { printf 'error: preflight-advice requires --preflight-file\n' >&2; exit 2; }
+  cp -- "$preflight_file" "$transport_dir/preflight.json"
+  draft_args=(--preflight-file "$transport_dir/preflight.json")
+elif [[ -n "$preflight_file" ]]; then
+  printf 'error: --preflight-file requires preflight-advice\n' >&2; exit 2
+fi
 repo_identity="$script_dir/../../../hooks/lib/repo_identity.py"
 repo_key=$(python3 "$repo_identity" --path "$cwd" --field key) || {
   printf 'error: --cwd is not inside a Git worktree: %s\n' "$cwd" >&2
@@ -153,7 +161,7 @@ if [[ -n "$phase" ]]; then
   flock -x 9
   checkpoint_file="$transport_dir/checkpoint.json"
   mkdir -p "$channels_dir"
-  if ! python3 "$workflow_cli" checkpoint --repo "$repo_root" --phase "$phase" --channel-dir "$channels_dir" "${reconsult_args[@]}" >"$checkpoint_file" 2>"$transport_dir/checkpoint-error"; then
+  if ! python3 "$workflow_cli" checkpoint --repo "$repo_root" --phase "$phase" --channel-dir "$channels_dir" "${reconsult_args[@]}" "${draft_args[@]}" >"$checkpoint_file" 2>"$transport_dir/checkpoint-error"; then
     checkpoint_error=$(cat "$transport_dir/checkpoint-error")
     if [[ "$checkpoint_error" == *"no active workflow"* ]]; then
       printf 'error: %s requires an active workflow; begin the pass before consulting\n' "$phase" >&2
@@ -224,8 +232,6 @@ write_sid() {
 }
 codex_resume_sid=""
 if [[ -n "$phase" ]]; then
-  # A final review with no preflight consult behind it starts the workflow-bound
-  # session itself; preflight advice is optional.
   if [[ "$session_mode" == create || ! -s "$sid_file" ]]; then
     mode=create
     if [[ "$provider" == "claude" ]]; then
@@ -274,10 +280,10 @@ phase_prompt=""
 case "$phase" in
   preflight-advice)
     phase_prompt='Checkpoint Interface: preflight-advice
-Using only the supplied original request, question, design declaration, advisor projection, and current-pass diff: derive the load-bearing promises of the public Interface from the original request, then challenge the proposed Module owner, Interface, Seam, first real-Seam RED, preservation obligations, and demonstrated risks. For each load-bearing promise, enumerate the caller-reachable operations able to falsify it - interruption and cancellation, transaction control, lifecycle re-entry, shared-state writers, persistence - and treat a material promise with no planned real-Seam attack as a finding. Treat the supplied design declaration as a falsifiable hypothesis under attack, not proof. Do not require or imply live repository operations. Return only {"schemaVersion":1,"findings":[{"id":"SPEC-1","claim":"...","material":true,"kind":"behavioral"}],"verdict":"completed"}; findings may be empty; a finding may include priorFinding {"evidenceId":"...","id":"..."} to link an existing finding.' ;;
+Review the supplied exact preflight artifact (contract and Behavior Map); on reconsult reconstruct it from the named recorded baseDigest and delta, not an unrecorded prior response. A retry may repeat that delta. Challenge interpretation coverage: where plausible readings diverge, demand typed discriminating boundaryInputs and competing interpretations, with interpretation and authority together only once settled. A prose-only semantic choice is a material gap; unambiguous items need no extra fields. Using the original request, question, design declaration, advisor projection, and current-pass diff: derive the load-bearing promises of the public Interface from the original request, then challenge the proposed Module owner, Interface, Seam, first real-Seam RED, preservation obligations, and demonstrated risks. For each load-bearing promise, enumerate the caller-reachable operations able to falsify it - interruption and cancellation, transaction control, lifecycle re-entry, shared-state writers, persistence - and treat a material promise with no planned real-Seam attack as a finding. Treat the supplied design declaration as a falsifiable hypothesis under attack, not proof. Do not require or imply live repository operations. Return only {"schemaVersion":1,"findings":[{"id":"SPEC-1","claim":"...","material":true,"kind":"behavioral"}],"verdict":"approved|changes-required"}; approved only when the draft has no material gap, otherwise changes-required; visibly unsettled interpretations are allowed when the owning item stays pending. Judge the artifact, not completed implementation. Draft findings are corrected before recording, not disposed as runtime repairs. Findings may be empty; a finding may include priorFinding {"evidenceId":"...","id":"..."} to link an existing finding.' ;;
   final-review)
     phase_prompt='Checkpoint Interface: final-review
-Answer in this order, before any declared evidence: 1) from the supplied original request and the public Interface visible in the diff, state what is promised; 2) name the production operations able to falsify each load-bearing promise; 3) name every such operation not attacked through the real Seam in the supplied evidence; 4) judge each supplied finding-ledger entry: does its disposition narrow or lose part of the immutable claim, comparing the immutable claim/domain against exact intake identity, actual executed commands, preserved guarantees, and reassessment state of its owning attacks; 5) only then apply code-review, codebase-design, TDD, and code-quality criteria to the current Module owner, design reconciliation, candidate binding, minimality, security boundary, and reachable failures visible in those channels. A promised load-bearing surface with no attack, or a ledger entry whose owners do not cover its claim, forbids commit-ready even when every declared map item is green. Judge the selected resource receipt in the consult question against its declared scale and fixed limit, using the measured target identity in its output, not an assumed generic receipt field. Known missing required material acceptance is a Spec finding, not prose beside empty findings. Attribute repeated or self-introduced defects bluntly only when supplied evidence demonstrates them. Treat checkpoint readiness as wrapper-authored metadata; beyond the supplied channels do not require omitted Behavior Map, TDD, code-review, verification, preservation, or other live repository evidence. Do not require or imply live repository operations. Report every additional material reachable failure class you can demonstrate in this consult, batched in this single envelope; do not ration findings across rounds - each finding still carries its measured or concretely reachable trigger, and undemonstrated speculation stays excluded. A finding that names no measured or concretely reachable failure is not material, and a re-raise of a finding whose recorded rejection quotes a measurement is material only when it quotes a new measurement contradicting that rejection. Reserve context-mismatch for a candidate or projection identity mismatch: the supplied passStartOid, activeCandidateTree, or advisor projection does not describe the diff you were given. A recorded rejection of a claim about the original request'"'"'s literal wording that quotes a real-Seam measurement is answered with a verdict, never context-mismatch: re-raise it as material only with a new measurement contradicting that rejection, otherwise commit-ready when nothing else is material. Return only schemaVersion 1 with findings carrying id, claim, material, and kind, optional priorFinding {"evidenceId":"...","id":"..."} to link an existing finding, and verdict commit-ready, fix-before-commit, or context-mismatch. Use fix-before-commit only with a material finding and commit-ready only when context matches with none.' ;;
+Check the supplied current Behavior Map for interpretation coverage: independently derive divergent plausible readings and typed discriminating inputs; a prose-only semantic choice without owning interpretation fields, an unchecked material boundary, or unresolved choice presented as settled is a finding. Unambiguous items need no extra fields. Answer in this order, before any declared evidence: 1) from the supplied original request and the public Interface visible in the diff, state what is promised; 2) name the production operations able to falsify each load-bearing promise; 3) name every such operation not attacked through the real Seam in the supplied evidence; 4) judge each supplied finding-ledger entry: does its disposition narrow or lose part of the immutable claim, comparing the immutable claim/domain against exact intake identity, actual executed commands, preserved guarantees, and reassessment state of its owning attacks; 5) only then apply code-review, codebase-design, TDD, and code-quality criteria to the current Module owner, design reconciliation, candidate binding, minimality, security boundary, and reachable failures visible in those channels. A promised load-bearing surface with no attack, or a ledger entry whose owners do not cover its claim, forbids commit-ready even when every declared map item is green. Judge the selected resource receipt in the consult question against its declared scale and fixed limit, using the measured target identity in its output, not an assumed generic receipt field. Known missing required material acceptance is a Spec finding, not prose beside empty findings. Attribute repeated or self-introduced defects bluntly only when supplied evidence demonstrates them. Treat checkpoint readiness as wrapper-authored metadata; beyond the supplied channels do not require omitted TDD, code-review, verification, preservation, or other live repository evidence. Do not require or imply live repository operations. Report every additional material reachable failure class you can demonstrate in this consult, batched in this single envelope; do not ration findings across rounds - each finding still carries its measured or concretely reachable trigger, and undemonstrated speculation stays excluded. A finding that names no measured or concretely reachable failure is not material, and a re-raise of a finding whose recorded rejection quotes a measurement is material only when it quotes a new measurement contradicting that rejection. Reserve context-mismatch for a candidate or projection identity mismatch: the supplied passStartOid, activeCandidateTree, or advisor projection does not describe the diff you were given. A recorded rejection of a claim about the original request'"'"'s literal wording that quotes a real-Seam measurement is answered with a verdict, never context-mismatch: re-raise it as material only with a new measurement contradicting that rejection, otherwise commit-ready when nothing else is material. Return only schemaVersion 1 with findings carrying id, claim, material, and kind, optional priorFinding {"evidenceId":"...","id":"..."} to link an existing finding, and verdict commit-ready, fix-before-commit, or context-mismatch. Every material finding must include fixSketch {"change":"smallest snippet or unified diff against this candidate","probe":"discriminating executable check that fails on this candidate"}. Limit each sketch to 8192 UTF-8 bytes combined, separately from the prose word budget. Sketches are read-only proposals: the lead verifies the premise, drives real-Seam RED, adapts the change and owns GREEN; sketches never close findings. Do not reproduce previous sketches on resumed review. Use fix-before-commit only with a material finding and commit-ready only when context matches with none.' ;;
 esac
 
 role="Codex advisor mode, investigative. You are the independent advisor delegate for one consult. Do not spawn agents or run another advisor."
@@ -286,7 +292,7 @@ if [[ -n "$phase" ]]; then
 else
   role+=" You run with the same trust as the lead and are instructed not to mutate the checkout or workflow ledger. Use targeted reads, direct tests and CLI probes, and cite file:line."
 fi
-role+=" A mock, stub, fake, fixture-substituted collaborator, invented gateway, or test-only adapter is never RED/GREEN or production proof. A capture at a Module's own outgoing process boundary is the real Seam for assertions about what that Module emits; the ban targets substituted collaborators inside the asserted contract. An undemonstrated theoretical failure cannot require code. For bugs require a reproduced symptom and falsifiable root-cause hypothesis. Give findings, not orders, in <=${budget} words."
+role+=" A mock, stub, fake, fixture-substituted collaborator, invented gateway, or test-only adapter is never RED/GREEN or production proof. A capture at a Module's own outgoing process boundary is the real Seam for assertions about what that Module emits; the ban targets substituted collaborators inside the asserted contract. An undemonstrated theoretical failure cannot require code. For bugs require a reproduced symptom and falsifiable root-cause hypothesis. Give findings, not orders, in <=${budget} prose words; fix-sketch code has its separate phase cap."
 prompt_file="$transport_dir/prompt"
 {
   if [[ "$provider" == "codex" ]]; then
@@ -386,25 +392,28 @@ else
   if ! python3 "$workflow_cli" record advisor-result --repo "$repo_root" --slug "$producer_slug" \
       --workflow-id "$active_wid" --stage "$record_stage" --source codex-advisor \
       --input "$output_file" --design-declaration "$design_declaration_file" \
-      --expected-candidate-tree "$candidate" >/dev/null; then
+      --expected-candidate-tree "$candidate" "${draft_args[@]}" >/dev/null; then
     cat "$output_file"
     exit 2
   fi
   python3 "$workflow_cli" status --repo "$repo_root" --fields advisorPreflight,finalReview,finalReviewContextMismatchEvidence \
     >"$transport_dir/recorded.json"
-  python3 - "$output_file" "$record_stage" "$transport_dir/recorded.json" <<'PY'
+  python3 - "$script_dir/../../.." "$record_stage" "$transport_dir/recorded.json" "$repo_root" <<'PY'
 import json, sys
-envelope = json.load(open(sys.argv[1], encoding="utf-8"))
+sys.path.insert(0, sys.argv[1])
+from hooks.lib.repo_identity import resolve_repo_identity
+from hooks.lib.workflow_state import evidence_document
 state = json.load(open(sys.argv[3], encoding="utf-8"))
 record = state.get("advisorPreflight" if sys.argv[2] == "preflight" else "finalReview") or {}
-intake = state.get("finalReviewContextMismatchEvidence") or record.get("intakeEvidence") or "none"
+intake = state.get("finalReviewContextMismatchEvidence") or record.get("appealEvidence") or record.get("intakeEvidence") or "none"
+envelope = evidence_document(resolve_repo_identity(sys.argv[4]), intake)
 findings = envelope["findings"]
-head = f"verdict={envelope['verdict']} findings={len(findings)} intake={intake}\n"
+shown = findings[:40]
+head = f"verdict={envelope['verdict']} findings={len(findings)} shown={len(shown)} intake={intake}\n"
 tail = f"full envelope: workflow.py evidence --full --evidence-id {intake}\n"
-room = max(0, (1900 - len(head) - len(tail)) // max(1, len(findings)))
-lines = [f"{item['id']} {item.get('kind')} material={item['material']}: " for item in findings]
-sys.stdout.write(head + "".join(line + item["claim"][:max(0, room - len(line) - 1)] + "\n"
-                                for line, item in zip(lines, findings)) + tail)
+room = max(0, (1900 - len((head + tail).encode())) // max(1, len(shown)) - 1)
+lines = [f"sketch={'yes' if item.get('fixSketch') else 'missing/invalid' if item.get('fixSketchIssue') else 'n/a'} {item['id']}: {item['claim']}" for item in shown]
+sys.stdout.write(head + "".join(line.encode()[:room].decode("utf-8", errors="ignore") + "\n" for line in lines) + tail)
 PY
 fi
 printf 'codex_advisor_complete status=0 provider=%s\n' "$provider" >&2

@@ -100,53 +100,29 @@ the same transaction as the step. There is no separate transition to record, and
 no separate graph step exists. Read the packet's graph
 result; run further MCP checks when they widen the surface the packet fixed.
 
-### 4. Advisor scope check
+### 4. Draft and advisor review
 
-Invoke `codex-advisor` with phase `preflight-advice` through its sole wrapper,
-preferably in a dedicated chat pane. It attaches the recorded graph evidence
-itself. Supply the contract, packet, intended proof, and no-change surfaces. Invoke `codebase-design` first
-when adding/changing a Module, public Interface, or Seam.
+Invoke `production-preflight` and draft its two-field artifact before consulting.
+Read TDD's Behavior Map requirements; invoke `codebase-design` when changing a
+Module, public Interface or Seam. The draft owns the contract and planned attacks.
 
-The wrapper emits the completed answer, then records it; an intake
-with no material finding is closed at recording and needs no disposition.
-A material behavioral finding rides the pass as a map-owned attack and is
-dispositioned once that attack is GREEN; a nonbehavioral or measured-false
-finding is dispositioned whenever its measurement exists. Findings block
-completion, never an edit, a verification run, or a review:
+Give that exact draft to `codex-advisor --phase preflight-advice --preflight-file
+<draft.json>`, with the governing design. The advisor checks interpretation and
+boundary coverage on the map itself and returns `changes-required` or `approved`.
+Revise material gaps and `--reconsult` in the same advisor context; the wrapper
+sends only the delta from the recorded draft, naming both content identities.
+Draft iteration needs no per-cycle user permission. A failed consult leaves its
+recorded base unchanged; retry from that base. The advisor remains read-only.
 
-```bash
-python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" record advisor-disposition \
-  --finding SPEC-1 --fixed --evidence-ref <evidenceId>:<runIndex> --behavior-id BM_X
-```
+### 5. Record approved preflight once
 
-Identity, stage, intake and context come from the active workflow. `--fixed`
-with `--behavior-id` mints the finding's `sourceRefs` on that item and closes it
-once the item is GREEN through its RED (a recurring finding also takes `--reason`
-with its mechanism); `--rejected`, `--report-only` and `--follow-up REF` take
-`--reason` with the measured judgment. A material
-behavioral finding needs no disposition to proceed: it rides the pass as an
-attack obligation and `record preflight` refuses a map that does not own it.
-Refusal mutates nothing.
-An unavailable consult requires `--reason` with the measured transport failure
-and needs no disposition.
-
-### 5. Production preflight
-
-Invoke `production-preflight` before tracked production edits. Anchor it to the
-packet, graph, advisor findings, and governing artifact. Resolve, interview, or
-block on every material unknown. For transaction-sensitive work, load the
-[transaction doctrine](../production-code/references/transaction-doctrine.md).
-
-The recorded preflight owns the initial Behavior Map; read the tdd skill's [Record the Behavior Map in Preflight](../tdd/SKILL.md) section before writing it. It is authoritative for proof obligations, not architecture selection; a plan may reference it but is not a second proof owner.
-
-Record `{"authoritativeContract": ..., "behaviorMap": [...]}` (shape: `record
-preflight --help`); unsettled interpretations keep it pending.
-
-```bash
-python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" record preflight --input - <<'JSON'
-{"authoritativeContract":"...","behaviorMap":[...]}
-JSON
-```
+`record preflight --input <draft.json>` compares the artifact with the latest
+approved intake inside the ledger transaction. Missing or changed approval
+refuses without mutation. Recording closes initial draft consultation and cannot
+be repeated; later changes use the owning item's `tdd-map` reassessment. An
+approved artifact may retain unsettled interpretations as visibly pending items;
+they must settle before dependent proof or implementation. No second prose map,
+staging command or disposition ceremony is needed for draft corrections.
 
 ### 6. Mapped TDD RED or not-required
 
@@ -375,9 +351,9 @@ remains until the next `begin` replaces it; no reviewer gate applies.
 
 ## Failure semantics
 
-Missing or corrupt workflow state is pending, never success. Preflight advisor
-transport may be recorded `unavailable` only with the measured reason; final
-review has no unavailable exception. Ordinary documentation, scratch, and
+Missing or corrupt workflow state is pending, never success. A measured advisor
+transport failure may be recorded unavailable, but cannot approve preflight or
+complete final review. Ordinary documentation, scratch, and
 non-repository work keeps the lightweight exception; governance docs still
 reset downstream review readiness. There is no Stop hook; `workflow.py summary --repo <checkout>` restores identity,
 the next action and open work without a full-map reload. Use `status --fields

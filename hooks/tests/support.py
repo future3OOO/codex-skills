@@ -9,7 +9,7 @@ import sys
 import time
 from pathlib import Path
 
-from hooks.lib.behavior_map import no_change_item
+from hooks.lib.behavior_map import initial_items, map_errors, no_change_item
 from hooks.lib.repo_identity import RepoIdentity, resolve_repo_identity
 from hooks.lib.state_store import _active_candidate_tree
 from hooks.lib.workflow_documents import graph_evidence_document
@@ -233,6 +233,21 @@ def graph_packet(root: str, candidate: str, head: str) -> dict[str, object]:
     }
 
 
+def approve_preflight(repo: Path, document: dict[str, object]) -> None:
+    """Recorder setup only; live provider/agent acceptance is measured separately."""
+    identity = resolve_repo_identity(repo)
+    state = read_workflow(identity)
+    if state.get("preflightLatestEvidence") or ("behaviorMap" in document and map_errors(document["behaviorMap"], allow_runtime=False)):
+        return
+    document = dict(document)
+    if not map_errors(document.get("behaviorMap"), allow_runtime=False):
+        document["behaviorMap"] = initial_items(document["behaviorMap"])
+    intake = {"schemaVersion": 1, "slug": state["slug"], "workflowId": state["workflowId"],
+              "producer": "codex-advisor", "stage": "preflight", "verdict": "approved", "findings": []}
+    record_advisor_result(identity, state["slug"], state["workflowId"], "preflight", "codex-advisor",
+                          "approved", intake=intake, preflight_draft=document)
+
+
 def advance_to_final_review(repo: Path, tmp: Path, design=None) -> RepoIdentity:
     """Drive one pass from intake to a ready final-review checkpoint.
 
@@ -248,6 +263,7 @@ def advance_to_final_review(repo: Path, tmp: Path, design=None) -> RepoIdentity:
         identity, slug, workflow_id, "preflight", "codex-advisor", "completed", design=design
     )
     advisor_disposition(identity, slug, workflow_id, "preflight", "none")
+    approve_preflight(repo, build_no_change_document("advance to final review"))
     recorded = subprocess.run(
         [sys.executable, str(WORKFLOW), "record", "preflight", "--repo", str(repo), "--input", "-"],
         input=json.dumps(build_no_change_document("advance to final review")),
@@ -316,6 +332,10 @@ def checkpoint_channels(repo: Path, env: dict[str, str] | None, phase: str, *ext
     """The checkpoint with each evidence channel it wrote read back by name."""
     import tempfile
     with tempfile.TemporaryDirectory() as directory:
+        if phase == "preflight-advice" and "--preflight-file" not in extra:
+            draft = Path(directory) / "draft.json"
+            draft.write_text(json.dumps(build_no_change_document("checkpoint measurement")))
+            extra = (*extra, "--preflight-file", str(draft))
         result = subprocess.run(
             [sys.executable, str(WORKFLOW), "checkpoint", "--repo", str(repo), "--phase", phase,
              "--channel-dir", directory, *extra],

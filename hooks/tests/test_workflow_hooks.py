@@ -18,7 +18,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from hooks.lib.repo_identity import resolve_repo_identity  # noqa: E402
-from hooks.tests.support import (  # noqa: E402
+from hooks.tests.support import (
+    approve_preflight,  # noqa: E402
     checkpoint_channels,
     commit_ready_envelope,
     build_document,
@@ -176,6 +177,7 @@ class HookHarness(unittest.TestCase):
             document = build_document("hook-suite setup", behavior_map=behavior_map)
         doc_path = self.tmp / "preflight-doc.json"
         doc_path.write_text(json.dumps(document), encoding="utf-8")
+        approve_preflight(self.repo, document)
         recorded = subprocess.run(
             [sys.executable, str(WORKFLOW), "record", "preflight", "--repo", str(self.repo),
              "--slug", slug, "--workflow-id", wid, "--input", str(doc_path)],
@@ -867,7 +869,7 @@ if [[ -n "${ADVISOR_SHIM_REPLY:-}" ]]; then
 elif [[ " $* " == *" --resume "* ]]; then
   printf '%s\\n' '{"schemaVersion":1,"findings":[],"verdict":"commit-ready"}'
 else
-  printf '%s\\n' '{"schemaVersion":1,"findings":[],"verdict":"completed"}'
+  printf '%s\\n' '{"schemaVersion":1,"findings":[],"verdict":"approved"}'
 fi
 """
 
@@ -939,6 +941,10 @@ class WrapperPromptTests(HookHarness):
                     CAPTURE_DIR=str(rig / "capture"), ADVISOR_PROVIDER="claude")
 
     def run_advisor(self, env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
+        if "preflight-advice" in args and "--preflight-file" not in args:
+            draft = self.tmp / "draft.json"
+            draft.write_text(json.dumps(build_no_change_document("prompt rig")))
+            args = ("--preflight-file", str(draft), *args)
         return subprocess.run([str(ADVISOR_WRAPPER), "--cwd", str(self.repo), *args],
                               cwd=ROOT, env=env, text=True,
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
@@ -983,6 +989,7 @@ class WrapperPromptTests(HookHarness):
             "evidenceId": state["governedDesignEvidence"], "id": "PRES-1"}]
         doc_path = self.tmp / "prompt-preflight.json"
         doc_path.write_text(json.dumps(document), encoding="utf-8")
+        approve_preflight(self.repo, document)
         recorded = self.state("record", "preflight", "--slug", slug, "--workflow-id", wid,
                               "--input", str(doc_path))
         self.assertEqual(recorded.returncode, 0, recorded.stdout + recorded.stderr)

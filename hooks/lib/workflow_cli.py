@@ -11,7 +11,6 @@ import tempfile
 from pathlib import Path
 
 from ._workflow_db import CHECK_ONLY, LedgerError, _canonical, history, read_evidence
-from .behavior_map import interpretation_pending
 from .command_runner import _tail, emit_json as _emit_json, print_output as _print_output, run as _run, run_entry as _run_entry
 from .repo_identity import RepoIdentity, RepoIdentityError, resolve_repo_identity, try_resolve_repo_identity
 from .state_prune import prune
@@ -58,7 +57,7 @@ RECORD_SHAPES = {
                'disposition {"intakeEvidenceId":"...","dispositions":[{"finding_id":"R-1","status":"fixed|'
                'rejected-with-evidence|report-only|accepted-follow-up","reason":"...","evidenceRefs":["E:0"]}]}'),
     "advisor-result": ('the advisor envelope {"schemaVersion":1,"findings":[{"id":"SPEC-1","claim":"...",'
-                       '"material":true,"kind":"behavioral|nonbehavioral"}],"verdict":"completed|commit-ready|'
+                       '"material":true,"kind":"behavioral|nonbehavioral"}],"verdict":"approved|changes-required|completed|commit-ready|'
                        'fix-before-commit|context-mismatch"}, or --verdict unavailable --reason TEXT'),
     "advisor-disposition": ("--finding F --fixed|--rejected|--report-only|--follow-up REF --evidence-ref E:i "
                             "[--behavior-id BM] [--reason TEXT]; or --stage S --findings none; or --input "
@@ -109,8 +108,9 @@ def parser() -> argparse.ArgumentParser:
     command.add_argument("--reason", required=True)
     command = _repo(commands.add_parser("checkpoint", help="query advisor readiness without mutation"))
     command.add_argument("--phase", required=True)
-    command.add_argument("--reconsult", action="store_true", help="user-authorized repeat preflight consultation")
+    command.add_argument("--reconsult", action="store_true", help="resume review of a revised preflight draft")
     command.add_argument("--channel-dir", help="write the advisor evidence channels here and list them in order")
+    command.add_argument("--preflight-file", help="draft artifact reviewed before its single recording")
     _repo(commands.add_parser("complete", help="complete a ready workflow"), instance=True)
     commands.add_parser("tdd", help="run and record one real RED/GREEN candidate")
 
@@ -140,6 +140,7 @@ def parser() -> argparse.ArgumentParser:
             command.add_argument("--reason")
             command.add_argument("--design-declaration")
             command.add_argument("--expected-candidate-tree")
+            command.add_argument("--preflight-file")
         elif kind == "advisor-disposition":
             command.add_argument("--stage")
             command.add_argument("--findings", choices=("none", "addressed"))
@@ -375,13 +376,12 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
         if not args.input:
             raise ValueError("record preflight requires --input <path|->")
         document = preflight_document(args.input)
-        pending = any(interpretation_pending(item) for item in document["behaviorMap"])
-        status = "pending" if pending else "passed"
+        status = "passed"  # Approval records once; unsettled items remain TDD obligations.
         _, evidence_id = commit_evidence_phase(identity, slug, workflow_id, "preflight", {
             "schemaVersion": 1, "slug": slug, "workflowId": workflow_id, "document": document,
             "recordedAt": utc_timestamp()}, status=status)
         emit({"evidenceId": evidence_id, "status": status})
-        return 2 if pending else 0
+        return 0
     if args.kind == "review":
         if not args.input:
             raise ValueError("record review requires --input <path|->")
@@ -412,7 +412,8 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
         state = record_advisor_result(
             identity, slug, workflow_id, args.stage, args.source, verdict, reason=args.reason,
             design=design_declaration(args.design_declaration) if args.design_declaration else None,
-            intake=intake, expected_candidate_tree=expected or candidate)
+            intake=intake, expected_candidate_tree=expected or candidate,
+            preflight_draft=preflight_document(args.preflight_file) if args.preflight_file else None)
     else:
         flag = None
         if args.finding is not None:
@@ -484,7 +485,8 @@ def _dispatch(args: argparse.Namespace) -> int:
         _emit_json(_receipt(pause(identity, args.slug, args.workflow_id, args.reason,
                                   expected_candidate_tree=_active_candidate_tree(identity)), identity))
     elif args.command == "checkpoint":
-        _emit_json(checkpoint(identity, args.phase, reconsult=args.reconsult, channel_dir=args.channel_dir))
+        _emit_json(checkpoint(identity, args.phase, reconsult=args.reconsult, channel_dir=args.channel_dir,
+                              preflight_draft=preflight_document(args.preflight_file) if args.preflight_file else None))
     elif args.command == "complete":
         _emit_json(_receipt(complete(identity, slug=args.slug, workflow_id=args.workflow_id,
                                      expected_candidate_tree=_active_candidate_tree(identity)), identity))

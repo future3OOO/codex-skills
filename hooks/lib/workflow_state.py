@@ -1,6 +1,7 @@
 """Repository-scoped production workflow policy and transactional commands."""
 from __future__ import annotations
 
+import difflib
 import hashlib
 import json
 import os
@@ -764,6 +765,13 @@ def commit_evidence_phase(
         if expected_evidence_id is not _NO_CAS and state.get(latest_field) != expected_evidence_id:
             raise WorkflowError(f"{phase} evidence changed during the run; re-read and re-run the command")
         if phase == "preflight":
+            if state.get("preflightLatestEvidence"):
+                raise WorkflowError("preflight is already recorded; use tdd-map for subsequent changes")
+            advice = state.get("advisorPreflight") or {}
+            approved = transaction.evidence(advice.get("intakeEvidence")) or {}
+            if (advice.get("status") != "approved" or approved.get("verdict") != "approved"
+                    or json.dumps(approved.get("preflightDraft"), sort_keys=True) != json.dumps(evidence_doc.get("document", evidence_doc), sort_keys=True)):
+                raise WorkflowError("preflight requires advisor approval bound to this exact draft")
             _require_owned_behavioral_findings(state, _linked_finding_items(transaction, evidence_doc))
         _apply_step(identity, state, phase, status)
         write = evidence_write(str(state["workflowId"]), phase, evidence_doc)
@@ -1190,6 +1198,7 @@ def record_advisor_result(
     design: JsonObject | None = None,
     intake: JsonObject | None = None,
     expected_candidate_tree: str | None = None,
+    preflight_draft: JsonObject | None = None,
 ) -> JsonObject:
     if source not in REVIEW_SOURCES:
         raise ValueError(f"unsupported reviewer source: {source}")
@@ -1226,8 +1235,14 @@ def record_advisor_result(
                 raise WorkflowIncomplete("advisor-preflight requires repo-context-forge")
             if source != "codex-advisor":
                 raise ValueError("preflight advisor source must be codex-advisor")
-            if verdict not in {"completed", "unavailable"}:
-                raise ValueError("preflight verdict must be completed or unavailable")
+            if state.get("preflightLatestEvidence") and verdict in {"approved", "changes-required"}:
+                raise WorkflowError("preflight is already recorded; draft consultations are closed")
+            if verdict not in {"completed", "unavailable", "approved", "changes-required"}:
+                raise ValueError("preflight verdict must be approved, changes-required, completed or unavailable")
+            if verdict in {"approved", "changes-required"}:
+                if intake is None or preflight_draft is None:
+                    raise WorkflowError("draft advice requires its reviewed preflight artifact")
+                intake["preflightDraft"] = preflight_draft
             measured_reason = str(reason or "").strip() or None
             if verdict == "unavailable" and not measured_reason:
                 raise ValueError("preflight unavailable requires --reason")
@@ -1237,9 +1252,8 @@ def record_advisor_result(
                     str(state["workflowId"]), "finding-intake-preflight", intake,
                 )
                 writes.append(intake_write)
-                intake_reference = _register_finding_intake(
-                    transaction, state, intake_write.evidence_id, intake, intakes,
-                )
+                intake_reference = (intake_write.evidence_id if verdict in {"approved", "changes-required"} else
+                                    _register_finding_intake(transaction, state, intake_write.evidence_id, intake, intakes))
             current = state.get("advisorPreflight")
             if intake is None and replayed_design and isinstance(current, dict) and all((
                 current.get("findings") == ("pending" if _stage_unresolved(state, stage, source) else "none"),
@@ -1832,7 +1846,7 @@ def advisor_disposition(
         recorded = (
             isinstance(record, dict)
             and record.get("source") in REVIEW_SOURCES
-            and (record.get("status") == "completed" if stage == "preflight" else record.get("status") in FINAL_VERDICTS)
+            and (record.get("status") in {"completed", "approved", "changes-required"} if stage == "preflight" else record.get("status") in FINAL_VERDICTS)
         )
         source = record.get("source") if isinstance(record, dict) else None
         historical = False
@@ -1970,6 +1984,7 @@ def _finding_ledger(
 CHANNELS = (
     ("intent", "original request: the completeness oracle this pass answers to"),
     ("advisor-projection", "advisor projection (schemaVersion 1)"),
+    ("behavior-map", "preflight artifact / current Behavior Map: challenge interpretation and boundary coverage"),
     ("finding-ledger", "finding and attack ledger: each finding's immutable claim beside its owning attacks"),
     ("late-red", "late RED: items whose RED or baseline ran after production had changed"),
     ("diff", "current-pass diff: passStartOid^{tree} -> activeCandidateTree; a deleted file is its header and line count"),
@@ -1977,7 +1992,7 @@ CHANNELS = (
 
 
 def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
-               channel_dir: str | None = None) -> JsonObject:
+               channel_dir: str | None = None, preflight_draft: JsonObject | None = None) -> JsonObject:
     if phase not in CHECKPOINT_PHASES:
         raise ValueError(f"unsupported checkpoint phase: {phase}")
     if reconsult and phase != "preflight-advice":
@@ -2008,6 +2023,11 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
         ),
     )
     missing = [name for name, ready in requirements if not ready]
+    if phase == "preflight-advice":
+        if preflight_draft is None:
+            missing.append("preflight draft (--preflight-file)")
+        if state.get("preflightLatestEvidence"):
+            missing.append("preflight already recorded; draft consultations are closed")
     evidence_id = state.get("repoContextForgeEvidence")
     graph_document = evidence_document(
         identity, evidence_id if isinstance(evidence_id, str) else None,
@@ -2062,6 +2082,20 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
     if channel_dir is None:
         return result
     ledger, late = _finding_ledger(identity, state, items), {}
+    map_content = [{key: value for key, value in item.items() if key not in
+                    {"redProof", "baselineProof", "proofBinding"}} for item in items]
+    if phase == "preflight-advice" and preflight_draft is not None:
+        previous = evidence_document(identity, (state.get("advisorPreflight") or {}).get("intakeEvidence")) or {}
+        prior = previous.get("preflightDraft") if reconsult else None
+        draft_id = evidence_write(str(workflow_id), "preflight-draft", preflight_draft).evidence_id
+        map_content = {"digest": draft_id, "draft": preflight_draft}
+        if prior is not None:
+            map_content = {"digest": draft_id,
+                           "baseDigest": evidence_write(str(workflow_id), "preflight-draft", prior).evidence_id,
+                           "delta": "".join(difflib.unified_diff(
+                               json.dumps(prior, sort_keys=True, indent=2).splitlines(keepends=True),
+                               json.dumps(preflight_draft, sort_keys=True, indent=2).splitlines(keepends=True),
+                               fromfile="last-recorded-draft", tofile="current-draft"))}
     since = state.get("judgedBase" if state.get("nextAction") == "appeal-final-review" else "judgedTree") \
         if phase == "final-review" else None
     for entry in _late_items(items):  # each changed-path list once, with the items that share it
@@ -2069,6 +2103,7 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
     values: dict[str, tuple[object, object]] = {
         "intent": (None, state.get("intent") or None),
         "advisor-projection": (evidence_id, projection),
+        "behavior-map": (None, map_content or None),
         "finding-ledger": (None, ledger or None),
         "late-red": (None, list(late.values()) or None),
         "diff": (None, None if "passStartOid" in missing else current_pass_evidence(

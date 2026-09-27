@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from hooks.tests.support import approve_preflight
 from hooks.tests.support import COMMIT_READY, build_no_change_document, record_context_forge  # noqa: E402
 from hooks.lib.repo_identity import resolve_repo_identity  # noqa: E402
 from hooks.lib.tdd_surface import differences, identify  # noqa: E402
@@ -141,6 +142,7 @@ class TddSummaryTests(unittest.TestCase):
         state = read_workflow(identity)
         document = build_no_change_document("suite setup")
         document.pop("behaviorMap", None)
+        approve_preflight(self.repo, document)
         w.commit_evidence_phase(
             identity, str(state["slug"]), str(state["workflowId"]), "preflight", document,
         )

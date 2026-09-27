@@ -75,7 +75,7 @@ PREFLIGHT_SECTIONS = frozenset({"authoritativeContract", "behaviorMap"})
 def advisor_envelope(
     path: str, *, slug: str, workflow_id: str, stage: str, producer: str,
 ) -> tuple[JsonObject, str]:
-    """Validate one strict provider envelope while retaining its exact bytes."""
+    """Retain typed findings once; the response digest preserves byte identity."""
     try:
         raw = sys.stdin.buffer.read() if path == "-" else Path(path).read_bytes()
         text = raw.decode("utf-8")
@@ -87,15 +87,12 @@ def advisor_envelope(
     findings, verdict = value.get("findings"), value.get("verdict")
     if type(value.get("schemaVersion")) is not int or value.get("schemaVersion") != 1 or not isinstance(findings, list):
         raise ValueError("advisor envelope requires schemaVersion 1 and a findings array")
-    allowed = {"completed"} if stage == "preflight" else FINAL_ENVELOPE_VERDICTS if stage == "final" else set()
+    allowed = {"completed", "approved", "changes-required"} if stage == "preflight" else FINAL_ENVELOPE_VERDICTS if stage == "final" else set()
     if verdict not in allowed:
         raise ValueError(f"advisor envelope verdict {verdict!r} is incompatible with stage {stage}")
     typed: list[JsonObject] = []
     identifiers: set[str] = set()
     for position, item in enumerate(findings, 1):
-        # A completed consult is never discarded over its shape: extra fields are
-        # dropped and an unrecognised kind is read as behavioral, the conservative
-        # default that makes the finding ride the pass as an attack obligation.
         if not isinstance(item, dict) or not {"id", "claim", "material"} <= set(item):
             raise ValueError(f"advisor finding {position} requires id, claim, and material")
         identifier, kind = item.get("id"), item.get("kind")
@@ -110,9 +107,18 @@ def advisor_envelope(
         if prior is not None and (not isinstance(prior, dict) or set(prior) != {"evidenceId", "id"}
                                   or not all(_text(v) for v in prior.values())):
             raise ValueError("priorFinding requires evidenceId and id")
-        typed.append({"id": identifier, "claim": item["claim"], "material": item["material"], "kind": kind,
-                      **({"priorFinding": prior} if prior is not None else {})})
-    if stage == "final" and verdict in {"commit-ready", "fix-before-commit"} and ((verdict == "commit-ready") == any(item["material"] for item in typed)):
+        finding = {"id": identifier, "claim": item["claim"], "material": item["material"], "kind": kind,
+                   **({"priorFinding": prior} if prior is not None else {})}
+        if stage == "final" and item["material"]:
+            sketch = item.get("fixSketch")
+            if (isinstance(sketch, dict) and set(sketch) == {"change", "probe"}
+                    and all(_text(v) and not re.search(r"[\ud800-\udfff]", v) for v in sketch.values())
+                    and sum(len(v.encode("utf-8")) for v in sketch.values()) <= 8192):
+                finding["fixSketch"] = sketch
+            else:
+                finding["fixSketchIssue"] = "missing, malformed, or exceeds 8192 UTF-8 bytes"
+        typed.append(finding)
+    if verdict in {"approved", "changes-required", "commit-ready", "fix-before-commit"} and ((verdict in {"approved", "commit-ready"}) == any(item["material"] for item in typed)):
         raise ValueError("advisor envelope verdict is incompatible with finding materiality")
     return {
         "schemaVersion": 1,
@@ -122,7 +128,6 @@ def advisor_envelope(
         "stage": stage,
         "verdict": verdict,
         "findings": typed,
-        "raw": text,
         "sha256": hashlib.sha256(raw).hexdigest(),
         "recordedAt": utc_timestamp(),
         "observationId": uuid.uuid4().hex,

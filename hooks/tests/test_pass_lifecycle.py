@@ -24,7 +24,7 @@ QUALITY_GATE = ROOT / "skills" / "production-code" / "scripts" / "code_quality_g
 ADVISOR = ROOT / "skills" / "codex-advisor" / "scripts" / "ask-codex-advisor.sh"
 
 from hooks.tests.support import (  # noqa: E402
-    build_no_change_document, checkpoint_channels, commit_ready_envelope, graph_packet, record_context_forge,
+    approve_preflight, build_no_change_document, checkpoint_channels, commit_ready_envelope, graph_packet, record_context_forge,
     wait_for_trace_writes,
 )
 
@@ -526,7 +526,8 @@ class PassLifecycleTests(unittest.TestCase):
         approved = self.cli("checkpoint", "--phase", "preflight-advice", "--reconsult")
         self.assertEqual(approved.returncode, 0, approved.stderr)
         repeated = json.loads(approved.stdout)
-        self.assertTrue(repeated["ready"], "APPROVED_PREFLIGHT_RECONSULT_REFUSED: " + approved.stdout)
+        self.assertFalse(repeated["ready"], "RECORDED_PREFLIGHT_RECONSULT_ACCEPTED: " + approved.stdout)
+        self.assertIn("preflight already recorded; draft consultations are closed", repeated["missing"])
         self.assertEqual(repeated["sessionMode"], "resume")
         self.assertEqual(repeated["workflowId"], wid)
         self.assertEqual(json.loads(self.cli("status").stdout), before)
@@ -821,6 +822,7 @@ class PassLifecycleTests(unittest.TestCase):
         self.run_cli(("record", "advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "preflight", "--source", "codex-advisor", "--verdict", "completed"),
                      ("record", "advisor-disposition", "--slug", slug, "--workflow-id", wid, "--stage", "preflight", "--findings", "none"))
         payload = self.json_file("busy-preflight.json", self.preflight_document())
+        approve_preflight(self.repo, self.preflight_document())
         holder = sqlite3.connect(database_path(resolve_repo_identity(self.repo))); holder.execute("BEGIN IMMEDIATE")
         trace = self.tmp / "guarded-writer-trace.json"
         primary = subprocess.Popen([sys.executable, str(WORKFLOW), "pause", "--repo", str(self.repo), "--slug", slug,
@@ -1256,6 +1258,8 @@ class PassLifecycleTests(unittest.TestCase):
     def record_preflight(self, wid: str, document: dict[str, str]) -> subprocess.CompletedProcess[str]:
         payload = self.tmp / "preflight-input.json"
         payload.write_text(json.dumps(document), encoding="utf-8")
+        if wid == json.loads(self.cli("status").stdout)["workflowId"]:
+            approve_preflight(self.repo, document)
         return subprocess.run(
             [sys.executable, str(WORKFLOW), "record", "preflight", "--repo", str(self.repo),
              "--slug", json.loads(self.cli("status").stdout)["slug"],
@@ -1628,7 +1632,7 @@ class PassLifecycleTests(unittest.TestCase):
         self.owner_phase("code-review", "passed", findings="none")
         self.finalize("legacy-evidence", wid)
         def strip_evidence(state: dict[str, object]) -> None:
-            for field in ("preflightEvidence", "productionCodeEvidence", "verificationEvidence"):
+            for field in ("preflightEvidence", "preflightLatestEvidence", "productionCodeEvidence", "verificationEvidence"):
                 state.pop(field, None)
         self.rewrite_latest_state(strip_evidence)
 
@@ -1750,6 +1754,7 @@ class PassLifecycleTests(unittest.TestCase):
         # report refusal: exit 2 means nothing was recorded.
         payload = self.tmp / "preflight-input.json"
         payload.write_text(json.dumps(self.preflight_document()), encoding="utf-8")
+        approve_preflight(self.repo, self.preflight_document())
         with open("/dev/full", "w") as full:
             recorded = subprocess.run(
                 [sys.executable, str(WORKFLOW), "record", "preflight", "--repo", str(self.repo),
@@ -2662,10 +2667,12 @@ class PassLifecycleTests(unittest.TestCase):
         subprocess.run(["git", "init", "-q"], cwd=repo, env=self.env, check=True)
         wrapper = ROOT / "skills" / "codex-advisor" / "scripts" / "ask-codex-advisor.sh"
 
+        draft = self.json_file("draft.json", self.preflight_document())
+
         def run(path: Path) -> subprocess.CompletedProcess[str]:
             return subprocess.run([
                 str(wrapper), "--slug", "shape", "--phase", "preflight-advice",
-                "--design-file", str(path), "--cwd", str(repo), "--", "q",
+                "--design-file", str(path), "--preflight-file", str(draft), "--cwd", str(repo), "--", "q",
             ], cwd=ROOT, env=self.env, text=True, capture_output=True, check=False)
 
         empty = self.tmp / "empty-design.md"
@@ -2815,7 +2822,7 @@ commit_tdd(resolve_repo_identity(sys.argv[1]), 'terminal-state', sys.argv[2],
             self.assertEqual(rejected.returncode, 2, f"{phase} mutation was accepted during revalidation")
         closed_preflight = self.record_preflight(wid, self.preflight_document())
         self.assertEqual(closed_preflight.returncode, 2, closed_preflight.stdout + closed_preflight.stderr)
-        self.assertIn("revalidation", closed_preflight.stderr)
+        self.assertIn("already recorded", closed_preflight.stderr)
 
         marker = self.tmp / "revalidation-command-ran"
         raced_tdd = subprocess.run(

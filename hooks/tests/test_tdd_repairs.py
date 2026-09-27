@@ -27,7 +27,8 @@ from hooks.lib.workflow_state import (  # noqa: E402
     read_workflow,
     record_advisor_result,
 )
-from hooks.tests.support import (  # noqa: E402
+from hooks.tests.support import (
+    approve_preflight,  # noqa: E402
     build_document,
     pending_behavior,
     record_context_forge,
@@ -121,6 +122,7 @@ class MappedTddRepairTests(unittest.TestCase):
             json.dumps(build_document("mapped TDD", behavior_map=items)),
             encoding="utf-8",
         )
+        approve_preflight(self.repo, json.loads(preflight.read_text()))
         recorded = self.cli(
             "record", "preflight",
             "--repo",
