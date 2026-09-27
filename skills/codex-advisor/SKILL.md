@@ -215,9 +215,8 @@ If transport is genuinely unavailable, record the preflight result as
 review. No nonce, skip file, stamp, attestation, or audited exception authorizes
 completion.
 
-Close final findings with `workflow.py record advisor-disposition --finding <ID>
---fixed --behavior-id <BM_ID> --evidence-ref <evidenceId>:<runIndex>`.
-Use `record advisor-disposition --help` for measured rejection and other dispositions.
+Close final findings with `workflow.py record advisor-disposition --finding <ID> --fixed --evidence-ref <evidenceId>:<runIndex>`; add `--behavior-id <BM_ID>` for an owning Behavior Map item.
+See `record advisor-disposition --help` for other dispositions.
 Read the typed intake once; judge each sketch against the real candidate and
 retain the lead's RED/GREEN. Approval of a draft closes its draft corrections,
 never a runtime finding or proof obligation.

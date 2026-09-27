@@ -18,8 +18,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from hooks.lib.repo_identity import resolve_repo_identity  # noqa: E402
-from hooks.tests.support import (
-    approve_preflight,  # noqa: E402
+from hooks.tests.support import (  # noqa: E402
+    approve_preflight,
     checkpoint_channels,
     commit_ready_envelope,
     build_document,
