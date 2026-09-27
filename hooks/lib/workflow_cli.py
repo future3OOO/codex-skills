@@ -272,8 +272,9 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
         # TypeSafe Jev reviews every changed unit for bloat, and new tests are checked
         # against the failing runs the pass recorded (a new test needs a demonstrated gap).
         tdd = evidence_document(identity, state.get("tddEvidence") if isinstance(state.get("tddEvidence"), str) else None)
-        reds = [{"command": item.get("redCommand") or "", "site": (item.get("redProof") or {}).get("site") or ""}
-                for item in (tdd.get("behaviorMap") or [] if isinstance(tdd, dict) else []) if isinstance(item, dict) and item.get("redProof")]
+        # A reopened item keeps its redProof as history without a redCommand: only a currently bound RED proves a test.
+        reds = [{"command": item["redCommand"], "site": (item.get("redProof") or {}).get("site") or ""}
+                for item in (tdd.get("behaviorMap") or [] if isinstance(tdd, dict) else []) if isinstance(item, dict) and item.get("redCommand")]
         with tempfile.NamedTemporaryFile("w", encoding="utf-8", prefix="quality-gate-reds-", suffix=".json", delete=False) as handle:
             json.dump({"reds": reds}, handle)
         temporary.append(handle.name)

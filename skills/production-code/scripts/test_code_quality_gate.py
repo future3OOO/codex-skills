@@ -840,6 +840,7 @@ _UNIT_ROWS = (
     ("src/Legacy.java", "class Legacy {\n  static final String LEGACY_FLAG = \"x\";\n  int keep() { return 1; }\n}\n",
      "class Legacy {\n  int keep() { return 1; }\n}\n", {}, set()),  # deletion only: its unit is asserted below
     ("src/imports.py", "import sys\nimport os\n\n\ndef here():\n    return os.getcwd()\n", "import os\n\n\ndef here():\n    return os.getcwd()\n", {}, {"<region>"}),
+    ("src/drop.py", "def gone():\n    return 1\n\n\ndef kept():\n    return 2\n", "def kept():\n    return 2\n", {"gone": "function"}, {"kept"}),
 )
 
 
@@ -857,8 +858,8 @@ def test_bloat_units_follow_the_change_in_any_language(repo: Path) -> None:
     facts = {"sweep": ("src/sweep.py", "old") in kinds, "touched": "total" in touched}
     assert not wrong and all(facts.values()), f"BLOAT_UNITS_WRONG {wrong} {facts}"
     assert ("src/Legacy.java", "<region>") in kinds, f"BLOAT_UNITS_WRONG deletion-only Java change has no unit: {sorted(kinds)}"
-    # A name removed from a file in any language (Java: static, final, String, LEGACY_FLAG; Python: debug) counts too.
-    assert evidence.get("removedNames") == 5, f"BLOAT_UNITS_WRONG removed names {evidence.get('removedNames')}"
+    # A name removed from a file in any language (Java: static, final, String, LEGACY_FLAG; Python: debug, gone) counts too.
+    assert evidence.get("removedNames") == 6, f"BLOAT_UNITS_WRONG removed names {evidence.get('removedNames')}"
 
 
 @with_repo

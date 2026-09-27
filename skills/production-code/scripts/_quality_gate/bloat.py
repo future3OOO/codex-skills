@@ -283,9 +283,14 @@ def _units(snapshot: EvaluationSnapshot, index: dict[str, list], paths: tuple[st
         if entry.path not in texts:
             continue
         for hunk in entry.hunks:
-            # A pure deletion changes its symbol; in a file with no symbol index (no pattern for its language), the file.
+            # A pure deletion changes its symbol, or is its own unit when it removed a whole definition; in a file with no
+            # symbol index (no pattern for its language), the file.
             if not hunk.added and hunk.deleted and (_enclosing(index[entry.path], max(hunk.at, 1)) or not index[entry.path]):
-                unit_at(entry.path, max(hunk.at, 1), "" if index[entry.path] else texts[entry.path])["changed"] += [f"- {text}" for _, text in hunk.deleted]
+                gone = extract_symbols(entry.path, "\n".join(text for _, text in hunk.deleted), language_for_path(entry.path))
+                unit = units.setdefault((entry.path, -max(hunk.at, 1) - 0.5), {"path": entry.path, "line": max(hunk.at, 1), "symbol": gone[0].name, "shape": "function",
+                                                                             "role": _role(entry.path), "kind": "function", "code": "", "changed": []}) if gone \
+                    else unit_at(entry.path, max(hunk.at, 1), "" if index[entry.path] else texts[entry.path])
+                unit["changed"] += [f"- {text}" for _, text in hunk.deleted]
             loose = [(number, text) for number, text in hunk.added if not _enclosing(index[entry.path], number)]
             region = "\n".join(text for _, text in loose)
             for number, text in hunk.added:
