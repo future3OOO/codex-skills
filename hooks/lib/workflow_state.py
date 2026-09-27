@@ -2491,8 +2491,7 @@ def operation_receipt(state: JsonObject, identity: RepoIdentity, **details: obje
     """Return the committed operation's result and its current continuation."""
     if CHECK_ONLY.get():
         return details
-    current = public_status(state, identity, recovery=True,
-                            fields={"schemaVersion", "workflowId", "slug", "phase", "nextAction", "activeCandidateTree"})
+    current = public_status(state, fields={"schemaVersion", "workflowId", "slug", "phase", "nextAction"})
     return {**current, "next": next_operation(identity, {**state, **current}, details), **details}
 
 
