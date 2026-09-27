@@ -922,9 +922,10 @@ def test_new_tests_need_a_recorded_failing_run(repo: Path) -> None:
         ("python3 -m pytest -q tests/new/test_more.py -k 'total_again and not slow'", ""), ("python3 -m pytest -q tests/new/test_more.py -k 'not (thrice or slow)'", ""),
         ("python3 -m unittest tests.new.test_extra.test_extra", ""), ("python3 -m pytest -q other/test_other.py -k other_path", ""),
         ("python3 -m pytest -q tests/new/test_other.py", ""), ("", f"{repo}/tests/new/test_more.py:9 assert total([2]) == 2"),
-        ("go test ./... -run 'TestAddGo$'", "sum"), ("npx jest web/more.test.js -t 'sums thrice'", ""),
+        ("go test ./... -run 'TestAddGo$'", "sum"), ("go test ./... -run '*TestAdd'", ""), ("npx jest web/more.test.js -t 'sums thrice'", ""),
         ("python3 -m pytest tests -k case_mixed", ""), ("python3 -m pytest tests/new/test_more.py::test_param_one[1]", ""))]}), encoding="utf-8")
-    _, proved = bloat_run(repo, "--bloat-review", "--tdd-evidence-json", str(reds))
+    res, proved = bloat_run(repo, "--bloat-review", "--tdd-evidence-json", str(reds))
+    assert proved is not None, f"BLOAT_NEW_TEST_UNPROVEN the gate crashed on a recorded run: {res.stderr[-300:]}"
     unproven = sorted(item["evidence"]["owners"][0] for item in proved["findings"] if item["region"].get("category") == "test-unproven")
     assert bloat_rule(proved)["evidence"]["removedNames"] == 6, f"BLOAT_UNITS_WRONG deleted file {bloat_rule(proved)['evidence']['removedNames']}"
     assert unproven == ["tests/new/test_more.py:12 test_total_thrice", "tests/new/test_more.py:16 test_total_slow",
@@ -1006,6 +1007,10 @@ def test_jev_finds_duplicates_across_the_repo(repo: Path) -> None:
     assert evidence["requests"] < sum(evidence["questions"].values()), f"BLOAT_DUPLICATE_SENDS {evidence['requests']} {evidence['questions']}"
     assert copies == {"src/scales.py:2 normalized", "src/scales.py:8 normalized"}, f"BLOAT_SAME_NAME_COLLAPSED {copies}"
     problems = [] if cached.get("requests") == 0 and cached.get("cached", 0) > 0 and lines(again) == lines(payload) else [f"BLOAT_CACHE_MISS {cached.get('requests')} {cached.get('cached')}"]
+    store = repo / ".git" / "codex-quality-gate" / "jev-answers.jsonl"  # one damaged line loses only its own answer
+    store.write_text("not json\n" + "".join(store.read_text(encoding="utf-8").splitlines(keepends=True)[1:]), encoding="utf-8")
+    partial = bloat_rule(bloat_run(repo, "--bloat-review", "--gitnexus-context-json", str(graph), TYPESAFE_API_KEY=key)[1])["evidence"]
+    problems += [] if (partial.get("requests"), partial.get("cached")) == (1, cached["cached"] - 1) else [f"BLOAT_CACHE_MISS damaged line {partial.get('requests')} {partial.get('cached')}"]
     printed = {(item["evidence"]["question"], frozenset(re.sub(r":\d+ ", "::", owner) for owner in item["evidence"]["owners"])) for item in payload["findings"]
                if item["region"].get("category") == "duplicate" and isinstance(item["evidence"].get("score"), float)}
     missing = ({("same", frozenset(pair)) for pair in (("src/state.py::map_items", "src/maps.py::recorded_map"), ("scripts/b.sh::copy_tree", "scripts/a.sh::sync_dirs"),

@@ -30,11 +30,11 @@ def unproven(units: list[dict[str, object]], snapshot: EvaluationSnapshot, reds:
         return [] if head.startswith("./") and folder in ("", ".") or folder and path.startswith(folder + "/") else None
 
     def chosen(expression: str, flag: str, symbol: str) -> bool:
-        if flag != "-k":  # -run, -t and the like: a pattern over the name
-            return bool(re.search(expression, symbol)) if not re.search(r"[\\(\[]$", expression) else expression in symbol
-        try:  # pytest -k: case-insensitive substring words combined with and/or/not
+        try:  # -run, -t and the like: a pattern over the name; pytest -k: substring words combined with and/or/not
+            if flag != "-k":
+                return bool(re.search(expression, symbol))
             return _truth(ast.parse(expression.replace("-", "_"), mode="eval").body, symbol.lower())
-        except (SyntaxError, ValueError):
+        except (re.error, SyntaxError, ValueError):  # a malformed pattern or expression proves nothing
             return False
 
     def proven(unit: dict[str, object]) -> bool:

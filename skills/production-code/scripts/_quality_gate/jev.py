@@ -41,9 +41,15 @@ class Session:
     def __init__(self, key: str, store: Path | None = None) -> None:
         self.key, self.store, self.lock, self.kept = key, store, threading.Lock(), {}
         try:
-            self.kept = {row["id"]: row["answers"] for row in map(json.loads, store.read_text(encoding="utf-8").splitlines())} if store and store.is_file() else {}
-        except (OSError, UnicodeError, ValueError, KeyError, TypeError):
-            pass
+            lines = store.read_text(encoding="utf-8").splitlines() if store and store.is_file() else []
+        except (OSError, UnicodeError):
+            lines = []
+        for line in lines:  # a damaged line loses only its own answer
+            try:
+                row = json.loads(line)
+                self.kept[str(row["id"])] = row["answers"]
+            except (ValueError, KeyError, TypeError):
+                continue
 
     @staticmethod
     def id(state: dict[str, object], questions: dict[str, object]) -> str:
