@@ -166,8 +166,7 @@ omitted, and the post-edit validation below.
 
 When you do call out:
 
-- Name the unanswered dependency question first. Reuse the retained packet and
-  prior applicable results; do not repeat its executed checks on resume.
+- Name the unanswered dependency question; reuse prior applicable results on resume.
 - Retain the exact UID and file from the packet or `context` (`uid` is supported).
   The current `impact` accepts a name as `target`; require its returned target ID
   and repo to match the retained identity. Reject same-named helper mismatches.
@@ -188,8 +187,6 @@ When you do call out:
 - do not use unscoped `gitnexus_detect_changes(compare)` for initial target
   selection; it is not packet-scoped and can overreport unrelated historical
   surfaces
-- use `gitnexus_detect_changes` after local edits, before commit, or as
-  supplemental graph evidence after the packet target surface is fixed
 - trust blast-radius claims only when `<gitnexus_status>` is `fresh` or
   `reindexed` and `required_checks_resolved` is true
 

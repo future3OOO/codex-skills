@@ -187,17 +187,16 @@ Record a non-empty JSON array. Every item has eight required fields; these examp
 - Do not make tracked edits, stage files, or resolve review threads before preflight is complete.
 - Do not treat a retrospective preflight summary as valid compliance.
 - Do not pause for approval unless the user explicitly asked for it or a real blocker prevents safe editing.
-- If new facts invalidate the preflight after editing has started, stop, correct the contract or map, and continue from the corrected preflight.
+- If new facts invalidate the recorded preflight, stop and reassess the owning items through `tdd-map` before continuing; do not reopen the initial preflight loop.
 
 ## Recording
 
-Draft the artifact first and give that exact JSON to `preflight-advice --preflight-file`.
-Revise on `changes-required` and use `--reconsult` in the same session, without
-per-cycle user approval. Only `approved` permits the single recording.
+Submit the exact artifact through [Codex Advisor's preflight loop](../codex-advisor/SKILL.md#preflight-advice).
+Record it once the advisor returns `approved` for that content.
 
 In the governed workflow record it with `python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" record preflight --input -`
 (shape: `record preflight --help`; `--check` validates without recording). A refusal
-names every violation at once and mutates nothing. Recording requires the latest advisor approval for the exact typed artifact;
-key order and JSON formatting do not change content. A refused record writes nothing.
+names every violation at once and mutates nothing. Key order and JSON formatting
+do not change content.
 Approved unsettled items remain pending; settle them through `tdd-map`, never a
 second preflight recording. Response prose is not evidence.

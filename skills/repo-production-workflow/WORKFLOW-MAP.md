@@ -8,9 +8,11 @@ flowchart LR
     B[begin] --> R[Repo Context Forge records the packet graph evidence]
     R --> D{bug or regression?}
     D -->|yes| DG[diagnose]
-    D -->|no| A1[advisor preflight]
-    DG --> A1
-    A1 --> P[production preflight records the Behavior Map]
+    D -->|no| PD[draft production preflight and Behavior Map]
+    DG --> PD
+    PD --> A1[advisor preflight]
+    A1 -->|changes-required| PD
+    A1 -->|approved| P[record the approved preflight once]
     P --> M{map has a pending item?}
     M -->|yes| TR[mapped contract RED, preservation items settled first]
     M -->|no: every item already-satisfied or omitted| NR[tdd --not-required]
@@ -58,7 +60,7 @@ workflow pause|checkpoint|complete|prune
 
 Mutation receipts include identity, the operation result and `next`: its bound
 `command`, any authored `input`, optional producer `help` and finding bindings.
-Summary renders the same navigation. Observed execution identifies its kind and
+Summary derives recovery guidance from the current checkout. Observed execution identifies its kind and
 supplies a ready verification-binding command on success; a failed observation
 leaves verification unchanged. Dry-run recording publishes no continuation or
 committed reference. `status` returns full state. Identity defaults to the active workflow; an explicit
@@ -88,11 +90,10 @@ owns the initial Behavior Map; mapped TDD evidence carries its stable IDs,
 RED/GREEN runs and current dispositions. A plan may show
 the map but is not an evidence owner.
 
-Exit 2 alone does not prove a refusal: the verification, TDD, and review
-producers each document a path that commits first and returns 2 after — a
-command that failed after being recorded, an invalid TDD run recorded as
-`reopen` or `in-progress`, and a review whose material findings remain
-unresolved. Repo Context Forge, preflight, and verification keep their
+Exit 2 alone does not prove a refusal: verification and TDD can commit first
+and return 2 after — a command that failed after being recorded or an invalid
+TDD run recorded as `reopen` or `in-progress`.
+Repo Context Forge, preflight, and verification keep their
 accepted reference only while producer-recorded as passed — every other transition drops
 it, so a bare replay can never resurrect prior evidence. TDD and code review
 instead keep a current producer reference across their own non-passed states —
@@ -141,12 +142,11 @@ effective findings are terminal, and an unchanged reviewable tree since the lead
 ## Edit invalidation
 
 ```text
-production Edit/Write/apply_patch
+production edit observed through explicit paths or actual Git changes
   -> verification = pending
   -> codeReview = pending
   -> finalReview = pending
-  -> nextAction = implementation when a resolved map was touched,
-                  otherwise implementation/correction
+  -> derive the next invocation from the operation receipt or fresh summary
 ```
 
 Invalidation occurs before quality feedback, so a failing quality check cannot
@@ -170,10 +170,9 @@ their own immutable intake.
 
 ## Approval freshness
 
-A file written through the shell emits no editor event, so nothing invalidates
-mid-stream, and the pre-edit gate does not see that write either — an accepted
-gap, because the failure model is drift rather than deception. Freshness is
-recovered at the later gates instead. Recording the lead review stores a
+Bash writes are observed from actual Git changes when the tool finishes;
+prose and quoted operators are not edit paths. Changes during execution remain
+subject to the later binding checks. Recording the lead review stores a
 per-path manifest of the reviewable surface: each path's working-tree file mode
 and content hash, and for a tracked submodule the commit it currently points at.
 The index is read only to learn which paths are tracked and which of them are
@@ -215,7 +214,7 @@ session and defers the rest here.
 |---|---|
 | `PreToolUse(Edit\|Write\|apply_patch)` | Advise, never refuse: name what the pass has not recorded and admit the edit; docs, scratch, and non-repository paths are silent; test-like paths skip only the RED advice |
 | `PreToolUse(Bash)` | Rewrite a lone pytest/unittest command to `workflow.py verify --observed -- <command>`: the same exit code, plus a receipt in the checkout of the command's own working directory; while it records, the command's stderr is merged into stdout |
-| `PostToolUse(Edit\|Write\|apply_patch)` | Invalidate downstream readiness, then return single-file lint and the map advisory |
+| `PostToolUse(Edit\|Write\|apply_patch\|Bash)` | Observe explicit edit paths and actual Git changes, invalidate downstream readiness, then return batched lint and the map advisory |
 | `PostCompact` | Forget which advisories this session has heard, so each returns once after compaction |
 | `SessionStart(compact)` | Restore the discipline line and the pass's open work from committed SQLite state |
 

@@ -103,8 +103,7 @@ about the request's literal wording that quotes a real-Seam measurement receives
 a verdict, either a material re-raise carrying a new contradicting measurement
 or `commit-ready`.
 
-Both phases check the owning map for interpretation and boundary coverage; final
-review receives the current recorded map. Every material final finding includes
+Final review receives the current recorded Behavior Map. Every material finding includes
 `fixSketch` with `change` and `probe`, at most 8192 UTF-8 bytes combined, separate
 from the prose word budget. Missing, malformed or oversized sketches are reported
 on the retained finding; they never discard a completed consult. The lead reads
@@ -217,6 +216,3 @@ completion.
 
 Close final findings with `workflow.py record advisor-disposition --finding <ID> --fixed --evidence-ref <evidenceId>:<runIndex>`; add `--behavior-id <BM_ID>` for an owning Behavior Map item.
 See `record advisor-disposition --help` for other dispositions.
-Read the typed intake once; judge each sketch against the real candidate and
-retain the lead's RED/GREEN. Approval of a draft closes its draft corrections,
-never a runtime finding or proof obligation.
