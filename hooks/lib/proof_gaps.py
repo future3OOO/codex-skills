@@ -71,8 +71,6 @@ def _report(identity, command, env, item, green_tree, pass_start, others, scratc
     if base["exit"] != 0:
         cause = "hit the time budget" if base["exit"] is None else f"exited {base['exit']}"
         return [f"{PREFIX} not run (the proof {cause} on a copy of the candidate)"], []
-    if not base["lines"] and not base["events"]:
-        return [f"{PREFIX} not run - the observer saw no execution (the interpreter ignored PYTHONPATH or started no Python)"], []
     ran = base["lines"] & {f"{p}:{n}" for p, lines in since_start.items() for n in lines}
     # Break what this proof owns: changed lines it runs that few other items' GREEN proofs run.
     share = Counter(line for lines in others for line in lines)
@@ -81,8 +79,8 @@ def _report(identity, command, env, item, green_tree, pass_start, others, scratc
     if ran and not owned:
         return [f"{PREFIX} not run - other items' GREEN proofs already run every changed line this proof runs"], sorted(ran)
     if not any(targets.values()):
-        return [f"{PREFIX} not run - the proof ran none of the changed lines in its copy (it may import the checkout "
-                "through an absolute path or an installed package)"], sorted(ran)
+        return [f"{PREFIX} not run - the proof ran none of the changed lines in its copy (its interpreter may ignore "
+                "PYTHONPATH, or import the checkout through an absolute path or an installed package)"], sorted(ran)
     second = observe("b2")
     if second["exit"] != 0:
         cause = "hit the time budget" if second["exit"] is None else f"exited {second['exit']}; its outcome is not repeatable"

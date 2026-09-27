@@ -85,6 +85,17 @@ class ProofGapTests(unittest.TestCase):
         self.assertEqual(payload.get("proofGaps"), lines if len(lines) > 1 else None, "GAP_NOT_IN_LEDGER")
         return lines
 
+    def stray(self, marker: bytes) -> list[str]:
+        """This test's processes (its HOME is in their environment) still running a proof after the GREEN returned."""
+        def read(p: Path, name: str) -> bytes:
+            try:
+                return (p / name).read_bytes()
+            except OSError:  # the process exited while being listed, or is not ours
+                return b""
+        home = f"HOME={self.h.env['HOME']}".encode()
+        return [p.name for p in Path("/proc").iterdir()
+                if p.name.isdigit() and marker in read(p, "cmdline") and home in read(p, "environ").split(b"\0")]
+
     def test_gap_is_named_for_each_runner(self) -> None:
         runners = [("unittest", False), ("unittest", True), ("script", False), ("src", False)]
         for runner, child in runners + ([("pytest", False)] if PYTEST else []):
@@ -101,9 +112,10 @@ class ProofGapTests(unittest.TestCase):
                 slug, _ = self.h.begin_with_map([self.item("BM_W", "WEAK_FAILED")])
                 green, payload = self.cycle(slug, "BM_W", self.proof(name, FAILS, "WEAK_FAILED", runner, child),
                                             weaken=(name, WEAK))
-                lines = self.gaps(payload)
-                self.assertTrue(any("calc.py:3" in line and "not judged" in line for line in lines[1:]),
-                                "PROOF_GAP_NOT_REPORTED: " + json.dumps(lines))
+                lines, status = self.gaps(payload), self.h.evidence()["behaviorMap"][0]["status"]
+                self.assertTrue(green.returncode == 0 and status == "green"
+                                and any("calc.py:3" in line and "not judged" in line for line in lines[1:]),
+                                "PROOF_GAP_NOT_REPORTED: " + json.dumps([green.returncode, status, lines]))
 
     def test_clean_proof_reports_a_zero_gap_summary(self) -> None:
         # Run-to-run noise must not read as a gap: a copy root outside /tmp, a value naming that root,
@@ -181,10 +193,11 @@ class ProofGapTests(unittest.TestCase):
         slug, _ = self.h.begin_with_map([self.item("BM_E", "WEAK_FAILED")])
         _, payload = self.cycle(slug, "BM_E", self.proof("test_weak", FAILS, "WEAK_FAILED", "unittest-E"), weaken=("test_weak", WEAK))
         lines = self.gaps(payload)
-        self.assertTrue(lines and "observer" in lines[0] and "gaps" not in lines[0],
-                        "OBSERVER_ABSENCE_HIDDEN: " + json.dumps(lines))
+        self.assertTrue(lines and "ran none" in lines[0] and "PYTHONPATH" in lines[0] and "gaps" not in lines[0],
+                        "UNOBSERVED_NOT_FOLDED: " + json.dumps(lines))
 
-    @unittest.skipUnless(KEY_FILE.is_file(), "live TypeSafe check needs ~/.config/typesafe/key")
+    @unittest.skipUnless(os.environ.get("RUN_LIVE_TYPESAFE_TESTS") == "1" and KEY_FILE.is_file(),
+                         "live TypeSafe check needs RUN_LIVE_TYPESAFE_TESTS=1 and ~/.config/typesafe/key")
     def test_jev_reports_only_promised_outcome_changes(self) -> None:
         self.h.env["TYPESAFE_API_KEY"] = KEY_FILE.read_text().strip()
         slug, _ = self.h.begin_with_map([self.item("BM_W", "WEAK_FAILED")])
@@ -193,49 +206,48 @@ class ProofGapTests(unittest.TestCase):
         self.assertTrue(any("calc.py:3" in line and " p=" in line for line in lines[1:])
                         and not any("not judged" in line for line in lines), "JEV_NOT_APPLIED: " + json.dumps(lines))
 
-    def test_opt_out_runs_the_proof_once(self) -> None:
-        counter = self.h.tmp / "executions"
-        self.h.env.update(PROBE_COUNTER=str(counter), WORKFLOW_PROOF_GAPS="off")
-        slug, _ = self.h.begin_with_map([self.item("BM_W", "WEAK_FAILED")])
-        command = self.proof("test_weak", FAILS, "WEAK_FAILED")
-        path = self.h.repo / "test_weak.py"
-        path.write_text("import os\nfrom pathlib import Path\np = Path(os.environ['PROBE_COUNTER'])\n"
-                        "p.write_text(p.read_text() + 'x' if p.exists() else 'x')\n" + path.read_text())
-        red = self.h.tdd(slug, "red", "BM_W", command)
-        self.assertEqual(red.returncode, 0, red.stdout + red.stderr)
-        (self.h.repo / "calc.py").write_text(BRANCHY)
-        path.write_text(path.read_text().replace(FAILS, WEAK))
-        payload = json.loads(self.h.tdd(slug, "green", "BM_W", command).stdout.splitlines()[-1])
-        self.assertTrue(counter.read_text() == "xx" and "proofGaps" not in payload,
-                        "OPT_OUT_IGNORED: " + json.dumps([counter.read_text(), payload.get("proofGaps")]))
-
     def test_slow_proof_is_bounded(self) -> None:
         # The proof sleeps past the check's budget only when the check reruns it.
         slug, _ = self.h.begin_with_map([self.item("BM_H", "HANG_FAILED")])
         command = self.proof("test_slow", FAILS, "HANG_FAILED")
         path = self.h.repo / "test_slow.py"
         path.write_text("import os, time\nif os.environ.get('PROOF_GAPS_OUT'):\n    time.sleep(70)\n" + path.read_text())
-        red = self.h.tdd(slug, "red", "BM_H", command)
-        self.assertEqual(red.returncode, 0, red.stdout + red.stderr)
-        self.calc.write_text(BRANCHY)
         started = time.monotonic()
-        green = self.h.tdd(slug, "green", "BM_H", command)
+        green, _ = self.cycle(slug, "BM_H", command)
         elapsed = time.monotonic() - started
         self.assertTrue(elapsed < 90 and green.returncode == 0, "SLOW_PROOF_UNBOUNDED: " + json.dumps(elapsed))
         summary = (self.h.evidence()["runs"][-1].get("proofGaps") or [""])[0]
         self.assertTrue("time budget" in summary and "124" not in summary, "BUDGET_MISREPORTED: " + summary)
 
-    def test_budget_cut_break_is_not_caught(self) -> None:
-        # No break can fail this weak proof; it is slow only under the check, so the budget cuts some breaks short.
-        slug, _ = self.h.begin_with_map([self.item("BM_K", "CUT_FAILED")])
-        command = self.proof("test_cut", FAILS, "CUT_FAILED")
-        path = self.h.repo / "test_cut.py"
-        path.write_text("import os, time\nif os.environ.get('PROOF_GAPS_OUT'):\n    time.sleep(15)\n" + path.read_text())
-        dead = "".join(f"    v{n} = {n}\n" for n in range(8))
-        _, payload = self.cycle(slug, "BM_K", command, "def scale(x):\n" + dead + BRANCHY.split("\n", 1)[1],
-                                weaken=("test_cut", WEAK))
-        summary = self.gaps(payload)[0]
-        self.assertTrue(" 0 caught" in summary, "BUDGET_CUT_COUNTED_CAUGHT: " + summary)
+    def test_proof_runs_once_without_a_check(self) -> None:
+        # No production .py change, and the opt-out: each GREEN runs its proof once, never under the check.
+        for case in ("no-python", "opt-out"):
+            with self.subTest(case=case):
+                self.tearDown()
+                self.setUp()
+                counter = self.h.tmp / "executions"
+                self.h.env["PROBE_COUNTER"] = str(counter)
+                if case == "opt-out":
+                    self.h.env["WORKFLOW_PROOF_GAPS"] = "off"
+                (self.h.repo / "limit.txt").write_text("1\n")
+                slug, _ = self.h.begin_with_map([self.item("BM_T", "LIMIT_FAILED")])
+                (self.h.repo / "test_limit.py").write_text(
+                    "import os, unittest\nfrom pathlib import Path\np = Path(os.environ['PROBE_COUNTER'])\n"
+                    "p.write_text(p.read_text() + 'x' if p.exists() else 'x')\n"
+                    "class T(unittest.TestCase):\n    def test_it(self):\n"
+                    "        self.assertEqual(Path('limit.txt').read_text(), '2\\n', 'LIMIT_FAILED')\n")
+                command = (sys.executable, "-m", "unittest", "test_limit.T.test_it")
+                red = self.h.tdd(slug, "red", "BM_T", command)
+                self.assertEqual(red.returncode, 0, red.stdout + red.stderr)
+                (self.h.repo / "limit.txt").write_text("2\n")
+                if case == "opt-out":
+                    self.calc.write_text(BRANCHY)
+                payload = json.loads(self.h.tdd(slug, "green", "BM_T", command).stdout.splitlines()[-1])
+                retained = (self.h.evidence()["runs"][-1].get("proofGaps") or [""])[0]
+                expected = "proofGaps" not in payload and (
+                    not retained if case == "opt-out" else "no production .py" in retained)
+                self.assertTrue(counter.read_text() == "xx" and expected,
+                                "EXTRA_PROOF_RUN: " + json.dumps([counter.read_text(), retained]))
 
     def test_malformed_observer_report_keeps_green(self) -> None:
         slug, _ = self.h.begin_with_map([self.item("BM_M", "BAD_FAILED")])
@@ -243,39 +255,11 @@ class ProofGapTests(unittest.TestCase):
         path = self.h.repo / "test_bad.py"
         path.write_text("import os\nout = os.environ.get('PROOF_GAPS_OUT')\nif out:\n"
                         "    open(os.path.join(out, 'bad.json'), 'w').write('{\"lines\": []}')\n" + path.read_text())
-        red = self.h.tdd(slug, "red", "BM_M", command)
-        self.assertEqual(red.returncode, 0, red.stdout + red.stderr)
-        self.calc.write_text(BRANCHY)
-        green = self.h.tdd(slug, "green", "BM_M", command)
+        green, _ = self.cycle(slug, "BM_M", command)
         evidence = self.h.evidence()
         summary = (evidence["runs"][-1].get("proofGaps") or [""])[0]
         self.assertTrue(green.returncode == 0 and evidence["behaviorMap"][0]["status"] == "green" and "not run" in summary,
                         "MALFORMED_REPORT_ABORTED_GREEN: " + json.dumps([green.returncode, summary, green.stderr[-300:]]))
-
-    def test_change_without_production_python_runs_the_proof_once(self) -> None:
-        counter = self.h.tmp / "executions"
-        self.h.env["PROBE_COUNTER"] = str(counter)
-        (self.h.repo / "limit.txt").write_text("1\n")
-        slug, _ = self.h.begin_with_map([self.item("BM_T", "LIMIT_FAILED")])
-        (self.h.repo / "test_limit.py").write_text(
-            "import os, unittest\nfrom pathlib import Path\np = Path(os.environ['PROBE_COUNTER'])\n"
-            "p.write_text(p.read_text() + 'x' if p.exists() else 'x')\n"
-            "class T(unittest.TestCase):\n    def test_it(self):\n"
-            "        self.assertEqual(Path('limit.txt').read_text(), '2\\n', 'LIMIT_FAILED')\n")
-        command = (sys.executable, "-m", "unittest", "test_limit.T.test_it")
-        red = self.h.tdd(slug, "red", "BM_T", command)
-        self.assertEqual(red.returncode, 0, red.stdout + red.stderr)
-        (self.h.repo / "limit.txt").write_text("2\n")
-        lines = self.gaps(json.loads(self.h.tdd(slug, "green", "BM_T", command).stdout.splitlines()[-1]))
-        self.assertTrue(counter.read_text() == "xx" and "no production .py" in lines[0],
-                        "NO_PY_CHANGE_RERAN: " + json.dumps([counter.read_text(), lines]))
-
-    def test_green_outcome_is_unchanged_by_a_gap(self) -> None:
-        slug, _ = self.h.begin_with_map([self.item("BM_W", "WEAK_FAILED")])
-        green, _ = self.cycle(slug, "BM_W", self.proof("test_weak", FAILS, "WEAK_FAILED"), weaken=("test_weak", WEAK))
-        status = self.h.evidence()["behaviorMap"][0]["status"]
-        self.assertTrue(green.returncode == 0 and status == "green",
-                        "GREEN_OUTCOME_CHANGED: " + json.dumps([green.returncode, status, green.stderr[-400:]]))
 
     def test_worktree_is_untouched(self) -> None:
         slug, _ = self.h.begin_with_map([self.item("BM_W", "WEAK_FAILED")])
@@ -292,20 +276,29 @@ class ProofGapTests(unittest.TestCase):
         self.h.tdd(slug, "green", "BM_W", command)
         self.assertEqual(snapshot(), before, "WORKTREE_CHANGED")
 
-    def test_a_hanging_break_is_bounded(self) -> None:
-        slug, _ = self.h.begin_with_map([self.item("BM_H", "HANG_FAILED")])
+    def test_hanging_and_budget_cut_breaks_are_bounded(self) -> None:
+        # "hang": dropping `n += 1` spins forever and is stopped by its own 5 s limit (caught with dropping `n = 0`).
+        # "cut": the proof is slow only under the check, so the shared budget cuts runs short; a cut run proves nothing.
+        # Either way the GREEN returns within 90 s, counts no stopped run as caught, and leaves no process behind.
         loop = "def scale(x):\n    n = 0\n    while n < x:\n        n += 1\n    return n\n"
-        started = time.monotonic()
-        green, _ = self.cycle(slug, "BM_H", self.proof("test_hang", FAILS, "HANG_FAILED"), loop, weaken=("test_hang", WEAK))
-        elapsed = time.monotonic() - started
-        def cmdline(p: Path) -> bytes:
-            try:
-                return (p / "cmdline").read_bytes()
-            except OSError:  # the process exited while being listed
-                return b""
-        stray = [p for p in Path("/proc").iterdir() if p.name.isdigit() and b"test_hang" in cmdline(p)]
-        self.assertTrue(elapsed < 90 and not stray and green.returncode == 0,
-                        "GREEN_NOT_BOUNDED: " + json.dumps([elapsed, [p.name for p in stray]]))
+        slow = "import os, time\nif os.environ.get('PROOF_GAPS_OUT'):\n    time.sleep(15)\n"
+        dead = "def scale(x):\n" + "".join(f"    v{n} = {n}\n" for n in range(8)) + BRANCHY.split("\n", 1)[1]
+        for case, code, prefix in (("hang", loop, ""), ("cut", dead, slow)):
+            with self.subTest(case=case):
+                self.tearDown()
+                self.setUp()
+                slug, _ = self.h.begin_with_map([self.item("BM_H", "HANG_FAILED")])
+                command = self.proof(f"test_{case}", FAILS, "HANG_FAILED")
+                path = self.h.repo / f"test_{case}.py"
+                path.write_text(prefix + path.read_text())
+                started = time.monotonic()
+                green, _ = self.cycle(slug, "BM_H", command, code, weaken=(f"test_{case}", WEAK))
+                elapsed = time.monotonic() - started
+                summary = (self.h.evidence()["runs"][-1].get("proofGaps") or [""])[0]
+                stray = self.stray(f"test_{case}.T".encode())
+                bounded = " 0 caught" in summary if case == "cut" else " 2 caught" in summary and elapsed >= 5
+                self.assertTrue(elapsed < 90 and not stray and green.returncode == 0 and bounded,
+                                "BREAK_NOT_BOUNDED: " + json.dumps([case, elapsed, stray, summary]))
 
 
 if __name__ == "__main__":
