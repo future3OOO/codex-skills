@@ -5,138 +5,62 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from .git_scope import git_read, read_git_file
-from .findings import BaselineFile, Hunk, Numstat, SnapshotEntry
-from .path_policy import classify_path, normalize_path
+from .git_scope import git_read, read_git_file, read_tree_blobs
+from .findings import Hunk, Numstat, SnapshotEntry
+from .path_policy import classify_path, is_data_path, normalize_path
 
 
-def parse_repo_context_packet(text: str) -> set[str]:
-    """Paths a Repo Context Forge packet names, for owner-discovery boosts."""
-    paths: set[str] = set()
-    for match in re.finditer(r'(?:path|file)=["\']([^"\']+)["\']', text):
-        paths.add(normalize_path(match.group(1)))
-    for line in text.splitlines():
-        for match in re.finditer(r"[\w./-]+\.(?:cjs|cts|go|js|jsx|mjs|mts|php|py|rb|rs|sh|ts|tsx)", line):
-            paths.add(normalize_path(match.group(0).strip("`'\"(),:;")))
-    return {path for path in paths if path}
-
-
-def _list_valued(item: dict) -> list[str]:
-    """Relationship keys holding the provider's list-shaped result; null/scalar values are malformed."""
-    return [key for key in ("callers", "calleeOf", "references") if isinstance(item.get(key), list)]
-
-
-def parse_gitnexus_context_json(text: str) -> tuple[dict[str, int], list[str]]:
+def _graph_symbols(repo: Path, text: str, base: str, tree: str) -> tuple[dict[tuple[str, str], tuple[str, ...]], tuple[str, ...]]:
+    """Each graph symbol's related symbols (callers, callees, references), keyed by (file, name), from
+    caller-supplied graph evidence; evidence that is unreadable or names another snapshot is a named gap."""
     if not text.strip():
-        return {}, []
+        return {}, ()
     try:
         payload = json.loads(text)
     except json.JSONDecodeError as exc:
-        return {}, [f"gitnexus context JSON ignored: {exc}"]
-    symbols = payload.get("symbols", []) if isinstance(payload, dict) else []
-    if not isinstance(symbols, list):
-        return {}, []
-    boosts: dict[str, int] = {}
-    for item in symbols:
-        if not isinstance(item, dict):
-            continue
-        name = str(item.get("name") or item.get("symbol") or "").strip()
-        path = normalize_path(str(item.get("file") or item.get("path") or "").strip())
-        if not name or not path:
-            continue
-        boost = (8 if any(item[key] for key in _list_valued(item)) else 0) + (
-            7 if item.get("processes") or item.get("flows") or item.get("workflows") else 0
-        )
-        if boost:
-            boosts[f"{path}:{name}"] = min(15, boost)
-    return boosts, []
-
-# The fixed disposition carrier: a git-dir path is readable during capture
-# and never part of any candidate tree, so records there are out-of-tree.
-DISPOSITIONS_CARRIER = "qg54-dispositions.json"
-
-
-def _disposition_records(repo: Path) -> tuple[dict[str, object], ...]:
-    """Disposition records from the fixed out-of-tree carrier, decoded and
-    shape-checked, with their commits resolved during capture. Trust,
-    finding state, and severity stay with the owner rules."""
-    located, failure = git_read(repo, ["rev-parse", "--git-path", DISPOSITIONS_CARRIER])
-    if failure:
-        return ()
-    carrier = Path(located.strip())
-    carrier = carrier if carrier.is_absolute() else repo / carrier
-    try:
-        text = carrier.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return ()
-    except (OSError, UnicodeDecodeError) as exc:
-        return ({"invalidDocument": f"dispositions carrier ignored: {exc}"},)
-    try:
-        payload = json.loads(text)
-    except json.JSONDecodeError as exc:
-        return ({"invalidDocument": f"dispositions carrier ignored: {exc}"},)
-    records = payload.get("records") if isinstance(payload, dict) else None
-    if not isinstance(records, list):
-        return ({"invalidDocument": "dispositions carrier has no records array"},)
-    resolved = []
-    for record in records:
-        if not isinstance(record, dict):
-            resolved.append({"invalidDocument": "record is not an object"})
-            continue
-        base, _ = git_read(repo, ["rev-parse", "--verify", f"{record.get('base', '')}^{{commit}}"])
-        tree, _ = git_read(repo, ["rev-parse", "--verify", f"{record.get('candidate', '')}^{{tree}}"])
-        resolved.append({**record, "resolvedBase": base.strip(), "resolvedCandidateTree": tree.strip()})
-    return tuple(resolved)
-
-
-def _graph_binding(repo: Path, gitnexus_context_json: str, base: str, tree: str) -> tuple[str, frozenset[str]]:
-    """The graph evidence's snapshot binding, resolved during capture: the
-    gap that leaves caller/callee scope unestablished (parent decision 1b —
-    the snapshot index is not a substitute), and the files it covers."""
-    absent = "no snapshot-bound external graph evidence: caller/callee scope is unestablished"
-    if not gitnexus_context_json.strip():
-        return absent, frozenset()
-    try:
-        payload = json.loads(gitnexus_context_json)
-    except json.JSONDecodeError:
-        return absent, frozenset()
-    if not isinstance(payload, dict) or not payload.get("base") or not payload.get("candidate"):
-        return absent, frozenset()
-    symbols = payload.get("symbols")
-    files = frozenset(
-        normalize_path(str(item.get("file") or item.get("path") or ""))
-        for item in (symbols if isinstance(symbols, list) else [])
-        if isinstance(item, dict) and _list_valued(item)
-    ) - {""}
-    if not files:
-        return "external graph evidence carries no caller/callee symbol results: a bare declaration is not evidence", frozenset()
+        return {}, (f"graph evidence ignored: {exc}",)
+    symbols = payload.get("symbols") if isinstance(payload, dict) else None
+    if not isinstance(symbols, list) or not payload.get("base") or not payload.get("candidate"):
+        return {}, ("graph evidence ignored: it names no snapshot or symbols",)
     declared_base, _ = git_read(repo, ["rev-parse", "--verify", f"{payload['base']}^{{commit}}"])
     declared_tree, _ = git_read(repo, ["rev-parse", "--verify", f"{payload['candidate']}^{{tree}}"])
     if (declared_base.strip(), declared_tree.strip()) != (base, tree):
-        return "external graph evidence is stale: it does not name the evaluated snapshot", files
-    return "", files
+        return {}, ("graph evidence is stale: it does not name the evaluated snapshot",)
+    return {
+        (normalize_path(str(item.get("file") or item.get("path"))), str(item.get("name") or item.get("symbol"))):
+            tuple(str(ref) for key in ("callers", "calleeOf", "references") if isinstance(item.get(key), list) for ref in item[key])
+        for item in symbols if isinstance(item, dict)
+    }, ()
+
+
+def _tree_sources(repo: Path, tree: str) -> tuple[dict[str, str], tuple[str, ...]]:
+    """The candidate tree's code files (any language, data and docs excepted); oversized ones are a named gap."""
+    listed, failure = git_read(repo, ["ls-tree", "-r", "-l", "-z", tree])
+    if failure:
+        return {}, (f"source index listing failed: {failure}",)
+    wanted, oversized = [], 0
+    for record in listed.split("\0"):
+        meta, _, rel_path = record.partition("\t")
+        fields = meta.split()
+        kind = classify_path(rel_path)
+        if len(fields) < 4 or fields[1] != "blob" or not (kind.role in BASELINE_ROLES or (
+                kind.exclusion_reason == "non-source extension" and kind.role != "docs" and not is_data_path(rel_path))):
+            continue
+        oversized += int(fields[3]) > MAX_INDEX_FILE_BYTES
+        wanted += [rel_path] if int(fields[3]) <= MAX_INDEX_FILE_BYTES else []
+    unreadable = sum("\n" in path for path in wanted)
+    return read_tree_blobs(repo, tree, wanted), tuple(gap for count, gap in (
+        (oversized, f"source index skipped {oversized} file(s) over {MAX_INDEX_FILE_BYTES} bytes"),
+        (unreadable, f"source index skipped {unreadable} file(s) whose path contains a newline")) if count)
 
 
 _HUNK_HEADER = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 
 _QUOTED_ESCAPES = {"a": "\a", "b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v", '"': '"', "\\": "\\"}
 
-# Baseline capture bounds: how many owner files may be read PER ROLE, so one
-# role cannot spend another's budget, and how large one may be. They live with
-# the capture because the cap must prevent the read.
-MAX_INDEX_FILES = 4000
+# The source index bloat review reads: the roles whose code can own a behaviour, and the largest file read.
 MAX_INDEX_FILE_BYTES = 500_000
-
-# Roles whose implementation the exact rules read and whose base-tree files are
-# captured as owner evidence: an exact copy of an existing helper is the same
-# defect wherever it lives; generated and vendored code is never an owner.
 BASELINE_ROLES = ("production", "test", "test-support")
-
-
-def top_dir(path: str) -> str:
-    # Root-level files share the repository root: their directory is "", never
-    # the filename, or no two root files could ever be neighbors.
-    return path.split("/", 1)[0] if "/" in path else ""
 
 
 @dataclass(frozen=True)
@@ -155,43 +79,21 @@ class EvaluationSnapshot:
     candidate_tree: str
     changed_scope: str
     entries: tuple[SnapshotEntry, ...]
-    baseline: tuple[BaselineFile, ...]
-    baseline_gaps: tuple[str, ...]
-    # Owner-discovery gaps outside the production role: the reuse advisory
-    # scores production owners only, so a test owner it never reads cannot
-    # make its verdict unknown.
-    baseline_role_gaps: tuple[str, ...]
-    # Same-role, same-language owners the candidate-relevance bound never read.
-    baseline_scope_gaps: tuple[str, ...]
-    # Where each renamed base path lives in the candidate. A renamed path has
-    # no entry of its own, so without this its content could neither be found
-    # nor be proven gone.
-    renamed_to: dict[str, str]
     unattributed: tuple[str, ...]
     capture_gaps: tuple[str, ...]
-    # Caller-supplied evidence, parsed once and frozen here with everything
-    # else a detector reads.
-    packet_paths: frozenset[str]
-    gitnexus_boosts: dict[str, int]
-    gitnexus_warnings: tuple[str, ...]
-    # The two external data Interfaces #77 versions, captured and frozen: the
-    # graph evidence's snapshot binding (empty gap when it names this exact
-    # snapshot and covers real symbols) and the disposition records read from
-    # the fixed out-of-tree carrier with their commits resolved.
-    graph_gap: str
-    graph_files: frozenset[str]
-    disposition_records: tuple[dict[str, object], ...]
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "_by_path", {entry.path: entry for entry in self.entries})
+    # Graph relationships per (file, symbol), and the candidate tree's own source files for bloat review
+    # (read only when bloat review asks for them, so the default gate reads no more than before).
+    graph_symbols: dict[tuple[str, str], tuple[str, ...]]
+    sources: dict[str, str]
+    source_gaps: tuple[str, ...]
 
     @classmethod
     def from_scope(
         cls,
         repo: Path,
         scope: dict[str, object],
-        repo_context_packet: str = "",
         gitnexus_context_json: str = "",
+        with_sources: bool = False,
     ) -> "EvaluationSnapshot":
         base = str(scope["base_commit"])
         tree = str(scope["candidate_tree"])
@@ -205,30 +107,18 @@ class EvaluationSnapshot:
             _entry(repo, path, renamed.get(path, path), base, tree, hunks, counts, path in untracked)
             for path in sorted(changed)
         )
-        packet_paths = frozenset(parse_repo_context_packet(repo_context_packet))
-        boosts, warnings = parse_gitnexus_context_json(gitnexus_context_json)
-        baseline, baseline_gaps, baseline_role_gaps, baseline_scope_gaps = _baseline_index(
-            repo, base, entries, packet_paths, {key.rsplit(":", 1)[0] for key in boosts}
-        )
-        graph_gap, graph_files = _graph_binding(repo, gitnexus_context_json, base, tree)
+        sources, source_gaps = _tree_sources(repo, tree) if with_sources else ({}, ())
+        graph, graph_gaps = _graph_symbols(repo, gitnexus_context_json, base, tree) if with_sources else ({}, ())
         return cls(
-            packet_paths=packet_paths,
-            gitnexus_boosts=boosts,
-            gitnexus_warnings=tuple(warnings),
-            graph_gap=graph_gap,
-            graph_files=graph_files,
-            disposition_records=_disposition_records(repo),
+            graph_symbols=graph,
+            sources=sources,
+            source_gaps=source_gaps + graph_gaps,
             base_identity=base,
             base_source=str(scope["base_source"]),
             candidate_source=str(scope["candidate_source"]),
             candidate_tree=tree,
             changed_scope=str(scope["changed_scope"]),
             entries=entries,
-            baseline=baseline,
-            baseline_gaps=baseline_gaps,
-            baseline_role_gaps=baseline_role_gaps,
-            baseline_scope_gaps=baseline_scope_gaps,
-            renamed_to={old: new for new, old in renamed.items()},
             unattributed=tuple(sorted(set(hunks) - changed)),
             capture_gaps=capture_gaps,
         )
@@ -239,9 +129,6 @@ class EvaluationSnapshot:
             return self.candidate_source
         kind = "git-tree" if self.candidate_source == "index" else "worktree-snapshot"
         return f"{kind}:{self.candidate_tree}"
-
-    def entry(self, rel_path: str) -> SnapshotEntry | None:
-        return self._by_path.get(rel_path)
 
     def role_entries(self, *roles: str) -> list[SnapshotEntry]:
         return [entry for entry in self.entries if entry.classification.role in roles]
@@ -258,17 +145,13 @@ class EvaluationSnapshot:
 
     def gap_streams(self) -> dict[str, tuple[str, ...]]:
         """The one completeness source every rule draws from: capture-level
-        failures, baseline discovery gaps, unattributed diff hunks, and the
+        failures, unattributed diff hunks, and the
         per-entry measurement gaps (all entries, and the source subset the
         hunk-reading rules depend on)."""
         return {
             "capture": self.capture_gaps,
-            "baseline": self.baseline_gaps,
-            "baseline_roles": self.baseline_role_gaps,
-            "baseline_scope": self.baseline_scope_gaps,
             "attribution": tuple(f"{path}: diff hunks matched no changed file" for path in self.unattributed),
             "measurement": tuple(sorted({gap for entry in self.entries if entry.classification.source for gap in entry.gaps})),
-            "measurement_production": tuple(sorted({gap for entry in self.role_entries("production") for gap in entry.gaps})),
             "measurement_all": tuple(sorted({gap for entry in self.entries for gap in entry.gaps})),
         }
 
@@ -304,77 +187,6 @@ def _entry(
     )
 
 
-def _baseline_index(
-    repo: Path,
-    base: str,
-    entries: tuple[SnapshotEntry, ...],
-    packet_paths: frozenset[str],
-    gitnexus_paths: set[str],
-) -> tuple[tuple[BaselineFile, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
-    """Bounded owner capture: the base-tree source files a change could
-    reimplement, read before the snapshot freezes so no detector reads Git.
-
-    Candidate-independent eligibility (owner language among the changed
-    languages of the SAME role, and a shared top directory or packet/GitNexus
-    naming) and the file and size caps all apply before any blob read. Roles
-    are kept apart so widening capture to tests cannot widen which production
-    owners the production rules see. A file skipped by a cap, or whose read
-    failed, is a recorded gap — unread scope never reads as absence — while a
-    path the change adds simply has no base entry.
-    """
-    if not base:
-        return (), (), (), ()
-    listed, failure = git_read(repo, ["ls-tree", "-r", "-l", "-z", base])
-    if failure:
-        return (), (f"reuse baseline listing failed: {failure}",), (), ()
-    scope: dict[str, tuple[set[str], set[str]]] = {}
-    for entry in entries:
-        if entry.classification.role in BASELINE_ROLES:
-            languages, roots = scope.setdefault(entry.classification.role, (set(), set()))
-            languages.add(entry.classification.language)
-            roots.add(top_dir(entry.path))
-    files: list[BaselineFile] = []
-    gaps: list[tuple[str, str]] = []
-    reads: dict[str, int] = {}
-    skipped = 0
-    for record in listed.split("\0"):
-        # ls-tree -l: "<mode> <type> <oid> <size>\t<path>".
-        meta, sep, rel_path = record.partition("\t")
-        fields = meta.split()
-        if not sep or not rel_path or len(fields) < 4 or fields[1] != "blob":
-            continue
-        classification = classify_path(rel_path)
-        if not classification.source:
-            continue
-        languages, roots = scope.get(classification.role, (set(), set()))
-        eligible = classification.language in languages and (
-            top_dir(rel_path) in roots or rel_path in packet_paths or rel_path in gitnexus_paths
-        )
-        text = None
-        # An owner excluded by the candidate-relevance bound is unread scope,
-        # not proven absence: the exact rules must report that, and no cap or
-        # bound may shrink their denominator into a clean verdict.
-        skipped += classification.language in languages and not eligible
-        if eligible and int(fields[3]) > MAX_INDEX_FILE_BYTES:
-            gaps.append((classification.role, f"{rel_path}: reuse baseline exceeds {MAX_INDEX_FILE_BYTES} bytes"))
-        elif eligible and reads.get(classification.role, 0) >= MAX_INDEX_FILES:
-            gaps.append((classification.role, f"reuse baseline discovery stopped at {MAX_INDEX_FILES} files"))
-        elif eligible:
-            # Attempts consume the cap, not successes: confirmed read failures
-            # must not buy unbounded extra Git reads.
-            reads[classification.role] = reads.get(classification.role, 0) + 1
-            text, read_failure = git_read(repo, ["show", f"{base}:{rel_path}"])
-            if read_failure:
-                text = None
-                gaps.append((classification.role, f"{rel_path}: reuse baseline could not be read"))
-        files.append(BaselineFile(rel_path, classification.role, classification.language, text))
-    scope_gap = (f"reuse baseline scope read only the changed top directories: {skipped} "
-                 f"same-role source file(s) elsewhere were never read",) if skipped else ()
-    production = tuple(dict.fromkeys(text for role, text in gaps if role == "production"))
-    other = tuple(dict.fromkeys(text for role, text in gaps if role != "production"))
-    return tuple(files), production, other, scope_gap
-
-
 def _counts_for(rel_path: str, record: Numstat | None) -> tuple[int, int, tuple[str, ...]]:
     if record is None:
         return 0, 0, ()
@@ -389,7 +201,7 @@ def _collect_hunks(raw_diff: str) -> dict[str, tuple[Hunk, ...]]:
     """One hunk-preserving walk of the captured diff, keyed by literal path."""
     collected: dict[str, list[Hunk]] = {}
     base_path = key = ""
-    base_line = current_line = 0
+    base_line = current_line = start = 0
     added: list[tuple[int, str]] = []
     deleted: list[tuple[int, str]] = []
     in_hunk = False
@@ -397,7 +209,7 @@ def _collect_hunks(raw_diff: str) -> dict[str, tuple[Hunk, ...]]:
     def close() -> None:
         nonlocal in_hunk, added, deleted
         if in_hunk and key:
-            collected.setdefault(key, []).append(Hunk(tuple(added), tuple(deleted)))
+            collected.setdefault(key, []).append(Hunk(tuple(added), tuple(deleted), start))
         in_hunk, added, deleted = False, [], []
 
     # Split on Git's actual record delimiter only: splitlines() would also
@@ -424,6 +236,7 @@ def _collect_hunks(raw_diff: str) -> dict[str, tuple[Hunk, ...]]:
         if match:
             close()
             base_line, current_line = int(match.group(1)), int(match.group(3))
+            start = current_line
             in_hunk = True
             continue
         if not in_hunk or not key:

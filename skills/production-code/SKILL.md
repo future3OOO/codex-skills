@@ -20,10 +20,10 @@ Before editing, use the standards below to choose the smallest production-safe i
 python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" verify --kind quality-gate --base-ref "<base>"
 ```
 
-It records the verdict on the pass and attaches the pass's recorded
-snapshot-bound Repo Context Forge evidence, which
-`QG54-OWNER-COMPETITION-PRODUCTION` needs; without it that rule reports
-incomplete. Load
+It records the verdict on the pass. It also has TypeSafe Jev find duplicated
+tests and functions for every changed unit, anywhere in the repo (this sends that
+code to TypeSafe; without a key it is a named gap), and flags each new test that no
+failing run recorded in the pass names: a new test needs a demonstrated gap. Load
 [references/gate-policy.md](references/gate-policy.md) when interpreting the
 gate's JSON contract.
 
@@ -165,9 +165,7 @@ Load [references/transaction-doctrine.md](references/transaction-doctrine.md) fo
 - Scan for common quality escapes such as `TODO`, `FIXME`, `eslint-disable`, `@ts-ignore`, and broad catch/pass patterns.
 - Run the bundled production code quality gate.
 - If the gate reports errors or actionable warnings, go back to the code, remove the bloat or quality escape, and rerun the gate.
-- If the gate reports a `QG54-OWNER-COMPETITION-PRODUCTION` warning, it has named both competing owners with their evidence class. Deepen, replace, or consolidate same-responsibility owners until one owner remains and delete the competing surface; a `candidate` or `confirmed-unresolved` state left behind is unfinished work, not a passing verdict. `resolved` telemetry requires a parent-bound disposition record and complete scope; same-responsibility repairs additionally require the one-owner predicate.
-- If the gate reports a `QG54-DUPLICATE-*` warning, it has named every region carrying that exact implementation. Keep one owner and delete the copies, or call the survivor. These rules are warning-only; a copy left behind is unfinished work, not a passing verdict.
-- For owner-competition warnings, inspect the named regions' callers/callees with GitNexus MCP or local search before deciding; distinct authorities, real adapters, and genuinely different lifecycles are the legitimate negative cases the disposition contract records.
+- If the gate reports a `QG-BLOAT` line, it names the unit, the category and any confirmed counterpart. Extend or delete the repeated test, call the existing code, or delete the leftover; a line left behind is unfinished work, not a passing verdict.
 - Treat touched shallow modules as in-scope debt: absorb, delete, or record the blocker before finalizing.
 - Do not finish the turn while duplicate added code, reimplemented existing helpers, unnecessary growth, fake-green suppressions, broad catch/pass, temp artifacts, or cleanup failures remain in the changed production surface.
 - Treat the gate as changed-scope evidence, not as a substitute for the repo's own lint, typecheck, tests, build, and domain-specific quality gates.

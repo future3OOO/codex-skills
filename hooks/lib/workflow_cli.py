@@ -256,7 +256,7 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
     binding_error: str | None = None
     tree_before: dict[str, str] | None = None
     graph_evidence_id: str | None = None
-    graph_context_path: str | None = None
+    temporary: list[str] = []
     try:
         tree_before = tree_manifest(identity)
     except RuntimeError as exc:
@@ -269,6 +269,15 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
             raise ValueError("quality-gate verification runs the bundled gate and accepts no command")
         command = [sys.executable, str(ROOT / "skills" / "production-code" / "scripts" / "code_quality_gate.py"),
                    "check", "--repo", str(identity.root), "--base-ref", args.base_ref]
+        # TypeSafe Jev reviews every changed unit for bloat, and new tests are checked
+        # against the failing runs the pass recorded (a new test needs a demonstrated gap).
+        tdd = evidence_document(identity, state.get("tddEvidence") if isinstance(state.get("tddEvidence"), str) else None)
+        reds = [{"command": item.get("redCommand") or "", "site": (item.get("redProof") or {}).get("site") or ""}
+                for item in (tdd.get("behaviorMap") or [] if isinstance(tdd, dict) else []) if isinstance(item, dict) and item.get("redProof")]
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", prefix="quality-gate-reds-", suffix=".json", delete=False) as handle:
+            json.dump({"reds": reds}, handle)
+        temporary.append(handle.name)
+        command += ["--bloat-review", "--tdd-evidence-json", handle.name]
         # The pass's recorded Repo Context Forge evidence, handed to the gate
         # unchanged when it carries the producer's snapshot-bound gate context;
         # the gate's own binding check adjudicates match, stale, or absent.
@@ -286,8 +295,8 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
             )
             with handle:
                 json.dump(graph_context, handle)
-            graph_context_path = handle.name
-            command += ["--gitnexus-context-json", graph_context_path]
+            temporary.append(handle.name)
+            command += ["--gitnexus-context-json", handle.name]
     else:
         if args.base_ref:
             raise ValueError("--base-ref belongs to --kind quality-gate")
@@ -296,8 +305,8 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
     try:
         raw, exit_code, timed_out = _run(command, identity, args.timeout)
     finally:
-        if graph_context_path is not None:
-            os.unlink(graph_context_path)
+        for path in temporary:
+            os.unlink(path)
     valid = binding_error is None and not timed_out and _passed(shlex.join(command), exit_code, _tail(raw))
     gate: dict[str, object] | None = None
     shown = raw

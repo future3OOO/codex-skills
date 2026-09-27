@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import ast
-import io
 import re
-import tokenize
 
 from .findings import SymbolDef
 
@@ -17,6 +15,7 @@ _SYMBOL_PATTERNS = {
         ("function", re.compile(r"^\s*(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(")),
         ("class", re.compile(r"^\s*(?:export\s+)?class\s+([A-Za-z_$][\w$]*)\b")),
         ("function", re.compile(r"^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>")),
+        ("function", re.compile(r"^\s*(?:it|test)\s*\(\s*[\"'`]([^\"'`]+)[\"'`]")),  # a callback test, named by its title
     ],
     "go": [("function", re.compile(r"^\s*func\s+(?:\([^)]*\)\s*)?([A-Za-z_][\w]*)\s*\("))],
     "rust": [
@@ -43,7 +42,8 @@ def extract_symbols(path: str, text: str, language: str) -> list[SymbolDef]:
     for line_no, line in enumerate(lines, 1):
         for kind, pattern in _SYMBOL_PATTERNS.get(language, []):
             match = pattern.search(line)
-            if match:
+            # Parsed Python names its real definitions; a "def" inside a string literal is text.
+            if match and (not python_ends or line_no in python_ends):
                 symbols.append(SymbolDef(
                     match.group(1), path, line_no, kind, language,
                     _definition_content(lines, line_no, language, python_ends.get(line_no)),
@@ -69,43 +69,3 @@ def _definition_content(lines: list[str], line_no: int, language: str, known_end
         indent = len(lines[start]) - len(lines[start].lstrip())
         end = next((index for index in range(line_no, len(lines)) if lines[index].strip() and len(lines[index]) - len(lines[index].lstrip()) <= indent), end)
     return "\n".join(lines[start:end]).rstrip()
-
-
-def canonical_lines(text: str, language: str) -> dict[int, str] | None:
-    """Line number to canonical content for one captured file, or `None` when
-    the language has no real tokenizer to prove what a comment is.
-
-    Exactness is the point, so this removes only what a tokenizer proves is
-    removable: whole-line comments and blank lines. Identifiers, literals,
-    operators, control flow, indentation, and trailing whitespace all survive,
-    and nothing inside a multi-line string token is dropped — a blank line
-    there is content, and deleting it would make two different strings
-    canonicalize identically. A trailing comment keeps its whole line for the
-    same reason: the code beside it is not a comment.
-    """
-    if language != "python":
-        return None
-    try:
-        tokens = list(tokenize.generate_tokens(io.StringIO(text).readline))
-    # A captured tree is untrusted input: a .py path holding NUL bytes reaches
-    # CPython's C tokenizer, which reports that as SystemError rather than a
-    # syntax error. Every one of these is "this file was not read", never a
-    # blanket except: the caller turns None into a named incomplete scope.
-    except (IndentationError, SyntaxError, SystemError, UnicodeError, ValueError, tokenize.TokenError):
-        return None
-    dropped: set[int] = set()
-    protected: set[int] = set()
-    for token in tokens:
-        if token.type == tokenize.COMMENT and not token.line[: token.start[1]].strip():
-            dropped.add(token.start[0])
-        # Only string content spans physical lines, and 3.12 tokenizes an
-        # f-string as FSTRING_* rather than STRING; the span covers both.
-        elif token.end[0] > token.start[0]:
-            protected.update(range(token.start[0], token.end[0] + 1))
-    return {
-        number: line
-        for number, line in enumerate(text.splitlines(), 1)
-        if number in protected or (line.strip() and number not in dropped)
-    }
-
-
