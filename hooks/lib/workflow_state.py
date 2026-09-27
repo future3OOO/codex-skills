@@ -1443,7 +1443,7 @@ def pause(identity: RepoIdentity, slug: str, workflow_id: str | None, reason: st
         state = _bound_instance_state(transaction.state, slug, workflow_id)
         state["paused"] = {"reason": cleaned, "at": utc_timestamp()}
         state = _commit(transaction, state, "pause")
-        return public_status(state, identity, candidate_tree=expected_candidate_tree, recovery=True, fields=set(state)) if expected_candidate_tree else state
+    return public_status(state, identity, candidate_tree=expected_candidate_tree, recovery=True, fields=set(state)) if expected_candidate_tree else state
 
 
 def _behavioral_finding_closure(
