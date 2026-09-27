@@ -806,7 +806,7 @@ def _run_tdd(values: list[str]) -> int:
         _print_output(raw)
     payload: JsonObject = {
         "summaryId": evidence_id,
-        "phase": phase,
+        "tddPhase": phase,
         "valid": valid,
         "exitCode": exit_code,
         "runIndex": len(document.get("runs", [])) - 1 if document else None,

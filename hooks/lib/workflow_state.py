@@ -2200,15 +2200,20 @@ def invalidate_after_edit(identity: RepoIdentity, path: str | None) -> tuple[Jso
                 | set(_paths(identity, "ls-files", "--modified", "--others", "--exclude-standard", "-z"))
                 | set(_paths(identity, "diff", "--cached", "--name-only", "-z")))
         candidate = _active_candidate_tree(identity)
-        changed = sorted(set(changed) | set(_paths(identity, "diff", "--no-renames", "--name-only", "-z", str(state["activeCandidateTree"]), candidate)))
-        path = next((p for p in changed if is_reviewable_path(p)),
-                    next((p for p in changed if is_governance_path(p)), None))
-        if path is None:
+        uncomparable = False
+        try:
+            observed = _paths(identity, "diff", "--no-renames", "--name-only", "-z", str(state["activeCandidateTree"]), candidate)
+        except RuntimeError:
+            observed = _paths(identity, "ls-files", "--modified", "--others", "--exclude-standard", "-z")
+            observed += _paths(identity, "diff", "--cached", "--name-only", "-z")
+            uncomparable = True
+        changed = sorted(set(changed) | set(observed))
+        governance = uncomparable or any(is_governance_path(p) for p in changed)
+        reviewable = (state.get("phase") != "complete" and not state.get("revalidation")
+                      and (uncomparable or any(is_reviewable_path(p) for p in changed)))
+        if not (reviewable or governance):
             return state, changed
-        reviewable = is_reviewable_path(path)
-        if reviewable and state.get("phase") == "complete" and not state.get("revalidation"):
-            return state, changed
-        if reviewable and _binding_drift(identity, state, "quality-gate", transaction) is None:
+        if not governance and _binding_drift(identity, state, "quality-gate", transaction) is None:
             if state.get("activeCandidateTree") != candidate:
                 state["activeCandidateTree"] = candidate
                 return _commit(transaction, state, "verified-candidate-observed"), changed

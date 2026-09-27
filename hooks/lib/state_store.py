@@ -199,7 +199,7 @@ def analysis_unchanged(identity: RepoIdentity, before: str, after: str) -> bool:
             if suffix != ".py":
                 return False
             old, new = (_git(identity, "cat-file", "blob", oid.decode()) for oid in (old_oid, new_oid))
-            if any(data.startswith(b"#!") for data in (old, new)) and old.splitlines()[0] != new.splitlines()[0]:
+            if any(data.startswith(b"#!") for data in (old, new)) and old.splitlines()[:1] != new.splitlines()[:1]:
                 return False
             if tokenize.detect_encoding(io.BytesIO(old).readline)[0] != tokenize.detect_encoding(io.BytesIO(new).readline)[0]:
                 return False

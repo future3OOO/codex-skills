@@ -37,16 +37,33 @@ def lane(repo: str, base: str, head: str = "HEAD") -> str:
                               capture_output=True, check=False)
     if ancestor.returncode or not analysis_unchanged(resolve_repo_identity(repo), previous, head):
         return "production"
-    try:
-        result = subprocess.run(["gh", "api", "-X", "GET",
-                                 f"repos/{repository}/actions/workflows/gate-suite.yml/runs",
-                                 "-f", f"head_sha={previous}", "-f", "status=success", "-f", "per_page=1"],
+    def api(endpoint: str) -> dict:
+        result = subprocess.run(["gh", "api", f"repos/{repository}/actions/{endpoint}"],
                                 capture_output=True, text=True, check=True, timeout=30)
-        runs = json.loads(result.stdout).get("workflow_runs", [])
-        if any(run.get("head_sha") == previous and run.get("conclusion") == "success"
-               and run.get("path") == ".github/workflows/gate-suite.yml" for run in runs):
-            return "correction"
-    except (OSError, subprocess.SubprocessError, ValueError, AttributeError, TypeError):
+        return json.loads(result.stdout)
+
+    try:
+        for run in api("workflows/gate-suite.yml/runs?status=success&per_page=20")["workflow_runs"]:
+            if run["path"] != ".github/workflows/gate-suite.yml" or run["conclusion"] != "success":
+                continue
+            ancestor = subprocess.run(["git", "-C", repo, "merge-base", "--is-ancestor", run["head_sha"], head],
+                                      capture_output=True, check=False)
+            if ancestor.returncode:
+                continue
+            jobs = api(f"runs/{run['id']}/jobs")["jobs"]
+            if not any(step["name"] == "Integrated package contracts" and step["conclusion"] == "success"
+                       for job in jobs for step in job["steps"]):
+                continue
+            for artifact in api(f"runs/{run['id']}/artifacts")["artifacts"]:
+                match = re.fullmatch(r"pr138-source-([0-9a-f]{40})", artifact["name"])
+                if not match or artifact["expired"]:
+                    continue
+                tested = match[1]
+                subprocess.run(["git", "-C", repo, "fetch", "--no-tags", "origin", tested],
+                               capture_output=True, check=True, timeout=30)
+                if analysis_unchanged(resolve_repo_identity(repo), tested, head):
+                    return "correction"
+    except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError):
         return "production"
     return "production"
 

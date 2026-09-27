@@ -316,7 +316,7 @@ def input_evidence(surface: Mapping[str, object], root: Path, inputs: list[objec
         else:
             # argv is the concrete process Interface, independent of its language.
             values.extend(args[1:])
-            targets, unresolved = [], None
+            targets, unresolved = [], "opaque process inputs beyond argv were not inspected"
     if test_id:
         targets, discover, ambiguous, unresolved = [test_id], False, [], None
     if discover or ambiguous or unresolved or len(targets) > 32:

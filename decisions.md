@@ -15,6 +15,21 @@ snapshot-byte, declaration and cancellation/retry probes own the correction.
 Delivery: [PR #118](https://github.com/future3OOO/codex-skills/pull/118), followed
 by PR119's separate review corrections. No merge or shared installation.
 
+## 2026-09-28 — PR119 review corrections
+
+Keep edit invalidation in its existing transaction: classify governance separately,
+and invalidate acceptance when history is unavailable, even if the pass-start commit
+was also pruned. Recover local feedback from the current index and worktree.
+CI correction reuse requires a successful integration step and equivalent inputs
+from its immutable exported merge tree; a successful cheap run is insufficient.
+Keep explicit socket routing and committed mutation receipts. Move native identity
+validation to the common fallback; distinguish TDD run phase from workflow phase.
+Opaque process input extraction reports its limits, not absence inferred from argv.
+Delivery: corrections for [PR #119](https://github.com/future3OOO/codex-skills/pull/119)
+passed local proof and technical review. The user approved the +22-source-line
+exception for this correction; required CI provenance and invalidation proof stay
+intact. Commit/push and remote closure proceed; no merge or installation.
+
 ## 2026-09-25 — Editable code is not a constraint
 
 **Decision:** AGENTS.md's findings rules add one sentence: before rejecting a

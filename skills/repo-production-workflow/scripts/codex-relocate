@@ -148,8 +148,6 @@ def main():
     if (os.environ.get("CODEX_RELOC_LOOP") == "1"
             and os.environ.get("CODEX_RELOC_SHELL_PID")
             and not os.environ.get("CODEX_APP_SERVER_SOCK")):
-        if tid not in {"self", os.environ.get("CODEX_THREAD_ID")}:
-            sys.exit("the native resume loop can relocate only its calling thread")
         return self_hosted(cwd, tid, note, "pane session: using its own resume loop")
     last_err = "no app-server socket found — session is not remote-hosted"
     for path in sockets():
@@ -266,6 +264,8 @@ def self_hosted(cwd, tid, note, why):
     the new root."""
     if tid == "self":
         tid = os.environ.get("CODEX_THREAD_ID", "")
+    if tid != os.environ.get("CODEX_THREAD_ID", ""):
+        sys.exit("the native resume loop can relocate only its calling thread")
     if any(c.isspace() for c in tid):
         sys.exit(f"thread id must not contain whitespace: {tid}")
     hint = f"codex resume -C {shlex.quote(cwd)} {shlex.quote(tid)}"
