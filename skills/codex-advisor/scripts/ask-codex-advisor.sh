@@ -94,49 +94,43 @@ esac
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 transport_dir=$(mktemp -d)
 trap 'rm -rf "$transport_dir"' EXIT
+snapshot_file() {
+  python3 - "$@" <<'PY'
+import os, stat, sys
+source, target, label = sys.argv[1:]
+fd = os.open(source, os.O_RDONLY | os.O_NONBLOCK)
+status = os.fstat(fd)
+if not stat.S_ISREG(status.st_mode):
+    os.close(fd)
+    raise SystemExit(f"{label} is not a regular file at snapshot time")
+os.set_blocking(fd, True)
+with os.fdopen(fd, "rb") as handle, open(target, "wb") as sink:
+    sink.write(handle.read(status.st_size))
+PY
+}
 design_declaration_file=""
 design_snapshot=""; design_bytes=""; design_sha=""
 if [[ -n "$phase" ]]; then
   design_declaration_file="$transport_dir/design-declaration.json"
   if [[ -n "$design_file" ]]; then
     design_snapshot="$transport_dir/design-snapshot"
-    python3 - "$design_file" "$design_snapshot" <<'PY'
-import os, stat, sys
-source, target = sys.argv[1:]
-fd = os.open(source, os.O_RDONLY | os.O_NONBLOCK)
-status = os.fstat(fd)
-if not stat.S_ISREG(status.st_mode):
-    os.close(fd)
-    raise SystemExit("governing design is not a regular file at snapshot time")
-os.set_blocking(fd, True)
-with os.fdopen(fd, "rb") as handle, open(target, "wb") as sink:
-    sink.write(handle.read(status.st_size))
-PY
-    python3 - "$script_dir/../../.." "$design_snapshot" "$design_declaration_file" <<'PY'
-import json, sys
-sys.path.insert(0, sys.argv[1])
-from hooks.lib.workflow_documents import design_file_declaration
-with open(sys.argv[3], "w", encoding="utf-8") as handle:
-    json.dump(design_file_declaration(sys.argv[2]), handle, sort_keys=True)
-PY
-  else
-    python3 - "$script_dir/../../.." "$design_absent" "$design_declaration_file" <<'PY'
-import json, sys
-sys.path.insert(0, sys.argv[1])
-from hooks.lib.workflow_documents import design_absence
-with open(sys.argv[3], "w", encoding="utf-8") as handle:
-    json.dump(design_absence(sys.argv[2]), handle, sort_keys=True)
-PY
-  fi
-  if [[ -n "$design_snapshot" ]]; then
+    snapshot_file "$design_file" "$design_snapshot" "governing design"
     design_bytes=$(wc -c <"$design_snapshot")
     design_sha=$(sha256sum "$design_snapshot" | cut -d' ' -f1)
   fi
+  python3 - "$script_dir/../../.." "$design_snapshot" "$design_absent" "$design_declaration_file" <<'PY'
+import json, sys
+sys.path.insert(0, sys.argv[1])
+from hooks.lib.workflow_documents import design_absence, design_file_declaration
+declaration = design_file_declaration(sys.argv[2]) if sys.argv[2] else design_absence(sys.argv[3])
+with open(sys.argv[4], "w", encoding="utf-8") as handle:
+    json.dump(declaration, handle, sort_keys=True)
+PY
 fi
 
 if [[ "$phase" == preflight-advice ]]; then
   [[ -n "$preflight_file" ]] || { printf 'error: preflight-advice requires --preflight-file\n' >&2; exit 2; }
-  cp -- "$preflight_file" "$transport_dir/preflight.json"
+  snapshot_file "$preflight_file" "$transport_dir/preflight.json" "preflight draft"
   draft_args=(--preflight-file "$transport_dir/preflight.json")
 elif [[ -n "$preflight_file" ]]; then
   printf 'error: --preflight-file requires preflight-advice\n' >&2; exit 2

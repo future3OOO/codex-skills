@@ -31,8 +31,8 @@ from hooks.lib.workflow_state import (  # noqa: E402
     read_workflow,
     record_advisor_result,
 )
-from hooks.tests.support import (
-    approve_preflight,  # noqa: E402
+from hooks.tests.support import (  # noqa: E402
+    approve_preflight,
     POST_EDIT,
     WORKFLOW,
     build_document,

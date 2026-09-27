@@ -21,8 +21,8 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from hooks.tests.support import (
-    approve_preflight,  # noqa: E402
+from hooks.tests.support import (  # noqa: E402
+    approve_preflight,
     build_document,
     fixture_env,
     pending_behavior,

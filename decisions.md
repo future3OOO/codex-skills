@@ -6,6 +6,15 @@ Issue bodies own implementation scope; this record preserves decisions and their
 status. New decisions supersede earlier ones explicitly; observations and open
 acceptance gaps are not completed delivery.
 
+## 2026-09-28 — PR118 snapshot review correction
+
+Share the existing nonblocking regular-file snapshot policy between design and
+preflight inputs, preserving symlinks to regular files. Consolidate declaration
+creation in the wrapper; no new transport or tracked test suite. Real FIFO,
+snapshot-byte, declaration and cancellation/retry probes own the correction.
+Delivery: [PR #118](https://github.com/future3OOO/codex-skills/pull/118), followed
+by PR119's separate review corrections. No merge or shared installation.
+
 ## 2026-09-25 — Editable code is not a constraint
 
 **Decision:** AGENTS.md's findings rules add one sentence: before rejecting a
