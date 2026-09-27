@@ -398,7 +398,7 @@ class ContractProofAuthorityTests(unittest.TestCase):
         marker = "FINAL_REVIEW_EVIDENCE_ONLY_CONTRACT_ABSENT"
         script = (ROOT / "skills" / "codex-advisor" / "scripts" / "ask-codex-advisor.sh").read_text(encoding="utf-8")
         preflight, final = script.split("  final-review)\n", 1)
-        clause = "do not require omitted Behavior Map, TDD, code-review, verification, preservation"
+        clause = "do not require omitted TDD, code-review, verification, preservation"
         self.assertIn(clause, final.split("esac", 1)[0], marker)
         self.assertNotIn(clause, preflight.rsplit("  preflight-advice)\n", 1)[-1], marker)
 

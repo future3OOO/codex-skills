@@ -47,10 +47,7 @@ def _tdd_parser() -> argparse.ArgumentParser:
     """The sole grammar for mapped and imported-legacy TDD options."""
     parser = argparse.ArgumentParser(
         prog="workflow tdd",
-        epilog=(
-            "imported pre-map workflows keep the legacy flags: "
-            "--behavior, --seam, --expected-failure"
-        ),
+        description="Run: workflow tdd --phase red --behavior-id BM_ID -- <runner-command>",
     )
     parser.add_argument("--repo", "--cwd", dest="repo", default=".")
     parser.add_argument("--slug")

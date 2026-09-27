@@ -153,7 +153,7 @@ Record a non-empty JSON array. Every item has eight required fields; these examp
     "interpretations": ["now > expiresAt", "now >= expiresAt"],
     "interpretation": "now >= expiresAt",
     "authority": "the requested expiry behavior contract",
-    "sourceRefs": [{"type": "finding", "evidenceId": "<advisor-intake>", "id": "SPEC-1"}]
+    "sourceRefs": [{"type": "design", "evidenceId": "<existing-design-evidence>", "id": "DESIGN-1"}]
   },
   {
     "id": "BM_UNCHANGED",

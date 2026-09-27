@@ -121,7 +121,7 @@ approved intake inside the ledger transaction. Missing or changed approval
 refuses without mutation. Recording closes initial draft consultation and cannot
 be repeated; later changes use the owning item's `tdd-map` reassessment. An
 approved artifact may retain unsettled interpretations as visibly pending items;
-they must settle before dependent proof or implementation. No second prose map,
+execution can be retained, but completion requires settlement. No second prose map,
 staging command or disposition ceremony is needed for draft corrections.
 
 ### 6. Mapped TDD RED or not-required

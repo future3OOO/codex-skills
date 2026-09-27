@@ -364,9 +364,12 @@ def input_evidence(surface: Mapping[str, object], root: Path, inputs: list[objec
             selected = [child for parent in selected for child in getattr(parent, "body", [])
                         if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and child.name == name]
         classes = [node for node in selected if isinstance(node, ast.ClassDef)] or classes
+        if not selected:
+            limits.append(f"selected definition unavailable: {target}")
+            continue
         lifecycle = ({"setUp", "tearDown", "setUpClass", "tearDownClass"} if runner == "unittest"
                      else {"setup_method", "teardown_method", "setup_class", "teardown_class"})
-        module_lifecycle = {"setUpModule", "tearDownModule"} if runner == "unittest" else {"setup_module", "teardown_module"} if runner == "pytest" else set()
+        module_lifecycle = {"setUpModule", "tearDownModule"} if runner == "unittest" else {"setup_module", "teardown_module", "setup_function", "teardown_function"} if runner == "pytest" else set()
         module_hooks = any(isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in module_lifecycle for node in tree.body)
         if module_hooks:
             limits.append("module lifecycle input flow was not inspected")
@@ -380,9 +383,6 @@ def input_evidence(surface: Mapping[str, object], root: Path, inputs: list[objec
             [member for member in node.body if isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef))
              and (member.name.startswith("test") or isinstance(member, ast.FunctionDef) and member.name in lifecycle)]
             if isinstance(node, ast.ClassDef) else [node])]
-        if not selected:
-            limits.append(f"selected definition unavailable: {target}")
-            continue
         bindings: dict[str, list[object]] = {}
         fixtures: set[str] = set()
         for node in tree.body if runner != "exact" else []:
@@ -505,11 +505,11 @@ def _source_inputs(node: ast.AST, bindings: dict[str, list[object]],
         return
     if isinstance(node, ast.Assign):
         _source_inputs(node.value, bindings, values, limits)
-        for name in node.targets:
-            if isinstance(name, ast.Name):
+        if all(isinstance(name, ast.Name) for name in node.targets):
+            for name in node.targets:
                 bindings[name.id] = _input_literals(node.value, bindings)
-            else:
-                bindings.clear()
+        else:
+            bindings.clear()
         return
     if isinstance(node, ast.For):
         if node.orelse:

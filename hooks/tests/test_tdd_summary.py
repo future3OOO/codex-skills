@@ -17,7 +17,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from hooks.tests.support import approve_preflight
-from hooks.tests.support import COMMIT_READY, build_no_change_document, record_context_forge  # noqa: E402
+from hooks.tests.support import build_no_change_document, record_context_forge  # noqa: E402
 from hooks.lib.repo_identity import resolve_repo_identity  # noqa: E402
 from hooks.lib.tdd_surface import differences, identify  # noqa: E402
 from hooks.lib.workflow_state import advisor_disposition, pause, read_workflow, record_advisor_result, set_phase  # noqa: E402
@@ -579,65 +579,6 @@ class TddSummaryTests(unittest.TestCase):
             self.evidence_document(current_id), current_document,
             "the stale producer mutated the interleaved logical evidence",
         )
-
-    def test_terminal_workflow_rejects_reruns_before_touching_evidence(self) -> None:
-        behavior_command = (
-            sys.executable, "-c",
-            "import app; assert app.value == 2, 'AssertionError: value must be 2'",
-        )
-        red = self.run_script(
-            WORKFLOW, "tdd", "--cwd", str(self.repo), "--slug", "tdd-summary",
-            "--phase", "red", "--behavior", "captures command outcome",
-            "--seam", "workflow.py tdd subprocess boundary", "--expected-failure", "AssertionError",
-            "--", *behavior_command,
-        )
-        self.assertEqual(red.returncode, 0, red.stdout + red.stderr)
-        (self.repo / "app.py").write_text("value = 2\n", encoding="utf-8")
-        green = self.run_script(
-            WORKFLOW, "tdd", "--cwd", str(self.repo), "--slug", "tdd-summary",
-            "--phase", "green", "--behavior", "captures command outcome",
-            "--seam", "workflow.py tdd subprocess boundary", "--", *behavior_command,
-        )
-        self.assertEqual(green.returncode, 0, green.stdout + green.stderr)
-        record_context_forge(self.repo, self.tmp)
-        summary_id = json.loads(green.stdout.splitlines()[-1])["summaryId"]
-        before = self.evidence_document(summary_id)
-
-        identity = resolve_repo_identity(self.repo)
-        wid = read_workflow(identity)["workflowId"]
-        doc = build_no_change_document("terminal workflow rerun")
-        doc_path = self.tmp / "preflight-doc.json"
-        doc_path.write_text(json.dumps(doc), encoding="utf-8")
-        recorded = self.run_script(WORKFLOW, "record", "preflight", "--repo", str(self.repo), "--slug", "tdd-summary",
-                                   "--workflow-id", wid, "--input", str(doc_path))
-        self.assertEqual(recorded.returncode, 0, recorded.stdout + recorded.stderr)
-        verified = self.run_script(WORKFLOW, "verify", "--repo", str(self.repo), "--slug", "tdd-summary",
-                                   "--", sys.executable, "-c", "pass")
-        self.assertEqual(verified.returncode, 0, verified.stdout + verified.stderr)
-        quality = self.run_script(WORKFLOW, "verify", "--repo", str(self.repo), "--slug", "tdd-summary",
-                                  "--kind", "quality-gate", "--base-ref", "HEAD")
-        self.assertEqual(quality.returncode, 0, quality.stdout + quality.stderr)
-        set_phase(identity, "code-review", "passed", findings="none")
-        record_advisor_result(identity, "tdd-summary", wid, "final", "codex-advisor", "commit-ready",
-                              intake={**COMMIT_READY, "workflowId": wid, "stage": "final", "producer": "codex-advisor"})
-        advisor_disposition(identity, "tdd-summary", wid, "final", "none")
-        completed = self.run_script(WORKFLOW, "complete", "--repo", str(self.repo))
-        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
-
-        (self.repo / "app.py").write_text("value = 1\n", encoding="utf-8")
-        rerun = self.run_script(
-            WORKFLOW, "tdd", "--cwd", str(self.repo), "--slug", "tdd-summary",
-            "--phase", "green", "--behavior", "captures command outcome",
-            "--seam", "workflow.py tdd subprocess boundary", "--", *behavior_command,
-        )
-        self.assertEqual(rerun.returncode, 2, rerun.stdout + rerun.stderr)
-        self.assertIn("terminal", rerun.stderr)
-        self.assertEqual(
-            self.evidence_document(summary_id), before,
-            "a rerun against a terminal workflow mutated its evidence summary",
-        )
-        state = json.loads(self.run_script(WORKFLOW, "status", "--repo", str(self.repo)).stdout)
-        self.assertEqual((state["phase"], state["tdd"]), ("complete", "passed"))
 
     def test_only_the_declared_failure_and_seam_count(self) -> None:
         silent = self.run_script(

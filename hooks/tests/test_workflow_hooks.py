@@ -1784,6 +1784,7 @@ class RedFirstTests(HookHarness):
         self.assertEqual(extra.returncode, 2, marker + ": a retired section was recorded")
         self.assertIn("unknown sections: openQuestions", extra.stderr, marker + ": " + extra.stderr)
         doc.write_text(json.dumps(full), encoding="utf-8")
+        approve_preflight(self.repo, full)
         accepted = self.state("record", "preflight", "--slug", slug, "--workflow-id", wid, "--input", str(doc))
         self.assertEqual(accepted.returncode, 0, marker + ": " + accepted.stdout + accepted.stderr)
 
