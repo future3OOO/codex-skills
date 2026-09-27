@@ -50,17 +50,16 @@ class ProofGapTests(unittest.TestCase):
         return pending_behavior(identifier, behavior="scale doubles a positive input",
                                 expected="calc.scale(3) returns 6", red_failure=marker)
 
-    def proof(self, name: str, check: str, marker: str, runner: str = "unittest", child: bool = False) -> tuple[str, ...]:
-        call = ("subprocess.run([sys.executable, '-c', 'import calc; print(calc.scale(3))'], "
-                "capture_output=True, text=True).returncode == 0") if child else check
+    def proof(self, name: str, check: str, marker: str, runner: str = "unittest") -> tuple[str, ...]:
+        if runner == "child":  # the code runs only in a child process, so only the child's observer can see it
+            check = f"subprocess.run([sys.executable, '-c', {f'import calc; assert {check}'!r}]).returncode == 0"
         if runner == "script":  # a plain script, not a test file
             (self.h.repo / f"{name}.py").write_text(f"import calc\nassert {check}, {marker!r}\n")
             return (sys.executable, f"{name}.py")
         (self.h.repo / f"{name}.py").write_text(
             "import subprocess, sys, unittest\nimport calc\n"
             f"class T(unittest.TestCase):\n    def test_it(self):\n"
-            f"        self.assertTrue({check}, {marker!r})\n"
-            + (f"        self.assertTrue({call}, {marker!r})\n" if child else ""))
+            f"        self.assertTrue({check}, {marker!r})\n")
         if runner == "pytest":
             return (sys.executable, "-m", "pytest", "-q", f"{name}.py::T::test_it")
         if runner == "unittest-E":
@@ -97,9 +96,8 @@ class ProofGapTests(unittest.TestCase):
                 if p.name.isdigit() and marker in read(p, "cmdline") and home in read(p, "environ").split(b"\0")]
 
     def test_gap_is_named_for_each_runner(self) -> None:
-        runners = [("unittest", False), ("unittest", True), ("script", False), ("src", False)]
-        for runner, child in runners + ([("pytest", False)] if PYTEST else []):
-            with self.subTest(runner=runner, child=child):
+        for runner in ["unittest", "child", "script", "src"] + (["pytest"] if PYTEST else []):
+            with self.subTest(runner=runner):
                 self.tearDown()
                 self.setUp()
                 if runner == "src":  # the code is imported through an absolute PYTHONPATH into the checkout
@@ -110,7 +108,7 @@ class ProofGapTests(unittest.TestCase):
                     self.calc = self.h.repo / "src" / "calc.py"
                 name = "check_weak" if runner == "script" else "test_weak"
                 slug, _ = self.h.begin_with_map([self.item("BM_W", "WEAK_FAILED")])
-                green, payload = self.cycle(slug, "BM_W", self.proof(name, FAILS, "WEAK_FAILED", runner, child),
+                green, payload = self.cycle(slug, "BM_W", self.proof(name, FAILS, "WEAK_FAILED", runner),
                                             weaken=(name, WEAK))
                 lines, status = self.gaps(payload), self.h.evidence()["behaviorMap"][0]["status"]
                 self.assertTrue(green.returncode == 0 and status == "green"
