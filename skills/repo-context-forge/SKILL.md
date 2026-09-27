@@ -168,9 +168,9 @@ When you do call out:
 
 - Name the unanswered dependency question first. Reuse the retained packet and
   prior applicable results; do not repeat its executed checks on resume.
-- Resolve the exact symbol UID and file from the packet or `context` before
-  `impact`. Use that UID as the target, and verify the returned symbol and repo.
-  A same-named test helper is not evidence about the production owner.
+- Retain the exact UID and file from the packet or `context` (`uid` is supported).
+  The current `impact` accepts a name as `target`; require its returned target ID
+  and repo to match the retained identity. Reject same-named helper mismatches.
 - Query only the missing caller, callee, writer or required impact direction.
   Broaden traversal only when an observed dependency requires it.
 - Retain full graph responses outside the checkout and conversation. Inspect

@@ -539,7 +539,7 @@ class PassLifecycleTests(unittest.TestCase):
         self.begin_slug("checkpoint-candidate-drift")
         self.advance_to_context_forge()
         app = self.repo / "app.py"
-        app.write_text(app.read_text(encoding="utf-8") + "# changed\n", encoding="utf-8")
+        app.write_text("value = 2\n", encoding="utf-8")
 
         checkpoint = self.checkpoint("preflight-advice")
         self.assertEqual(

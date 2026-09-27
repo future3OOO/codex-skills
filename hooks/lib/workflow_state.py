@@ -902,8 +902,10 @@ def execution_receipt(identity: RepoIdentity, state: JsonObject, reference: str,
         raise WorkflowError(f"execution reference could not be sampled: {exc}") from exc
     if (manifest is None or manifest != current_tree or run.get("bindingError")
             or run.get("timedOut") or ("outputTail" not in run
-                and not (run.get("sourceReference") and run.get("testId")))):
+                and not (isinstance(run.get("sourceReference"), str) and run["sourceReference"]))):
         raise WorkflowError("execution reference is stale, unbound, incomplete or not an executed receipt")
+    if "outputTail" not in run and not run.get("testId"):
+        return execution_receipt(identity, state, run["sourceReference"], transaction)
     return run, manifest
 
 
