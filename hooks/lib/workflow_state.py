@@ -1437,13 +1437,13 @@ def instance_id(state: JsonObject) -> str | None:
 
 def pause(identity: RepoIdentity, slug: str, workflow_id: str | None, reason: str, *,
           expected_candidate_tree: str | None = None) -> JsonObject:
-    cleaned = reason.strip()
-    if not cleaned:
+    if not (cleaned := reason.strip()):
         raise ValueError("pause requires a non-empty --reason")
     with mutation(identity, expected_candidate_tree=expected_candidate_tree) as transaction:
         state = _bound_instance_state(transaction.state, slug, workflow_id)
         state["paused"] = {"reason": cleaned, "at": utc_timestamp()}
-        return _commit(transaction, state, "pause")
+        state = _commit(transaction, state, "pause")
+        return public_status(state, identity, candidate_tree=expected_candidate_tree, recovery=True, fields=set(state)) if expected_candidate_tree else state
 
 
 def _behavioral_finding_closure(
