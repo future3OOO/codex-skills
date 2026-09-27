@@ -38,15 +38,6 @@ def git_read(repo: Path, args: list[str]) -> tuple[str, str]:
     return res.stdout, ""
 
 
-def git_text(repo: Path, args: list[str]) -> str:
-    # For callers where absence and failure are the same answer.
-    return git_read(repo, args)[0]
-
-
-def git_ok(repo: Path, args: list[str]) -> bool:
-    return run_git(repo, args).returncode == 0
-
-
 def read_git_file(repo: Path, ref: str, rel_path: str) -> str | None:
     if not ref:
         return None
@@ -54,10 +45,20 @@ def read_git_file(repo: Path, ref: str, rel_path: str) -> str | None:
     return None if failure else text
 
 
-def parse_z_names(raw: str) -> set[str]:
-    # -z transports carry literal names: no stripping, or a filename with
-    # leading or trailing whitespace would be keyed under a different path.
-    return {item for item in raw.split("\0") if item}
+def read_tree_blobs(repo: Path, tree: str, paths: list[str]) -> dict[str, str]:
+    """Many blobs of one tree in a single `git cat-file --batch` read; a path Git cannot resolve is absent."""
+    request = b"".join(f"{tree}:{path}\n".encode("utf-8", "surrogateescape") for path in paths if "\n" not in path)
+    res = subprocess.run(["git", "cat-file", "--batch"], cwd=repo, input=request, capture_output=True, check=False)
+    out, texts, cursor = res.stdout, {}, 0
+    for path in (path for path in paths if "\n" not in path):
+        end = out.find(b"\n", cursor)
+        header = out[cursor:end].split()
+        cursor = end + 1
+        if len(header) == 3 and header[1] == b"blob":
+            size = int(header[2])
+            texts[path] = out[cursor:cursor + size].decode("utf-8", "replace")
+            cursor += size + 1
+    return texts
 
 
 def parse_numstat_z(raw: str) -> list[Numstat]:
@@ -135,14 +136,6 @@ def _resolve_base(repo: Path, base_ref: str | None) -> tuple[str, str, list[str]
     return empty.stdout.strip(), "HEAD", []
 
 
-def _capture_worktree(repo: Path) -> tuple[str, list[str]]:
-    """Capture the worktree as one tree OID, or report why it was unstable."""
-    try:
-        return _active_candidate_tree(resolve_repo_identity(repo)), []
-    except (OSError, RepoIdentityError) as exc:
-        return "", [str(exc)]
-
-
 def _diff_scope(repo: Path, base: str, tree: str) -> tuple[set[str], dict[str, str], str, list[Numstat], list[str]]:
     """The evaluated diff, plus the reads that failed to produce it.
 
@@ -184,10 +177,13 @@ def collect_scope(repo: Path, base_ref: str | None, *, staged_only: bool = False
         # Capture the tree, then diff the captured tree, not the live index:
         # `--cached` re-reads whatever is staged now, so a concurrent stage could
         # be evaluated as if it were the candidate that gets authorised.
-        tree = git_text(repo, ["write-tree"]).strip()
+        tree = git_read(repo, ["write-tree"])[0].strip()
         capture_errors = [] if tree else ["git write-tree failed"]
     else:
-        tree, capture_errors = _capture_worktree(repo)
+        try:  # the worktree captured as one tree OID, or why it was unstable
+            tree, capture_errors = _active_candidate_tree(resolve_repo_identity(repo)), []
+        except (OSError, RepoIdentityError) as exc:
+            tree, capture_errors = "", [str(exc)]
     if capture_errors:
         scope_name = unresolved if staged_only else f"commit-range:{base}...worktree"
         return _scope(base, base_source, scope_name, capture_errors, candidate_source=source)
@@ -198,7 +194,8 @@ def collect_scope(repo: Path, base_ref: str | None, *, staged_only: bool = False
         if failure:
             # Failed discovery is not an absence of untracked files.
             errors.append(f"untracked discovery failed: {failure}")
-        untracked = parse_z_names(listed) & changed
+        # -z carries literal names: no stripping, or a name with edge whitespace keys under another path.
+        untracked = {item for item in listed.split("\0") if item} & changed
     scope_name = f"index-tree:{base[:12]}...{tree[:12]}" if staged_only else f"commit-range:{base[:12]}...worktree-snapshot"
     return _scope(
         base,

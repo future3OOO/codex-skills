@@ -41,6 +41,8 @@ EMPTY_CATCH_RULES = [
     re.compile(r"\.catch\s*\(\s*(?:async\s*)?\([^)]*\)\s*=>\s*\{\s*\}\s*\)", re.S),
     re.compile(r"except\s+Exception\s*:\s*\n\s*pass\b", re.S),
     re.compile(r"except\s*:\s*\n\s*pass\b", re.S),
+    # A broad catch that hands back a value turns any crash, its own helpers' included, into an ordinary result.
+    re.compile(r"except\s+(?:Base)?Exception\s*(?:as\s+\w+\s*)?:\s*\n\s*return\b", re.S),
 ]
 
 

@@ -77,10 +77,6 @@ def is_excluded_path(path: str) -> bool:
 
 def is_test_like_path(path: str) -> bool:
     """The standalone compatibility predicate workflow state loads directly."""
-    return classify_path(path).test_like_compat
-
-
-def _test_like(path: str) -> bool:
     lowered = f"/{normalize_path(path).lower()}"
     if any(marker in lowered for marker in TEST_MARKERS):
         return True
@@ -103,7 +99,7 @@ def classify_path(path: str) -> PathClass:
     Additive over the predicates above: the test-like truth keeps its exact
     pre-existing meaning because workflow state classifies edits with it.
     """
-    test_like = _test_like(path)
+    test_like = is_test_like_path(path)
     lowered = f"/{normalize_path(path).lower()}"
     if is_source_path(path):
         # The stored language enum reserves real parser names for source
@@ -142,6 +138,11 @@ def is_dependency_manifest(path: str) -> bool:
     return literal.parent.name.lower() in MANIFEST_STEMS or any(
         part in MANIFEST_STEMS for part in re.split(r"[-.]", stem)
     )
+
+
+def is_data_path(path: str) -> bool:
+    """Data and dependency formats: they carry no behaviour to judge."""
+    return bool(re.search(r"(?:\.(?:json|ya?ml|toml|lock|csv|xml|ini|cfg|conf|env|svg)|(?:^|/)go\.sum)$", path, re.I))
 
 
 def language_for_path(path: str) -> str:

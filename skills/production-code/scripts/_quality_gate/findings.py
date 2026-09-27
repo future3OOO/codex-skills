@@ -8,10 +8,7 @@ from .path_policy import PathClass
 
 RULE_GROWTH = "QG54-GROWTH-CUMULATIVE"
 RULE_INCOMPLETE = "QG54-ANALYSIS-INCOMPLETE"
-RULE_DUPLICATE_SYMBOL = "QG54-DUPLICATE-ADDED-SYMBOL"
-RULE_DUPLICATE_BLOCK = "QG54-DUPLICATE-ADDED-BLOCK"
-RULE_DUPLICATE_BASELINE = "QG54-DUPLICATE-BASELINE"
-RULE_OWNER_PRODUCTION = "QG54-OWNER-COMPETITION-PRODUCTION"
+RULE_BLOAT = "QG-BLOAT"
 
 # Warning promotion is decided by this immutable per-exact-rule-ID metadata and
 # nothing else: never rendered text, prefixes, families, roles, or scores.
@@ -20,10 +17,7 @@ RULE_OWNER_PRODUCTION = "QG54-OWNER-COMPETITION-PRODUCTION"
 _PROMOTION_ELIGIBLE = {
     RULE_GROWTH: False,
     RULE_INCOMPLETE: False,
-    RULE_DUPLICATE_SYMBOL: False,
-    RULE_DUPLICATE_BLOCK: False,
-    RULE_DUPLICATE_BASELINE: False,
-    RULE_OWNER_PRODUCTION: False,
+    RULE_BLOAT: False,
 }
 
 # The scope kind for each gap the gate's own producers emit. Identity uses the
@@ -31,23 +25,15 @@ _PROMOTION_ELIGIBLE = {
 # a finding's ID; the raw strings stay in evidence.
 _SCOPE_KINDS = (
     ("Git reported no line counts", "measurement"),
-    ("reuse baseline", "baseline-discovery"),
     ("diff hunks matched no changed file", "attribution"),
     ("no caller-supplied base", "base-binding"),
-    ("gitnexus context JSON ignored", "graph-input"),
-    ("graph evidence", "graph-input"),
+    ("TypeSafe", "typesafe"),
+    ("source index", "source-index"),
+    ("graph evidence", "graph"),
+    ("unjudged", "judgment"),
+    ("tdd evidence", "tdd"),
+    ("--bloat-budget", "budget"),
 )
-
-
-def anchor(kind: str, role: str, language: str, content: str) -> str:
-    """A stable anchor over anchor kind, role, language, and anchored content.
-
-    Role and language are part of the anchor because the architecture's
-    identity formula is a fingerprint plus role/language: the same symbol name
-    in a production file and in a test fixture is not the same debt.
-    """
-    payload = "\x1f".join((kind, role, language, content))
-    return hashlib.sha256(payload.encode("utf-8", errors="surrogateescape")).hexdigest()[:16]
 
 
 def finding_id(rule_id: str, identity: tuple[str, ...]) -> str:
@@ -77,20 +63,7 @@ class Hunk:
 
     added: tuple[tuple[int, str], ...]
     deleted: tuple[tuple[int, str], ...]
-
-
-@dataclass(frozen=True)
-class BaselineFile:
-    """One base-tree source file with its classification and captured text.
-
-    `text` is `None` when the file was never read: outside owner discovery,
-    skipped by a capture bound, or the read itself failed.
-    """
-
-    path: str
-    role: str
-    language: str
-    text: str | None
+    at: int = 0  # the candidate line the hunk starts at (where a pure deletion happened)
 
 
 @dataclass(frozen=True)
@@ -132,7 +105,7 @@ class Finding:
     `incomplete`, or `not-evaluated` — and is `incomplete` whenever the rule's
     required scope had gaps, so a rule that could not see everything can never
     read as a clean pass. `passed` is the intrinsic check result (null while
-    unknown); a null-state finding is active when emitted. `identity` carries
+    unknown). `identity` carries
     the rule-family anchors; paths and line numbers in `region` are display
     provenance, never identity.
     """
@@ -147,9 +120,6 @@ class Finding:
     action: str
     pass_condition: dict[str, object]
     gaps: tuple[str, ...]
-    # candidate | confirmed-unresolved | resolved for owner-competition
-    # findings; every other rule family has no state machine and stays None.
-    state: str | None = None
 
     def finding_id(self) -> str:
         return finding_id(self.rule_id, self.identity)
@@ -161,7 +131,6 @@ class Finding:
             "severity": self.severity,
             "status": self.status,
             "passed": self.passed,
-            "state": self.state,
             "base": base,
             "candidate": candidate,
             "region": self.region,

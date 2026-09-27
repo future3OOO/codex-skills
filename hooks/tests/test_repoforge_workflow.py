@@ -21,7 +21,6 @@ BOOTSTRAP = ROOT / "skills" / "repo-context-forge" / "scripts" / "bootstrap.py"
 QUALITY_GATE = ROOT / "skills" / "production-code" / "scripts" / "code_quality_gate.py"
 CANONICAL_BOOTSTRAP = Path("/home/prop_/.local/share/repo-context-forge/current/scripts/codex_context_bootstrap.py")
 GITNEXUS = shutil.which("gitnexus")
-OWNER_RULES = ("QG54-OWNER-COMPETITION-PRODUCTION",)
 
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -499,32 +498,26 @@ class RepoForgeWorkflowTests(unittest.TestCase):
         self.assertTrue(runs, "typed verification recorded no run")
         return verified, runs[-1]
 
-    def owner_states(self, run: dict[str, object]) -> dict[str, dict[str, object]]:
-        """Each owner rule's finding from the bundled gate over the graph context verify handed it."""
+    def graph_gaps(self, run: dict[str, object]) -> list[str]:
+        """The bloat review's graph gaps from the bundled gate over the graph context verify handed it."""
         recorded = self.status()["repoContextForgeEvidence"]
         self.assertEqual((run["graphEvidenceId"], "--gitnexus-context-json" in str(run["command"])), (recorded, True))
         context = self.tmp / "gate-context.json"
         context.write_text(json.dumps(self.evidence(recorded)["document"]["gateContext"]), encoding="utf-8")
         gate = subprocess.run([sys.executable, str(QUALITY_GATE), "check", "--repo", str(self.repo), "--base-ref",
-                               str(run["baseRef"]), "--json", "--gitnexus-context-json", str(context)],
-                              env=self.env, text=True, capture_output=True, check=False)
-        gate_payload = json.loads(gate.stdout)
-        states = {
-            str(item["ruleId"]): item
-            for item in gate_payload["findings"]
-            if str(item["ruleId"]) in OWNER_RULES and item["region"]["scope"] == "evaluation"
-        }
-        self.assertEqual(sorted(states), sorted(OWNER_RULES), gate_payload["findings"])
-        return states
+                               str(run["baseRef"]), "--json", "--bloat-review", "--gitnexus-context-json", str(context)],
+                              env={**self.env, "HOME": str(self.tmp / "keyless-home"), "TYPESAFE_API_KEY": ""},
+                              text=True, capture_output=True, check=False)
+        rule = next(item for item in json.loads(gate.stdout)["findings"] if item["ruleId"] == "QG-BLOAT" and item["region"]["scope"] == "evaluation")
+        return [gap for gap in rule["completeness"]["gaps"] if "graph evidence" in gap]
 
     @unittest.skipUnless(GITNEXUS, "the real GitNexus CLI is unavailable")
     def test_typed_verification_hands_recorded_graph_evidence_to_the_owner_rules(self) -> None:
-        """A governed pass with uncommitted edits reaches a complete owner-rule verdict.
+        """A governed pass with uncommitted edits hands the gate graph evidence bound to its snapshot.
 
         The whole chain is real: the producer analyzes the dirty candidate, the
         bootstrap records the evidence, and typed verification must hand that
-        recorded evidence to the gate so the owner-competition rule evaluates
-        instead of reporting the unestablished-scope gap.
+        recorded evidence to the gate, which accepts it with no graph gap.
         """
         self.git("branch", "-M", "main")
         forged = self.graph_bootstrap()
@@ -534,13 +527,7 @@ class RepoForgeWorkflowTests(unittest.TestCase):
         verified, run = self.typed_quality_gate_run("main")
         self.assertEqual(verified.returncode, 0, verified.stdout + verified.stderr)
         self.assertIsNone(run["bindingError"], run["bindingError"])
-        for rule_id, finding in sorted(self.owner_states(run).items()):
-            gaps = finding["completeness"]["gaps"]
-            self.assertNotEqual(finding["status"], "incomplete", f"{rule_id} could not evaluate: {gaps}")
-            self.assertTrue(finding["completeness"]["complete"], f"{rule_id} gaps: {gaps}")
-        # The summary verify prints is that graph-backed evaluation.
-        self.assertIn("- QG54-OWNER-COMPETITION-PRODUCTION: pass", verified.stdout, "VERIFY_SUMMARY_WITHOUT_GRAPH")
-        self.assertNotIn("graph evidence", verified.stdout, "VERIFY_SUMMARY_WITHOUT_GRAPH")
+        self.assertEqual(self.graph_gaps(run), [], "VERIFY_GRAPH_NOT_BOUND")
 
     @unittest.skipUnless(GITNEXUS, "the real GitNexus CLI is unavailable")
     def test_evidence_bound_to_a_different_snapshot_keeps_the_owner_rules_incomplete(self) -> None:
@@ -560,13 +547,7 @@ class RepoForgeWorkflowTests(unittest.TestCase):
 
         verified, run = self.typed_quality_gate_run("main")
         self.assertEqual(verified.returncode, 0, verified.stdout + verified.stderr)
-        for rule_id, finding in sorted(self.owner_states(run).items()):
-            self.assertEqual(finding["status"], "incomplete", f"{rule_id}: {finding}")
-            self.assertIn(
-                "external graph evidence is stale: it does not name the evaluated snapshot",
-                finding["completeness"]["gaps"],
-                f"{rule_id} did not name the stale binding",
-            )
+        self.assertEqual(self.graph_gaps(run), ["graph evidence is stale: it does not name the evaluated snapshot"])
 
     @unittest.skipUnless(GITNEXUS, "the real GitNexus CLI is unavailable")
     def test_bootstrap_records_the_producer_graph_result_as_workflow_evidence(self) -> None:

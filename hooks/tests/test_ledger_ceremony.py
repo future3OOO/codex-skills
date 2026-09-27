@@ -1013,23 +1013,28 @@ class ObservedInWorkflow(Ceremony):
 
     def test_the_typed_gate_shows_its_warnings(self) -> None:
         marker = "GATE_WARNINGS_HIDDEN"
-        self.begin()
-        body = "    total = 0\n    for item in items:\n        total += item * 2\n        total -= 1\n        total += 3\n        total *= 2\n    return total\n"
-        for name in ("alpha", "beta", "gamma"):  # a JSON report over the 16,000-byte output cap
-            (self.repo / f"{name}.py").write_text(f"def {name}(items):\n" + body, encoding="utf-8")
+        wid = self.begin()
         (self.repo / "escape.py").write_text("X = 1  # TO" + "DO later\n", encoding="utf-8")
-        printed = self.cli("verify", "--kind", "quality-gate", "--base-ref", "HEAD").stdout
-        self.assertTrue(printed.startswith("Production Code Quality Gate\nverdict: fail"), f"GATE_SUMMARY_NOT_SHOWN: {printed[:80]}")
-        self.assertIn("- no-quality-escapes: fail (escape.py:1)", printed, "GATE_SUMMARY_NOT_SHOWN")
-        self.assertIn("- QG54-OWNER-COMPETITION-PRODUCTION [", printed, marker)
-        for index in range(150):  # a text summary over the 16,000-byte output cap still prints whole
-            (self.repo / f"copy_{index:03d}_{'x' * 60}.py").write_text(f"def copy{index}(items):\n" + body, encoding="utf-8")
-        summary = self.cli("verify", "--kind", "quality-gate", "--base-ref", "HEAD").stdout.rstrip("\n").rpartition("\n")[0]
-        self.assertTrue(summary.startswith("Production Code Quality Gate\nverdict: fail") and len(summary) > 16000
-                        and "- no-quality-escapes: fail (escape.py:1)" in summary and "copy_149_" in summary, "GATE_SUMMARY_CUT")
+        for index in range(150):  # unproven new tests: a text summary over the 16,000-byte output cap still prints whole
+            (self.repo / f"test_new_{index:03d}_{'x' * 60}.py").write_text("def test_fresh():\n    assert 1 == 1\n", encoding="utf-8")
+        # A reopened item keeps its historical redProof without a redCommand: that proof names the last new test's failing
+        # line, and must prove nothing (TYPED_GATE_REDS_WRONG).
+        site = f"{self.repo}/test_new_149_{'x' * 60}.py:2 assert 1 == 1"
+        commit_evidence_phase(resolve_repo_identity(self.repo), "ceremony", wid, "preflight", {
+            "schemaVersion": 1, "slug": "ceremony", "workflowId": wid, "document": {"authoritativeContract": "fixture", "behaviorMap": [
+                item("BM_ATTACK", "VALUE_NOT_TWO"), item("BM_REOPENED", "OTHER_NOT_TWO", redProof={"observation": "OTHER_NOT_TWO", "site": site})]}})
+        self.ok("tdd", "--slug", "ceremony", "--phase", "red", "--behavior-id", "BM_ATTACK", "--", sys.executable, "-m", "unittest", "-v", "test_app")
+        env = {**{k: v for k, v in self.env.items() if k != "TYPESAFE_API_KEY"}, "HOME": str(self.tmp / "keyless-home")}
+        result = self.cli("verify", "--kind", "quality-gate", "--base-ref", "HEAD", env=env)
         run = evidence_document(resolve_repo_identity(self.repo), str(self.state()["verificationLatestEvidence"]))["runs"][-1]
-        self.assertEqual(set(run["gate"]), {"ok", "errors"}, marker)
-
+        # Typed verify reviews by default, and flags a new test no recorded RED of the pass ever failed on.
+        missing = [name for name, held in (("BLOAT_VERIFY_NOT_DEFAULT", "--bloat-review" in run["command"] and "- QG-BLOAT: incomplete" in result.stdout),
+                                           ("TYPED_GATE_REDS_WRONG", f"test-unproven: test_new_149_{'x' * 60}.py:1 test_fresh" in result.stdout)) if not held]
+        self.assertFalse(missing, " ".join(missing))
+        summary = result.stdout.rstrip("\n").rpartition("\n")[0]
+        self.assertTrue(summary.startswith("Production Code Quality Gate\nverdict: fail") and len(summary) > 16000
+                        and "- no-quality-escapes: fail (escape.py:1)" in summary and "test_new_149_" in summary, "GATE_SUMMARY_CUT")
+        self.assertEqual((set(run["gate"]), run["valid"]), ({"ok", "errors"}, run["gate"]["ok"]), marker)
 
 class FlagDisposition(Ceremony):
     def tdd(self, phase: str, behavior: str, module: str = "test_app") -> str:

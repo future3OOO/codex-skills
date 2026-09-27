@@ -215,7 +215,7 @@ candidate and re-records the graph evidence with a gate-shaped context bound
 to the measured snapshot tree. The typed runner hands that context to the
 gate, whose binding check alone adjudicates match, stale, or absent. Evidence
 recorded before the last edit stays honestly stale, so the re-run is what lets
-the owner-competition rules evaluate. The remaining revalidation cost is the
+the gate accept the recorded graph evidence as current. The remaining revalidation cost is the
 producer's GitNexus phase; reducing it below the current ~30s is producer-side
 work tracked on issue #182.
 
