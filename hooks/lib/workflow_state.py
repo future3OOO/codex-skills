@@ -547,6 +547,9 @@ def commit_tdd(
                 ) or []
             owned = _linked_finding_items(transaction, items=items)
             pending = set(behavior_map.unresolved(items, terminals=terminals))
+            readiness = state.get("tdd")
+            if state.get("preflightEvidence") and readiness in {"in-progress", "passed", "not-required"}:
+                readiness = "in-progress" if pending else "not-required" if readiness == "not-required" else "passed"
             # Mutation may request proof from already-settled owners; closure
             # still judges current proof. Ownership cannot be moved away.
             for entry in state.get("findingStates", []):
@@ -557,6 +560,15 @@ def commit_tdd(
                         require_green=entry.get("status") == "fixed", owned=owned,
                         terminals=terminals, pending=pending,
                     )
+        verification = transaction.evidence(state.get("verificationLatestEvidence"))
+        verification_stale = False
+        if isinstance(verification, dict) and verification.get("runs"):
+            manifest_id = state.get("qualityGateManifestId") or verification["runs"][-1].get("treeManifestId")
+            try:
+                current_tree = tree_manifest(identity)
+            except RuntimeError as exc:
+                raise WorkflowError(f"verification binding could not be sampled: {exc}") from exc
+            verification_stale = not manifest_id or transaction.manifest(manifest_id) != current_tree
         mechanism_updates: list[JsonObject] = []
         if reassessed and summary_doc is not None:
             affected = _linked_finding_items(transaction, items=[item for item in items if item["id"] in reassessed])
@@ -568,7 +580,8 @@ def commit_tdd(
             previous = _map_items(transaction.evidence(expected_evidence_id))
             if previous is None:
                 previous = _map_items(transaction.evidence(state.get("preflightEvidence")))
-            if action is None and json.dumps(items, sort_keys=True) == json.dumps(previous, sort_keys=True) and not mechanism_updates:
+            if (action is None and readiness == state.get("tdd") and not mechanism_updates and not verification_stale
+                    and json.dumps(items, sort_keys=True) == json.dumps(previous, sort_keys=True)):
                 return state, expected_evidence_id
         writes: list[EvidenceWrite] = []
         manifests: list[ManifestWrite] = []
@@ -591,15 +604,8 @@ def commit_tdd(
             state.pop("paused", None)
         if opens_cycle:
             state["tddCycleCount"] = state.get("tddCycleCount", 0) + 1
-        verification = transaction.evidence(state.get("verificationLatestEvidence"))
-        if isinstance(verification, dict) and verification.get("runs"):
-            manifest_id = state.get("qualityGateManifestId") or verification["runs"][-1].get("treeManifestId")
-            try:
-                current_tree = tree_manifest(identity)
-            except RuntimeError as exc:
-                raise WorkflowError(f"verification binding could not be sampled: {exc}") from exc
-            if not manifest_id or transaction.manifest(manifest_id) != current_tree:
-                _reset_downstream(state)
+        if verification_stale:
+            _reset_downstream(state)
         if review_changed:
             _reset_reviews(state)
         if action == "reopen":
@@ -609,6 +615,8 @@ def commit_tdd(
         elif action is not None:
             state["tdd"] = action
             state["phase"] = "implementation" if opens_cycle else "tdd"
+        elif summary_doc is not None:
+            state["tdd"] = readiness
         state["nextAction"] = _derive_next_action(state, summary_doc)
         return _commit(transaction, state, f"tdd-{action or 'annotated'}", evidence=writes, manifests=manifests), evidence_id
 

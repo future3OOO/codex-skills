@@ -475,7 +475,7 @@ def apply_dispositions(
         elif status == "withdrawn":
             if mapped.get("kind") != "contract":
                 raise ValueError(_PRESERVATION_WITHDRAWN_REFUSED.format(identifier))
-            if previous != "pending" or "redProof" in mapped:
+            if previous not in {"pending", "withdrawn"} or "redProof" in mapped:
                 raise ValueError(f"behavior {identifier} is {previous}; only a never-attacked "
                                  "pending contract item can be withdrawn")
             if any(ref.get("type") != "finding"
@@ -483,6 +483,7 @@ def apply_dispositions(
                    for ref in mapped.get("sourceRefs") or []):
                 raise ValueError(f"behavior {identifier} carries sourceRefs; an owned item cannot be "
                                  "withdrawn while any owning finding is open or fixed")
+            mapped.pop("revalidationRequired", None)
         elif mapped.get("kind") == "contract":
             raise ValueError(_CONTRACT_DISPOSITION_REFUSED.format(identifier))
         elif status == "already-satisfied" and mapped.get("revalidationRequired"):

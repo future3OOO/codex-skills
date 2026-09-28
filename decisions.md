@@ -6,25 +6,26 @@ Issue bodies own implementation scope; this record preserves decisions and their
 status. New decisions supersede earlier ones explicitly; observations and open
 acceptance gaps are not completed delivery.
 
-## 2026-09-28 — Preflight continuation repair
+## 2026-09-28 — Workflow continuation and readiness repair
 
-For [issue #95](https://github.com/future3OOO/codex-skills/issues/95), deepen the
-existing continuation owner: pending advice selects consultation, draft findings
-select reconsultation, and approval selects recording the retained exact draft.
-A changed explicit draft remains refused and receives reconsultation guidance
-carrying its path. The existing transaction still owns approval and single-record
-checks. No new phase, approval mechanism, validator or skill is introduced.
+[PR #121](https://github.com/future3OOO/codex-skills/pull/121) follows
+[issue #95](https://github.com/future3OOO/codex-skills/issues/95). The existing
+continuation owner selects consultation, reconsultation or approved recording;
+changed drafts receive recovery guidance. Both provider launch modes bind cwd.
+These measured repairs replace the earlier help-only proposal and retain the
+existing approval transaction. No new phase, validator, Module or skill is added.
 
-This supersedes the earlier help-only repair proposal: the measured defect was
-an instruction to record before approval. It also limits the earlier PR118/119
-acceptance conclusion: protocol probes did not establish caller navigation.
-Bind both Codex provider launch modes to the repository; the real caller exposed
-resume inheriting scratch cwd. Inlining its single-use function removes four lines.
-Paired recorder replay removes a 7,524-byte repeat transfer. An independent caller
-also completed the frozen candidate's real revision/approval/recording journey
-without guidance overrides; this is not a blinded study or a runtime speed claim.
-Delivery: verified, independently reviewed implementation on
-`fix/workflow-next-action`; unmerged and not installed.
+The initial preflight-only acceptance was too narrow. A captured issue35 workflow
+exposed withdrawal retaining a revalidation flag; a separate CLI probe found
+revalidation left TDD passed. The TDD transaction now derives readiness from its
+admitted map, replacing competing map/runner decisions. Valid withdrawal clears
+revalidation; repeating it recovers older stranded records without changing history.
+Phase, cycles and current downstream evidence survive reassessment; source drift
+still invalidates evidence. Attacked and finding-owned obligations remain guarded.
+
+Real caller navigation and copied-ledger recovery are distinct proofs. The earlier
+paired recorder avoided a 7,524-byte repeat transfer; no runtime speed or universal
+agent-autonomy claim follows. Delivery: PR #121; unmerged and not installed.
 
 ## 2026-09-28 — PR118 snapshot review correction
 
