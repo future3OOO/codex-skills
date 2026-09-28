@@ -37,6 +37,7 @@ from .workflow_state import (
     execution_digest,
     execution_receipt,
     instance_id,
+    operation_receipt,
     run_recorded_baseline,
 )
 
@@ -210,7 +211,7 @@ def _not_required(
             "updatedAt": utc_timestamp(),
         }
     )
-    _, evidence_id = commit_tdd(
+    state, evidence_id = commit_tdd(
         identity,
         str(state["slug"]),
         str(state["workflowId"]),
@@ -218,7 +219,7 @@ def _not_required(
         "not-required",
         expected_evidence_id=existing_id,
     )
-    _emit_json({"summaryId": evidence_id, "status": "not-required"})
+    _emit_json(operation_receipt(state, identity, summaryId=evidence_id, status="not-required", kind="tdd"))
     return 0
 
 
@@ -793,7 +794,7 @@ def _run_tdd(values: list[str]) -> int:
                 runs=[*prior_runs, run] if matches else [run],
             )
     if document is not None:
-        _, evidence_id = commit_tdd(
+        state, evidence_id = commit_tdd(
             identity, slug, workflow_id, document, action,
             expected_evidence_id=evidence_id, opens_cycle=opens_cycle, tree_before=tree_before,
             review_changed=opens_cycle,
@@ -805,7 +806,7 @@ def _run_tdd(values: list[str]) -> int:
         _print_output(raw)
     payload: JsonObject = {
         "summaryId": evidence_id,
-        "phase": phase,
+        "tddPhase": phase,
         "valid": valid,
         "exitCode": exit_code,
         "runIndex": len(document.get("runs", [])) - 1 if document else None,
@@ -816,7 +817,7 @@ def _run_tdd(values: list[str]) -> int:
         payload["inputEvidence"] = input_check
     if baseline:
         payload["status"] = "already-satisfied"
-    _emit_json(payload)
+    _emit_json(operation_receipt(state, identity, kind="tdd", **payload))
     if valid or baseline:
         return 0
     if legacy:
@@ -1103,11 +1104,11 @@ def map_update(identity: RepoIdentity, state: JsonObject, value: JsonObject) -> 
         ) and set(behavior_map.unresolved(items)) != set(unresolved)
         # A None action annotates the evidence under the same binding without a lifecycle change.
         quiet = before == after and not review_changed and not interpretation_progress
-        _, evidence_id = commit_tdd(
+        state, evidence_id = commit_tdd(
             identity, str(state["slug"]), str(state["workflowId"]), document,
             None if quiet else "in-progress" if unresolved else "passed",
             expected_evidence_id=current_evidence_id, review_changed=review_changed, reassessed=reassessed,
         )
-    return {"summaryId": evidence_id, "status": status, "pending": unresolved,
-            "added": [entry["id"] for entry in added_items],
-            **({"inputEvidence": input_checks} if input_checks else {})}
+    return operation_receipt(state, identity, summaryId=evidence_id, status=status, pending=unresolved,
+                             added=[entry["id"] for entry in added_items],
+                             **({"inputEvidence": input_checks} if input_checks else {}))

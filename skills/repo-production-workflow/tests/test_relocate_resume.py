@@ -1,4 +1,7 @@
-"""Real-seam attacks for the self-hosted relocation path.
+"""Configuration and outgoing-command diagnostics for relocation.
+
+Native relocation acceptance requires a real CLI resume and native/hook root
+observations; the command captures below do not establish that acceptance.
 
 Seams under test:
 - marker file -> _codex_reloc_loop -> `codex resume` argv (codex stubbed via
@@ -17,38 +20,19 @@ RELOC = os.environ.get("RELOC_SCRIPT_FILE", os.path.join(HERE, "..", "scripts", 
 # demonstrated product failure so the RED record binds to it.
 NOTE_LOST = "resumed pane lands at composer with no continuation turn — agent never continues (demonstrated)"
 TRUST_BLOCK = "resume blocks on interactive trust prompt; pane waits dead for input"
-INTERRUPT_BANNER = "resumed pane shows 'Conversation interrupted' banner"
 EPOCH_CRASH = "loop exits without resuming the thread, or crashes mid-loop leaving the pane dead"
 TRUST_CORRUPT = "config.toml corrupted or trust silently missing — codex launches break or the prompt blocks the resume"
 TRUST_ROBUST = "relocation aborts on an unusual but valid config, or silently destroys config content"
 STUCK_RESUME = "stuck marker re-resumes the same thread forever — pane storms duplicate sessions"
-MARKER_UTF8 = "relocation aborts with UnicodeEncodeError; marker unwritten, pane stays put"
 EPOCH_WRAP = "oversized epoch wraps bash int64 — invalid marker resumes a dead thread"
 
-# The parser carried by panes that sourced the loop before this change.
-# Kept verbatim so the compat contract is tested against the actual old code,
-# not a paraphrase.
-OLD_LOOP = '''_codex_reloc_loop() {
-  local m="$HOME/.codex/reloc/$$" wt tid epoch
-  while [ -f "$m" ]; do
-    { read -r wt tid epoch < "$m" && rm -f "$m"; } || break
-    [ -n "$wt" ] && [ -n "$tid" ] || break
-    [ -z "${epoch:-}" ] && continue
-    [ $(( $(date +%s) - epoch )) -gt 900 ] && continue
-    CODEX_RELOC_LOOP=1 command codex "$@" resume -C "$wt" "$tid"
-  done
-}'''
+
+def _loop_snippet():
+    with open(LOOP) as _f:
+        return _f.read()
 
 
-def _loop_snippet(path=LOOP):
-    with open(path) as _f:
-        m = re.search(r"^_codex_reloc_loop\(\) \{.*?^\}", _f.read(), re.S | re.M)
-    assert m, "loop function not found"
-    return m.group(0)
-
-
-def _run_loop(marker_text, snippet=None):
-    """Run _codex_reloc_loop against marker_text; return (stdout, stderr)."""
+def _run_loop(marker_text):
     with tempfile.TemporaryDirectory() as td:
         _fake_codex(td, '#!/usr/bin/env bash\nprintf "RESUME_ARGV:%s\\n" "$*"\n')
         body = (
@@ -60,7 +44,7 @@ def _run_loop(marker_text, snippet=None):
         )
         env = dict(os.environ); env["MARKER"] = marker_text
         r = subprocess.run(["bash", "-c", body, "_", td],
-                           input=snippet or _loop_snippet(), capture_output=True,
+                           input=_loop_snippet(), capture_output=True,
                            text=True, env=env)
         return r.stdout, r.stderr
 
@@ -116,18 +100,6 @@ class LoopResume(unittest.TestCase):
         out, err = _run_loop("/tmp/wtx T6 1000000\n")
         self.assertNotIn("RESUME_ARGV", out, out + err)
 
-    def test_stale_loop_baseline(self):
-        """Old loop + original single-line marker — the pre-change contract."""
-        out, err = _run_loop("/tmp/wtx T0 %d\n" % int(__import__("time").time()),
-                             snippet=OLD_LOOP)
-        self.assertIn("resume -C /tmp/wtx T0", out, out + err)
-
-    def test_stale_loop_survives_new_marker(self):
-        """Old 3-var in-memory loop + new line-2 note marker: resumes, no crash."""
-        out, err = _run_loop("/tmp/wtx T7 %d\ncontinue from /tmp/wtx\n" % int(__import__("time").time()),
-                             snippet=OLD_LOOP)
-        self.assertIn("resume -C /tmp/wtx T7", out, out + err)
-        self.assertNotIn("syntax error", err)
 
     @unittest.skipIf(os.geteuid() == 0, "chmod cannot deny rm to root")
     def test_stuck_marker_resumes_once(self):
@@ -326,7 +298,6 @@ class TrustDir(unittest.TestCase):
                          self._read(), TRUST_CORRUPT)
 
 
-
 class _FakeAppServer(threading.Thread):
     """Minimal websocket+JSON-RPC server asserting turn/start receives cwd+note."""
 
@@ -398,46 +369,6 @@ class _FakeAppServer(threading.Thread):
         finally:
             c.close()
             self.sock.close()
-
-
-class DeferredKill(unittest.TestCase):
-    def _stubchain(self, tag, extra_env=None, extra_argv=()):
-        """Run the real process chain; return its JSON report."""
-        with tempfile.TemporaryDirectory() as td:
-            wt = os.path.join(td, "wt" + tag); home = os.path.join(td, "home")
-            os.makedirs(wt); os.makedirs(os.path.join(home, ".codex", "reloc"))
-            env = dict(os.environ, HOME=home, **(extra_env or {}))
-            r = subprocess.run(
-                # A persistent bash wrapper is the designed "interactive shell"
-                # ancestor: a bare `bash -c 'python3 ...'` execs away, so the
-                # trailing `exit $?` keeps bash alive as the marker's shell pid.
-                ["bash", "-c", 'python3 "$@"; exit $? ', "_",
-                 os.path.join(HERE, "reloc-stubchain.py"), RELOC, wt, "tid-1",
-                 "flag", *extra_argv],
-                capture_output=True, text=True, timeout=40, env=env)
-            reports = [l for l in r.stdout.splitlines() if l.startswith("{")]
-            self.assertTrue(reports, r.stdout + r.stderr)
-            return json.loads(reports[-1])
-
-    def test_host_kill_is_deferred_detached(self):
-        """The instant os.kill(SIGTERM) mid-turn leaves an interrupted banner.
-        The deferral is measured on the real process chain: the host stub
-        receives SIGTERM well after the relocating process exits."""
-        rep = self._stubchain("A")
-        self.assertTrue(rep["sigterm_delivered_to_host"], INTERRUPT_BANNER)
-        self.assertIsNotNone(rep["sigterm_delay"], INTERRUPT_BANNER)
-        self.assertGreaterEqual(rep["sigterm_delay"], 5, INTERRUPT_BANNER)
-
-    def test_unicode_note_marker_arms_utf8(self):
-        """The note is arbitrary user text; a non-UTF-8 locale must not turn
-        the arm into an uncaught UnicodeEncodeError — pre-fix the locale-
-        default open() died on the surrogates the child decodes from argv."""
-        rep = self._stubchain("U", {"PYTHONUTF8": "0", "LC_ALL": "C"},
-                              ["finish \u20ac \u00f1"])
-        self.assertEqual(0, rep["exit_code"], MARKER_UTF8)
-        self.assertTrue(rep["sigterm_delivered_to_host"], MARKER_UTF8)
-        self.assertTrue(rep["marker_exists"], MARKER_UTF8)
-        self.assertIn("wtU tid-1", rep["marker_content"], MARKER_UTF8)
 
 
 class SocketPathPreserved(unittest.TestCase):

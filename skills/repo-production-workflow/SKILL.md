@@ -31,14 +31,11 @@ rooted session gives delegates, hooks, and advisors the same checkout:
 python3 "$HOME/.codex/skills/repo-production-workflow/scripts/codex-relocate" "<task-worktree>"
 ```
 
-The `<task-worktree>` must be an absolute, whitespace-free path. The script
-arms the launching shell's resume loop and kills the TUI — run it as the
-turn's last action; the same thread resumes at the worktree in the same
-pane, and the workflow (`begin` and later steps) continues in the resumed
-session's next turn (requires the `codex`/`codexs` resume loop from
-`scripts/codex-reloc-loop.bashrc`; without it the script prints the manual
-`resume -C` command instead). Remote-hosted (app-server) sessions can't
-self-relocate — launch them rooted at the worktree instead.
+The `<task-worktree>` must be an absolute, whitespace-free path. Run relocation
+as the turn's last action. Native `codex`/`codexs` sessions resume the same thread
+through their owned launcher; without it, follow the printed `resume -C` command.
+An explicit app-server request remains pending until a subsequent turn confirms
+the target cwd and hook repository. Continue only in that confirmed checkout.
 For a new task, choose one short slug; `begin` creates and activates its state
 for that worktree before bootstrap:
 
@@ -60,11 +57,14 @@ will enforce. `--intent "<text>"` still takes a literal argument, and
 
 The repository-scoped SQLite event ledger remembers accepted transitions, logical evidence, phase, and next action across process restarts. Its disposable active projection is repaired from that history. It is agent-writable workflow continuity, not an attestation, approval, audit credential, or Git boundary.
 
-`workflow.py status` is the public `schemaVersion: 1` JSON projection consumed by
-hooks and advisor automation. It exposes semantic workflow facts and logical
-evidence identities only; database paths, table names, journals, and other
-storage mechanics are private. Missing authoritative state returns exit 2 with
-`no active workflow` and creates nothing.
+## Continuation
+
+Follow the operation result's `next.command`; `next.input` names any judgment or
+document still needed. Consult `next.help` for an unfamiliar input and retain
+the supported invocation and returned evidence IDs. On resume or after edits,
+use `workflow.py summary --repo <checkout>` for current recovery guidance;
+`status --fields <comma-separated-fields>` supplies missing facts. Resume the same pass.
+See [State Interface](WORKFLOW-MAP.md#state-interface) for receipt and status fields.
 
 ## Mandatory order
 
@@ -106,23 +106,15 @@ Invoke `production-preflight` and draft its two-field artifact before consulting
 Read TDD's Behavior Map requirements; invoke `codebase-design` when changing a
 Module, public Interface or Seam. The draft owns the contract and planned attacks.
 
-Give that exact draft to `codex-advisor --phase preflight-advice --preflight-file
-<draft.json>`, with the governing design. The advisor checks interpretation and
-boundary coverage on the map itself and returns `changes-required` or `approved`.
-Revise material gaps and `--reconsult` in the same advisor context; the wrapper
-sends only the delta from the recorded draft, naming both content identities.
-Draft iteration needs no per-cycle user permission. A failed consult leaves its
-recorded base unchanged; retry from that base. The advisor remains read-only.
+Submit the exact draft through [Codex Advisor's preflight loop](../codex-advisor/SKILL.md#preflight-advice),
+with the governing-design declaration. Continue to recording only after `approved`.
 
 ### 5. Record approved preflight once
 
-`record preflight --input <draft.json>` compares the artifact with the latest
-approved intake inside the ledger transaction. Missing or changed approval
-refuses without mutation. Recording closes initial draft consultation and cannot
-be repeated; later changes use the owning item's `tdd-map` reassessment. An
-approved artifact may retain unsettled interpretations as visibly pending items;
-execution can be retained, but completion requires settlement. No second prose map,
-staging command or disposition ceremony is needed for draft corrections.
+Follow [Production Preflight's recording step](../production-preflight/SKILL.md#recording)
+and continue after recording succeeds. Initial draft consultation then closes;
+settle pending interpretations or revise obligations through the owning item's
+`tdd-map` reassessment. Pending interpretations block completion.
 
 ### 6. Mapped TDD RED or not-required
 
@@ -351,11 +343,14 @@ remains until the next `begin` replaces it; no reviewer gate applies.
 
 ## Failure semantics
 
-Missing or corrupt workflow state is pending, never success. A measured advisor
-transport failure may be recorded unavailable, but cannot approve preflight or
-complete final review. Ordinary documentation, scratch, and
-non-repository work keeps the lightweight exception; governance docs still
-reset downstream review readiness. There is no Stop hook; `workflow.py summary --repo <checkout>` restores identity,
-the next action and open work without a full-map reload. Use `status --fields
-<comma-separated-fields>` for missing facts. Resume the same pass.
-[WORKFLOW-MAP.md](WORKFLOW-MAP.md) owns the hook roles. Unavailable blast-radius impact is reported as `unknown`.
+Missing or corrupt workflow state is pending, never success. For an unavailable
+advisor, follow [Failure and disposition](../codex-advisor/SKILL.md#failure-and-disposition).
+Incoming findings can be recorded while verification is pending; that receipt
+does not certify review. [Hook roles](WORKFLOW-MAP.md#hook-roles) owns edit observation
+and documentation exceptions. Use the task repository as the tool workdir.
+
+Locate the file or symbol first; read the returned path, never a filename inferred
+from its concept. Retain that owner path with its supported command across resumes.
+Keep searches separate from independent actions; handle expected no-match results
+explicitly. Serialize ledger mutations and stop dependent batches on unexpected
+failure (`set -euo pipefail`; Python `check=True`).

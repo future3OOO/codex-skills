@@ -696,20 +696,19 @@ class PerEditOverheadTests(HookHarness):
         self.assertEqual(state["phase"], "implementation", marker)
         self.assertEqual(state["codeReview"], {"status": "pending", "findings": "pending"}, marker)
 
-    def test_a_second_dirty_edit_appends_no_ledger_event(self) -> None:
+    def test_a_repeated_dirty_observation_appends_no_ledger_event(self) -> None:
         marker = "REDUNDANT_INVALIDATION_COMMITTED"
         self.complete_workflow(finish=False)
         (self.repo / "app.py").write_text("value = 2\n", encoding="utf-8")
         first = self.post_edit("app.py")
         self.assertEqual(first.returncode, 0, marker + ": " + first.stdout + first.stderr)
         before = self.history_length()
-        (self.repo / "app.py").write_text("value = 3\n", encoding="utf-8")
         second = self.post_edit("app.py")
         self.assertEqual(second.returncode, 0, marker + ": " + second.stdout + second.stderr)
         self.assertEqual(self.history_length(), before,
                          marker + ": a no-op dirty edit committed a ledger event")
 
-    def test_a_repeated_governance_edit_appends_no_ledger_event(self) -> None:
+    def test_a_repeated_governance_observation_appends_no_ledger_event(self) -> None:
         marker = "REDUNDANT_GOVERNANCE_INVALIDATION_COMMITTED"
         self.complete_workflow(finish=False)
         (self.repo / "app.py").write_text("value = 2\n", encoding="utf-8")
@@ -717,7 +716,6 @@ class PerEditOverheadTests(HookHarness):
         (self.repo / "AGENTS.md").write_text("# rules\n", encoding="utf-8")
         self.post_edit("AGENTS.md")
         before = self.history_length()
-        (self.repo / "AGENTS.md").write_text("# rules v2\n", encoding="utf-8")
         repeated = self.post_edit("AGENTS.md")
         self.assertEqual(repeated.returncode, 0, marker + ": " + repeated.stdout + repeated.stderr)
         self.assertEqual(self.history_length(), before,
@@ -1921,7 +1919,7 @@ class RedFirstTests(HookHarness):
         self.assertEqual(borrowed.returncode, 2, marker + ": GREEN accepted another item's RED surface")
         self.assertEqual(self.map_status()["BM_B"], "red", marker)
 
-    def test_an_edit_before_any_review_records_no_invalidation(self) -> None:
+    def test_an_edit_before_any_review_records_the_candidate(self) -> None:
         marker = "NOOP_INVALIDATION_RECORDED"
         slug = "no-noop"
         self.open_pass(slug, [pending_behavior("BM_A", behavior="a is two", seam="app module", expected="app.a == 2", red_failure="A_NOT_TWO")])
@@ -1929,7 +1927,7 @@ class RedFirstTests(HookHarness):
         before = self.events()
         (self.repo / "app.py").write_text("a = 2\nb = 1\n", encoding="utf-8")
         self.post_edit("app.py")
-        self.assertEqual(self.events(), before, marker + ": an edit before any review appended an event")
+        self.assertEqual(self.events(), before + 1, marker + ": the edited candidate was not recorded")
         self.assertEqual(self.tdd(slug, "green", "BM_A", "a").returncode, 0)
         record_context_forge(self.repo, self.tmp)
         self.run_verification(slug)

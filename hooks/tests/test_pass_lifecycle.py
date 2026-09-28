@@ -379,9 +379,7 @@ class PassLifecycleTests(unittest.TestCase):
         intent = "task text " * 2000
         begun = self.cli("begin", "--slug", "quiet-intent", "--intent", intent)
         self.assertEqual(begun.returncode, 0, begun.stdout + begun.stderr)
-        receipt = json.loads(begun.stdout)
-        self.assertEqual({"schemaVersion", "workflowId", "slug", "activeCandidateTree", "phase", "nextAction"},
-                         set(receipt), "INTENT_ECHOED_BY_DEFAULT")
+        self.assertNotIn("task text ", begun.stdout, "INTENT_ECHOED_BY_DEFAULT")
         status = json.loads(self.cli("status").stdout)
         self.assertNotIn("intent", status, "INTENT_ECHOED_BY_DEFAULT")
         self.assertEqual(status["slug"], "quiet-intent")
@@ -539,7 +537,7 @@ class PassLifecycleTests(unittest.TestCase):
         self.begin_slug("checkpoint-candidate-drift")
         self.advance_to_context_forge()
         app = self.repo / "app.py"
-        app.write_text(app.read_text(encoding="utf-8") + "# changed\n", encoding="utf-8")
+        app.write_text("value = 2\n", encoding="utf-8")
 
         checkpoint = self.checkpoint("preflight-advice")
         self.assertEqual(

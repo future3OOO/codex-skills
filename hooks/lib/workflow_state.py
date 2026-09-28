@@ -10,10 +10,12 @@ import shlex
 import subprocess
 import sys
 import uuid
+from pathlib import Path
 from typing import Callable, Sequence
 
 from . import behavior_map, tdd_surface
 from ._workflow_db import (
+    CHECK_ONLY,
     EvidenceWrite,
     LedgerError,
     LedgerMutation,
@@ -30,10 +32,13 @@ from .repo_identity import RepoIdentity
 from .workflow_documents import advisor_disposition_document, validate_advisor_projection, validate_design_declaration
 from .state_store import (
     _active_candidate_tree,
+    _paths,
+    analysis_unchanged,
     is_governance_path,
     is_reviewable_path,
     is_test_path,
     manifest_diff,
+    repo_state_dir,
     tree_manifest,
     utc_timestamp,
 )
@@ -646,7 +651,7 @@ def commit_review(
     """Commit immutable review intake or an appended disposition."""
     with mutation(identity) as transaction:
         state = _bound_instance_state(transaction.state, slug, workflow_id)
-        if summary_doc.get("kind") == "intake":
+        if summary_doc.get("kind") == "intake" and not summary_doc.get("findings"):
             _require_predecessor(state, "code-review")
         write = evidence_write(str(state["workflowId"]), "code-review", summary_doc)
         manifest: ManifestWrite | None = None
@@ -713,12 +718,13 @@ def commit_review(
                     _finding_unresolved(entry) and entry.get("repairOwner") for entry in state.get("findingStates", [])):
                 state["reviewerContextId"] = summary_doc["reviewContextId"]
             unresolved = _stage_unresolved(state, "code-review", "code-review")
-            if unresolved:
-                manifest = _apply_step(identity, state, "code-review", "pending", "pending")
-                if intake:
-                    state["codeReviewIntakeEvidence"] = reference
+            if not (_allows_next(state, "tdd") and _allows_next(state, "verification")):
+                _reset_reviews(state)
             else:
-                manifest = _apply_step(identity, state, "code-review", "passed", "none")
+                manifest = _apply_step(identity, state, "code-review",
+                                       "pending" if unresolved else "passed", "pending" if unresolved else "none")
+            if intake:
+                state["codeReviewIntakeEvidence"] = reference
         else:
             summary_doc = _resolve_disposition_receipts(identity, transaction, state, summary_doc)
             review_manifest, review_head = _validate_disposition_context(identity, state, summary_doc)
@@ -897,8 +903,10 @@ def execution_receipt(identity: RepoIdentity, state: JsonObject, reference: str,
         raise WorkflowError(f"execution reference could not be sampled: {exc}") from exc
     if (manifest is None or manifest != current_tree or run.get("bindingError")
             or run.get("timedOut") or ("outputTail" not in run
-                and not (run.get("sourceReference") and run.get("testId")))):
+                and not (isinstance(run.get("sourceReference"), str) and run["sourceReference"]))):
         raise WorkflowError("execution reference is stale, unbound, incomplete or not an executed receipt")
+    if "outputTail" not in run and not run.get("testId"):
+        return execution_receipt(identity, state, run["sourceReference"], transaction)
     return run, manifest
 
 
@@ -1042,8 +1050,19 @@ def evidence_document(identity: RepoIdentity, evidence_id: str | None) -> JsonOb
     return document if isinstance(document, dict) else None
 
 
+def graph_projection(identity: RepoIdentity, value: object, candidate: str) -> JsonObject:
+    projection = validate_advisor_projection(value)
+    indexed = str(projection["indexedCandidateTree"])
+    if indexed == candidate:
+        return projection
+    if not analysis_unchanged(identity, indexed, candidate):
+        raise ValueError("advisor projection does not describe the active candidate tree")
+    return {**projection, "reuse": {"candidateTree": candidate,
+                                   "basis": "unchanged graph inputs and Python source positions"}}
+
+
 def _graph_candidate_ready(
-    document: object, candidate: str, *, slug: object, workflow_id: object,
+    document: object, candidate: str, *, identity: RepoIdentity, slug: object, workflow_id: object,
 ) -> bool:
     if (
         not isinstance(document, dict)
@@ -1054,9 +1073,7 @@ def _graph_candidate_ready(
     ):
         return False
     try:
-        validate_advisor_projection(
-            document.get("advisorProjection"), candidate_tree=candidate,
-        )
+        graph_projection(identity, document.get("advisorProjection"), candidate)
     except ValueError:
         return False
     return True
@@ -1420,13 +1437,13 @@ def instance_id(state: JsonObject) -> str | None:
 
 def pause(identity: RepoIdentity, slug: str, workflow_id: str | None, reason: str, *,
           expected_candidate_tree: str | None = None) -> JsonObject:
-    cleaned = reason.strip()
-    if not cleaned:
+    if not (cleaned := reason.strip()):
         raise ValueError("pause requires a non-empty --reason")
     with mutation(identity, expected_candidate_tree=expected_candidate_tree) as transaction:
         state = _bound_instance_state(transaction.state, slug, workflow_id)
         state["paused"] = {"reason": cleaned, "at": utc_timestamp()}
-        return _commit(transaction, state, "pause")
+        state = _commit(transaction, state, "pause")
+    return public_status(state, identity, candidate_tree=expected_candidate_tree, recovery=True, fields=set(state)) if expected_candidate_tree else state
 
 
 def _behavioral_finding_closure(
@@ -2044,9 +2061,7 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
         missing.append("advisor projection evidence belongs to another workflow")
     else:
         try:
-            projection = validate_advisor_projection(
-                graph_document.get("advisorProjection"), candidate_tree=candidate,
-            )
+            projection = graph_projection(identity, graph_document.get("advisorProjection"), candidate)
         except ValueError as exc:
             missing.append(str(exc))
     design_evidence_id = state.get("governedDesignEvidence")
@@ -2147,7 +2162,7 @@ def complete(
         if (
             not _graph_candidate_ready(
                 graph_document, _active_candidate_tree(identity),
-                slug=state.get("slug"), workflow_id=state.get("workflowId"),
+                identity=identity, slug=state.get("slug"), workflow_id=state.get("workflowId"),
             )
             and "repoContextForge" not in missing
         ):
@@ -2175,23 +2190,40 @@ def _reset_reviews(state: JsonObject) -> None:
     state.pop("finalReviewContextMismatchEvidence", None)
 
 
-def invalidate_after_edit(identity: RepoIdentity, path: str) -> JsonObject | None:
-    reviewable = is_reviewable_path(path)
-    if not reviewable and not is_governance_path(path):
-        return read_workflow(identity)
+def invalidate_after_edit(identity: RepoIdentity, path: str | None) -> tuple[JsonObject | None, list[str]]:
+    """Observe the candidate once; return actual paths for the hook's local feedback."""
     with mutation(identity) as transaction:
         state = transaction.state
+        changed = [path] if path is not None else []
         if state is None:
-            return None
-        if reviewable and state.get("phase") == "complete" and not state.get("revalidation"):
-            return state
-        if reviewable and _binding_drift(identity, state, "quality-gate", transaction) is None:
-            return state
+            return None, sorted(set(changed)
+                | set(_paths(identity, "ls-files", "--modified", "--others", "--exclude-standard", "-z"))
+                | set(_paths(identity, "diff", "--cached", "--name-only", "-z")))
+        candidate = _active_candidate_tree(identity)
+        uncomparable = False
+        try:
+            observed = _paths(identity, "diff", "--no-renames", "--name-only", "-z", str(state["activeCandidateTree"]), candidate)
+        except RuntimeError:
+            observed = _paths(identity, "ls-files", "--modified", "--others", "--exclude-standard", "-z")
+            observed += _paths(identity, "diff", "--cached", "--name-only", "-z")
+            uncomparable = True
+        changed = sorted(set(changed) | set(observed))
+        governance = uncomparable or any(is_governance_path(p) for p in changed)
+        reviewable = (state.get("phase") != "complete" and not state.get("revalidation")
+                      and (uncomparable or any(is_reviewable_path(p) for p in changed)))
+        if not (reviewable or governance):
+            return state, changed
+        if not governance and _binding_drift(identity, state, "quality-gate", transaction) is None:
+            if state.get("activeCandidateTree") != candidate:
+                state["activeCandidateTree"] = candidate
+                return _commit(transaction, state, "verified-candidate-observed"), changed
+            return state, changed
         def material(value: JsonObject) -> str:
             return json.dumps({k: v for k, v in value.items() if k != "nextAction"},
                               sort_keys=True)
 
         before, before_next = material(state), state.get("nextAction")
+        state["activeCandidateTree"] = candidate
         state.pop("paused", None)
         if reviewable:
             state["phase"] = "implementation"
@@ -2201,17 +2233,13 @@ def invalidate_after_edit(identity: RepoIdentity, path: str) -> JsonObject | Non
             if state.get("phase") == "complete":
                 state["revalidation"] = True
         _reset_downstream(state)
-        # An edit while the workflow is already dirty repeats a transition that
-        # changes nothing material; committing it would append a duplicate
-        # ledger event (measured: 64% of a benchmark run's events) and clobber
-        # a producer-derived nextAction, such as the reassessment hint, with
-        # this path's recomputation. Commit exactly when material state
-        # changed; otherwise keep the committed projection intact.
+        # A repeated observation must preserve the producer's nextAction and
+        # avoid a duplicate ledger event when no material state changed.
         if material(state) == before:
             if before_next is not None:
                 state["nextAction"] = before_next
-            return state
-        return _commit(transaction, state, kind)
+            return state, changed
+        return _commit(transaction, state, kind), changed
 
 
 def review_blockers(identity: RepoIdentity, state: JsonObject) -> list[str]:
@@ -2272,7 +2300,7 @@ def public_status(state: JsonObject, identity: RepoIdentity | None = None, *,
     ready = _allows_next(state, "repo-context-forge") and (
         candidate is None or _graph_candidate_ready(
             graph_document, candidate,
-            slug=state.get("slug"), workflow_id=state.get("workflowId"),
+            identity=identity, slug=state.get("slug"), workflow_id=state.get("workflowId"),
         )
     )
     stored = state.get("repoContextForge")
@@ -2401,6 +2429,77 @@ def _latest_verification_command(identity: RepoIdentity, state: JsonObject) -> s
     return f" Verified by: {command[:120] + ' […]' if len(command) > 120 else command}."
 
 
+def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObject | None = None) -> JsonObject:
+    """Bind the selected operation once for command results and recovery."""
+    scripts = Path(__file__).resolve().parents[2] / "skills"
+    cli = [sys.executable, str(scripts / "repo-production-workflow/scripts/workflow.py")]
+    bound = ["--repo", str(identity.root), "--slug", str(state["slug"]),
+             "--workflow-id", str(state["workflowId"])]
+    action = state.get("nextAction")
+    if receipt is not None and receipt.get("kind") == "observed":
+        if receipt.get("valid") is True:
+            return {"command": shlex.join([*cli, "verify", *bound, "--from-evidence",
+                                          f"{receipt['evidenceId']}:{receipt['runIndex']}"])}
+        return {"command": None, "input": "correct the failed operation; observation leaves verification unchanged"}
+    if state.get("phase") == "complete" and not state.get("revalidation"):
+        return {"command": None}
+    if action == "repo-context-forge":
+        command = [sys.executable, str(Path.home() / ".codex/skills/repo-context-forge/scripts/bootstrap.py"),
+                   "--repo", str(identity.root), "--workflow-slug", str(state["slug"]),
+                   "--base", str(state.get("baseOid") or state["passStartOid"])]
+        if not state.get("repoContextForgeEvidence"):
+            request = shlex.join([*cli, "status", "--repo", str(identity.root), "--fields", "intent"])
+            reader = shlex.join([sys.executable, "-c", "import json,sys; print(json.load(sys.stdin)['intent'], end='')"])
+            return {"command": shlex.join([*command, "--mode", "intent"]) + f' --intent "$({request} | {reader})"'}
+        command += ["--revalidate"]
+    elif action == "verification":
+        command = [*cli, "verify", *bound, "--kind", "quality-gate", "--base-ref",
+                   str(state.get("baseOid") or state["passStartOid"])]
+    elif action == "complete-workflow":
+        command = [*cli, "complete", *bound]
+    elif action in {"final-review", "re-consult-final-review", "appeal-final-review"}:
+        design = repo_state_dir(identity) / "designs" / f"{state['workflowId']}.md"
+        declaration = evidence_document(identity, state.get("governedDesignEvidence")) or {}
+        if design.is_file() or declaration.get("status") == "absent":
+            command = [str(scripts / "codex-advisor/scripts/ask-codex-advisor.sh"), "--slug", str(state["slug"]),
+                       "--phase", "final-review", "--cwd", str(identity.root)]
+            command += ["--design-file", str(design)] if design.is_file() else ["--design-absent", str(declaration["reason"])]
+            return {"command": shlex.join(command), "input": "review question on stdin"}
+        command = [*cli, "paths", "--repo", str(identity.root), "--workflow-id", str(state["workflowId"])]
+    elif action in {"preflight", "tdd", "run-mapped-tdd", "code-review", "classify-current-findings",
+                    "close-current-findings", "address-review-findings"}:
+        producer = {"preflight": ["record", "preflight"], "tdd": ["tdd"], "run-mapped-tdd": ["tdd"],
+                    "code-review": ["record", "review"]}.get(str(action))
+        if producer is None:
+            pending = next((f for f in state.get("findingStates", []) if _finding_unresolved(f)), {})
+            producer = ["record", "review" if pending.get("producer") == "code-review" else "advisor-disposition"]
+        command = [*cli, *producer, *bound] if "record" in producer else [*cli, *producer, *bound[:4]]
+        operation: JsonObject = {"command": shlex.join(command + (["--input", "-"] if "record" in producer else [])),
+                                "help": shlex.join([*cli, *producer, "--help"]),
+                                "input": {
+                                    "review": "independent review intake or measured disposition on stdin",
+                                    "preflight": "preflight contract and Behavior Map on stdin",
+                                    "advisor-disposition": "measured finding disposition on stdin",
+                                    "tdd": "--phase, --behavior-id and real command after --",
+                                }[producer[-1]]}
+        pending = [{"intakeEvidenceId": f["intakeEvidenceId"], "findingId": f["findingId"], "kind": f.get("kind")}
+                   for f in state.get("findingStates", []) if _finding_unresolved(f)]
+        if pending:
+            operation["findings"] = pending
+        return operation
+    else:
+        command = [*cli, "status", "--repo", str(identity.root)]
+    return {"command": shlex.join(command)}
+
+
+def operation_receipt(state: JsonObject, identity: RepoIdentity, **details: object) -> JsonObject:
+    """Return the committed operation's result and its current continuation."""
+    if CHECK_ONLY.get():
+        return details
+    current = public_status(state, fields={"schemaVersion", "workflowId", "slug", "phase", "nextAction"})
+    return {**current, "next": next_operation(identity, {**state, **current}, details), **details}
+
+
 def summary(identity: RepoIdentity, limit: int = 3000, *, labels: bool = True) -> str:
     """The pass for a resuming lead; the compaction re-arm drops the review labels
     (late and shared RED ids), which name settled items too."""
@@ -2416,6 +2515,7 @@ def summary(identity: RepoIdentity, limit: int = 3000, *, labels: bool = True) -
     records = {"advisor-preflight": f"{advisor.get('status')}/{advisor.get('findings')}",
                "code-review": f"{code_review.get('status')}/{code_review.get('findings')}",
                "final-review": f"{final_review.get('status')}/{final_review.get('findings')}"}
+    operation = next_operation(identity, state)
     mechanisms = ""
     shown: set[str] = set()
     excerpt_budget = 600
@@ -2435,6 +2535,8 @@ def summary(identity: RepoIdentity, limit: int = 3000, *, labels: bool = True) -
     text = (
         f"Active workflow: slug={state.get('slug')} workflowId={state.get('workflowId')} "
         f"candidate={state.get('activeCandidateTree')} phase={state.get('phase')} next={state.get('nextAction')}. "
+        + "\nNext invocation: " + str(operation["command"] or "none; workflow complete") + "\n"
+        + "".join(f"{key}: {value}\n" for key, value in operation.items() if key != "command")
         + (f"Binding: {gate_drift}. " if gate_drift else "")
         + " ".join(f"{field}={state[field]}" for field in (
             "preflightLatestEvidence", "tddEvidence", "verificationLatestEvidence", "qualityGateManifestId") if state.get(field)) + ". "

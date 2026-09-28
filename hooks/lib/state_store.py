@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import contextlib
+import ast
 import importlib.util
+import io
 import json
 import os
 import stat
 import subprocess
 import tempfile
+import tokenize
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Iterator
@@ -180,6 +183,31 @@ def production_changes(identity: RepoIdentity, base: str) -> list[str]:
     """Production (non-test reviewable) paths that differ from ``base``, tracked or untracked."""
     changed = [*_paths(identity, "diff", "--name-only", "-z", base), *untracked_paths(identity)]
     return sorted({path for path in changed if is_reviewable_path(path) and not is_test_path(path)})
+
+
+def analysis_unchanged(identity: RepoIdentity, before: str, after: str) -> bool:
+    """Compare real Git inputs for graph reuse; code positions remain significant."""
+    try:
+        changes = _git(identity, "diff", "--raw", "-z", "--no-abbrev", "--no-renames", before, after).split(b"\0")
+        for header, name in zip(changes[::2], changes[1::2]):
+            old_mode, new_mode, old_oid, new_oid, status = header.split()
+            if old_mode[1:] != new_mode or new_mode not in {b"100644", b"100755"} or status != b"M":
+                return False
+            suffix = Path(os.fsdecode(name)).suffix.lower()
+            if suffix in DOC_SUFFIXES:
+                continue
+            if suffix != ".py":
+                return False
+            old, new = (_git(identity, "cat-file", "blob", oid.decode()) for oid in (old_oid, new_oid))
+            if any(data.startswith(b"#!") for data in (old, new)) and old.splitlines()[:1] != new.splitlines()[:1]:
+                return False
+            if tokenize.detect_encoding(io.BytesIO(old).readline)[0] != tokenize.detect_encoding(io.BytesIO(new).readline)[0]:
+                return False
+            if ast.dump(ast.parse(old, type_comments=True), include_attributes=True) != ast.dump(ast.parse(new, type_comments=True), include_attributes=True):
+                return False
+        return True
+    except (OSError, RuntimeError, SyntaxError, UnicodeError, ValueError):
+        return False
 
 
 def is_docs_or_scratch(path: str) -> bool:
