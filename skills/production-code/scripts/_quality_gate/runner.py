@@ -11,12 +11,17 @@ from .snapshot import EvaluationSnapshot
 GATE_VERSION = "2026-08-10.1"
 
 # The immediate checks, each stated once: name, the error reported on a find,
-# sample cap, and which gap stream makes an otherwise-clean result unknown.
+# and which gap stream makes an otherwise-clean result unknown.
 _SIMPLE_CHECKS = (
-    ("no-merge-conflict-markers", "merge conflict markers found in {n} file(s)", 10, "capture"),
-    ("no-temp-artifacts", "temporary artifact paths detected in {n} changed file(s)", 10, "capture"),
-    ("no-quality-escapes", "quality escapes detected in {n} changed location(s)", 10, "attribution"),
+    ("no-merge-conflict-markers", "merge conflict markers found in {n} file(s)", "capture"),
+    ("no-temp-artifacts", "temporary artifact paths detected in {n} changed file(s)", "capture"),
+    ("no-quality-escapes", "quality escapes detected in {n} changed location(s)", "attribution"),
 )
+# The text summary's bounds, set from real reports: three items per list, each
+# clipped to 160 characters (the longest real item is 124), 4,000 UTF-8 bytes in all
+# (PR #33's 139-file report renders 3,342). Typed verify adds a report locator and
+# its receipt, under 6,000 bytes whole; the JSON result keeps every item.
+_SHOWN, _ITEM_CHARS, _SUMMARY_BYTES = 3, 160, 4000
 
 
 def check(
@@ -61,12 +66,12 @@ def check(
     # rules report once, as `findings`, never re-rendered as strings.
     checks: list[dict[str, object]] = []
 
-    for name, template, cap, stream in _SIMPLE_CHECKS:
+    for name, template, stream in _SIMPLE_CHECKS:
         items = found[name]
         gaps = gaps_for[stream]
         if items:
             errors.append(template.format(n=len(items)))
-            checks.append({"name": name, "sample": items[:cap], "passed": False, "status": "finding", **({"gaps": list(gaps)} if gaps else {})})
+            checks.append({"name": name, "sample": items, "passed": False, "status": "finding", **({"gaps": list(gaps)} if gaps else {})})
         elif gaps:
             checks.append({"name": name, "sample": [], "passed": None, "status": "incomplete", "gaps": list(gaps)})
         else:
@@ -146,7 +151,14 @@ def check(
     }
 
 
+def _some(items: list[str]) -> list[str]:
+    """The first items, each clipped, then an explicit count of the rest."""
+    shown = [item if len(item) <= _ITEM_CHARS else item[:_ITEM_CHARS - 1] + "…" for item in items[:_SHOWN]]
+    return shown + ([f"+{len(items) - _SHOWN} more"] if len(items) > _SHOWN else [])
+
+
 def format_text(result: dict[str, object]) -> str:
+    """A bounded summary for chat: every omission is counted, and the JSON result is the complete report."""
     lines = [
         "Production Code Quality Gate",
         f"verdict: {'pass' if result['ok'] else 'fail'}",
@@ -158,15 +170,26 @@ def format_text(result: dict[str, object]) -> str:
     ]
     for check in result["checks"]:
         outcome = "incomplete" if check["passed"] is None else "pass" if check["passed"] else "fail"
-        lines.append(f"- {check['name']}: {outcome}" + (f" ({', '.join(check['sample'])})" if check.get("sample") else ""))
-    lines += ["", "Errors:", *([f"- {error}" for error in result["errors"]] or ["- none"]), "", "Warnings:"]
-    # Measured growth stays visible even when an unbased run leaves the claim incomplete; then each
-    # concrete finding, located (rule-level records are the `Checks` lines).
+        lines.append(f"- {check['name']}: {outcome}" + (f" ({', '.join(_some(check['sample']))})" if check.get("sample") else ""))
+    lines += ["", "Errors:", *([f"- {error}" for error in _some(result["errors"])] or ["- none"]), "", "Warnings:"]
+    # Measured growth stays visible even when an unbased run leaves the claim incomplete; then the
+    # first concrete findings of each rule, located (rule-level records are the `Checks` lines).
     net = result["evaluation"]["growth"]["humanAuthored"]["net"]
     active = [f"{RULE_GROWTH}: human-authored net growth {net} exceeds the 500-line review budget"] if net > 500 else []
-    active += [" ".join(filter(None, (f"{item['ruleId']} [{item['findingId']}]", item["state"], item["region"].get("evidenceClass"),
-               item["evidence"].get("responsibilityKey"), "for " + item["evidence"]["affectedRuleId"] if "affectedRuleId" in item["evidence"] else None))) + ": "
-               + ", ".join(item["evidence"].get("gaps") or item["evidence"].get("owners") or [f"{r['path']}:{r['displayLine']}" for g in item["evidence"].get("duplicates", ()) for r in g["regions"]])
-               for item in result["findings"] if item["status"] == "finding" and item["region"]["scope"] != "evaluation"]
-    lines.extend([f"- {warning}" for warning in active + result["warnings"]] or ["- none"])
-    return "\n".join(lines)
+    by_rule: dict[str, list[str]] = {}
+    for item in result["findings"]:
+        if item["status"] == "finding" and item["region"]["scope"] != "evaluation":
+            by_rule.setdefault(item["ruleId"], []).append(" ".join(filter(None, (
+                f"{item['ruleId']} [{item['findingId']}]", item["state"], item["region"].get("evidenceClass"),
+                item["evidence"].get("responsibilityKey"),
+                "for " + item["evidence"]["affectedRuleId"] if "affectedRuleId" in item["evidence"] else None))) + ": "
+                + ", ".join(_some(item["evidence"].get("gaps") or item["evidence"].get("owners") or [
+                    f"{r['path']}:{r['displayLine']}" for g in item["evidence"].get("duplicates", ()) for r in g["regions"]])))
+    for rule, rendered in by_rule.items():
+        active += rendered[:_SHOWN] + ([f"{rule}: +{len(rendered) - _SHOWN} more"] if len(rendered) > _SHOWN else [])
+    lines.extend([f"- {warning}" for warning in active + _some(result["warnings"])] or ["- none"])
+    data = "\n".join(lines).encode("utf-8", "surrogateescape")
+    if len(data) > _SUMMARY_BYTES:  # a last guard in bytes, cut at a line: every list above is already bounded
+        cut = data.rindex(b"\n", 0, _SUMMARY_BYTES - 20)
+        data = data[:cut] + b"\n+%d more lines" % data.count(b"\n", cut)
+    return data.decode("utf-8", "surrogateescape")

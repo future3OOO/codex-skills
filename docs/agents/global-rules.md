@@ -93,8 +93,9 @@ Repo Context Forge analysis copy. For codex-skills installation, follow
 
 - Define verifiable success criteria before editing; for multi-step work, state
   the short plan and its checks.
-- Read only the lines being changed, using search's line numbers; no whole-file
-  or multi-hundred-line dumps, and no `JSON.stringify` of whole tool results.
+- Read changed lines first, then only the context behavior and preservation
+  need; no whole-file or multi-hundred-line dumps, and no `JSON.stringify` of
+  whole tool results.
 - Invoke `$tdd` before every code change. Drive real Seams: RED/GREEN for changed
   behavior, preservation proof for refactors. If the change creates the Seam,
   verify its absence first, then create it and return to drive it. Absence alone
@@ -127,8 +128,11 @@ Use FFF first for raw discovery; honor packet scope when present. Use GitNexus
 MCP for graph analysis; CLI only for indexing/admin. Follow `$repo-context-forge`
 for repo selection, executed-check reuse, and required post-edit validation.
 
-Before edits, run upstream `impact` only for changed symbols
-called from other modules; no `context` query when impact lists the callers.
+Before edits, reuse applicable packet and graph results; query only what they
+leave unanswered: upstream `impact` with tests for changed indexed symbols and
+shared contracts (downstream too when moving, deepening, consolidating, or hiding
+behavior), callers and callees of changed symbols, every shared-state writer and
+its risk, and the tested owner of an internal Seam a new file consumes.
 
 Never use `detect_changes` to select initial targets or as primary safety proof.
 Graph output must not shrink packet scope, the PR contract, or no-change surfaces.

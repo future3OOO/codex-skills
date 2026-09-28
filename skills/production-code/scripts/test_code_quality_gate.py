@@ -752,7 +752,8 @@ def test_repeated_inline_scaffolds_are_one_owner_candidate(repo: Path) -> None:
     ]
     assert len(expected) == 5, expected
     assert [(region["path"], region["displayLine"]) for region in finding["region"]["regions"]] == expected, finding
-    assert f"[{finding['findingId']}] candidate lifecycle-coordinators: " + ", ".join(f"{p}:{n}" for p, n in expected) in warnings, "TEXT_FINDING_UNLOCATED"
+    shown = ", ".join(f"{p}:{n}" for p, n in expected[:3])  # every region stays in the JSON
+    assert f"[{finding['findingId']}] candidate lifecycle-coordinators: {shown}, +2 more" in warnings, "TEXT_FINDING_UNLOCATED"
     assert code == 0 and payload["ok"] is True, (code, payload["errors"])
 
 

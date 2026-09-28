@@ -20,8 +20,9 @@ Before editing, use the standards below to choose the smallest production-safe i
 python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" verify --kind quality-gate --base-ref "<base>"
 ```
 
-It records the verdict on the pass and attaches the pass's recorded
-snapshot-bound Repo Context Forge evidence, which
+It prints a bounded summary and the command that reads the complete report,
+which the pass retains as evidence with the verdict. It attaches the pass's
+recorded snapshot-bound Repo Context Forge evidence, which
 `QG54-OWNER-COMPETITION-PRODUCTION` needs; without it that rule reports
 incomplete. Load
 [references/gate-policy.md](references/gate-policy.md) when interpreting the

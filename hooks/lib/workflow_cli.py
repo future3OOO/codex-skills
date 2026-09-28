@@ -306,12 +306,15 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
             os.unlink(graph_context_path)
     valid = binding_error is None and not timed_out and _passed(shlex.join(command), exit_code, _tail(raw))
     gate: dict[str, object] | None = None
+    report: dict[str, object] | None = None
     shown = raw
     if args.kind == "quality-gate":
         try:
-            # Text mode: the whole summary for the lead, then the JSON verdict line for the ledger.
-            summary, _, verdict = raw.rstrip(b"\n").rpartition(b"\n")
-            gate = validate_gate_result(json.loads(verdict.decode("utf-8")))
+            # Text mode: the bounded summary for the lead, then the complete JSON report, which
+            # the ledger retains as its own evidence beside the run's verdict.
+            summary, _, line = raw.rstrip(b"\n").rpartition(b"\n")
+            report = json.loads(line.decode("utf-8"))
+            gate = validate_gate_result(report)
             shown, raw = summary.rstrip(b"\n") + b"\n", (json.dumps(gate, sort_keys=True) + "\n").encode()
             valid = valid and gate.get("ok") is True
             errors = gate.get("errors")
@@ -344,9 +347,13 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
         run.update(baseRef=args.base_ref, gate=gate, bindingError=binding_error, graphEvidenceId=graph_evidence_id)
     elif binding_error is not None:
         run["bindingError"] = binding_error
-    state, evidence_id, recorded = commit_verification(identity, slug, workflow_id, run, tree_before=tree_before)
-
-    _print_output(shown, whole=gate is not None)
+    state, evidence_id, recorded = commit_verification(identity, slug, workflow_id, run, tree_before=tree_before,
+                                                       report=report if gate is not None else None)
+    if recorded.get("reportEvidenceId"):
+        shown += ("complete report: " + shlex.join([
+            sys.executable, str(ROOT / "skills" / "repo-production-workflow" / "scripts" / "workflow.py"), "evidence",
+            "--repo", str(identity.root), "--evidence-id", str(recorded["reportEvidenceId"]), "--full"]) + "\n").encode()
+    _print_output(shown)
     _emit_json(_receipt(state, identity, **{
         "evidenceId": evidence_id,
         "exitCode": exit_code,

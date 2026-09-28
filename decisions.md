@@ -30,6 +30,26 @@ passed local proof and technical review. The user approved the +22-source-line
 exception for this correction; required CI provenance and invalidation proof stay
 intact. Commit/push and remote closure proceed; no merge or installation.
 
+## 2026-09-29 — Issue 107: rules loaded once, bounded gate output, retained report
+
+**Decision:** [PR #111](https://github.com/future3OOO/codex-skills/pull/111)
+finishes [#107](https://github.com/future3OOO/codex-skills/issues/107) under its
+revised brief. The global rules live at `docs/agents/global-rules.md` and install
+as `AGENTS.md`, so a codex-skills session loads them once; the automatic
+decisions-record mandate and the test-owner gate rule are removed. Typed verify
+prints a bounded summary (three items per list and per rule, items clipped at 160
+characters, every omission counted, 4,000 UTF-8 bytes in all), then one command
+reading the complete gate report, which the verification transaction writes as
+its own ledger evidence; a run without a verdict names none. The gate JSON keeps
+every hard-failure location. Supersedes the 2026-09-23 "whole report shown" note
+and PR #111's earlier whole-summary and literal graph/reading restrictions: the
+rules now reuse applicable graph results and query only unanswered impact, caller,
+callee and shared-writer questions, and read changed lines first, then needed
+context.
+
+**Status:** Rebased on main 5894065; PR #121's live repairs are separate hunks.
+Post-merge estate cleanup stays on #107.
+
 ## 2026-09-25 — Editable code is not a constraint
 
 **Decision:** AGENTS.md's findings rules add one sentence: before rejecting a

@@ -69,7 +69,11 @@ tests, build, or domain-specific gates.
   and sets top-level `ok=false`.
 - Each warning-rule result is reported once, in `findings`; `checks` carries
   only each rule's pass/status/gaps, and top-level `warnings` carries only
-  optional-input read failures.
+  optional-input read failures. An immediate check's `sample` lists every
+  location it found.
+- Text mode prints a bounded summary, then the complete JSON: at most three
+  items per list and three findings per rule, each item clipped to 160
+  characters, every omission counted, and 4,000 UTF-8 bytes in all.
 - Checks are path-aware through one stored classification per entry (role,
   parser language, human-authored/source status, test-like compatibility,
   exclusion reason). Production source remains strict; tests still fail
