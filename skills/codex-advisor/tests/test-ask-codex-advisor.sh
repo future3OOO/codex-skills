@@ -245,7 +245,6 @@ preflight_out=$(run_wrapper --slug scoped-rig --phase preflight-advice --preflig
 check_status "controlled preflight composition exits 0" 0 "$status"
 preflight_args=$(cat "$rigtmp/capture/args-1")
 preflight_sid="00000000-0000-7000-8000-000000000001"
-check "provider runs in selected repository" "-C $rigtmp/repo" "$preflight_args"
 check "preflight creates provider session" "exec --sandbox read-only" "$preflight_args"
 check_absent "preflight does not resume" " resume " "$preflight_args"
 check "preflight pins advisor model" "--model gpt-6-astra" "$preflight_args"

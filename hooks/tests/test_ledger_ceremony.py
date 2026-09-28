@@ -268,6 +268,7 @@ class PreflightContinuation(Ceremony):
         draft = json.loads((self.tmp / "draft.json").read_text())
         before = self.rows(), self.state()
         for document, extra in (({**draft, "authoritativeContract": "changed"}, []),
+                                (draft, ["--input", ""]),
                                 (draft, ["--workflow-id", "foreign-pass"])):
             result = self.cli("record", "preflight", "--input", "-", *extra, input=json.dumps(document))
             self.assertEqual(result.returncode, 2, marker + result.stderr)
