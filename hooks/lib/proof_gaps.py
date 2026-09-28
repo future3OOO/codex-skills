@@ -1,9 +1,8 @@
 """Advisory check after a valid mapped GREEN: would the item's proof notice its own changed code breaking?
 
-Execution decides: the proof is rerun on scratch copies of the candidate with small breaks on the changed
-lines it runs (negate a condition, flip a comparison, drop a statement, return None); a break the proof
-still passes on, where what the proof observes changed, is a survivor. TypeSafe Jev only judges whether
-that observed difference is an outcome the item promises. The lead's worktree is never written."""
+The proof is rerun on scratch copies of the candidate with small breaks on the changed lines it runs (negate a
+condition, flip a comparison, drop a statement, return None). A break the proof still passes on is a surviving
+mutation: a lead to a missing assertion, not a confirmed gap. The lead's worktree is never written."""
 from __future__ import annotations
 
 import ast
@@ -16,7 +15,6 @@ import shlex
 import shutil
 import tempfile
 import time
-import urllib.request
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -26,7 +24,7 @@ from .repo_identity import CanonicalRoot, RepoIdentity
 from .state_store import _git, is_test_path
 
 SITE = Path(__file__).with_name("proof_gaps_site")
-MAX_BREAKS, WORKERS, BUDGET_SECONDS, THRESHOLD, REVIEW, SHARE = 12, 4, 60.0, 0.7, 0.5, 0.25
+MAX_BREAKS, WORKERS, BUDGET_SECONDS, SHARE = 12, 4, 60.0, 0.25
 PREFIX = "proof-gap check:"
 SWAP = {ast.Eq: ast.NotEq, ast.NotEq: ast.Eq, ast.Lt: ast.GtE, ast.GtE: ast.Lt, ast.Gt: ast.LtE,
         ast.LtE: ast.Gt, ast.In: ast.NotIn, ast.NotIn: ast.In, ast.Is: ast.IsNot, ast.IsNot: ast.Is}
@@ -36,17 +34,18 @@ HUNK = re.compile(r"^@@ -\S+ \+(\d+)(?:,(\d+))? @@")
 
 
 def report(identity: RepoIdentity, command: list[str], env: dict[str, str] | None, item: dict[str, object],
-           green_tree: str, pass_start: str, others: list[list[str]]) -> tuple[list[str], list[str]]:
-    """A summary line, then one line per gap, review-band or unjudged survivor (the lead is shown only those), and the
-    changed lines the proof ran. `others` are the lines other items' GREEN proofs ran, as recorded on this pass's map."""
+           green_tree: str, pass_start: str, others: list[list[str]]) -> tuple[list[str], list[str], list[str]]:
+    """(lead, evidence, ran): the lines the lead is shown (the summary and each survivor whose run recorded a
+    difference; none when every break was caught or the check did not run), every line for the GREEN run entry
+    (adding each survivor with no difference detected), and the changed lines the proof ran."""
     try:
         with tempfile.TemporaryDirectory(prefix="proof-gaps-") as scratch:
             return _report(identity, command, env, item, green_tree, pass_start, others, Path(scratch))
     except (OSError, RuntimeError, ValueError, SyntaxError, KeyError, TypeError) as error:
-        return [f"{PREFIX} not run ({type(error).__name__}: {error})"], []
+        return [], [f"{PREFIX} not run ({type(error).__name__}: {error})"], []
 
 
-def _report(identity, command, env, item, green_tree, pass_start, others, scratch: Path) -> tuple[list[str], list[str]]:
+def _report(identity, command, env, item, green_tree, pass_start, others, scratch: Path) -> tuple[list[str], list[str], list[str]]:
     deadline = time.monotonic() + BUDGET_SECONDS
     root = Path(identity.root)
     # The proof's own files (a script it runs) are the proof, not the code under test.
@@ -54,7 +53,7 @@ def _report(identity, command, env, item, green_tree, pass_start, others, scratc
                if t.endswith(".py") and (root / t).resolve().is_file() and (root / t).resolve().is_relative_to(root.resolve())}
     since_start = {p: lines for p, lines in _changed(identity, pass_start, green_tree).items() if p not in scripts}
     if not since_start:
-        return [f"{PREFIX} not run - no production .py line changed since the pass start"], []
+        return [], [f"{PREFIX} not run - no production .py line changed since the pass start"], []
     listed = [os.fsdecode(p) for p in _git(identity, "ls-files", "-z", "-c", "-o", "--exclude-standard").split(b"\0") if p]
     files = [p for p in listed if (Path(identity.root) / p).is_file()]
     tests = [p for p in files if is_test_path(p) or p in scripts]
@@ -70,57 +69,53 @@ def _report(identity, command, env, item, green_tree, pass_start, others, scratc
     base = observe("b1")
     if base["exit"] != 0:
         cause = "hit the time budget" if base["exit"] is None else f"exited {base['exit']}"
-        return [f"{PREFIX} not run (the proof {cause} on a copy of the candidate)"], []
+        return [], [f"{PREFIX} not run (the proof {cause} on a copy of the candidate)"], []
     ran = base["lines"] & {f"{p}:{n}" for p, lines in since_start.items() for n in lines}
     # Break what this proof owns: changed lines it runs that few other items' GREEN proofs run.
     share = Counter(line for lines in others for line in lines)
     owned = {line for line in ran if share[line] < max(2, SHARE * len(others))}
     targets = {p: {n for n in lines if f"{p}:{n}" in owned} for p, lines in since_start.items()}
     if ran and not owned:
-        return [f"{PREFIX} not run - other items' GREEN proofs already run every changed line this proof runs"], sorted(ran)
+        return [], [f"{PREFIX} not run - other items' GREEN proofs already run every changed line this proof runs"], sorted(ran)
     if not any(targets.values()):
-        return [f"{PREFIX} not run - the proof ran none of the changed lines in its copy (its interpreter may ignore "
+        return [], [f"{PREFIX} not run - the proof ran none of the changed lines in its copy (its interpreter may ignore "
                 "PYTHONPATH, or import the checkout through an absolute path or an installed package)"], sorted(ran)
     second = observe("b2")
     if second["exit"] != 0:
         cause = "hit the time budget" if second["exit"] is None else f"exited {second['exit']}; its outcome is not repeatable"
-        return [f"{PREFIX} not run (a second unchanged run of the proof {cause})"], sorted(ran)
+        return [], [f"{PREFIX} not run (a second unchanged run of the proof {cause})"], sorted(ran)
     noise = {(e[0], e[1]) for e in set(base["events"]) ^ set(second["events"])}
     sites = sorted((path, site) for path, lines in targets.items() for site in _sites(identity, path) if site[1] in lines)
     sites = random.Random(str(item.get("id"))).sample(sites, min(MAX_BREAKS, len(sites)))
     timeout = max(5.0, 5 * base["seconds"])  # per break, and never past the budget
-    def attempt(site: tuple[str, tuple[str, int, int]]) -> tuple[tuple[str, tuple[str, int, int]], str, dict | None]:
+    def attempt(site: tuple[str, tuple[str, int, int]]) -> tuple[tuple[str, tuple[str, int, int]], str]:
         if deadline - time.monotonic() < 1:
-            return site, "skipped", None
+            return site, "skipped"
         path, where = site
         broken = _mutate((Path(identity.root) / path).read_text(encoding="utf-8"), where)
         seen = observe(f"m{sites.index(site)}", timeout, (path, broken))
-        if seen["exit"] != 0:  # a run the shared budget cut short proves nothing; a break that hangs stops earlier
-            return site, "skipped" if seen["exit"] is None and deadline - time.monotonic() < 1 else "caught", None
-        difference = _difference(base, seen, noise)
-        return site, "survived" if difference else "quiet", difference
+        if seen["exit"] is None:  # stopped by its own time limit or the shared budget: proves nothing either way
+            return site, "inconclusive"
+        if seen["exit"] != 0:
+            return site, "caught"
+        return site, "survived" if _differs(base, seen, noise) else "quiet"
 
     with ThreadPoolExecutor(WORKERS) as pool:
         outcomes = list(pool.map(attempt, sites))
-    counts = Counter(outcome for _, outcome, _ in outcomes)
-    survivors = [(site, difference) for site, outcome, difference in outcomes if outcome == "survived"]
-    scores, unjudged = _judge(item, [difference for _, difference in survivors])
-    listed = [((scores[n] if scores else None), site, difference) for n, (site, difference) in enumerate(survivors)
-              if not scores or scores[n] >= REVIEW]
-    gaps = sum(1 for score, _, _ in listed if score is not None and score >= THRESHOLD)
-    verdict = f"{gaps} gaps" if scores or not survivors else f"{len(listed)} survived, not judged ({unjudged})"
+    counts = Counter(outcome for _, outcome in outcomes)
     summary = (f"{PREFIX} {shlex.join(command)[-120:]}: {len(sites)} breaks on {len(owned)} changed lines this proof owns: "
-               f"{counts['caught']} caught, {verdict}")
-    extras = [(counts["quiet"], "changed nothing the proof observes"),
-              (len(survivors) - gaps if scores else 0, f"survived, below bar (p<{THRESHOLD})"), (counts["skipped"], "skipped (time budget)")]
+               f"{counts['caught']} caught, {counts['survived']} survived")
+    extras = [(counts["quiet"], "survived; no difference detected (in the run evidence)"),
+              (counts["inconclusive"], "inconclusive (timed out)"), (counts["skipped"], "skipped (time budget)")]
     summary += "".join(f", {n} {text}" for n, text in extras if n)
-    lines = [summary]
-    for score, (path, (kind, line, _)), difference in sorted(listed, key=lambda g: -(g[0] or 0)):
-        code = (Path(identity.root) / path).read_text(encoding="utf-8").splitlines()[line - 1].strip()[:80]
-        verdict = (f"not judged: {unjudged}" if score is None else f"p={score:.2f}" if score >= THRESHOLD
-                   else f"below bar, review: p={score:.2f}")
-        lines.append(f"{path}:{line} ({CHANGE[kind]}: `{code}`) stays green; {difference}; {verdict}")
-    return lines, sorted(ran)
+    lines = {"survived": [], "quiet": []}
+    for (path, (kind, line, _)), outcome in outcomes:
+        if outcome in lines:
+            code = (Path(identity.root) / path).read_text(encoding="utf-8").splitlines()[line - 1].strip()[:80]
+            lines[outcome].append(f"{path}:{line} ({CHANGE[kind]}: `{code}`) survived"
+                                  + ("" if outcome == "survived" else "; no difference detected"))
+    lead = [summary, *lines["survived"]] if counts["caught"] < len(sites) else []
+    return lead, [summary, *lines["survived"], *lines["quiet"]], sorted(ran)
 
 
 def _copy(identity: RepoIdentity, files: list[str], target: Path) -> Path:
@@ -207,39 +202,7 @@ def _mutate(source: str, site: tuple[str, int, int]) -> str:
     return ast.unparse(ast.fix_missing_locations(Break().visit(ast.parse(source))))
 
 
-def _difference(base: dict, seen: dict, noise: set) -> str | None:
-    """The first value or error the proof received that differs from the unchanged run, ignoring run-to-run noise."""
-    before = [e for e in base["events"] if (e[0], e[1]) not in noise]
-    after = [e for e in seen["events"] if (e[0], e[1]) not in noise]
-    if before == after:
-        return None
-    show = lambda es, n: f"{es[n][0]} {es[n][1]} {es[n][2][:120]}" if n < len(es) else "(nothing)"
-    first = next((n for n, pair in enumerate(zip(before, after)) if pair[0] != pair[1]), min(len(before), len(after)))
-    return f"before {show(before, first)}, after {show(after, first)}"
+def _differs(base: dict, seen: dict, noise: set) -> bool:
+    """Whether the values and errors the proof received differ from the unchanged run, ignoring run-to-run noise."""
+    return [e for e in base["events"] if (e[0], e[1]) not in noise] != [e for e in seen["events"] if (e[0], e[1]) not in noise]
 
-def _judge(item: dict[str, object], differences: list[str]) -> tuple[list[float] | None, str]:
-    """Jev's probability per survivor that its observed difference changes a promised outcome."""
-    if not differences:
-        return None, ""
-    key = os.environ.get("TYPESAFE_API_KEY")
-    key_file = Path.home() / ".config" / "typesafe" / "key"
-    if not key and key_file.is_file():
-        key = key_file.read_text(encoding="utf-8").strip()
-    if not key:
-        return None, "no TypeSafe key"
-    state = {"item": {"behavior": item.get("behavior"), "expected": item.get("expected")},
-             "differences": {f"d{n}": difference for n, difference in enumerate(differences)}}
-    questions = {f"d{n}": {"type": "noul",
-                           "instructions": f"Does the difference in `differences.d{n}` (what the test observed before and after a code change) change an outcome that `item.expected` promises?",
-                           "criteria": {"true": "It changes a value, error, stored state or output that item.expected names",
-                                        "false": "It changes only internals item.expected does not name"}}
-                 for n in range(len(differences))}
-    body = json.dumps({"model": "jev-1.13.0", "state": state, "questions": questions}).encode()
-    request = urllib.request.Request("https://api.typesafe.ai/v1/systemone", data=body,
-                                     headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(request, timeout=20) as response:
-            answers = json.load(response)["answers"]
-        return [float(answers[f"d{n}"]["noul"]) for n in range(len(differences))], ""
-    except (OSError, ValueError, KeyError, TypeError) as error:
-        return None, f"TypeSafe unreachable ({type(error).__name__})"

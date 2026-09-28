@@ -104,14 +104,15 @@ justify renaming tests, splitting batches, instrumentation or repeating sufficie
 proof. Unambiguous items do no extraction. Existing review challenges semantic
 adequacy and the mandatory final advisor still applies.
 
-A valid mapped GREEN also runs an advisory proof-gap check: the proof is rerun on
+A valid mapped GREEN also runs an advisory mutation check: the proof is rerun on
 scratch copies with small breaks on the changed production `.py` lines it owns (lines
-run by fewer than two, or a quarter, of other items' proofs, whichever is more), and each break it still passes on
-whose returned or raised values changed is judged by TypeSafe Jev against `expected`.
-The run entry keeps the summary; the payload shows `proofGaps` only when a gap or
-review-band line exists. A listed gap is an assertion the proof lacks; add it or record
-why the change is not promised. The rerun repeats the proof's effects outside the
-checkout, so a proof that touches real external systems sets `WORKFLOW_PROOF_GAPS=off`.
+run by fewer than two, or a quarter, of other items' proofs, whichever is more). The
+payload's `proofGaps` shows a summary and one line per break the proof still passed on
+whose run recorded a difference; the GREEN run entry also keeps each survivor with no
+difference detected. A surviving mutation is a lead, not a confirmed gap: it may change
+nothing, belong to another item, or be caught by another proof. Timed-out breaks are
+inconclusive. The rerun repeats the proof's effects outside the checkout, so a proof that
+touches real external systems sets `WORKFLOW_PROOF_GAPS=off`.
 
 GREEN exposes implementation consequences. Inspect what the implementation actually chose - value conversions, callees, shared writers, hooks and mutation paths, and every operation whose effects could erase a rule before it is judged - and classify each material risk against the contract as needing a real probe, having reusable proof, or being unreachable. When one reveals a new load-bearing mechanism, a touched-Seam preservation or interaction behavior, or a defect, add the item before the next production edit; when it reveals nothing, record the classification and nothing else. The map advisory raises impacted-test candidates; review challenges the decisions and the omissions. Pass the document on stdin instead of a scratch file:
 

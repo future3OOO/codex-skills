@@ -662,15 +662,15 @@ def _run_tdd(values: list[str]) -> int:
 
     if proof is not None and binding.get("productionChanged"):
         proof = {**proof, "productionChanged": binding["productionChanged"]}
-    gaps, ran = None, None
+    lead, gaps, ran = [], None, None
     # The check reruns the proof, so a proof with effects outside the checkout repeats them; opt out there.
     if (not legacy and phase == "green" and valid and receipt is None and not nonexecuting
             and os.environ.get("WORKFLOW_PROOF_GAPS") != "off"):
         # Lines other items' current GREEN proofs ran live on their map binding: committed with the GREEN, dropped on reopen.
         others = [entry["proofBinding"]["ranLines"] for entry in items if entry["id"] != args.behavior_id
                   and entry.get("status") == "green" and "ranLines" in entry.get("proofBinding", {})]
-        gaps, ran = proof_gaps.report(identity, command, env, mapped, binding["candidateTree"],
-                                      str(state.get("passStartOid") or "HEAD"), others)
+        lead, gaps, ran = proof_gaps.report(identity, command, env, mapped, binding["candidateTree"],
+                                            str(state.get("passStartOid") or "HEAD"), others)
     fields: dict[str, object] = {
         "phase": phase,
         "command": command_text,
@@ -829,8 +829,8 @@ def _run_tdd(values: list[str]) -> int:
         payload["behaviorId"] = args.behavior_id
     if input_check is not None:
         payload["inputEvidence"] = input_check
-    if gaps and len(gaps) > 1:  # the lead hears only of gaps; the run entry keeps the summary for review
-        payload["proofGaps"] = gaps
+    if lead:  # the run entry keeps every line; the lead sees them only when a break was not caught
+        payload["proofGaps"] = lead
     if baseline:
         payload["status"] = "already-satisfied"
     _emit_json(payload)
