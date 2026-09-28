@@ -1959,6 +1959,8 @@ Decisions:
   line came through them, so printed-output and database observation were removed.
 - `WORKFLOW_PROOF_GAPS=off` skips it: the rerun repeats a proof's effects outside the checkout.
 - Split agreed with the Jev-gate lead (#115 / PR #111 branch): this is a record-time check; the gate keeps
-  text judgments and owns the broad-catch rule. proof_gaps owns the only tracer (sys.monitoring tool id 4).
+  text judgments and owns the broad-catch rule. proof_gaps owns the only tracer (sys.monitoring tool id 4 on
+  Python 3.12+, sys.settrace on older interpreters: the proof keeps its own interpreter; without the fallback 132
+  benchmark GREENs on Python 3.11 got no check at all).
 
 Delivery status: in progress on `feat/proof-gaps-record-time`.

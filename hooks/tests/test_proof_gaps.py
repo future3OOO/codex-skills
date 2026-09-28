@@ -24,6 +24,8 @@ from hooks.tests.support import pending_behavior  # noqa: E402
 from hooks.tests import test_tdd_repairs as tdd_repairs  # noqa: E402
 
 PYTEST = importlib.util.find_spec("pytest") is not None
+PY311 = shutil.which("python3.11") or next(iter(sorted(Path.home().glob(".local/share/uv/python/cpython-3.11*/bin/python3.11"))), None)
+PY311 = str(PY311) if PY311 else None
 BRANCHY = "def scale(x):\n    if x > 0:\n        return x * 2\n    return 0\n"
 WEAK = "[calc.scale(3)] is not None"  # runs scale, checks nothing it returns
 FAILS = "calc.scale(3) == 6"  # the RED check: the base stub returns None
@@ -257,9 +259,39 @@ class ProofGapTests(unittest.TestCase):
         slug, _ = self.h.begin_with_map([self.item("BM_E", "WEAK_FAILED")])
         _, payload = self.cycle(slug, "BM_E", self.proof("test_weak", FAILS, "WEAK_FAILED", "unittest-E"), weaken=("test_weak", WEAK))
         lines = self.gaps(payload)
-        self.assertTrue(lines and "ran none" in lines[0] and "PYTHONPATH" in lines[0] and "gaps" not in lines[0],
-                        "UNOBSERVED_NOT_FOLDED: " + json.dumps(lines))
+        self.assertTrue(lines and "ran none" in lines[0] and "PYTHONPATH" in lines[0] and "3.12" not in lines[0]
+                        and "proofGaps" not in payload, "UNOBSERVED_NOT_FOLDED: " + json.dumps([lines, payload.get("proofGaps")]))
 
+    @unittest.skipUnless(PY311, "needs a Python 3.11 interpreter (uv python install 3.11)")
+    def test_an_error_leaving_a_with_block_is_observed_on_every_interpreter(self) -> None:
+        # Dropping `msg = ...` changes the error scale raises through the with block (ValueError -> NameError);
+        # the weak proof accepts any error, so the break survives and must be listed on 3.11 as on 3.12.
+        code = ("import contextlib\ndef scale(x):\n    with contextlib.nullcontext():\n        if x < 0:\n"
+                "            msg = 'negative'\n            raise ValueError(msg)\n    return x * 2\n")
+        check = "self.assertRaises(Exception, calc.scale, -1) is None and calc.scale(3) == 6"
+        for python in (sys.executable, PY311):
+            with self.subTest(python=python):
+                self.tearDown()
+                self.setUp()
+                self.calc.write_text("def scale(x):\n    if x < 0:\n        raise ValueError\n")
+                self.h.git("commit", "-q", "-am", "raises")
+                slug, _ = self.h.begin_with_map([self.item("BM_U", "WEAK_FAILED")])
+                command = (python, *self.proof("test_unwind", check, "WEAK_FAILED")[1:])
+                _, payload = self.cycle(slug, "BM_U", command, code)
+                shown = payload.get("proofGaps") or []
+                self.assertIn("calc.py:5 (statement removed: `msg = 'negative'`) survived", shown,
+                              "OLD_PYTHON_UNWIND_MISSED: " + json.dumps([python, self.gaps({})]))
+
+    @unittest.skipUnless(PY311, "needs a Python 3.11 interpreter (uv python install 3.11)")
+    def test_an_old_proof_interpreter_is_still_checked(self) -> None:
+        # Python 3.11 has no sys.monitoring; the check must still observe the proof and list its surviving mutation.
+        slug, _ = self.h.begin_with_map([self.item("BM_O", "WEAK_FAILED")])
+        command = (PY311, *self.proof("test_old", FAILS, "WEAK_FAILED")[1:])
+        green, payload = self.cycle(slug, "BM_O", command, weaken=("test_old", WEAK))
+        shown, status = payload.get("proofGaps") or [], self.h.evidence()["behaviorMap"][0]["status"]
+        self.assertTrue(green.returncode == 0 and status == "green"
+                        and "calc.py:3 (returns None: `return x * 2`) survived" in shown,
+                        "OLD_PYTHON_UNCHECKED: " + json.dumps([green.returncode, status, shown]))
     def test_slow_proof_is_bounded(self) -> None:
         # The proof sleeps past the check's budget only when the check reruns it.
         slug, _ = self.h.begin_with_map([self.item("BM_H", "HANG_FAILED")])
