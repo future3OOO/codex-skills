@@ -6,6 +6,26 @@ Issue bodies own implementation scope; this record preserves decisions and their
 status. New decisions supersede earlier ones explicitly; observations and open
 acceptance gaps are not completed delivery.
 
+## 2026-09-28 — Preflight continuation repair
+
+For [issue #95](https://github.com/future3OOO/codex-skills/issues/95), deepen the
+existing continuation owner: pending advice selects consultation, draft findings
+select reconsultation, and approval selects recording the retained exact draft.
+A changed explicit draft remains refused and receives reconsultation guidance
+carrying its path. The existing transaction still owns approval and single-record
+checks. No new phase, approval mechanism, validator or skill is introduced.
+
+This supersedes the earlier help-only repair proposal: the measured defect was
+an instruction to record before approval. It also limits the earlier PR118/119
+acceptance conclusion: protocol probes did not establish caller navigation.
+Bind both Codex provider launch modes to the repository; the real caller exposed
+resume inheriting scratch cwd. Inlining its single-use function removes four lines.
+Paired recorder replay removes a 7,524-byte repeat transfer. An independent caller
+also completed the frozen candidate's real revision/approval/recording journey
+without guidance overrides; this is not a blinded study or a runtime speed claim.
+Delivery: verified, independently reviewed implementation on
+`fix/workflow-next-action`; unmerged and not installed.
+
 ## 2026-09-28 — PR118 snapshot review correction
 
 Share the existing nonblocking regular-file snapshot policy between design and

@@ -2429,7 +2429,8 @@ def _latest_verification_command(identity: RepoIdentity, state: JsonObject) -> s
     return f" Verified by: {command[:120] + ' […]' if len(command) > 120 else command}."
 
 
-def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObject | None = None) -> JsonObject:
+def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObject | None = None, *,
+                   preflight_draft: JsonObject | None = None, preflight_file: str | None = None) -> JsonObject:
     """Bind the selected operation once for command results and recovery."""
     scripts = Path(__file__).resolve().parents[2] / "skills"
     cli = [sys.executable, str(scripts / "repo-production-workflow/scripts/workflow.py")]
@@ -2457,18 +2458,39 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
                    str(state.get("baseOid") or state["passStartOid"])]
     elif action == "complete-workflow":
         command = [*cli, "complete", *bound]
-    elif action in {"final-review", "re-consult-final-review", "appeal-final-review"}:
+    elif action in {"preflight", "final-review", "re-consult-final-review", "appeal-final-review"}:
+        preflight = action == "preflight"
+        advice = state.get("advisorPreflight") or {}
+        intake = (evidence_document(identity, advice.get("intakeEvidence")) or {}) if preflight else {}
+        draft = intake.get("preflightDraft")
+        if (preflight and advice.get("status") == "approved" and intake.get("verdict") == "approved"
+                and isinstance(draft, dict) and (preflight_draft is None
+                or json.dumps(draft, sort_keys=True) == json.dumps(preflight_draft, sort_keys=True))):
+            return {"command": shlex.join([*cli, "record", "preflight", *bound])}
         design = repo_state_dir(identity) / "designs" / f"{state['workflowId']}.md"
         declaration = evidence_document(identity, state.get("governedDesignEvidence")) or {}
-        if design.is_file() or declaration.get("status") == "absent":
+        if preflight or design.is_file() or declaration.get("status") == "absent":
             command = [str(scripts / "codex-advisor/scripts/ask-codex-advisor.sh"), "--slug", str(state["slug"]),
-                       "--phase", "final-review", "--cwd", str(identity.root)]
-            command += ["--design-file", str(design)] if design.is_file() else ["--design-absent", str(declaration["reason"])]
-            return {"command": shlex.join(command), "input": "review question on stdin"}
+                       "--phase", "preflight-advice" if preflight else "final-review", "--cwd", str(identity.root)]
+            needed = ["review question on stdin"]
+            if design.is_file():
+                command += ["--design-file", str(design)]
+            elif declaration.get("status") == "absent":
+                command += ["--design-absent", str(declaration["reason"])]
+            else:
+                needed.append("--design-file <path> or --design-absent <reason>")
+            if preflight:
+                if isinstance(draft, dict):
+                    command += ["--reconsult"]
+                if preflight_file:
+                    command += ["--preflight-file", preflight_file]
+                else:
+                    needed.append("--preflight-file <current-draft.json>")
+            return {"command": shlex.join(command), "input": "; ".join(needed)}
         command = [*cli, "paths", "--repo", str(identity.root), "--workflow-id", str(state["workflowId"])]
-    elif action in {"preflight", "tdd", "run-mapped-tdd", "code-review", "classify-current-findings",
+    elif action in {"tdd", "run-mapped-tdd", "code-review", "classify-current-findings",
                     "close-current-findings", "address-review-findings"}:
-        producer = {"preflight": ["record", "preflight"], "tdd": ["tdd"], "run-mapped-tdd": ["tdd"],
+        producer = {"tdd": ["tdd"], "run-mapped-tdd": ["tdd"],
                     "code-review": ["record", "review"]}.get(str(action))
         if producer is None:
             pending = next((f for f in state.get("findingStates", []) if _finding_unresolved(f)), {})
@@ -2478,7 +2500,6 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
                                 "help": shlex.join([*cli, *producer, "--help"]),
                                 "input": {
                                     "review": "independent review intake or measured disposition on stdin",
-                                    "preflight": "preflight contract and Behavior Map on stdin",
                                     "advisor-disposition": "measured finding disposition on stdin",
                                     "tdd": "--phase, --behavior-id and real command after --",
                                 }[producer[-1]]}
