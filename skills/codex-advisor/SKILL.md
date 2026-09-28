@@ -18,22 +18,20 @@ phase belongs in `--phase`, not in the slug.
 
 ### `preflight-advice`
 
-Run after investigating the affected behavior and design, before the initial
-production preflight.
-Supply the focused scope question; the workflow checkpoint supplies the
-pass-owned advisor projection, the recorded original request, workflow binding,
-and current-pass diff anchors. The advisor derives the load-bearing promises of
-the public Interface from the original request, enumerates the caller-reachable
-operations able to falsify each promise — interruption and cancellation,
-transaction control, lifecycle re-entry, shared-state writers, persistence —
-and makes any material promise without a planned real-Seam attack a finding.
-It challenges scope and design; it does not create the preflight artifact or
-approve implementation.
+Review the drafted production preflight before it is recorded. Supply it with
+`--preflight-file <draft.json>`; the wrapper snapshots it before consultation.
+The checkpoint sends the exact artifact, including its Behavior Map. Challenge
+competing interpretations and typed discriminating inputs: a prose-only semantic
+choice is a material gap; unambiguous items need no extra fields.
 
-Repeat preflight advice only when the user requests or approves it. Pass
-`--reconsult` for that authorized repeat: it reuses the advisor session and
-overrides only stage selection, preserving the open-pass and current-context
-checks. A repair or pending finding alone does not authorize another consult.
+Return `approved` when the draft has no material gap, otherwise
+`changes-required`. The lead revises and uses `--reconsult` in the same session;
+no per-cycle user permission is needed. The checkpoint sends the delta from the
+last recorded draft with base and target content identities. A failed result does
+not advance that base; retries may repeat the delta. With no recorded base, the
+retry carries the full artifact. Draft findings stay in their consult intake;
+approval gates the single `record preflight`, without runtime finding dispositions.
+After recording, initial preflight consultation is closed.
 
 Every phased consult carries a governing-design declaration: `--design-file`
 with the durable design artifact, or `--design-absent` with the specific
@@ -65,9 +63,7 @@ procedure, not new doctrine. A family selection or rejection resting on a
 falsifiable prediction about existing behavior, tests, compatibility, or
 runtime semantics stays unresolved — whoever made the prediction: planning,
 advisor, or lead — until the smallest practical real-Seam measurement
-resolves it. A preflight finding of that shape is dispositioned `fixed` only
-with that measurement in its `evidence`, and each finding's disposition says
-whether it is behavioral or non-behavioral.
+resolves it. Correct the draft using that measurement before resubmission.
 
 ### `final-review`
 
@@ -93,7 +89,7 @@ recorded rejection quotes a measurement is material only with a new
 contradicting measurement. It returns only this strict envelope:
 
 ```json
-{"schemaVersion":1,"findings":[{"id":"SPEC-1","claim":"...","material":true,"kind":"behavioral"}],"verdict":"fix-before-commit"}
+{"schemaVersion":1,"findings":[{"id":"SPEC-1","claim":"...","material":true,"kind":"behavioral","fixSketch":{"change":"smallest snippet or diff","probe":"check failing on this candidate"}}],"verdict":"fix-before-commit"}
 ```
 
 Findings carry `id`, `claim`, `material`, and `kind` (`behavioral` or
@@ -107,8 +103,17 @@ about the request's literal wording that quotes a real-Seam measurement receives
 a verdict, either a material re-raise carrying a new contradicting measurement
 or `commit-ready`.
 
-The wrapper records the exact UTF-8 response and its digest as immutable finding
-intake; it never dispositions. Completion
+Both phases check the owning map for interpretation and boundary coverage; final
+review receives the current recorded map. Every material final finding includes
+`fixSketch` with `change` and `probe`, at most 8192 UTF-8 bytes combined, separate
+from the prose word budget. Missing, malformed or oversized sketches are reported
+on the retained finding; they never discard a completed consult. The lead reads
+a sketch once, verifies its premise, drives its real-Seam probe RED, adapts the
+change, and owns GREEN. A sketch never closes a finding.
+
+The wrapper stores typed findings and the response SHA-256 once, without a raw
+answer duplicate. The digest marks `sketch=yes` or `missing/invalid`, without code.
+Later advisor ledgers omit sketches; the resumed session already holds them. Completion
 derives from the context-matched intake's effective terminal dispositions, not
 from the raw verdict alone. A `context-mismatch` advances nothing and must be
 re-consulted. A final `rejected-with-evidence` remains pending for one response
@@ -124,7 +129,7 @@ wait for the process rather than polling with repeated sleeps.
 
 ```bash
 "$HOME/.codex/skills/codex-advisor/scripts/ask-codex-advisor.sh" \
-  --slug "<task>" --phase preflight-advice \
+  --slug "<task>" --phase preflight-advice --preflight-file "<draft.json>" \
   --cwd "$PWD" --design-file "<design-artifact>" \
   --budget 600 -- "<focused scope question>"
 
@@ -158,7 +163,7 @@ no design artifact. The operator-selected default budget is 600 words, and
 budgets above 1,200 are refused. Phased consults refuse `--fresh`; the workflow
 checkpoint owns payload anchors and session mode.
 
-The checkpoint lists the evidence channels (intent, advisor projection, finding
+The checkpoint lists the evidence channels (intent, advisor projection, preflight/map, finding
 ledger, late RED, current-pass diff) in order; the wrapper frames each one it lists
 and reports its size and digest on stderr as `codex_advisor_evidence`, and the
 assembled prompt reports `codex_advisor_prompt bytes_total`. A phased consult
@@ -180,8 +185,8 @@ transaction recaptures it before commit.
 The wrapper derives the repository root and session identity from
 `hooks/lib/repo_identity.py`, so one stable slug uses one workflow-bound SID
 from the root, a subdirectory, a relative path, or a symlinked path. Preflight
-creates it; final review and appeal require and resume it. A missing SID or
-resume failure refuses without a cold-start fallback.
+creates it; draft iterations require and resume it. Final review resumes it
+when available, preserving the existing cold-start path for legacy passes.
 
 A successful transport requires exit 0, non-empty stdout, and
 `codex_advisor_complete status=0 provider=codex` on stderr. A missing terminal
@@ -206,63 +211,12 @@ output may test parsing but never proves the live transport.
 ## Failure and disposition
 
 If transport is genuinely unavailable, record the preflight result as
-`unavailable` with the measured reason and continue only under the workflow's
-documented preflight rule. There is no unavailable exception for the final
+`unavailable` with the measured reason; it cannot approve recording. There is no unavailable exception for the final
 review. No nonce, skip file, stamp, attestation, or audited exception authorizes
 completion.
 
-The lead validates every advisor finding against current code and proof, then
-records it as fixed, rejected-with-evidence, or accepted follow-up — or leaves a
-behavioral finding pending as a map-owned attack obligation until its owning
-attack is GREEN. Dispositions may cover any subset of an intake; later
-correction documents name only changed findings and append supersession links.
-A rejection's evidence quotes the executed measurement command and its output —
-a rejection without its quoted measurement is indistinguishable from one
-ignored, and a document rejecting three or more material findings draws a
-recorded bulk-rejection warning. A disposition that links Behavior Map items
-may claim no occurrence domain wider than the union of those items' executed
-attacks; anything wider is split into further pending items or the domain is
-narrowed. A disposition with no linked items proves its domain with its own
-quoted measurement. `fixed` on a behavioral finding additionally requires the
-owning attack GREEN.
-While a material finding, a mapped GREEN, or a re-raised finding awaiting its
-second disposition remains open, completion refuses; verification, the typed
-gate, and lead review run regardless. An appeal blocks completion until the
-advisor's one response; a material re-raise reopens the finding for one more
-lead disposition, which then stands. Targeted TDD and changed-Seam probes
-remain available.
-Any production edit after final review resets code review and final review to
-pending, but the immutable intake remains closable under the same workflow ID.
-
-The wrapper itself records the raw result. An intake with no material
-finding closes at recording. A material behavioral finding rides the pass as a
-map-owned attack (`record preflight` refuses a map that does not own it through
-finding `sourceRefs`) and is dispositioned once that attack is GREEN; findings
-block completion only. Identity, stage, intake and context come from the active
-workflow:
-
-```bash
-python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" record advisor-disposition \
-  --finding SPEC-1 --fixed --evidence-ref <evidenceId>:<runIndex> --behavior-id BM_X
-python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" record advisor-disposition \
-  --finding SPEC-2 --rejected --evidence-ref <evidenceId>:<runIndex> --reason "<measured premise and domain>"
-```
-
-`--fixed --behavior-id` mints the finding's `sourceRefs` on that item and needs it
-GREEN through its RED; a recurring finding also takes `--reason` with its mechanism. `--rejected` needs a measured false premise or zero
-occurrence, `--report-only` a false material consequence (behavioral: an owning
-attack the tdd producer proved), `--follow-up REF` its tracker reference; each
-takes `--reason`. Evidence citing a temporary-directory path refuses. The document
-forms, including `--findings none`, remain: `record advisor-disposition --help`
-prints their shapes. A refusal mutates no state.
-
-For an unavailable consult, record the full
-slug- and instance-bound command; no disposition is needed and final review
-has no unavailable route:
-
-```bash
-python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" record advisor-result \
-  --stage preflight --verdict unavailable --reason "<measured transport failure>"
-```
-
-After validating final-review output, record the final dispositions the same way.
+Close final findings with `workflow.py record advisor-disposition --finding <ID> --fixed --evidence-ref <evidenceId>:<runIndex>`; add `--behavior-id <BM_ID>` for an owning Behavior Map item.
+See `record advisor-disposition --help` for other dispositions.
+Read the typed intake once; judge each sketch against the real candidate and
+retain the lead's RED/GREEN. Approval of a draft closes its draft corrections,
+never a runtime finding or proof obligation.

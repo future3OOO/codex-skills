@@ -22,6 +22,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from hooks.tests.support import (  # noqa: E402
+    approve_preflight,
     build_document,
     fixture_env,
     pending_behavior,
@@ -287,6 +288,7 @@ class ExecutedSelectionsTests(unittest.TestCase):
         document = build_document("executed selections", behavior_map=list(items))
         path = self.tmp / "preflight.json"
         path.write_text(json.dumps(document), encoding="utf-8")
+        approve_preflight(self.repo, document)
         recorded = self.workflow(
             "record", "preflight", "--slug", self.slug, "--workflow-id", self.workflow_id,
             "--input", str(path),

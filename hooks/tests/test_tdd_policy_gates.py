@@ -41,19 +41,12 @@ class MappedTddPolicyGateTests(unittest.TestCase):
 
     def test_preflight_retains_interpretation_inputs(self) -> None:
         h = self.harness
-        slug, workflow_id = h.begin_with_map([pending_behavior("BM_CHOICE")])
-        path = h.tmp / f"{slug}-preflight.json"
-        document = json.loads(path.read_text())
         choice = {"boundaryInputs": ["SELECT 'x'", 0, False],
                   "interpretations": ["host truthiness", "database truthiness"],
                   "interpretation": "database truthiness", "authority": "governing requirement"}
-        document["behaviorMap"][0].update(choice)
-        path.write_text(json.dumps(document))
-        result = h.cli("record", "preflight", "--repo", str(h.repo), "--slug", slug,
-                       "--workflow-id", workflow_id, "--input", str(path))
-        self.assertEqual(result.returncode, 0, "INTERPRETATION_METADATA_REFUSED: " + result.stdout + result.stderr)
-        evidence_id = json.loads(result.stdout)["evidenceId"]
-        recorded = h.cli("evidence", "--full", "--repo", str(h.repo), "--evidence-id", evidence_id)
+        h.begin_with_map([{**pending_behavior("BM_CHOICE"), **choice}])
+        state = json.loads(h.cli("status").stdout)
+        recorded = h.cli("evidence", "--full", "--evidence-id", state["preflightEvidence"])
         self.assertEqual(recorded.returncode, 0, recorded.stderr)
         retained = json.loads(recorded.stdout)["document"]["document"]["behaviorMap"][0]
         self.assertEqual(json.dumps({key: retained[key] for key in choice}), json.dumps(choice))
@@ -186,6 +179,9 @@ class MappedTddPolicyGateTests(unittest.TestCase):
             "subscript_effect": "    class Mutator:\n        def __getitem__(self, key):\n            flags.pop(1)\n    m = Mutator()\n    flags = ['pytest', '--quiet', 'test_a.py']\n    m[0]\n    assert identify(flags)['runner'] == 'pytest'\n",
             "callable_lookup_effect": "    class Mutator:\n        @property\n        def run(self):\n            flags.pop(1)\n            return identify\n    m = Mutator()\n    flags = ['pytest', '--quiet', 'test_a.py']\n    assert m.run(flags)['runner'] == 'pytest'\n",
             "hash_effect": "    class Mutator:\n        def __hash__(self):\n            flags.pop(1)\n            return 1\n    m = Mutator()\n    flags = ['pytest', '--quiet', 'test_a.py']\n    {m: 1}\n    assert identify(flags)['runner'] == 'pytest'\n",
+            "subclass_effect": "    class Base:\n        def __init_subclass__(cls):\n            nonlocal flag\n            flag = '-q'\n    object = Base\n    flag = '--quiet'\n    class Child(object):\n        pass\n    assert identify(['pytest', flag])['runner'] == 'pytest'\n",
+            "descriptor_effect": "    class Descriptor:\n        def __set_name__(self, owner, name):\n            nonlocal flag\n            flag = '-q'\n    descriptor = Descriptor()\n    flag = '--quiet'\n    class Child:\n        field = descriptor\n    assert identify(['pytest', flag])['runner'] == 'pytest'\n",
+            "class_mutation": "    flags = ['--quiet']\n    class Child:\n        flags[0] = '-q'\n    assert identify(['pytest', flags[0]])['runner'] == 'pytest'\n",
             "keyword_expansion": "    from json import dumps\n    class Arguments:\n        def keys(self):\n            flags.pop(1)\n            return []\n    arguments = Arguments()\n    flags = ['pytest', '--quiet', 'test_a.py']\n    dumps(flags, **arguments)\n    assert identify(flags)['runner'] == 'pytest'\n",
         }, "INPUT_BINDING_LIFETIME_BROKEN")
 
@@ -359,27 +355,18 @@ class MappedTddPolicyGateTests(unittest.TestCase):
         self.assertEqual(evidence["unresolved"], ["absent"], "MIXED_INPUT_CRASH")
         self.assertEqual(evidence["represented"], [])
 
-    def test_unsettled_preflight_is_recoverable(self) -> None:
+    def test_preflight_retains_unsettled_interpretation(self) -> None:
         h = self.harness
-        slug, workflow_id = h.begin_with_map([pending_behavior("BM_CHOICE")])
-        path = h.tmp / f"{slug}-preflight.json"
-        document = json.loads(path.read_text())
-        document["behaviorMap"][0].update(boundaryInputs=["SELECT 'x'"],
-                                        interpretations=["host truthiness", "database truthiness"])
-        path.write_text(json.dumps(document))
-        result = h.cli("record", "preflight", "--repo", str(h.repo), "--slug", slug,
-                       "--workflow-id", workflow_id, "--input", str(path))
-        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-        state = json.loads(h.cli("status", "--repo", str(h.repo)).stdout)
-        self.assertEqual(state["preflight"], "pending", "UNSETTLED_CHOICE_LOST")
-        summary = h.cli("summary", "--repo", str(h.repo))
-        self.assertIn(state["preflightLatestEvidence"], summary.stdout)
-        stored = h.cli("evidence", "--full", "--repo", str(h.repo), "--evidence-id", state["preflightLatestEvidence"])
-        self.assertEqual(json.loads(stored.stdout)["document"]["document"], document)
+        item = dict(pending_behavior("BM_CHOICE"), boundaryInputs=["SELECT 'x'"],
+                    interpretations=["host truthiness", "database truthiness"])
+        slug, _ = h.begin_with_map([item])
+        state = json.loads(h.cli("status").stdout)
+        stored = h.cli("evidence", "--full", "--evidence-id", state["preflightEvidence"])
+        self.assertTrue(behavior_map.interpretation_pending(
+            json.loads(stored.stdout)["document"]["document"]["behaviorMap"][0]), "UNSETTLED_CHOICE_LOST")
         from hooks.lib.workflow_state import ready_for_edit
         ready, missing = ready_for_edit(resolve_repo_identity(h.repo), "app.py")
         self.assertFalse(ready)
-        self.assertIn("production preflight", missing, "PENDING_PREFLIGHT_DIAGNOSIS_LOST")
 
     def test_late_inputs_reuse_or_reopen_baseline(self) -> None:
         h = self.harness

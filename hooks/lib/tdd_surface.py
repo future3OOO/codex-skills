@@ -355,22 +355,34 @@ def input_evidence(surface: Mapping[str, object], root: Path, inputs: list[objec
         sources[str(path.resolve().relative_to(root.resolve()))] = hashlib.sha256(data).hexdigest()
         selected: list[ast.AST] = [tree]
         case_id = None
+        classes = []
         for name in names:
+            classes = [node for node in selected if isinstance(node, ast.ClassDef)]
             if "[" in name:
                 name, _, case = name.partition("[")
                 case_id = case.removesuffix("]")
             selected = [child for parent in selected for child in getattr(parent, "body", [])
                         if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and child.name == name]
-        classes = [node for node in selected if isinstance(node, ast.ClassDef)]
+        classes = [node for node in selected if isinstance(node, ast.ClassDef)] or classes
+        if not selected:
+            limits.append(f"selected definition unavailable: {target}")
+            continue
+        lifecycle = ({"setUp", "tearDown", "setUpClass", "tearDownClass"} if runner == "unittest"
+                     else {"setup_method", "teardown_method", "setup_class", "teardown_class"})
+        module_lifecycle = {"setUpModule", "tearDownModule"} if runner == "unittest" else {"setup_module", "teardown_module", "setup_function", "teardown_function"} if runner == "pytest" else set()
+        module_hooks = any(isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in module_lifecycle for node in tree.body)
+        if module_hooks:
+            limits.append("module lifecycle input flow was not inspected")
+        selected.extend(member for node in classes if node not in selected for member in node.body
+                        if isinstance(member, ast.FunctionDef) and member.name in lifecycle)
+        if runner == "pytest" and any(isinstance(node, ast.FunctionDef) and node.name in {"setUp", "tearDown", "setUpClass", "tearDownClass", "setUpModule", "tearDownModule"} for owner in [tree, *classes] for node in owner.body):
+            limits.append("unittest lifecycle under pytest was not inspected")
         if any(ast.unparse(base) not in {"unittest.TestCase", "object"} for node in classes for base in node.bases):
             limits.append("inherited test bodies were not inspected")
         selected = [child for node in selected for child in (
             [member for member in node.body if isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef))
-             and (member.name.startswith("test") or member.name in {"setUp", "tearDown", "setUpClass", "tearDownClass", "setup_method", "teardown_method", "setup_class", "teardown_class"})]
+             and (member.name.startswith("test") or isinstance(member, ast.FunctionDef) and member.name in lifecycle)]
             if isinstance(node, ast.ClassDef) else [node])]
-        if not selected:
-            limits.append(f"selected definition unavailable: {target}")
-            continue
         bindings: dict[str, list[object]] = {}
         fixtures: set[str] = set()
         for node in tree.body if runner != "exact" else []:
@@ -399,7 +411,7 @@ def input_evidence(surface: Mapping[str, object], root: Path, inputs: list[objec
             if isinstance(node, ast.Module) and runner != "exact":
                 limits.append(f"whole-file runner selection lacks case attribution: {target}")
                 continue
-            local = {} if classes else dict(bindings)
+            local = {} if classes or module_hooks else dict(bindings)
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 defaults = {arg.arg for arg in node.args.args[-len(node.args.defaults):]} if node.args.defaults else set()
                 defaults.update(arg.arg for arg, default in zip(node.args.kwonlyargs, node.args.kw_defaults) if default is not None)
@@ -448,11 +460,8 @@ def _source_inputs(node: ast.AST, bindings: dict[str, list[object]],
                    selected: bool = False) -> None:
     """Inspect literal call inputs and local literal tables, not arbitrary dataflow."""
     if isinstance(node, ast.ClassDef):
-        bindings.pop(node.name, None)
-        if node.decorator_list or node.keywords or any(isinstance(part, ast.Call) for base in node.bases for part in ast.walk(base)):
-            bindings.clear()
-        for statement in node.body:
-            _source_inputs(statement.value if isinstance(statement, ast.Assign) else statement, bindings, [], [])
+        bindings.clear()
+        limits.append("class construction input flow was not inspected")
         return
     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and not selected:
         bindings.pop(node.name, None)
@@ -494,10 +503,13 @@ def _source_inputs(node: ast.AST, bindings: dict[str, list[object]],
         for statement in node.body:
             _source_inputs(statement, bindings, values, limits)
         return
-    if isinstance(node, ast.Assign) and all(isinstance(target, ast.Name) for target in node.targets):
+    if isinstance(node, ast.Assign):
         _source_inputs(node.value, bindings, values, limits)
-        for name in node.targets:
-            bindings[name.id] = _input_literals(node.value, bindings)
+        if all(isinstance(name, ast.Name) for name in node.targets):
+            for name in node.targets:
+                bindings[name.id] = _input_literals(node.value, bindings)
+        else:
+            bindings.clear()
         return
     if isinstance(node, ast.For):
         if node.orelse:

@@ -33,7 +33,7 @@ POLICY_VERSION = 1
 BUSY_TIMEOUT_MS = 2500
 # Lists stored as content-addressed parts: the same item or run is written once
 # however many evidence documents carry it.
-PART_PATHS = (("behaviorMap",), ("runs",), ("document", "behaviorMap"))
+PART_PATHS = (("behaviorMap",), ("runs",), ("document", "behaviorMap"), ("preflightDraft", "behaviorMap"))
 # `record --check`: every recorder runs its whole transaction, then rolls back.
 CHECK_ONLY: contextvars.ContextVar[bool] = contextvars.ContextVar("check_only", default=False)
 JsonObject = dict[str, object]

@@ -24,6 +24,7 @@ from hooks.lib.workflow_state import (  # noqa: E402
     ready_for_edit,
     record_advisor_result,
 )
+from hooks.tests.support import approve_preflight
 from hooks.tests.support import build_document, pending_behavior, record_context_forge  # noqa: E402
 
 WORKFLOW = ROOT / "skills" / "repo-production-workflow" / "scripts" / "workflow.py"
@@ -84,6 +85,7 @@ class BehaviorMapWorkflowTests(unittest.TestCase):
             json.dumps(build_document("behavior map test", behavior_map=behavior_map)),
             encoding="utf-8",
         )
+        approve_preflight(self.repo, json.loads(payload.read_text()))
         recorded = self.cli(
             "record", "preflight", "--slug", slug, "--workflow-id", workflow_id,
             "--input", str(payload),

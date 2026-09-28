@@ -18,7 +18,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from hooks.lib.repo_identity import resolve_repo_identity
-from hooks.tests.support import build_no_change_document, record_context_forge
+from hooks.tests.support import approve_preflight, build_no_change_document, record_context_forge
 
 WORKFLOW = ROOT / "skills" / "repo-production-workflow" / "scripts" / "workflow.py"
 
@@ -93,15 +93,9 @@ class WorkflowLedgerTests(unittest.TestCase):
     def prepare_preflight_ready(self, slug: str = "atomic") -> tuple[dict[str, object], Path]:
         state = self.begin(slug)
         record_context_forge(self.repo, self.tmp)
-        workflow_id = str(state["workflowId"])
-        for command in (
-            ("record", "advisor-result", "--slug", slug, "--workflow-id", workflow_id, "--stage", "preflight", "--source", "codex-advisor", "--verdict", "completed"),
-            ("record", "advisor-disposition", "--slug", slug, "--workflow-id", workflow_id, "--stage", "preflight", "--findings", "none"),
-        ):
-            result = self.cli(*command, "--repo", str(self.repo))
-            self.assertEqual(result.returncode, 0, result.stderr)
         document = self.tmp / "preflight.json"
         document.write_text(json.dumps(build_no_change_document("ledger proof")), encoding="utf-8")
+        approve_preflight(self.repo, json.loads(document.read_text()))
         return state, document
 
     def test_status_without_database_or_legacy_state_is_missing_not_success(self) -> None:

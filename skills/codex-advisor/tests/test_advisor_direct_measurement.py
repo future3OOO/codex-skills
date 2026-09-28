@@ -37,6 +37,11 @@ def run_checked(
 def run_advisor(
     args: list[str], *, cwd: Path, env: dict[str, str]
 ) -> subprocess.CompletedProcess[str]:
+    if "preflight-advice" in args and "--preflight-file" not in args:
+        from hooks.tests.support import build_no_change_document
+        draft = cwd.parent / "advisor-draft.json"
+        draft.write_text(json.dumps(build_no_change_document("provider transport measurement")))
+        args = [args[0], "--preflight-file", str(draft), *args[1:]]
     process = subprocess.Popen(
         args,
         cwd=cwd,
@@ -52,11 +57,11 @@ def run_advisor(
         os.killpg(process.pid, signal.SIGKILL)
         process.communicate()
         raise
-    intake = re.match(r"verdict=\S+ findings=\d+ intake=(evidence-[0-9a-f]+)\n", stdout)
+    intake = re.match(r"verdict=\S+ findings=\d+ shown=\d+ intake=(evidence-[0-9a-f]+)\n", stdout)
     if process.returncode == 0 and intake:
         # A phased consult prints a digest; the envelope is read back where it was recorded.
         recorded = run_workflow("evidence", "--full", "--repo", str(cwd), "--evidence-id", intake.group(1), cwd=cwd, env=env)
-        stdout = json.loads(recorded.stdout)["document"]["raw"]
+        stdout = json.dumps(json.loads(recorded.stdout)["document"])
     return subprocess.CompletedProcess(args, process.returncode, stdout, stderr)
 
 
@@ -709,9 +714,9 @@ class AdvisorConcurrentSessionTest(unittest.TestCase):
                     cwd=repo, env=env,
                 ).stdout
             )
-            raw = json.loads(evidence["document"]["raw"])  # the winner's digest names its recorded envelope
+            raw = evidence["document"]  # the winner's digest names its typed intake
             self.assertTrue(success_stdout.startswith(
-                f"verdict={raw['verdict']} findings={len(raw['findings'])} intake={intake}\n"), marker)
+                f"verdict={raw['verdict']} findings={len(raw['findings'])} shown={min(40, len(raw['findings']))} intake={intake}\n"), marker)
 
 
 class AdvisorBudgetContractTest(unittest.TestCase):

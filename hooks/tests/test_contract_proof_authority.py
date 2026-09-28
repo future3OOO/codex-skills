@@ -25,6 +25,7 @@ from hooks.lib.workflow_state import (  # noqa: E402
     record_advisor_result,
     record_base_oid,
 )
+from hooks.tests.support import approve_preflight
 from hooks.tests.support import build_document, pending_behavior, record_context_forge  # noqa: E402
 # Module alias only: binding the TestCase name here would make unittest.main
 # rediscover and re-run the whole behavior-map suite inside this file.
@@ -69,6 +70,7 @@ class ContractProofAuthorityTests(unittest.TestCase):
             json.dumps(build_document("contract proof", behavior_map=behavior_map)),
             encoding="utf-8",
         )
+        approve_preflight(self.repo, json.loads(payload.read_text()))
         return self.h.cli(
             "record", "preflight", "--slug", slug, "--workflow-id", workflow_id,
             "--input", str(payload),
@@ -396,7 +398,7 @@ class ContractProofAuthorityTests(unittest.TestCase):
         marker = "FINAL_REVIEW_EVIDENCE_ONLY_CONTRACT_ABSENT"
         script = (ROOT / "skills" / "codex-advisor" / "scripts" / "ask-codex-advisor.sh").read_text(encoding="utf-8")
         preflight, final = script.split("  final-review)\n", 1)
-        clause = "do not require omitted Behavior Map, TDD, code-review, verification, preservation"
+        clause = "do not require omitted TDD, code-review, verification, preservation"
         self.assertIn(clause, final.split("esac", 1)[0], marker)
         self.assertNotIn(clause, preflight.rsplit("  preflight-advice)\n", 1)[-1], marker)
 

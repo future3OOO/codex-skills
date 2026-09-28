@@ -103,28 +103,33 @@ mkdir -p "$argtmp/repo"
 git -C "$argtmp/repo" init -q
 git -C "$argtmp/repo" -c user.email=test@example.invalid -c user.name=Harness commit -q --allow-empty -m base
 write_design "$argtmp/design.md"
+PYTHONPATH="$ROOT" python3 - "$argtmp/draft.json" <<'PYDRAFT'
+import json, sys
+from hooks.tests.support import build_no_change_document
+open(sys.argv[1], "w").write(json.dumps(build_no_change_document("argument diagnostic")))
+PYDRAFT
 
-out=$("$WRAPPER" --slug t --phase preflight-advice --cwd "$argtmp/repo" -- q 2>&1); status=$?
+out=$("$WRAPPER" --slug t --phase preflight-advice --preflight-file "$argtmp/draft.json" --cwd "$argtmp/repo" -- q 2>&1); status=$?
 check_status "phased consult requires design declaration" 2 "$status"; check "design requirement named" "--design-file or --design-absent" "$out"
-out=$("$WRAPPER" --slug t --phase preflight-advice --design-file "$argtmp/missing" --cwd "$argtmp/repo" -- q 2>&1); status=$?
+out=$("$WRAPPER" --slug t --phase preflight-advice --preflight-file "$argtmp/draft.json" --design-file "$argtmp/missing" --cwd "$argtmp/repo" -- q 2>&1); status=$?
 check_status "missing design refused" 2 "$status"
-out=$("$WRAPPER" --slug t --phase preflight-advice --design-file "$argtmp/design.md" --design-absent no --cwd "$argtmp/repo" -- q 2>&1); status=$?
+out=$("$WRAPPER" --slug t --phase preflight-advice --preflight-file "$argtmp/draft.json" --design-file "$argtmp/design.md" --design-absent no --cwd "$argtmp/repo" -- q 2>&1); status=$?
 check_status "two design declarations refused" 2 "$status"
 out=$("$WRAPPER" --slug t --design-absent no --cwd "$argtmp/repo" -- q 2>&1); status=$?
 check_status "phase-less design refused" 2 "$status"
 
-out=$("$WRAPPER" --slug t --phase preflight-advice --design-absent no --cwd "$argtmp/repo" --fresh -- q 2>&1); status=$?
+out=$("$WRAPPER" --slug t --phase preflight-advice --preflight-file "$argtmp/draft.json" --design-absent no --cwd "$argtmp/repo" --fresh -- q 2>&1); status=$?
 check_status "phased caller choice refused (--fresh)" 2 "$status"
 check "phased fresh names checkpoint ownership" "checkpoint stage owns create or resume mode" "$out"
 
 printf '== checkpoint and path identity\n'
 state="$argtmp/state"
-out=$(CODEX_WORKFLOW_STATE_ROOT="$state" "$WRAPPER" --slug orphan --phase preflight-advice --design-absent no --cwd "$argtmp/repo" -- q 2>&1); status=$?
+out=$(CODEX_WORKFLOW_STATE_ROOT="$state" "$WRAPPER" --slug orphan --phase preflight-advice --preflight-file "$argtmp/draft.json" --design-absent no --cwd "$argtmp/repo" -- q 2>&1); status=$?
 check_status "phased consult without workflow refused" 2 "$status"; check "missing workflow named" "requires an active workflow" "$out"
 CODEX_WORKFLOW_STATE_ROOT="$state" python3 "$WORKFLOW" begin --repo "$argtmp/repo" --slug real-pass >/dev/null
-out=$(CODEX_WORKFLOW_STATE_ROOT="$state" "$WRAPPER" --slug wrong-pass --phase preflight-advice --design-absent no --cwd "$argtmp/repo" -- q 2>&1); status=$?
+out=$(CODEX_WORKFLOW_STATE_ROOT="$state" "$WRAPPER" --slug wrong-pass --phase preflight-advice --preflight-file "$argtmp/draft.json" --design-absent no --cwd "$argtmp/repo" -- q 2>&1); status=$?
 check_status "mismatched slug refused" 2 "$status"; check "slug mismatch named" "does not match the active workflow" "$out"
-out=$(CODEX_WORKFLOW_STATE_ROOT="$state" "$WRAPPER" --slug real-pass --phase preflight-advice --design-absent no --cwd "$argtmp/repo" -- q 2>&1); status=$?
+out=$(CODEX_WORKFLOW_STATE_ROOT="$state" "$WRAPPER" --slug real-pass --phase preflight-advice --preflight-file "$argtmp/draft.json" --design-absent no --cwd "$argtmp/repo" -- q 2>&1); status=$?
 check_status "not-ready checkpoint refused" 2 "$status"; check "missing graph step named" "repo-context-forge" "$out"
 
 idtmp=$(mktemp -d)
@@ -180,7 +185,7 @@ printf 'session id: 00000000-0000-7000-8000-%012d\n' "$count" >&2
 if [[ " $* " == *" resume "* ]] || grep -q 'final-review' "$CAPTURE_DIR/payload-$count"; then
   printf '%s\n' '{"schemaVersion":1,"findings":[],"verdict":"commit-ready"}'
 else
-  printf '%s\n' '{"schemaVersion":1,"findings":[{"id":"SPEC-1","claim":"the public reader returns the wrong value","kind":"behavioral","material":true},{"id":"SPEC-2","claim":"another reader returns the wrong value","kind":"behavioral","material":true}],"verdict":"completed"}'
+  printf '%s\n' '{"schemaVersion":1,"findings":[],"verdict":"approved"}'
 fi
 PROVIDER
 chmod +x "$rigtmp/bin/codex"
@@ -228,7 +233,15 @@ run_wrapper() {
     CODEX_WORKFLOW_STATE_ROOT="$rigstate" CAPTURE_DIR="$rigtmp/capture" \
     "$WRAPPER" --cwd "$rigtmp/repo" "$@"
 }
-preflight_out=$(run_wrapper --slug scoped-rig --phase preflight-advice --design-file "$rigtmp/design.md" -- 'scope question' 2>"$rigtmp/preflight.err"); status=$?
+# Draft before consultation; draft findings are not runtime finding obligations.
+PYTHONPATH="$ROOT" python3 - "$rigtmp/preflight.json" <<'PYDRAFT'
+import json, sys
+from hooks.tests.support import build_document, pending_behavior
+contract = pending_behavior("BM_READER", red_failure="READER_NOTE_WRONG")
+keep = {**pending_behavior("BM_KEEP", red_failure="READER_VALUE_WRONG"), "kind":"preservation"}
+open(sys.argv[1], "w").write(json.dumps(build_document("scoped wrapper diagnostic", behavior_map=[contract, keep])))
+PYDRAFT
+preflight_out=$(run_wrapper --slug scoped-rig --phase preflight-advice --preflight-file "$rigtmp/preflight.json" --design-file "$rigtmp/design.md" -- 'scope question' 2>"$rigtmp/preflight.err"); status=$?
 check_status "controlled preflight composition exits 0" 0 "$status"
 preflight_args=$(cat "$rigtmp/capture/args-1")
 preflight_sid="00000000-0000-7000-8000-000000000001"
@@ -248,29 +261,11 @@ check "current-pass diff carries the changed value" "diff> +value = 2" "$(cat "$
 check "projection is framed as channel-prefixed data" "advisor-projection> {" "$(cat "$rigtmp/capture/payload-1")"
 check_status "one projection section" 1 "$(count_exact "$rigtmp/capture/payload-1" '--- advisor projection (schemaVersion 1) ---')"
 check_status "one current-pass diff section" 1 "$(count_exact "$rigtmp/capture/payload-1" '--- current-pass diff: passStartOid^{tree} -> activeCandidateTree;')"
-for old in 'repo context packet' 'Repo Context Forge graph evidence' '--- unstaged diff ---' '--- staged diff ---' '--- untracked diff ---' 'current Behavior Map' 'recorded TDD summary' 'recorded code-review summary'; do
+for old in 'repo context packet' 'Repo Context Forge graph evidence' '--- unstaged diff ---' '--- staged diff ---' '--- untracked diff ---' 'recorded TDD summary' 'recorded code-review summary'; do
   check_absent "old payload absent ($old)" "$old" "$(cat "$rigtmp/capture/payload-1")"
 done
 
 wid=$(CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" status --repo "$rigtmp/repo" | python3 -c 'import json,sys; print(json.load(sys.stdin)["workflowId"])')
-# The controlled intake owns real runner-backed evidence, not authored GREEN.
-CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 - "$ROOT" "$rigtmp/repo" "$rigtmp/preflight.json" <<'PY'
-import json, sys
-sys.path.insert(0, sys.argv[1])
-from hooks.lib.repo_identity import resolve_repo_identity
-from hooks.lib.workflow_state import read_workflow
-from hooks.tests.support import build_document, pending_behavior
-state = read_workflow(resolve_repo_identity(sys.argv[2]))
-intake = state["advisorPreflight"]["intakeEvidence"]
-refs = [{"type":"finding", "evidenceId":intake, "id":identifier} for identifier in ("SPEC-1", "SPEC-2")]
-contract = {**pending_behavior("BM_READER", red_failure="READER_NOTE_WRONG"), "sourceRefs":refs}
-keep = {**contract, "id":"BM_KEEP", "kind":"preservation", "redFailure":"READER_VALUE_WRONG", "sourceRefs":[
-    *refs, {"type":"design", "evidenceId":state["governedDesignEvidence"], "id":"PRES-1"}]}
-doc = build_document("scoped wrapper diagnostic", behavior_map=[contract, keep])
-doc["authoritativeContract"] = ("Reuse the hook correctness operation at 82 rows; limit 2048 UTF-8 bytes and 2 seconds per hook, "
-    "no extra DB reads or subprocesses versus old; verify through workflow.py verify and report actual source target, scale, limit and observed value.")
-open(sys.argv[3], "w", encoding="utf-8").write(json.dumps(doc))
-PY
 CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" record preflight --repo "$rigtmp/repo" --slug scoped-rig --workflow-id "$wid" --input "$rigtmp/preflight.json" >/dev/null
 # The value edit preceded this pass's proof, so the reader contract is proved
 # through its own RED/GREEN on the note it still lacks; the preservation item
@@ -297,44 +292,6 @@ check "selected operation reports its retained scale" '"scale": 82' "$selected_r
 printf '%s\n' "$selected_receipt" | tee "$rigtmp/selected-receipt.txt"
 CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" verify --repo "$rigtmp/repo" --slug scoped-rig --kind quality-gate --base-ref HEAD >/dev/null
 CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" set-phase --repo "$rigtmp/repo" --phase code-review --status not-required --findings none >/dev/null
-
-# One report-only finding is settled; the other remains pending. Reassessment
-# blocks final transport, but measured rejection remains reachable in that pass.
-CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 - "$ROOT" "$rigtmp/repo" <<'PY'
-import json, sys
-from pathlib import Path
-sys.path.insert(0, sys.argv[1])
-from hooks.lib.repo_identity import resolve_repo_identity
-from hooks.lib.workflow_state import read_workflow
-from hooks.lib.state_store import _active_candidate_tree
-repo = Path(sys.argv[2])
-state = read_workflow(resolve_repo_identity(repo))
-for identifier, status in (("SPEC-1", "report-only"), ("SPEC-2", "rejected-with-evidence")):
-    doc = {"context":{"workflowId":state["workflowId"], "candidateTree":_active_candidate_tree(resolve_repo_identity(repo))},
-           "intakeEvidenceId":state["advisorPreflight"]["intakeEvidence"], "dispositions":[{
-               "finding_id":identifier, "status":status, "kind":"behavioral",
-               "premise":{"claim":"reader value differs", "command":"python3 -m unittest test_transport_probe", "result":"false" if status == "rejected-with-evidence" else "true: reported reader differs"},
-               "occurrence":{"domain":"all public app.value reads", "count":0, "complete":True, "command":"python3 -m unittest test_transport_probe", "result":"count=0"},
-               "materialConsequence":{"claim":"callers see the wrong value", "command":"python3 -m unittest test_transport_probe", "result":"false"},
-               "evidence":"retained public-reader operation passed"}]}
-    (repo.parent / f"{identifier}.json").write_text(json.dumps(doc), encoding="utf-8")
-(repo.parent / "reassess.json").write_text(json.dumps({"reassessment":"reader preservation affected", "dispositions":[{"id":"BM_KEEP", "revalidate":True, "evidence":"re-execute retained reader before closure"}]}), encoding="utf-8")
-PY
-out=$(CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" record advisor-disposition --repo "$rigtmp/repo" --slug scoped-rig --workflow-id "$wid" --stage preflight --findings addressed --input "$rigtmp/SPEC-1.json" 2>&1); status=$?
-check_status "executed owning evidence settles report-only" 0 "$status"
-out=$(CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" record tdd-map --repo "$rigtmp/repo" --slug scoped-rig --workflow-id "$wid" --input "$rigtmp/reassess.json" 2>&1); status=$?
-check_status "settled owner enters reassessment" 0 "$status"
-out=$(run_wrapper --slug scoped-rig --phase final-review --design-file "$rigtmp/design.md" -- 'final question' 2>&1); status=$?
-check_status "pending preservation blocks ordinary final transport" 2 "$status"
-check "refusal names the unresolved owner" "BM_KEEP" "$out"
-check_status "blocked final never invokes the provider" 1 "$(cat "$rigtmp/capture/count")"
-out=$(CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" record advisor-disposition --repo "$rigtmp/repo" --slug scoped-rig --workflow-id "$wid" --stage preflight --findings addressed --input "$rigtmp/SPEC-2.json" 2>&1); status=$?
-check_status "measured rejection remains reachable with pending preservation" 0 "$status"
-out=$(run_wrapper --slug scoped-rig --phase final-review --design-file "$rigtmp/design.md" -- 'final question' 2>&1); status=$?
-check_status "rejecting a finding does not erase pending preservation" 2 "$status"
-check_status "unrelated pending work still prevents provider invocation" 1 "$(cat "$rigtmp/capture/count")"
-out=$(CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" tdd --repo "$rigtmp/repo" --slug scoped-rig --phase red --behavior-id BM_KEEP -- python3 -m unittest test_transport_probe 2>&1); status=$?
-check_status "same retained operation closes preservation without a fabricated RED" 0 "$status"
 
 FAIL_PROVIDER=1 run_wrapper --slug scoped-rig --phase final-review --design-file "$rigtmp/design.md" -- 'final question' >/dev/null 2>"$rigtmp/resume-fail.err"; status=$?
 check_status "resume provider failure propagates" 7 "$status"
@@ -367,15 +324,7 @@ check "final design telemetry emitted" "codex_advisor_evidence name=governing-de
 check "projection telemetry emitted" "codex_advisor_evidence name=advisor-projection" "$(cat "$rigtmp/final.err")"
 check "diff telemetry emitted" "codex_advisor_evidence name=diff " "$(cat "$rigtmp/final.err")"
 check "completion marker emitted" "codex_advisor_complete status=0 provider=codex" "$(cat "$rigtmp/final.err")"
-python3 - "$rigtmp/capture/payload-4" "$rigtmp/selected-receipt.txt" "$rigtmp/SPEC-1.json" <<'PY'
-import json, sys
-payload, receipt, disposition = [open(path, encoding="utf-8").read() for path in sys.argv[1:]]
-assert receipt.strip() in payload, "SELECTED_RECEIPT_DROPPED"
-assert json.loads(disposition)["intakeEvidenceId"] in payload, "EXACT_INTAKE_ID_DROPPED"
-for value in ('"executedCommands"', 'python3 -m unittest test_transport_probe', '"revalidationRequired":false', 'all public app.value reads', 'the public reader returns the wrong value'):
-    assert value in payload, "OWNERSHIP_OR_MEASUREMENT_DROPPED: " + value
-PY
-check_status "outgoing final payload retains exact ownership, commands and selected receipt" 0 "$?"
+check "outgoing final payload retains selected receipt" "$selected_receipt" "$(cat "$rigtmp/capture/payload-4")"
 
 cat >"$rigtmp/home/.bashrc" <<'BASHRC'
 alias claudex='ANTHROPIC_BASE_URL=https://transport.invalid ANTHROPIC_AUTH_TOKEN=offline-token CLAUDE_CODE_SUBAGENT_MODEL=offline-model \

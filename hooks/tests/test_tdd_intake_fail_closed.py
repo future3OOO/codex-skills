@@ -18,11 +18,10 @@ if str(ROOT) not in sys.path:
 
 from hooks.lib._workflow_db import database_path  # noqa: E402
 from hooks.lib.workflow_state import (  # noqa: E402
-    advisor_disposition,
     read_workflow,
-    record_advisor_result,
 )
 from hooks.tests.support import (  # noqa: E402
+    approve_preflight,
     build_document,
     pending_behavior,
     record_context_forge,
@@ -101,10 +100,6 @@ class MappedIntakeFailureTests(unittest.TestCase):
         slug = str(state["slug"])
         workflow_id = str(state["workflowId"])
         identity = record_context_forge(self.repo, self.tmp)
-        record_advisor_result(
-            identity, slug, workflow_id, "preflight", "codex-advisor", "completed"
-        )
-        advisor_disposition(identity, slug, workflow_id, "preflight", "none")
         preflight = self.tmp / "preflight.json"
         preflight.write_text(
             json.dumps(
@@ -115,6 +110,7 @@ class MappedIntakeFailureTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
+        approve_preflight(self.repo, json.loads(preflight.read_text()))
         recorded = self.command(
             "record", "preflight",
             "--slug",

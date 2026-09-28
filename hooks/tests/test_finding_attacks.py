@@ -8,6 +8,7 @@ RED/GREEN cycle targets exactly one recorded surface.
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import shlex
 import shutil
@@ -26,6 +27,7 @@ WORKFLOW = ROOT / "skills" / "repo-production-workflow" / "scripts" / "workflow.
 from hooks.lib.repo_identity import resolve_repo_identity  # noqa: E402
 from hooks.lib import behavior_map  # noqa: E402
 from hooks.lib.state_store import _active_candidate_tree  # noqa: E402
+from hooks.tests.support import approve_preflight
 from hooks.tests.support import build_document, checkpoint_channels, record_context_forge  # noqa: E402
 
 
@@ -122,6 +124,7 @@ class AttackHarness(unittest.TestCase):
 
     def record_preflight(self, slug: str, wid: str, behavior_map: list[dict[str, object]]) -> subprocess.CompletedProcess[str]:
         payload = self.json_file("preflight.json", build_document("attack", behavior_map=behavior_map))
+        approve_preflight(self.repo, json.loads(payload.read_text()))
         return self.cli("record", "preflight", "--slug", slug, "--workflow-id", wid,
                         "--input", str(payload))
 
@@ -553,7 +556,7 @@ class PendingAdvisorRetries(AttackHarness):
             replay = self.accept(wid, [self.CAPTURED])
             self.assertEqual(replay["findingStates"], first["findingStates"], marker)
             self.assertEqual(replay["advisorPreflight"]["intakeEvidence"], original, marker)
-        self.assertEqual(self.record_preflight("pending-retry", wid, owned).returncode, 0, marker)
+        self.assertEqual(self.record_preflight("pending-retry", wid, owned).returncode, 2, marker)
         closed = self.close_finding(wid, original, self.CAPTURED)
         self.assertEqual(closed.returncode, 0, closed.stdout + closed.stderr)
         self.assertEqual(self.status()["advisorPreflight"]["findings"], "addressed", marker)
@@ -679,7 +682,7 @@ class PendingAdvisorRetries(AttackHarness):
         changed_verdict = self.accept(final_wid, [note, {**note, "id": "NEW", "material": True}], stage="final")
         self.assertEqual(len(changed_verdict["findingStates"]), 2, marker)
 
-    def test_observations_retain_raw_bytes(self) -> None:
+    def test_observations_retain_response_identity(self) -> None:
         marker = "OBSERVATION_LOST"
         wid = self.begin("pending-retry")
         raws = [json.dumps({"schemaVersion": 1, "findings": [self.CAPTURED], "verdict": "completed"},
@@ -691,7 +694,9 @@ class PendingAdvisorRetries(AttackHarness):
                      for event in history["events"] if event["kind"] == "advisor-preflight-result"
                      for evidence_id in event["evidenceIds"]]
         observations = [entry["document"] for entry in documents if entry["kind"] == "finding-intake-preflight"]
-        self.assertEqual(sorted(d["raw"] for d in observations), sorted(raws), marker)
+        self.assertEqual(sorted(d["sha256"] for d in observations),
+                         sorted(hashlib.sha256(raw.encode()).hexdigest() for raw in raws), marker)
+        self.assertTrue(all("raw" not in d and d["findings"] == [self.CAPTURED] for d in observations), marker)
 
     def test_invalid_payload_refuses_atomically(self) -> None:
         wid = self.begin("pending-retry")

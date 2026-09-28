@@ -32,6 +32,7 @@ from hooks.lib.workflow_state import (  # noqa: E402
     record_advisor_result,
 )
 from hooks.tests.support import (  # noqa: E402
+    approve_preflight,
     POST_EDIT,
     WORKFLOW,
     build_document,
@@ -140,6 +141,7 @@ class MapAdvisoryTests(unittest.TestCase):
             ITEM, behavior="compute adds two", seam="tests/test_app.py through unittest",
             expected="compute(1) is 3", red_failure="FIXTURE_VALUE_NOT_THREE",
         )])), encoding="utf-8")
+        approve_preflight(self.repo, json.loads(document.read_text()))
         recorded = self.workflow(
             "record", "preflight", "--slug", self.slug, "--workflow-id", workflow_id, "--input", str(document),
         )

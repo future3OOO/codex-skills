@@ -131,25 +131,40 @@ values in the owning item's optional, non-empty `boundaryInputs` JSON array.
 and `authority` are non-empty strings, supplied together once settled and both
 omitted while unsettled. Preserve material types in the concrete input values
 and their meaning in the existing explanation. Unambiguous items omit these fields; no case names or second
-coverage inventory are required. Initial unsettled readings and inputs are retained
-as pending preflight evidence, recoverable through the normal summary/evidence
-commands. Resolve them through existing user communication or authorized advice
+coverage inventory are required. Unsettled readings and inputs remain visibly pending on their owning item,
+recoverable through the normal summary/evidence commands. Resolve them through existing user communication or the draft advisor loop
 before dependent implementation; recording a choice does not prove behavior.
 After preflight, use the same item's [TDD reassessment](../tdd/SKILL.md), not a new preflight.
 
-Record a non-empty JSON array. Every item has these eight required fields:
+Record a non-empty JSON array. Every item has eight required fields; these examples also show the optional interpretation, finding-ownership and omission fields. Producer-owned proof and supersession fields belong to later TDD records:
 
 ```json
 [
   {
-    "id": "BM_ATOMICITY",
+    "id": "BM_DEADLINE",
+    "kind": "contract",
+    "basis": "requested expiry behavior",
+    "behavior": "a value expires exactly at its stated deadline",
+    "seam": "public expiry operation with its real clock",
+    "expected": "now equal to expiresAt is expired",
+    "redFailure": "DEADLINE_NOT_EXPIRED",
+    "status": "pending",
+    "boundaryInputs": [{"now": 10, "expiresAt": 10}],
+    "interpretations": ["now > expiresAt", "now >= expiresAt"],
+    "interpretation": "now >= expiresAt",
+    "authority": "the requested expiry behavior contract",
+    "sourceRefs": [{"type": "design", "evidenceId": "<existing-design-evidence>", "id": "DESIGN-1"}]
+  },
+  {
+    "id": "BM_UNCHANGED",
     "kind": "preservation",
-    "basis": "existing transaction guarantee",
-    "behavior": "a caught inner failure remains atomic under the new transaction path",
-    "seam": "the public operation through that path",
-    "expected": "no partial inner write survives",
-    "redFailure": "PARTIAL_INNER_WRITE_SURVIVED",
-    "status": "pending"
+    "basis": "unaffected command",
+    "behavior": "the separate read command keeps its result",
+    "seam": "read command",
+    "expected": "existing result",
+    "redFailure": "READ_RESULT_CHANGED",
+    "status": "omitted",
+    "evidence": "governing scope excludes the independent read implementation"
   }
 ]
 ```
@@ -176,8 +191,13 @@ Record a non-empty JSON array. Every item has these eight required fields:
 
 ## Recording
 
+Draft the artifact first and give that exact JSON to `preflight-advice --preflight-file`.
+Revise on `changes-required` and use `--reconsult` in the same session, without
+per-cycle user approval. Only `approved` permits the single recording.
+
 In the governed workflow record it with `python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" record preflight --input -`
 (shape: `record preflight --help`; `--check` validates without recording). A refusal
-names every violation at once and mutates nothing. Structurally valid unsettled
-interpretations record pending evidence and exit 2; when authority arrives, record
-the corrected document. Response prose is not evidence.
+names every violation at once and mutates nothing. Recording requires the latest advisor approval for the exact typed artifact;
+key order and JSON formatting do not change content. A refused record writes nothing.
+Approved unsettled items remain pending; settle them through `tdd-map`, never a
+second preflight recording. Response prose is not evidence.
