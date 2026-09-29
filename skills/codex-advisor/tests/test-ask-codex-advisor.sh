@@ -238,8 +238,7 @@ PYTHONPATH="$ROOT" python3 - "$rigtmp/preflight.json" <<'PYDRAFT'
 import json, sys
 from hooks.tests.support import build_document, pending_behavior
 contract = pending_behavior("BM_READER", red_failure="READER_NOTE_WRONG")
-keep = {**pending_behavior("BM_KEEP", red_failure="READER_VALUE_WRONG"), "kind":"preservation"}
-open(sys.argv[1], "w").write(json.dumps(build_document("scoped wrapper diagnostic", behavior_map=[contract, keep])))
+open(sys.argv[1], "w").write(json.dumps(build_document("scoped wrapper diagnostic", behavior_map=[contract])))
 PYDRAFT
 preflight_out=$(run_wrapper --slug scoped-rig --phase preflight-advice --preflight-file "$rigtmp/preflight.json" --design-file "$rigtmp/design.md" -- 'scope question' 2>"$rigtmp/preflight.err"); status=$?
 check_status "controlled preflight composition exits 0" 0 "$status"
@@ -266,17 +265,9 @@ done
 
 wid=$(CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" status --repo "$rigtmp/repo" | python3 -c 'import json,sys; print(json.load(sys.stdin)["workflowId"])')
 CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" record preflight --repo "$rigtmp/repo" --slug scoped-rig --workflow-id "$wid" --input "$rigtmp/preflight.json" >/dev/null
-# The value edit preceded this pass's proof, so the reader contract is proved
-# through its own RED/GREEN on the note it still lacks; the preservation item
-# baselines late on the candidate and is revalidated by the same operation later.
-out=$(CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" tdd --repo "$rigtmp/repo" --slug scoped-rig --phase red --behavior-id BM_READER -- python3 -m unittest test_transport_probe 2>&1); status=$?
-check_status "BM_READER opens RED on the missing note" 0 "$status"
 printf 'value = 2\nnote = "ready"\n' >"$rigtmp/repo/app.py"
-out=$(CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" tdd --repo "$rigtmp/repo" --slug scoped-rig --phase green --behavior-id BM_READER -- python3 -m unittest test_transport_probe 2>&1); status=$?
-check_status "BM_READER reaches GREEN through its RED" 0 "$status"
-out=$(CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" tdd --repo "$rigtmp/repo" --slug scoped-rig --phase red --behavior-id BM_KEEP -- python3 -m unittest test_transport_probe 2>&1); status=$?
-check_status "BM_KEEP receives an executed late baseline" 0 "$status"
-# The GREEN edit changed the candidate; refresh the graph context it binds to.
+out=$(CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" tdd --repo "$rigtmp/repo" --slug scoped-rig --behavior-id BM_READER -- python3 -m unittest test_transport_probe 2>&1); status=$?
+check_status "BM_READER compares recorded source versions" 0 "$status"
 CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 - "$ROOT" "$rigtmp/repo" <<'PY'
 import sys
 from pathlib import Path
@@ -284,10 +275,8 @@ sys.path.insert(0, sys.argv[1])
 from hooks.tests.support import record_context_forge
 record_context_forge(Path(sys.argv[2]), Path(sys.argv[2]).parent)
 PY
-selected_receipt=$(PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" verify --repo "$rigtmp/repo" --slug scoped-rig -- python3 -m unittest hooks.tests.test_behavior_map_workflow.BehaviorMapWorkflowTests.test_consecutive_hook_obligations_are_bounded_without_extra_edit_work 2>"$rigtmp/measurement.err"); status=$?
-check_status "declared hook resource operation verifies through the real runner" 0 "$status"
-check "selected operation reports its fixed byte limit" '"limitBytes": 2048' "$selected_receipt"
-check "selected operation reports its retained scale" '"scale": 82' "$selected_receipt"
+selected_receipt=$(PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" verify --repo "$rigtmp/repo" --slug scoped-rig -- python3 -m unittest hooks.tests.test_runner_comparisons.RunnerComparisonTests.test_phase_free_operation 2>"$rigtmp/measurement.err"); status=$?
+check_status "selected public comparison operation verifies through the real runner" 0 "$status"
 printf '%s\n' "$selected_receipt" | tee "$rigtmp/selected-receipt.txt"
 CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" verify --repo "$rigtmp/repo" --slug scoped-rig --kind quality-gate --base-ref HEAD >/dev/null
 CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" set-phase --repo "$rigtmp/repo" --phase code-review --status not-required --findings none >/dev/null

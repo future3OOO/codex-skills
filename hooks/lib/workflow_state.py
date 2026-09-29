@@ -2233,10 +2233,7 @@ def _map_listing(identity: RepoIdentity, state: JsonObject) -> str:
     """The unresolved map items a resumed lead still owes, by status; last in the line
     so a cap cut takes ids, never the invariant or the verification command."""
     try:
-        items = behavior_map.recorded_map(
-            evidence_document(identity, state.get("tddEvidence")),
-            evidence_document(identity, state.get("preflightEvidence")),
-        ) or []
+        items = _recorded_items(identity, state)
     except (WorkflowError, LedgerError, ValueError):
         return ""
     pending = behavior_map.unresolved(items)

@@ -46,15 +46,15 @@ def refresh_proof(identity: RepoIdentity, items: list[JsonObject], state: JsonOb
             command = shlex.split(proof["command"])
             try:
                 files = _probe_files(tdd_surface.identify(command), Path(identity.root), proof.get("support", []))
-            except WorkflowError:
+                reviewed = _reviewed_sources(identity, state, item)
+                if set(reviewed.values()) <= {arm["requestedTree"] for arm in proof["arms"]}:
+                    proof["reviewSources"] = reviewed
+                proof["fresh"] = (bool(proof.get("execution")) and files == proof["probeFiles"]
+                    and proof.get("candidateKey") == _execution_key(identity, candidate, candidate, files,
+                        command, proof["timeout"], proof["execution"])
+                    and proof.get("reviewSources", {}) == reviewed)
+            except (WorkflowError, OSError, RuntimeError):
                 proof["fresh"] = False
-                continue
-            reviewed = _reviewed_sources(identity, state, item)
-            if set(reviewed.values()) <= {arm["requestedTree"] for arm in proof["arms"]}:
-                proof["reviewSources"] = reviewed
-            proof["fresh"] = (files == proof["probeFiles"] and proof.get("candidateKey") == _execution_key(
-                identity, candidate, candidate, files, command, proof["timeout"])
-                and proof.get("reviewSources", {}) == reviewed)
 
 
 def edit_blockers(identity: RepoIdentity, state: JsonObject, *, reminders=None) -> list[str]:
@@ -144,13 +144,12 @@ def _executable(identity: RepoIdentity, command: str) -> str:
 
 
 def _execution_key(identity: RepoIdentity, source: str, probe: str, files: list[str],
-                   command: list[str], timeout: float) -> str:
+                   command: list[str], timeout: float, execution: JsonObject) -> str:
     entries = _git(identity, "ls-tree", "-r", "-z", source).split(b"\0")
     production = [entry for entry in entries if entry and not is_test_path(os.fsdecode(entry.split(b"\t", 1)[1]))]
     support = _git(identity, "ls-tree", "-r", "-z", probe, "--", *files) if files else b""
-    executable = _executable(identity, command[0])
-    executable_state = os.stat(executable)
-    config = json.dumps([command, timeout, sorted(_environment().items()), executable,
+    executable_state = os.stat(execution["executable"])
+    config = json.dumps([command, timeout, execution,
                          executable_state.st_size, executable_state.st_mtime_ns], sort_keys=True).encode()
     return hashlib.sha256(b"\0".join(production) + support + config).hexdigest()
 
@@ -251,7 +250,9 @@ def _run_tdd(values: list[str]) -> int:
     original = _git(identity, "rev-parse", f"{state['passStartOid']}^{{tree}}").decode().strip()
     reviewed = _reviewed_sources(identity, state, mapped)
     sources = [original, *dict.fromkeys(reviewed.values()), candidate]
-    keys = [_execution_key(identity, source, candidate, files, command, args.timeout) for source in sources]
+    execution = {"executable": _executable(identity, command[0]),
+                 "environment": hashlib.sha256(json.dumps(sorted(_environment().items())).encode()).hexdigest()}
+    keys = [_execution_key(identity, source, candidate, files, command, args.timeout, execution) for source in sources]
     previous = mapped.get("comparison")
     if previous and previous.get("valid") and previous.get("fresh") and previous.get("candidateKey") == keys[-1]:
         _emit_json(operation_receipt(state, identity, kind="tdd", behaviorId=args.behavior_id,
@@ -275,7 +276,7 @@ def _run_tdd(values: list[str]) -> int:
     comparison = "preserved" if preserved else "changed" if valid else "incomplete"
     run = {"runIndex": len((current or {}).get("runs", [])), "command": shlex.join(command), "candidateTree": candidate, "originalTree": original,
            "probeFiles": files, "support": args.support, "timeout": args.timeout, "candidateKey": keys[-1], "reviewSources": reviewed,
-           "comparison": comparison, "arms": arms, "valid": valid,
+           "comparison": comparison, "arms": arms, "valid": valid, "execution": execution,
            "exitCode": 0 if valid else 1, "timedOut": any(arm["timedOut"] for arm in arms)}
     mapped["comparison"] = run
     document = {"workflowId": workflow_id, "slug": slug, "kind": "comparison", "behaviorMap": items,

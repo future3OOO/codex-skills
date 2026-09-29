@@ -219,10 +219,6 @@ class RunnerComparisonTests(unittest.TestCase):
                 "from hooks.lib.workflow_state import read_workflow; "
                 "i=resolve_repo_identity('.'); print(json.dumps(completion_blockers(i,read_workflow(i))))")
         env = {**self.case.env, "PYTHONPATH": str(harness.ROOT)}
-        self.case.env.update(PYTHONPATH=str(harness.ROOT))
-        # Rebind to the same real environment used by the independent reader.
-        self.case.cli("tdd", "--repo", str(self.case.repo), "--behavior-id", "BM_VALUE",
-                      "--", sys.executable, "-m", "unittest", "test_value")
         def blockers():
             result = subprocess.run([sys.executable, "-c", code], cwd=self.case.repo, env=env,
                                     capture_output=True, text=True, check=True)

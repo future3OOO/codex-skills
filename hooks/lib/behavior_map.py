@@ -91,7 +91,9 @@ def apply_dispositions(items: list[JsonObject], dispositions: list[JsonObject]) 
         if errors := _source_refs(disposition["sourceRefs"], str(disposition["id"])):
             raise ValueError("; ".join(errors))
         entry = item(items, disposition["id"])
-        entry["sourceRefs"] = _refs([*entry.get("sourceRefs", []), *disposition["sourceRefs"]])
+        for reference in _refs(disposition["sourceRefs"]):
+            if reference not in entry["sourceRefs"]:
+                entry["sourceRefs"].append(reference)
 
 
 def producer_proved(entry: JsonObject) -> bool:
