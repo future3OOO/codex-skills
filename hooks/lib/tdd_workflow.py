@@ -765,10 +765,8 @@ def _run_tdd(values: list[str]) -> int:
         if reassessment and (baseline or (
             phase == "green" and status == "green" and (valid or nonexecuting)
         )):
-            # No execution leaves the obligation unresolved, not contradicted.
-            # A regression or ambiguous failure keeps ordinary invalidation.
-            action = ("passed" if (valid or baseline) and not pending
-                      and state.get("tdd") not in {"passed", "not-required"} else None)
+            # Reassessment retains phase; the transaction derives readiness.
+            action = None
         if isinstance(current, dict) and (
             action is None or (active is not None and active != args.behavior_id and not opens_cycle)
         ):
@@ -1089,24 +1087,15 @@ def map_update(identity: RepoIdentity, state: JsonObject, value: JsonObject) -> 
             document.update(kind="map", activeBehaviorId=None)
             for field in ("behaviorId", "behavior", "seam", "command", "surface", "runs"):
                 document.pop(field, None)
-        # Flagged reassessment is not a new cycle or a reason to replay a
-        # finished downstream chain. Actual new/settled obligations still move
-        # the normal lifecycle; source edits retain their existing invalidation.
         before, after = (
             {str(entry["id"]) for entry in entries
              if entry.get("status") in {"pending", "red"} and not entry.get("revalidationRequired")}
             for entries in (items, updated)
         )
         review_changed = before != after or any(entry.get("status") == "superseded" for entry in dispositions)
-        interpretation_progress = any(
-            set(entry) & {"boundaryInputs", "interpretations", "interpretation", "authority"}
-            for entry in dispositions
-        ) and set(behavior_map.unresolved(items)) != set(unresolved)
-        # A None action annotates the evidence under the same binding without a lifecycle change.
-        quiet = before == after and not review_changed and not interpretation_progress
         state, evidence_id = commit_tdd(
             identity, str(state["slug"]), str(state["workflowId"]), document,
-            None if quiet else "in-progress" if unresolved else "passed",
+            None if not review_changed else "in-progress" if unresolved else "passed",
             expected_evidence_id=current_evidence_id, review_changed=review_changed, reassessed=reassessed,
         )
     return operation_receipt(state, identity, summaryId=evidence_id, status=status, pending=unresolved,

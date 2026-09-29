@@ -36,8 +36,8 @@ from hooks.lib._workflow_db import (  # noqa: E402
 from hooks.lib.repo_identity import resolve_repo_identity  # noqa: E402
 from hooks.lib.workflow_documents import advisor_envelope  # noqa: E402
 from hooks.lib.workflow_state import (  # noqa: E402
-    advisor_disposition, complete, evidence_document, invalidate_after_edit,
-    read_workflow, ready_for_edit, record_advisor_result, review_blockers, set_phase,
+    WorkflowError, advisor_disposition, commit_evidence_phase, complete, evidence_document, invalidate_after_edit,
+    next_operation, read_workflow, ready_for_edit, record_advisor_result, review_blockers, set_phase,
 )
 from hooks.tests.support import approve_preflight, checkpoint_channels, record_context_forge  # noqa: E402
 
@@ -189,6 +189,156 @@ class TerseReceipts(Ceremony):
         full = self.cli("evidence", "--full", "--evidence-id", evidence_id)
         self.assertEqual(full.returncode, 0, f"{marker}: {full.stderr}")
         self.assertEqual(json.loads(full.stdout)["document"], evidence_document(resolve_repo_identity(self.repo), evidence_id), marker)
+
+
+class PreflightContinuation(Ceremony):
+    def advice(self, verdict: str = "approved", contract: str = "continuation repair") -> dict[str, object]:
+        # These are recorder inputs, not a substituted advisor transport.
+        draft = self.tmp / "draft.json"
+        draft.write_text(json.dumps({"authoritativeContract": contract,
+                                     "behaviorMap": [item("BM_ONE", "ONE_FAILED")]}))
+        envelope = self.tmp / "advice.json"
+        envelope.write_text(json.dumps({"schemaVersion": 1, "verdict": verdict, "findings": [
+            {"id": "SPEC-1", "claim": "revise the draft", "material": True, "kind": "nonbehavioral"}
+        ] if verdict == "changes-required" else []}))
+        design = self.tmp / "design.json"
+        design.write_text(json.dumps({"schemaVersion": 1, "status": "absent", "reason": "single owner repair"}))
+        return self.ok("record", "advisor-result", "--stage", "preflight", "--source", "codex-advisor",
+                       "--input", str(envelope), "--preflight-file", str(draft), "--design-declaration", str(design))
+
+    def test_unapproved_guidance_requests_the_missing_consult_inputs(self) -> None:
+        self.begin()
+        marker = "PREFLIGHT_CONSULT_NOT_GUIDED"
+        identity = resolve_repo_identity(self.repo)
+        for status in ("pending", "unavailable", "completed", "changes-required", "approved"):
+            state = {**self.state(), "advisorPreflight": {"status": status}}
+            operation = next_operation(identity, state)
+            args = shlex.split(operation["command"])
+            self.assertIn("preflight-advice", args, marker)
+            self.assertEqual(args[args.index("--cwd") + 1], str(self.repo), marker)
+            self.assertEqual(args[args.index("--slug") + 1], "ceremony", marker)
+            self.assertNotIn("--reconsult", args, marker)
+            for required in ("--preflight-file", "--design-file", "--design-absent", "stdin"):
+                self.assertIn(required, operation["input"], marker)
+        self.assertIn("preflight-advice", self.ok_raw("summary"), marker)
+
+    def test_changes_required_guidance_resumes_with_the_recorded_design(self) -> None:
+        self.begin()
+        receipt = self.advice("changes-required")
+        marker = "PREFLIGHT_RECONSULT_NOT_GUIDED"
+        identity, state = resolve_repo_identity(self.repo), self.state()
+        for status in ("changes-required", "unavailable", "approved"):
+            operation = next_operation(identity, {**state, "advisorPreflight": {
+                **state["advisorPreflight"], "status": status}})
+            args = shlex.split(operation["command"])
+            self.assertIn("--reconsult", args, marker)
+            self.assertIn("preflight-advice", args, marker)
+            self.assertEqual(args[args.index("--design-absent") + 1], "single owner repair", marker)
+            self.assertIn("--preflight-file", operation["input"], marker)
+        self.assertIn("--reconsult", receipt["next"]["command"], marker)
+        self.assertIn(receipt["next"]["command"], self.ok_raw("summary"), marker)
+
+    def test_approved_command_records_its_retained_draft_from_scratch(self) -> None:
+        wid = self.begin()
+        receipt = self.advice()
+        marker = "APPROVED_DRAFT_NOT_REUSED"
+        args = shlex.split(receipt["next"]["command"])
+        self.assertNotIn("--input", args, marker)
+        self.assertIn(wid, args, marker)
+        before = self.rows(), self.state()
+        checked = subprocess.run([*args, "--check"], cwd=self.tmp, env=self.env, capture_output=True, text=True)
+        self.assertEqual(checked.returncode, 0, marker + checked.stderr)
+        self.assertEqual((self.rows(), self.state()), before, marker)
+        approved = evidence_document(resolve_repo_identity(self.repo), self.state()["advisorPreflight"]["intakeEvidence"])
+        (self.tmp / "draft.json").unlink()
+        recorded = subprocess.run(args, cwd=self.tmp, env=self.env, capture_output=True, text=True)
+        self.assertEqual(recorded.returncode, 0, marker + recorded.stderr)
+        result = json.loads(recorded.stdout)
+        self.assertEqual(result["nextAction"], "tdd", marker)
+        stored = self.ok("evidence", "--full", "--evidence-id", result["evidenceId"])
+        self.assertEqual(stored["document"]["document"], approved["preflightDraft"], marker)
+
+    def test_explicit_draft_binding_and_record_atomicity(self) -> None:
+        self.begin()
+        marker = "PREFLIGHT_BINDING_CHANGED"
+        before = self.rows(), self.state()
+        self.assertEqual(self.cli("record", "preflight").returncode, 2, marker)
+        self.assertEqual((self.rows(), self.state()), before, marker)
+        self.advice()
+        draft = json.loads((self.tmp / "draft.json").read_text())
+        before = self.rows(), self.state()
+        for document, extra in (({**draft, "authoritativeContract": "changed"}, []),
+                                (draft, ["--input", ""]),
+                                (draft, ["--workflow-id", "foreign-pass"])):
+            result = self.cli("record", "preflight", "--input", "-", *extra, input=json.dumps(document))
+            self.assertEqual(result.returncode, 2, marker + result.stderr)
+            self.assertEqual((self.rows(), self.state()), before, marker)
+        self.ok("record", "preflight", "--check", "--input", "-", input=json.dumps(draft, sort_keys=True, indent=4))
+        self.assertEqual((self.rows(), self.state()), before, marker)
+        self.ok("record", "preflight", "--input", "-", input=json.dumps(draft, sort_keys=True))
+        before = self.rows(), self.state()
+        self.assertEqual(self.cli("record", "preflight", "--input", "-", input=json.dumps(draft)).returncode, 2, marker)
+        self.assertEqual((self.rows(), self.state()), before, marker)
+
+    def test_advisor_revision_between_read_and_commit_rejects_the_old_draft(self) -> None:
+        wid = self.begin()
+        self.advice()
+        identity = resolve_repo_identity(self.repo)
+        old = evidence_document(identity, self.state()["advisorPreflight"]["intakeEvidence"])["preflightDraft"]
+        self.advice(contract="revised continuation repair")
+        before = self.rows(), self.state()
+        marker = "STALE_APPROVAL_RECORDED"
+        with self.assertRaisesRegex(WorkflowError, "approval bound to this exact draft", msg=marker):
+            commit_evidence_phase(identity, "ceremony", wid, "preflight", {"document": old})
+        self.assertEqual((self.rows(), self.state()), before, marker)
+        self.ok("record", "preflight", "--input", str(self.tmp / "draft.json"))
+        stored = evidence_document(identity, self.state()["preflightLatestEvidence"])
+        self.assertEqual(stored["document"]["authoritativeContract"], "revised continuation repair", marker)
+
+    def test_refusal_guides_reconsultation_of_the_current_draft(self) -> None:
+        self.begin()
+        marker = "PREFLIGHT_RECOVERY_MISSING"
+        for approved in (False, True):
+            if approved:
+                self.advice()
+            draft = self.tmp / "current draft.json"
+            draft.write_text(json.dumps({"authoritativeContract": "current revised contract",
+                                         "behaviorMap": [item("BM_ONE", "ONE_FAILED")]}))
+            before = self.rows(), self.state()
+            result = self.cli("record", "preflight", "--input", str(draft))
+            self.assertEqual(result.returncode, 2, marker)
+            self.assertEqual((self.rows(), self.state()), before, marker)
+            self.assertTrue(result.stdout.strip(), marker)
+            recovery = json.loads(result.stdout)
+            self.assertIn("approval", recovery["error"], marker)
+            args = shlex.split(recovery["next"]["command"])
+            self.assertIn("preflight-advice", args, marker)
+            self.assertEqual("--reconsult" in args, approved, marker)
+            self.assertEqual(args[args.index("--preflight-file") + 1], str(draft), marker)
+        self.advice(contract="current revised contract")
+        self.ok("record", "preflight")
+        stored = evidence_document(resolve_repo_identity(self.repo), self.state()["preflightLatestEvidence"])
+        self.assertEqual(stored["document"]["authoritativeContract"], "current revised contract", marker)
+
+    def test_other_continuations_keep_their_bound_operations(self) -> None:
+        self.begin()
+        self.advice()
+        identity, state = resolve_repo_identity(self.repo), self.state()
+        marker = "CONTINUATION_CHANGED"
+        for action, expected in (("tdd", " tdd "), ("verification", "--kind quality-gate"),
+                                 ("code-review", "record review"), ("repo-context-forge", "--revalidate"),
+                                 ("complete-workflow", " complete ")):
+            command = next_operation(identity, {**state, "nextAction": action})["command"]
+            self.assertIn(expected, command, marker)
+            self.assertIn(str(self.repo), command, marker)
+        for action in ("final-review", "re-consult-final-review", "appeal-final-review"):
+            command = next_operation(identity, {**state, "nextAction": action})["command"]
+            self.assertIn("--phase final-review", command, marker)
+            self.assertIn("--design-absent 'single owner repair'", command, marker)
+        self.assertIsNone(next_operation(identity, {**state, "phase": "complete"})["command"], marker)
+        observed = {"kind": "observed", "valid": True, "evidenceId": "observed-proof", "runIndex": 0}
+        self.assertIn("--from-evidence observed-proof:0", next_operation(identity, state, observed)["command"], marker)
+        self.assertIsNone(next_operation(identity, state, {**observed, "valid": False})["command"], marker)
 
 
 class AdvisorBounded(Ceremony):
