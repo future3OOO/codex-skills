@@ -933,8 +933,6 @@ def commit_verification(
     typed run invalidated. The binding is kept only while its manifest still
     describes the tree: a valid run measures one tree and reports no drift, so
     run results alone never notice that the gate's tree has since moved on.
-    A typed run's complete `report` is written as its own evidence in the same
-    transaction, and the run names it; without the write, nothing is named.
     """
     with mutation(identity) as transaction:
         state = _bound_instance_state(transaction.state, slug, workflow_id)
@@ -947,7 +945,7 @@ def commit_verification(
         )
         prior_manifest_id = state.get("qualityGateManifestId")
         run = dict(run)
-        kept = [evidence_write(str(state["workflowId"]), "quality-gate-report", report)] if report is not None else []
+        kept = [evidence_write(str(state["workflowId"]), "quality-gate-report", {"report": [report]})] if report is not None else []
         if kept:
             run["reportEvidenceId"] = kept[0].evidence_id
         typed = run.get("kind") == "quality-gate"

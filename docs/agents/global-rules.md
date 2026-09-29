@@ -93,9 +93,8 @@ Repo Context Forge analysis copy. For codex-skills installation, follow
 
 - Define verifiable success criteria before editing; for multi-step work, state
   the short plan and its checks.
-- Read changed lines first, then only the context behavior and preservation
-  need; no whole-file or multi-hundred-line dumps, and no `JSON.stringify` of
-  whole tool results.
+- Read changed lines first, then only the context behavior and preservation need;
+  no whole-file or multi-hundred-line dumps, no `JSON.stringify` of whole tool results.
 - Invoke `$tdd` before every code change. Drive real Seams: RED/GREEN for changed
   behavior, preservation proof for refactors. If the change creates the Seam,
   verify its absence first, then create it and return to drive it. Absence alone

@@ -69,6 +69,15 @@ RECORD_SHAPES = {
                 '"supersededBy":"BM_Y"} | {"id":"BM_X","revalidate":true,"evidence":"why"}],"reassessment":"optional"}'),
 }
 DISPOSITION_FLAGS = {"fixed": "fixed", "rejected": "rejected-with-evidence", "report_only": "report-only"}
+# Failing checks' first five locations, then the first six active findings with three each. Each location
+# prints as at most 100 bytes of JSON, escapes included (file:line tail kept), so the whole stays under 4,200.
+REPORT_PROJECTION = (
+    'def clip: if (tojson | utf8bytelength) > 100 then "…" + (.[-100:] | until((tojson | utf8bytelength) <= 97; .[1:])) '
+    'else . end; .document.report[0] | (.checks[] | select(.passed == false) | {check: .name, count: (.sample | length), '
+    'at: (.sample[:5] | map(clip))}), ([.findings[] | select(.status == "finding" and .region.scope != "evaluation")] | '
+    '.[:6][] | {rule: .ruleId, id: .findingId, state, at: ([.evidence.gaps[]?, .evidence.owners[]?, '
+    '(.evidence.duplicates[]?.regions[] | "\\(.path):\\(.displayLine)")] | .[:3] | map(clip))})'
+)
 
 
 def _repo(command: argparse.ArgumentParser, *, instance: bool = False) -> argparse.ArgumentParser:
@@ -310,8 +319,7 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
     shown = raw
     if args.kind == "quality-gate":
         try:
-            # Text mode: the bounded summary for the lead, then the complete JSON report, which
-            # the ledger retains as its own evidence beside the run's verdict.
+            # Text mode: the bounded summary for the lead, then the complete report the ledger keeps.
             summary, _, line = raw.rstrip(b"\n").rpartition(b"\n")
             report = json.loads(line.decode("utf-8"))
             gate = validate_gate_result(report)
@@ -350,9 +358,14 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
     state, evidence_id, recorded = commit_verification(identity, slug, workflow_id, run, tree_before=tree_before,
                                                        report=report if gate is not None else None)
     if recorded.get("reportEvidenceId"):
-        shown += ("complete report: " + shlex.join([
-            sys.executable, str(ROOT / "skills" / "repo-production-workflow" / "scripts" / "workflow.py"), "evidence",
-            "--repo", str(identity.root), "--evidence-id", str(recorded["reportEvidenceId"]), "--full"]) + "\n").encode()
+        # Retrieval stays outside chat: the save prints nothing, and the example projection is bounded.
+        location = shlex.quote(str(Path(tempfile.gettempdir()) / f"{recorded['reportEvidenceId']}.json"))
+        shown += (f"complete report: {len(report['findings'])} findings "
+                  f"({sum(item.get('status') == 'finding' for item in report['findings'])} active), "
+                  f"{len(json.dumps(report)):,} bytes; save it outside chat, then read bounded projections:\n  "
+                  + shlex.join([sys.executable, str(ROOT / "skills" / "repo-production-workflow" / "scripts" / "workflow.py"),
+                                "evidence", "--repo", str(identity.root), "--evidence-id", str(recorded["reportEvidenceId"]),
+                                "--full"]) + f" > {location}\n  jq -c {shlex.quote(REPORT_PROJECTION)} {location}\n").encode()
     _print_output(shown)
     _emit_json(_receipt(state, identity, **{
         "evidenceId": evidence_id,

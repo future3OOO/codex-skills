@@ -17,10 +17,9 @@ _SIMPLE_CHECKS = (
     ("no-temp-artifacts", "temporary artifact paths detected in {n} changed file(s)", "capture"),
     ("no-quality-escapes", "quality escapes detected in {n} changed location(s)", "attribution"),
 )
-# The text summary's bounds, set from real reports: three items per list, each
-# clipped to 160 characters (the longest real item is 124), 4,000 UTF-8 bytes in all
-# (PR #33's 139-file report renders 3,342). Typed verify adds a report locator and
-# its receipt, under 6,000 bytes whole; the JSON result keeps every item.
+# Summary bounds from real reports (longest item 124 characters; PR #33's 139-file
+# report renders 3,342 bytes): three items per list, clipped at 160 characters, 4,000
+# bytes in all. The JSON result keeps every item.
 _SHOWN, _ITEM_CHARS, _SUMMARY_BYTES = 3, 160, 4000
 
 
@@ -172,8 +171,7 @@ def format_text(result: dict[str, object]) -> str:
         outcome = "incomplete" if check["passed"] is None else "pass" if check["passed"] else "fail"
         lines.append(f"- {check['name']}: {outcome}" + (f" ({', '.join(_some(check['sample']))})" if check.get("sample") else ""))
     lines += ["", "Errors:", *([f"- {error}" for error in _some(result["errors"])] or ["- none"]), "", "Warnings:"]
-    # Measured growth stays visible even when an unbased run leaves the claim incomplete; then the
-    # first concrete findings of each rule, located (rule-level records are the `Checks` lines).
+    # Measured growth stays visible even when unbased, then each rule's first located findings.
     net = result["evaluation"]["growth"]["humanAuthored"]["net"]
     active = [f"{RULE_GROWTH}: human-authored net growth {net} exceeds the 500-line review budget"] if net > 500 else []
     by_rule: dict[str, list[str]] = {}
