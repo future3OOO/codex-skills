@@ -55,14 +55,11 @@ Apply [Production Code's outcome and verification rules](../production-code/SKIL
 independently to the original objective and current candidate. Challenge whether
 that objective is fulfilled, including materially wrong behavior the declared
 assertions would miss. Judge correction of the original failure, affected-domain
-coverage and preservation separately. Bound every claim to what the retained
-operations observed: a RED whose recorded `observation` is entrypoint absence
-proves sensitivity, not the behavior its marker names; a `Shared RED observation`
-in `summary` proves one failure, not each listed item's behavior; an obligation
-left pending by a refused late baseline is unresolved, not proven. Each is a Spec
-finding. Challenge the map's omissions against the implementation's
-conversions, callees, shared writers and mutation paths. Return findings for the
-final advisor through the existing workflow; this review does not decide delivery.
+coverage and preservation separately. Bound every claim to exercised inputs. Inspect the runner's recorded original, reviewed and candidate outcomes, including public results and durable state effects. Matching successful checks establish preservation; equal failures, nonexecution and setup failures prove neither preservation nor a requested change.
+
+Challenge the expectation itself against the original request. Deleting implementation code does not authorize unrelated behavior changes. If an assertion expects an unrequested original-allow to candidate-block regression, reject the assertion and regression even when the comparison reports a clean failure-to-success change. Preserve original behavior where the request does not authorize a difference. Challenge omissions against changed predicates, callees, shared writers and mutation paths. Return findings through the existing workflow; no new approval or interpretation form is needed.
+
+
 
 On return review retain original finding identities/domains. Classify measured
 follow-ups as incomplete original repair, inherited missed defect, introduced
@@ -72,12 +69,7 @@ expected/observed results under those same verification rules.
 
 ## 5. Review both axes
 
-Derive discriminating inputs independently of the lead's `boundaryInputs`.
-Check omitted competing readings, unresolved authority, and the sensitivity of
-represented cases against the governing contract. The recorder's input screen
-establishes representation only: a represented but semantically inadequate case,
-or a falsely claimed extraction result, is a Spec finding. Reuse applicable proof;
-do not require new naming, metadata-only reruns or a second coverage inventory.
+Derive decisive inputs independently from changed predicates and their remaining uses. Apply Production Code's purpose-qualified deletion rule to the expectation itself. A check that finds words in the request or confirms the observed difference does not refute a finding that the difference is unauthorized. Reuse applicable proof; require no interpretation form or second coverage inventory.
 
 Run **Standards** and **Spec** independently:
 

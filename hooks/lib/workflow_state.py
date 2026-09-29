@@ -36,7 +36,6 @@ from .state_store import (
     analysis_unchanged,
     is_governance_path,
     is_reviewable_path,
-    is_test_path,
     manifest_diff,
     repo_state_dir,
     tree_manifest,
@@ -404,7 +403,7 @@ TDD_ACTIONS = {"reopen", "in-progress", "passed", "not-required"}
 
 
 def _map_items(
-    document: JsonObject | None, *, terminals: dict[str, JsonObject] | None = None,
+    document: JsonObject | None,
 ) -> list[JsonObject] | None:
     if not isinstance(document, dict):
         return None
@@ -412,7 +411,7 @@ def _map_items(
     if value is None:
         inner = document.get("document")
         value = inner.get("behaviorMap") if isinstance(inner, dict) else None
-    return behavior_map.runtime_items(value, terminals=terminals) if value is not None else None
+    return behavior_map.runtime_items(value) if value is not None else None
 
 
 def _linked_finding_items(
@@ -438,6 +437,7 @@ def _linked_finding_items(
                 by_ref.setdefault(key, {})[str(entry["id"])] = entry
     for finding in (state or (transaction.state if transaction else {}) or {}).get("findingStates", []):
         keys = [(str(finding["intakeEvidenceId"]), str(finding["findingId"])),
+                *([(str(finding["canonicalFinding"]["evidenceId"]), str(finding["canonicalFinding"]["id"]))] if finding.get("canonicalFinding") else []),
                 *((str(ref["evidenceId"]), str(ref["id"])) for ref in finding.get("observations", []))]
         linked = {identifier: item for key in keys for identifier, item in by_ref.get(key, {}).items()}
         for key in keys:
@@ -486,139 +486,60 @@ def _mechanism_explanation(
     return reference.strip() if isinstance(reference, str) and reference.strip() else None
 
 
-def commit_tdd(
-    identity: RepoIdentity,
-    slug: str,
-    workflow_id: str | None,
-    summary_doc: JsonObject | None,
-    action: str | None,
-    *,
-    expected_evidence_id: str | None = None,
-    opens_cycle: bool = False,
-    tree_before: dict[str, str] | None = None,
-    review_changed: bool = False,
-    reassessed: frozenset[str] = frozenset(),
-) -> tuple[JsonObject, str | None]:
-    """Commit a TDD transition and its logical evidence under one transaction.
-
-    `opens_cycle` is the caller's answer to the one question the committed
-    action cannot carry: `reopen` is recorded both for a cycle-opening RED and
-    for a GREEN regression, so the count is kept forward here rather than
-    reconstructed from a history that cannot tell the two apart.
-    """
-    if action is not None and action not in TDD_ACTIONS:
-        raise ValueError(f"unsupported tdd action: {action}")
+def commit_tdd(identity: RepoIdentity, slug: str, workflow_id: str | None,
+               summary_doc: JsonObject, *, expected_evidence_id=None,
+               tree_before=None, review_changed=False) -> tuple[JsonObject, str]:
+    """Publish comparison results and readiness together under existing ledger ownership."""
     with mutation(identity) as transaction:
         state = _bound_instance_state(transaction.state, slug, workflow_id)
         if state.get("revalidation"):
             raise WorkflowError(TDD_CLOSED)
-        if action is not None:
-            _require_predecessor(state, "tdd")
-            if not state.get("preflightEvidence"):
-                raise WorkflowError("tdd requires recorded preflight evidence")
+        _require_predecessor(state, "tdd")
+        if not state.get("preflightEvidence") or summary_doc.get("workflowId") != state["workflowId"]:
+            raise WorkflowError("comparison requires this workflow's recorded preflight")
         if state.get("tddEvidence") != expected_evidence_id:
-            raise WorkflowError("TDD evidence changed during the run; re-read and re-run the candidate")
-        if summary_doc is not None:
-            if summary_doc.get("workflowId") != state["workflowId"]:
-                raise WorkflowError("TDD document belongs to another workflow instance")
-            if tree_before is not None:
-                run = summary_doc["runs"][-1]
-                try:
-                    drift = _manifest_drift(tree_before, tree_manifest(identity),
-                                            stale="candidate changed during reassessment")
-                    if _active_candidate_tree(identity) != run.get("candidateTree") and drift is None:
-                        drift = "candidate tree changed during reassessment"
-                except (OSError, RuntimeError) as exc:
-                    drift = f"candidate could not be sampled at commit: {exc}"
-                if drift:
-                    run.update(valid=False, bindingError=drift)
-                    prior = transaction.evidence(expected_evidence_id) or {
-                        "workflowId": state["workflowId"],
-                        "behaviorMap": _map_items(transaction.evidence(state.get("preflightEvidence"))),
-                    }
-                    summary_doc = {**prior, "runs": [*prior.get("runs", []), run],
-                                   "updatedAt": utc_timestamp()}
-                    action, opens_cycle = None, False
-            terminals: dict[str, JsonObject] = {}
-            items = _map_items(summary_doc, terminals=terminals)
-            if items is None:
-                items = _map_items(
-                    transaction.evidence(state.get("preflightEvidence")), terminals=terminals,
-                ) or []
-            owned = _linked_finding_items(transaction, items=items)
-            pending = set(behavior_map.unresolved(items, terminals=terminals))
-            readiness = state.get("tdd")
-            if state.get("preflightEvidence") and readiness in {"in-progress", "passed", "not-required"}:
-                readiness = "in-progress" if pending else "not-required" if readiness == "not-required" else "passed"
-            # Mutation may request proof from already-settled owners; closure
-            # still judges current proof. Ownership cannot be moved away.
-            for entry in state.get("findingStates", []):
-                if isinstance(entry, dict) and entry.get("status") in {"fixed", "report-only"} and entry.get("kind") == "behavioral":
-                    _behavioral_finding_closure(
-                        str(entry.get("intakeEvidenceId")),
-                        str(entry.get("findingId")), admit_pending=True,
-                        require_green=entry.get("status") == "fixed", owned=owned,
-                        terminals=terminals, pending=pending,
-                    )
-        verification = transaction.evidence(state.get("verificationLatestEvidence"))
-        verification_stale = False
-        if isinstance(verification, dict) and verification.get("runs"):
-            manifest_id = state.get("qualityGateManifestId") or verification["runs"][-1].get("treeManifestId")
-            try:
-                current_tree = tree_manifest(identity)
-            except RuntimeError as exc:
-                raise WorkflowError(f"verification binding could not be sampled: {exc}") from exc
-            verification_stale = not manifest_id or transaction.manifest(manifest_id) != current_tree
-        mechanism_updates: list[JsonObject] = []
-        if reassessed and summary_doc is not None:
-            affected = _linked_finding_items(transaction, items=[item for item in items if item["id"] in reassessed])
-            mechanism_updates = [entry for entry in state.get("findingStates", [])
-                if entry.get("kind") == "behavioral" and _finding_unresolved(entry)
-                and (str(entry["intakeEvidenceId"]), str(entry["findingId"])) in affected
-                and summary_doc.get("reassessment") not in (None, _mechanism_explanation(
-                    entry.get("mechanismEvidence"), transaction.evidence, state["workflowId"]))]
-            previous = _map_items(transaction.evidence(expected_evidence_id))
-            if previous is None:
-                previous = _map_items(transaction.evidence(state.get("preflightEvidence")))
-            if (action is None and readiness == state.get("tdd") and not mechanism_updates and not verification_stale
-                    and json.dumps(items, sort_keys=True) == json.dumps(previous, sort_keys=True)):
-                return state, expected_evidence_id
-        writes: list[EvidenceWrite] = []
-        manifests: list[ManifestWrite] = []
-        evidence_id: str | None = None
-        if summary_doc is not None:
-            if tree_before is not None:
-                measured = manifest_write(str(state["workflowId"]), "tdd-tree", tree_before)
-                manifests.append(measured)
-                summary_doc["runs"][-1]["treeManifestId"] = measured.manifest_id
-            write = evidence_write(str(state["workflowId"]), "tdd", summary_doc)
-            writes.append(write)
-            evidence_id = write.evidence_id
-            state["tddEvidence"] = evidence_id
-            for entry in mechanism_updates:
-                prior = entry.get("mechanismEvidence")
-                if prior:
-                    entry.setdefault("mechanismHistory", []).append(prior)
-                entry["mechanismEvidence"] = {"evidenceId": evidence_id, "id": entry["findingId"]}
-        if action is not None:
-            state.pop("paused", None)
-        if opens_cycle:
-            state["tddCycleCount"] = state.get("tddCycleCount", 0) + 1
-        if verification_stale:
-            _reset_downstream(state)
-        if review_changed:
+            raise WorkflowError("probe obligations changed during execution; retry against current evidence")
+        items = _map_items(summary_doc) or []
+        from .tdd_workflow import refresh_proof
+        refresh_proof(identity, items, state)
+        manifests = []
+        if tree_before is not None:
+            run = summary_doc["runs"][-1]
+            drift = _manifest_drift(tree_before, tree_manifest(identity), stale="candidate changed during comparison")
+            if _active_candidate_tree(identity) != run["candidateTree"]:
+                drift = drift or "candidate tree changed during comparison"
+            if drift:
+                run.update(valid=False, bindingError=drift)
+                for entry in items:
+                    if entry.get("comparison", {}).get("candidateTree") == run["candidateTree"]:
+                        entry["comparison"].update(valid=False, bindingError=drift)
+            measured = manifest_write(str(state["workflowId"]), "tdd-tree", tree_before)
+            manifests.append(measured)
+            run["treeManifestId"] = measured.manifest_id
+        owned = _linked_finding_items(transaction, items=items)
+        previous = _map_items(transaction.evidence(expected_evidence_id)) or []
+        previous_owned = _linked_finding_items(transaction, items=previous)
+        for finding in state.get("findingStates", []):
+            key = (str(finding["intakeEvidenceId"]), str(finding["findingId"]))
+            if (finding.get("material") and finding.get("kind") == "behavioral"
+                    and finding.get("status") != "rejected-with-evidence" and key in previous_owned and key not in owned):
+                raise WorkflowError("probe edit loses the only owning attack for finding " + key[1])
+        pending = set(behavior_map.unresolved(items))
+        for entry in state.get("findingStates", []):
+            if entry.get("kind") == "behavioral" and entry.get("status") in {"fixed", "report-only"}:
+                _behavioral_finding_closure(str(entry["intakeEvidenceId"]), str(entry["findingId"]),
+                    owned=owned, pending=pending,
+                    admit_pending=True, require_green=entry["status"] == "fixed")
+        summary_doc["behaviorMap"] = items
+        write = evidence_write(str(state["workflowId"]), "tdd", summary_doc)
+        state["tddEvidence"] = write.evidence_id
+        state["tdd"] = "in-progress" if pending else "passed"
+        state["phase"] = "tdd"
+        state.pop("paused", None)
+        if review_changed or pending:
             _reset_reviews(state)
-        if action == "reopen":
-            state["tdd"] = "in-progress"
-            state["phase"] = "implementation"
-            _reset_downstream(state)
-        elif action is not None:
-            state["tdd"] = action
-            state["phase"] = "implementation" if opens_cycle else "tdd"
-        elif summary_doc is not None:
-            state["tdd"] = readiness
         state["nextAction"] = _derive_next_action(state, summary_doc)
-        return _commit(transaction, state, f"tdd-{action or 'annotated'}", evidence=writes, manifests=manifests), evidence_id
+        return _commit(transaction, state, "tdd-comparison", evidence=[write], manifests=manifests), write.evidence_id
 
 
 def _validate_disposition_context(identity: RepoIdentity, state: JsonObject, document: JsonObject) -> tuple[dict[str, str], str | None]:
@@ -661,6 +582,8 @@ def commit_review(
         state = _bound_instance_state(transaction.state, slug, workflow_id)
         if summary_doc.get("kind") == "intake" and not summary_doc.get("findings"):
             _require_predecessor(state, "code-review")
+        if summary_doc.get("kind") == "intake":
+            summary_doc["candidateTree"] = _active_candidate_tree(identity)
         write = evidence_write(str(state["workflowId"]), "code-review", summary_doc)
         manifest: ManifestWrite | None = None
         if summary_doc.get("kind") == "intake":
@@ -792,6 +715,8 @@ def commit_evidence_phase(
         state[latest_field] = write.evidence_id
         if status == "passed":
             state[f"{field}Evidence"] = write.evidence_id
+            if phase == "preflight" and _map_items(evidence_doc) == []:
+                state["tdd"] = "passed"
             state["nextAction"] = _derive_next_action(state)
         return _commit(
             transaction,
@@ -909,11 +834,12 @@ def execution_receipt(identity: RepoIdentity, state: JsonObject, reference: str,
         current_tree = tree_manifest(identity)
     except RuntimeError as exc:
         raise WorkflowError(f"execution reference could not be sampled: {exc}") from exc
+    compared = isinstance(run.get("arms"), list) and bool(run["arms"])
     if (manifest is None or manifest != current_tree or run.get("bindingError")
             or run.get("timedOut") or ("outputTail" not in run
-                and not (isinstance(run.get("sourceReference"), str) and run["sourceReference"]))):
+                and not compared and not (isinstance(run.get("sourceReference"), str) and run["sourceReference"]))):
         raise WorkflowError("execution reference is stale, unbound, incomplete or not an executed receipt")
-    if "outputTail" not in run and not run.get("testId"):
+    if "outputTail" not in run and not run.get("testId") and not compared:
         return execution_receipt(identity, state, run["sourceReference"], transaction)
     return run, manifest
 
@@ -1247,6 +1173,8 @@ def record_advisor_result(
         )):
             raise WorkflowError("advisor finding intake does not match this workflow result")
         replayed_design = False
+        if intake is not None:
+            intake["candidateTree"] = expected_candidate_tree or _active_candidate_tree(identity)
         if design is not None:
             # The design is a falsifiable hypothesis: a deepened declaration is
             # recorded append-only in the same pass, never a reason to restart.
@@ -1458,79 +1386,21 @@ def pause(identity: RepoIdentity, slug: str, workflow_id: str | None, reason: st
     return public_status(state, identity, candidate_tree=expected_candidate_tree, recovery=True, fields=set(state)) if expected_candidate_tree else state
 
 
-def _behavioral_finding_closure(
-    intake_id: str, finding_id: str,
-    *,
-    owned: dict[tuple[str, str], dict[str, JsonObject]],
-    terminals: dict[str, JsonObject],
-    pending: set[str],
-    admit_pending: bool = False,
-    require_green: bool = True,
-) -> None:
-    """Judge current owning proof; mutation admission keeps reassessment reachable.
-
-    Only existing fixed/report-only owners use admit_pending. It preserves
-    ownership, not a closure verdict; a new disposition always uses strict
-    proof, and completion re-judges all settled findings against the current map.
-    """
+def _behavioral_finding_closure(intake_id: str, finding_id: str, *, owned,
+                                pending, admit_pending=False, require_green=True) -> None:
     linked = owned.get((intake_id, finding_id), {})
     if not linked:
-        raise WorkflowError(
-            f"behavioral fixed for {finding_id} requires an owning Behavior Map "
-            "attack item carrying its finding sourceRef"
-        )
-    for identifier, entry in linked.items():
-        if entry.get("status") == "superseded" and str(
-            terminals[str(entry["id"])].get("id")
-        ) not in linked:
-            raise WorkflowError(
-                f"finding {finding_id} loses its owning attack: {identifier} is "
-                "superseded by an item without the finding sourceRef; keep the "
-                "finding's domain owned or re-disposition it explicitly"
-            )
-    if admit_pending and any(
-        entry.get("revalidationRequired") or (
-            entry.get("status") == "already-satisfied" and behavior_map.producer_proved(entry)
-        ) for entry in linked.values()
-    ):
-        # Reassessment may temporarily remove all current proof, or finish as
-        # a baseline that cannot sustain fixed. Strict closure still blocks it;
-        # measured correction must remain possible without fabricating RED.
+        raise WorkflowError(f"finding {finding_id} requires an owning probe with its finding sourceRef")
+    if admit_pending:
         return
-    if not require_green:
-        proved = [
-            identifier for identifier, entry in linked.items()
-            if behavior_map.producer_proved(terminals[str(entry["id"])])
-        ]
-        if not proved:
-            raise WorkflowError(
-                f"behavioral report-only for {finding_id} requires an owning attack the tdd "
-                "producer proved (GREEN, or a recorded baseline); unproved owners: "
-                + ", ".join(sorted(linked))
-            )
-        return
-    not_green = sorted(
-        identifier for identifier, entry in linked.items()
-        if not (admit_pending and entry.get("status") in {"pending", "red"})
-        and (identifier in pending
-             or entry.get("status") not in behavior_map.PROOF_STATUSES | {"superseded"}
-             and not (entry.get("status") == "already-satisfied"
-                      and (entry.get("kind") == "preservation" or behavior_map.producer_proved(entry))))
-    )
-    if not_green:
-        raise WorkflowError(
-            f"behavioral fixed for {finding_id} requires linked GREEN or producer-proved item(s): "
-            + ", ".join(not_green)
-        )
-    if not any(
-        behavior_map.green_through_red(entry) and identifier not in pending
-        for identifier, entry in linked.items()
-    ):
-        raise WorkflowError(
-            f"behavioral fixed for {finding_id} requires at least one owning attack proved on "
-            "the current candidate (GREEN through its recorded RED); "
-            "a baseline alone demonstrates no occurrence"
-        )
+    if any(identifier in pending or not behavior_map.producer_proved(entry) for identifier, entry in linked.items()):
+        raise WorkflowError(f"finding {finding_id} requires current successful owning comparisons")
+    if require_green:
+        reference = f"{intake_id}:{finding_id}"
+        if not any(arm.get("requestedTree") == entry["comparison"].get("reviewSources", {}).get(reference)
+                   and arm.get("outcome") == "failed" for entry in linked.values()
+                   for arm in entry["comparison"].get("arms", [])):
+            raise WorkflowError(f"finding {finding_id} requires a defect on its reviewed tree and a successful candidate repair")
 
 
 def _finding_state_blockers(state: JsonObject) -> list[str]:
@@ -1549,37 +1419,28 @@ def _finding_state_blockers(state: JsonObject) -> list[str]:
 
 def correction_blockers(
     identity: RepoIdentity, state: JsonObject, *, items: list[JsonObject] | None = None,
-    terminals: dict[str, JsonObject] | None = None,
 ) -> list[str]:
-    if terminals is None:
-        terminals = {}
     if items is None:
-        items = _recorded_items(identity, state, terminals=terminals)
-    if not terminals and items:
-        terminals = behavior_map.terminal_items(items)
-    pending = behavior_map.unresolved(items, terminals=terminals)
+        items = _recorded_items(identity, state)
+    pending = behavior_map.unresolved(items)
     return (["unresolved Behavior Map items: " + ", ".join(pending)] if pending else []) + _finding_proof_blockers(
-        None, state, items=items, terminals=terminals, pending=set(pending),
+        None, state, items=items, pending=set(pending),
     )
 
 
 def _finding_proof_blockers(
     transaction: LedgerMutation | None, state: JsonObject, *, items: list[JsonObject] | None = None,
-    terminals: dict[str, JsonObject] | None = None, pending: set[str] | None = None,
+    pending: set[str] | None = None,
 ) -> list[str]:
     states = state.get("findingStates", [])
     if not isinstance(states, list):
         return ["finding lifecycle evidence is corrupt"]
-    if terminals is None:
-        terminals = {}
     if items is None:
-        items = _map_items(transaction.evidence(state.get("tddEvidence")), terminals=terminals)
+        items = _map_items(transaction.evidence(state.get("tddEvidence")))
         if items is None:
-            items = _map_items(transaction.evidence(state.get("preflightEvidence")), terminals=terminals) or []
-    if not terminals and items:
-        terminals = behavior_map.terminal_items(items)
+            items = _map_items(transaction.evidence(state.get("preflightEvidence"))) or []
     if pending is None:
-        pending = set(behavior_map.unresolved(items, terminals=terminals))
+        pending = set(behavior_map.unresolved(items))
     owned = _linked_finding_items(transaction, items=items, state=state)
     blockers: list[str] = []
     for entry in states:
@@ -1588,7 +1449,7 @@ def _finding_proof_blockers(
                 _behavioral_finding_closure(
                     str(entry.get("intakeEvidenceId")), str(entry.get("findingId")),
                     require_green=entry.get("status") == "fixed", owned=owned,
-                    terminals=terminals, pending=pending,
+                    pending=pending,
                 )
             except WorkflowError as exc:
                 blockers.append(str(exc))
@@ -1676,9 +1537,6 @@ def _resolve_disposition_receipts(identity: RepoIdentity, transaction: LedgerMut
         }
         mechanism = item.get("mechanism") or entry.get("mechanismEvidence")
         if mechanism is None:
-            # A first fix is proved by its GREEN owner; a recurrence explains what the last repair missed.
-            if item["status"] == "fixed" and int(entry.get("recurrence", 0)) >= 1:
-                raise WorkflowError("recurring behavioral fixed requires its mechanism explanation or reference")
             continue
         if isinstance(mechanism, dict):
             owned = any(
@@ -1719,12 +1577,13 @@ def _apply_finding_dispositions(
     intake_states = {identifier: _finding_state(state, intake_id, identifier) for identifier in selected}
     if any(entry is None for entry in intake_states.values()):
         raise WorkflowError("recorded finding lifecycle does not match immutable intake")
-    terminals: dict[str, JsonObject] = {}
-    items = _map_items(transaction.evidence(state.get("tddEvidence")), terminals=terminals)
+    items = _map_items(transaction.evidence(state.get("tddEvidence")))
     if items is None:
-        items = _map_items(transaction.evidence(state.get("preflightEvidence")), terminals=terminals) or []
+        items = _map_items(transaction.evidence(state.get("preflightEvidence"))) or []
+    from .tdd_workflow import refresh_proof
+    refresh_proof(transaction.identity, items, state)
     owned = _linked_finding_items(transaction, items=items, state=state)
-    pending = set(behavior_map.unresolved(items, terminals=terminals))
+    pending = set(behavior_map.unresolved(items))
     for disposition in dispositions:
         identifier, status = str(disposition["finding_id"]), str(disposition["status"])
         kind = str(disposition["kind"])
@@ -1744,7 +1603,7 @@ def _apply_finding_dispositions(
                 try:
                     _behavioral_finding_closure(
                         intake_id, identifier, require_green=current == "fixed",
-                        owned=owned, terminals=terminals, pending=pending,
+                        owned=owned, pending=pending,
                     )
                 except WorkflowError:
                     # Only a terminal claim its present owning proof no longer
@@ -1761,7 +1620,7 @@ def _apply_finding_dispositions(
         if status in {"fixed", "report-only"} and kind == "behavioral":
             _behavioral_finding_closure(
                 intake_id, identifier, require_green=status == "fixed",
-                owned=owned, terminals=terminals, pending=pending,
+                owned=owned, pending=pending,
             )
         if current != "pending":
             prior = _disposition_evidence(state, finding_state, stage, producer)
@@ -1926,31 +1785,21 @@ CHECKPOINT_PHASES = {"preflight-advice", "final-review"}
 
 
 def _recorded_items(
-    identity: RepoIdentity, state: JsonObject, *, terminals: dict[str, JsonObject] | None = None,
+    identity: RepoIdentity, state: JsonObject,
 ) -> list[JsonObject]:
     """Read the current map, falling back only when absent, not when corrupt."""
     fields = ("preflightLatestEvidence",) if state.get("preflight") == "pending" else ()
     for field in (*fields, "tddEvidence", "preflightEvidence"):
         evidence_id = state.get(field)
-        items = _map_items(evidence_document(identity, evidence_id if isinstance(evidence_id, str) else None),
-                           terminals=terminals)
+        items = _map_items(evidence_document(identity, evidence_id if isinstance(evidence_id, str) else None))
         if items is not None:
+            from .tdd_workflow import refresh_proof
+            refresh_proof(identity, items, state)
             return items
     return []
 
 
-def _late_items(items: list[JsonObject]) -> list[JsonObject]:
-    """Items whose RED or baseline ran with production already changed: the order
-    of proof the recorder recorded instead of refusing (a contract RED, or a
-    preservation baseline whose observation is candidate-only)."""
-    late: list[JsonObject] = []
-    for entry in items:
-        proofs = (entry.get("redProof"), entry.get("baselineProof"))
-        changed = next((proof["productionChanged"] for proof in proofs
-                        if isinstance(proof, dict) and proof.get("productionChanged")), None)
-        if changed:
-            late.append({"id": entry.get("id"), "productionChanged": changed})
-    return late
+
 
 
 def _finding_ledger(
@@ -1999,9 +1848,8 @@ def _finding_ledger(
             "claim": claim,
             **{key: entry[key] for key in ("canonicalFinding", "recurrence", "observations", "mechanismEvidence", "mechanismHistory", "repairOwner", "repairOwnerHistory") if key in entry},
             "owners": [{**{key: item.get(key) for key in
-                           ("id", "kind", "behavior", "expected", "seam", "status", "proofCommand")},
-                        "executedCommands": behavior_map.executed_commands(item),
-                        "revalidationRequired": item.get("revalidationRequired") is True}
+                           ("id", "behavior", "expected", "seam")},
+                        "executedCommands": behavior_map.executed_commands(item)}
                        for item in attacks.values()],
             "measurement": measurement,
         })
@@ -2015,7 +1863,6 @@ CHANNELS = (
     ("advisor-projection", "advisor projection (schemaVersion 1)"),
     ("behavior-map", "preflight artifact / current Behavior Map: challenge interpretation and boundary coverage"),
     ("finding-ledger", "finding and attack ledger: each finding's immutable claim beside its owning attacks"),
-    ("late-red", "late RED: items whose RED or baseline ran after production had changed"),
     ("diff", "current-pass diff: passStartOid^{tree} -> activeCandidateTree; a deleted file is its header and line count"),
 )
 
@@ -2082,11 +1929,10 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
             validate_design_declaration(evidence_document(identity, design_evidence_id))
         except ValueError as exc:
             missing.append(str(exc))
-    terminals: dict[str, JsonObject] = {}
-    items = _recorded_items(identity, state, terminals=terminals)
+    items = _recorded_items(identity, state)
     if phase == "final-review":
         missing.extend(() if state.get("nextAction") in ("appeal-final-review", "re-consult-final-review")
-                       else correction_blockers(identity, state, items=items, terminals=terminals))
+                       else correction_blockers(identity, state, items=items))
         if drift := _binding_drift(identity, state, "review"):
             missing.append(drift)
         if drift := _binding_drift(identity, state, "quality-gate"):
@@ -2108,9 +1954,10 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
     }
     if channel_dir is None:
         return result
-    ledger, late = _finding_ledger(identity, state, items), {}
-    map_content = [{key: value for key, value in item.items() if key not in
-                    {"redProof", "baselineProof", "proofBinding"}} for item in items]
+    ledger = _finding_ledger(identity, state, items)
+    map_content = [{**{key: value for key, value in item.items() if key != "comparison"},
+                    **({"comparison": behavior_map.comparison_view(item["comparison"])} if item.get("comparison") else {})}
+                   for item in items]
     if phase == "preflight-advice" and preflight_draft is not None:
         previous = evidence_document(identity, (state.get("advisorPreflight") or {}).get("intakeEvidence")) or {}
         prior = previous.get("preflightDraft") if reconsult else None
@@ -2125,14 +1972,11 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
                                fromfile="last-recorded-draft", tofile="current-draft"))}
     since = state.get("judgedBase" if state.get("nextAction") == "appeal-final-review" else "judgedTree") \
         if phase == "final-review" else None
-    for entry in _late_items(items):  # each changed-path list once, with the items that share it
-        late.setdefault(json.dumps(entry["productionChanged"]), {"ids": [], "productionChanged": entry["productionChanged"]})["ids"].append(entry["id"])
     values: dict[str, tuple[object, object]] = {
         "intent": (None, state.get("intent") or None),
         "advisor-projection": (evidence_id, projection),
         "behavior-map": (None, map_content or None),
         "finding-ledger": (None, ledger or None),
-        "late-red": (None, list(late.values()) or None),
         "diff": (None, None if "passStartOid" in missing else current_pass_evidence(
             str(identity.root), f"{state['passStartOid']}^{{tree}}", candidate, since=since)),
     }
@@ -2166,9 +2010,10 @@ def complete(
         # this transaction sees, so a concurrent map change cannot slip through.
         tdd_document = transaction.evidence(state.get("tddEvidence"))
         preflight_document = transaction.evidence(state.get("preflightEvidence"))
-        missing = behavior_map.closure_blockers(
-            tdd_document, preflight_document,
-        ) + _finding_proof_blockers(transaction, state) + _finding_state_blockers(state) + completion_missing(state)
+        from .tdd_workflow import refresh_proof
+        items = behavior_map.recorded_map(tdd_document, preflight_document) or []
+        refresh_proof(identity, items, state)
+        missing = behavior_map.unresolved(items) + _finding_proof_blockers(transaction, state, items=items) + _finding_state_blockers(state) + completion_missing(state)
         graph_id = state.get("repoContextForgeEvidence")
         graph_document = transaction.evidence(graph_id) if isinstance(graph_id, str) else None
         if (
@@ -2267,19 +2112,12 @@ def ready_for_edit(identity: RepoIdentity, path: str) -> tuple[bool, list[str]]:
     state = read_workflow(identity)
     if state is None:
         return False, ["active workflow"]
-    if state.get("revalidation"):
-        return False, ["new active workflow (governance revalidation is re-verifying the completed pass; a production edit belongs to the next one)"]
-    if state.get("phase") == "complete":
-        return False, ["new active workflow (this one is complete; begin the next pass)"]
+    if state.get("revalidation") or state.get("phase") == "complete":
+        return False, ["new active workflow" + (" (governance revalidation permits verification/review only)"
+                                               if state.get("revalidation") else "")]
     missing = [name for name, phase in (("repo-context-forge", "repo-context-forge"),
-                                        ("production preflight", "preflight")) if not _allows_next(state, phase)]
-    if not is_test_path(path) and state.get("tdd") not in {"in-progress", "passed", "not-required"}:
-        missing.append("TDD RED or a recorded not-required decision (test-like edits stay open)")
-    if missing or is_test_path(path):
-        return not missing, missing
-    held = [str(item["id"]) for item in _recorded_items(identity, state)
-            if item.get("status") not in {"superseded", "omitted", "withdrawn"} and behavior_map.interpretation_pending(item)]
-    return not held, ["unsettled interpretation: " + ", ".join(held)] if held else []
+               ("production preflight", "preflight")) if not _allows_next(state, phase)]
+    return not missing, missing
 
 
 def public_status(state: JsonObject, identity: RepoIdentity | None = None, *,
@@ -2387,25 +2225,8 @@ def _executed_selections(identity: RepoIdentity, state: JsonObject) -> JsonObjec
 
 
 def _earned_split(identity: RepoIdentity, state: JsonObject, labels: bool) -> str:
-    """Contract items GREEN through RED over contract items declared: the proof
-    the map has earned, not the count of items it names; `labels` adds the review's
-    late and shared RED ids."""
-    try:
-        items = behavior_map.recorded_map(
-            evidence_document(identity, state.get("tddEvidence")),
-            evidence_document(identity, state.get("preflightEvidence")),
-        )
-    except (WorkflowError, LedgerError, ValueError):
-        return " Contract green=unknown (map evidence unreadable)."
-    items = items or []
-    contract = [entry for entry in items if entry.get("kind") == "contract"]
-    if not contract:
-        return ""
-    earned = sum(1 for entry in contract if behavior_map.green_through_red(entry))
-    late = labels and ", ".join(str(entry["id"]) for entry in _late_items(items))
-    shared = labels and "; ".join(", ".join(group) for group in behavior_map.shared_observations(items))
-    return (f" Contract green={earned}/{len(contract)}." + (f" Late RED: {late}." if late else "")
-            + (f" Shared RED observation: {shared}." if shared else ""))
+    items = _recorded_items(identity, state)
+    return f" Probes compared={sum(behavior_map.producer_proved(entry) for entry in items)}/{len(items)}." if items else ""
 
 
 def _map_listing(identity: RepoIdentity, state: JsonObject) -> str:
@@ -2418,11 +2239,8 @@ def _map_listing(identity: RepoIdentity, state: JsonObject) -> str:
         ) or []
     except (WorkflowError, LedgerError, ValueError):
         return ""
-    open_ids = set(behavior_map.unresolved(items))
-    by_status: dict[str, list[str]] = {}
-    for entry in (entry for entry in items if entry["id"] in open_ids):
-        by_status.setdefault(str(entry.get("status")), []).append(str(entry["id"]))
-    return " Open map: " + "; ".join(f"{status}: {', '.join(ids)}" for status, ids in by_status.items()) + "." if by_status else ""
+    pending = behavior_map.unresolved(items)
+    return " Open map: pending: " + ", ".join(pending) + "." if pending else ""
 
 
 def _latest_verification_command(identity: RepoIdentity, state: JsonObject) -> str:
@@ -2513,7 +2331,7 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
                                 "input": {
                                     "review": "independent review intake or measured disposition on stdin",
                                     "advisor-disposition": "measured finding disposition on stdin",
-                                    "tdd": "--phase, --behavior-id and real command after --",
+                                    "tdd": "--behavior-id and real command after --",
                                 }[producer[-1]]}
         pending = [{"intakeEvidenceId": f["intakeEvidenceId"], "findingId": f["findingId"], "kind": f.get("kind")}
                    for f in state.get("findingStates", []) if _finding_unresolved(f)]
@@ -2535,7 +2353,7 @@ def operation_receipt(state: JsonObject, identity: RepoIdentity, **details: obje
 
 def summary(identity: RepoIdentity, limit: int = 3000, *, labels: bool = True) -> str:
     """The pass for a resuming lead; the compaction re-arm drops the review labels
-    (late and shared RED ids), which name settled items too."""
+    which include settled review labels."""
     state = read_workflow(identity)
     if state is None:
         return "Workflow state unavailable; do not infer that any workflow step passed."

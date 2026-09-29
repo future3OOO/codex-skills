@@ -13,22 +13,17 @@ flowchart LR
     PD --> A1[advisor preflight]
     A1 -->|changes-required| PD
     A1 -->|approved| P[record the approved preflight once]
-    P --> M{map has a pending item?}
-    M -->|yes| TR[mapped contract RED, preservation items settled first]
-    M -->|no: every item already-satisfied or omitted| NR[tdd --not-required]
-    TR --> I[implementation]
-    NR --> I
-    I -->|every contract RED| TG[mapped GREEN]
-    I -->|not-required map| V
-    TG --> TM[map update when a proof exposes a new obligation]
-    TM -->|new obligation| TR
-    TM -->|map resolved| V[verification]
+    P --> I[write decisive probes and implement]
+    I --> TG[runner compares recorded source versions]
+    TG --> TM[update probe list when scope changes]
+    TM -->|unresolved| I
+    TM -->|current proof| V[verification]
     V --> CR[code-review delegate review when non-trivial]
     CR --> A2[final Codex Advisor review]
     A2 --> C{context matched and effective findings terminal?}
     C -->|context mismatch| A2
     C -->|behavioral correction| TM2[tdd-map adds the item]
-    TM2 --> TR
+    TM2 --> I
     C -->|non-behavioral correction| I
     C -->|evidence-backed rejection| AP[one appeal on the same session]
     AP --> C
@@ -110,10 +105,7 @@ the transcript audit.
 
 The database and its containing directory are private and agent-writable. Committed transactions provide continuity across process restart and compaction; it is not tamper-proof and does not authorize Git. A normal
 commit or HEAD change does not invalidate it. The edit hook advises, never
-refuses (hook table below). Every RED-phase run records the production paths
-changed since the pass began, so a late RED or baseline is labelled in
-`summary` and shown to the final review; nothing refuses on it. A `tdd-map`
-update is needed only when a GREEN exposes a new obligation. A normally
+refuses (hook table below). The runner compares original, reviewed and candidate sources and retains bound results. Update the list only when obligations change. A normally
 completed workflow is terminal: every mutation except `begin` is rejected.
 
 After a successful production edit in an active pass, the PostToolUse edit
@@ -156,7 +148,7 @@ resume at the first unsatisfied phase in the same ordered workflow. A
 governance-first pass therefore returns to TDD, while a completed
 implementation returns to verification.
 
-Behavioral findings from the `code-review` delegate or final Codex Advisor and pushed-head reviewers within the active task return to mapped TDD under the same `workflowId`: add the Behavior Map item, drive its behavior-specific RED, then fix it. Only genuinely non-behavioral corrections return directly to implementation, with the reason recorded. The behavioral/non-behavioral classification is a lead-owned obligation, not a machine-validated edge: the recorder validates the reassessment's structure and blocks completion until one is recorded, but it cannot judge the classification itself - a behavioral defect routed through a why-only reassessment is a doctrine violation the reviews are expected to catch, not a state the hooks can refuse. Separate work outside the active task starts a new workflow with `begin`.
+Behavioral findings return to the same workflow: attach the finding reference to its owning probe, implement the repair and execute the comparison against the recorded reviewed source. The runner supplies current proof; existing review judges the requirement and finding closure. List edits cannot discharge material findings. Separate work starts a new pass.
 
 A finding envelope is one correction batch. A pending behavioral finding rides
 the pass as a map-owned attack obligation; dispositions may cover any subset,

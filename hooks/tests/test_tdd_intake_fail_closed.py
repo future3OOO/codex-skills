@@ -133,8 +133,6 @@ class MappedIntakeFailureTests(unittest.TestCase):
             "tdd",
             "--slug",
             slug,
-            "--phase",
-            "red",
             "--behavior-id",
             "BM_VALUE",
             "--",
@@ -143,7 +141,7 @@ class MappedIntakeFailureTests(unittest.TestCase):
             "unittest",
             "test_app.ValueTests.test_value",
         )
-        self.assertEqual(red.returncode, 0, red.stdout + red.stderr)
+        self.assertEqual(red.returncode, 2, red.stdout + red.stderr)
 
         current = read_workflow(identity)
         evidence_id = str(current["tddEvidence"])

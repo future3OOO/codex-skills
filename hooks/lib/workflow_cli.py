@@ -48,9 +48,8 @@ from .workflow_state import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
-ITEM_SHAPE = ('{"id":"BM_X","kind":"contract|preservation","basis":"where this item came from",'
+ITEM_SHAPE = ('{"id":"BM_X","basis":"original request or preservation",'
               '"behavior":"...","seam":"...","expected":"...",'
-              '"redFailure":"MARKER","status":"pending|already-satisfied|omitted",'
               '"sourceRefs":[{"type":"finding","evidenceId":"<intake>","id":"SPEC-1"}]}')
 RECORD_SHAPES = {
     "preflight": f'{{"authoritativeContract":"text","behaviorMap":[{ITEM_SHAPE}]}}',
@@ -65,9 +64,7 @@ RECORD_SHAPES = {
                             "[--behavior-id BM] [--reason TEXT]; or --stage S --findings none; or --input "
                             '{"intakeEvidenceId":"...","context":{...},"dispositions":[...]}, each disposition:\n'
                             + DOCUMENT_SHAPE_TABLE),
-    "tdd-map": (f'{{"sourceBehaviorId":"BM_GREEN","items":[{ITEM_SHAPE}],"dispositions":['
-                '{"id":"BM_X","sourceRefs":[...]} | {"id":"BM_X","status":"omitted|superseded|withdrawn",'
-                '"supersededBy":"BM_Y"} | {"id":"BM_X","revalidate":true,"evidence":"why"}],"reassessment":"optional"}'),
+    "tdd-map": f'{{"items":[{ITEM_SHAPE}]}}',
 }
 DISPOSITION_FLAGS = {"fixed": "fixed", "rejected": "rejected-with-evidence", "report_only": "report-only"}
 # Failing checks' first five locations, then the first six active findings with three each. Each location
@@ -195,7 +192,8 @@ def _passed(command: str, exit_code: object, output: str) -> bool:
     reported no count (-qq), verifies nothing. The runner is TDD's (`identify`), which
     recognises bare invocations only."""
     from .tdd_workflow import _pass_proof
-    return exit_code == 0 and _pass_proof(identify(shlex.split(command)), output, baseline=False, exit_code=0)[0] is not None
+    surface = identify(shlex.split(command))
+    return exit_code == 0 and (surface.get("runner") not in {"pytest", "unittest"} or _pass_proof(surface, output)[0] is not None)
 
 
 def _observed(command: list[str]) -> int:
@@ -537,7 +535,9 @@ def main(argv: list[str] | None = None) -> int:
         # The TDD verb's parsing travels with its implementation.
         if values and values[0] == "tdd":
             from .tdd_workflow import _run_tdd
-            return _run_tdd(values[1:])
+            from .command_runner import interruptible
+            with interruptible():
+                return _run_tdd(values[1:])
         return _dispatch(parser().parse_args(values))
     except (RepoIdentityError, LedgerError, WorkflowError, ValueError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)

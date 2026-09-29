@@ -8,9 +8,7 @@ description: Enforce production-only implementation standards for this repo. Use
 Apply this skill before writing any repository code or file content change, keep it active while implementing, and run its bundled gate before finalizing.
 Use the production-preflight skill first on before-edit turns that require explicit preflight. `code-quality` owns the seven quality principles and wins on conflict; this skill extends them with implementation procedure.
 
-In a governed production workflow, invoke this skill after the RED or
-not-required TDD decision and before production, configuration, or runtime
-implementation edits; the test edit that establishes RED may precede it. Run
+In a governed production workflow, invoke this skill after planning the real probe and before production, configuration, or runtime implementation edits; the probe edit may precede it. Run
 the bundled gate over the pre-implementation tree as the clean baseline, then keep
 this doctrine active through implementation and final verification.
 
@@ -32,6 +30,7 @@ gate's JSON contract.
 ## Minimum Implementation Decision
 
 The user's intended production behavior governs implementation, repair and review.
+A purpose-qualified deletion removes the rules serving that purpose. A parenthetical list of regexes, helpers or predicates does not expand the deletion to their other uses. Trace shared uses and retain logic needed by behavior the request keeps. A code-name match, an observed difference or an assertion endorsing that difference does not authorize changing preserved behavior.
 Establish contract authority before adopting a corrective assertion or edit. Trace
 supported inputs, callers, callees, lifecycle paths and shared-state interactions
 before choosing probes. Tests and historical behavior inform that investigation;

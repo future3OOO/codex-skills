@@ -9,7 +9,7 @@ import sys
 import time
 from pathlib import Path
 
-from hooks.lib.behavior_map import initial_items, map_errors, no_change_item
+from hooks.lib.behavior_map import initial_items, map_errors
 from hooks.lib.repo_identity import RepoIdentity, resolve_repo_identity
 from hooks.lib.state_store import _active_candidate_tree
 from hooks.lib.workflow_documents import graph_evidence_document
@@ -140,13 +140,10 @@ def pending_behavior(
 ) -> dict[str, object]:
     return {
         "id": identifier,
-        "kind": kind,
         "basis": "test fixture behavior",
         "behavior": behavior,
         "seam": seam,
         "expected": expected,
-        "redFailure": red_failure,
-        "status": "pending",
         "sourceRefs": [],
     }
 
@@ -158,17 +155,12 @@ def build_document(
 ) -> dict[str, object]:
     """A structurally valid preflight document with explicit TDD scope."""
     return {"authoritativeContract": f"contract: {fill}",
-            "behaviorMap": [{**item, "sourceRefs": item.get("sourceRefs", [])} for item in behavior_map]}
+            "behaviorMap": [{key: value for key, value in item.items() if key in {"id", "basis", "behavior", "seam", "expected", "sourceRefs"}} for item in behavior_map]}
 
 
 def build_no_change_document(fill: str) -> dict[str, object]:
     """A preflight fixture that explicitly declares no production behavior work."""
-    return build_document(
-        fill,
-        behavior_map=[
-            no_change_item("test fixture declares no production behavior change")
-        ],
-    )
+    return build_document(fill, behavior_map=[])
 
 
 def graph_packet(root: str, candidate: str, head: str) -> dict[str, object]:

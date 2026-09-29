@@ -305,11 +305,12 @@ class ExecutedSelectionsTests(unittest.TestCase):
         )
         return f"{name}.Probe.test_behavior"
 
-    def tdd(self, phase: str, behavior_id: str, *command: str) -> subprocess.CompletedProcess[str]:
+    def tdd(self, phase: str, behavior_id: str, *command: str, support=()) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             [
                 sys.executable, str(WORKFLOW), "tdd", "--repo", str(self.repo),
-                "--slug", self.slug, "--phase", phase, "--behavior-id", behavior_id, "--", *command,
+                "--slug", self.slug, "--behavior-id", behavior_id,
+                *(token for path in support for token in ("--support", path)), "--", *command,
             ],
             cwd=self.repo, env=self.env, text=True,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
@@ -373,23 +374,23 @@ class ExecutedSelectionsTests(unittest.TestCase):
         owner below, since their exclusion needs runner state this fixture has
         no reason to build.
         """
-        marker = "FILTERED_PATH_PUBLISHED_AS_WHOLE_PATH"
+        marker = "TEST_DEPENDENCY_LOST"
         self.record_map(pending_behavior("BM_FILTERED", red_failure="FILTERED_MARKER"))
         self.two_tests("test_filtered")
         recorded = self.tdd(
             "red", "BM_FILTERED", sys.executable, "-m", "pytest", "-q",
             "test_filtered.py", "-k", "selected",
         )
-        self.assertEqual(recorded.returncode, 0, recorded.stdout + recorded.stderr)
+        self.assertEqual(recorded.returncode, 0, marker + ": " + recorded.stdout + recorded.stderr)
 
-        record = self.selections(marker)["BM_FILTERED"]["baseline"]
+        record = self.selections(marker)["BM_FILTERED"]["comparison"]
 
         self.assertIsNone(record["targets"], marker)
         self.assertIn("-k", str(record.get("unknown") or ""), marker)
 
     def test_every_captured_form_resolves_or_reports_unknown(self) -> None:
         """The whole captured corpus, through the owner that publishes selections."""
-        marker = "FILTERED_PATH_PUBLISHED_AS_WHOLE_PATH"
+        marker = "TEST_DEPENDENCY_LOST"
         from hooks.lib.workflow_state import _selection
 
         (self.repo / "suite").mkdir(exist_ok=True)
@@ -448,7 +449,7 @@ class ExecutedSelectionsTests(unittest.TestCase):
         test the pattern leaves out. The run passing is the proof it was excluded,
         since discovery over the directory would have collected and failed it.
         """
-        marker = "FILTERED_DISCOVERY_PUBLISHED_AS_WHOLE_DIRECTORY"
+        marker = "DISCOVERY_SUPPORT_BROKEN"
         self.record_map(pending_behavior("BM_DISCOVERED", red_failure="DISCOVERED_MARKER"))
         self.two_tests("test_discovered")
         self.probe("test_excluded", "EXCLUDED_MARKER", passing=False)
@@ -456,9 +457,9 @@ class ExecutedSelectionsTests(unittest.TestCase):
             "red", "BM_DISCOVERED", sys.executable, "-m", "unittest", "discover",
             "-s", ".", "-p", "test_discovered.py",
         )
-        self.assertEqual(recorded.returncode, 0, recorded.stdout + recorded.stderr)
+        self.assertEqual(recorded.returncode, 0, marker + ": " + recorded.stdout + recorded.stderr)
 
-        record = self.selections(marker)["BM_DISCOVERED"]["baseline"]
+        record = self.selections(marker)["BM_DISCOVERED"]["comparison"]
 
         self.assertIsNone(record["targets"], marker)
         self.assertIn("-p", str(record.get("unknown") or ""), marker)
@@ -469,56 +470,9 @@ class ExecutedSelectionsTests(unittest.TestCase):
         self.assertIsInstance(value, dict, marker)
         return value
 
-    def authored_selection(self, marker: str, **overrides: object) -> object:
-        """What status reports for an authored item that never ran.
 
-        The status read is part of the attack: a projection that refuses is as
-        much a failure as one that invents a selection.
-        """
-        item = pending_behavior("BM_AUTHORED", red_failure="AUTHORED_MARKER")
-        item.update(overrides)
-        self.record_map(pending_behavior("BM_REAL", red_failure="REAL_MARKER"), item)
-        result = self.workflow("status")
-        self.assertEqual(result.returncode, 0, f"{marker}: status refused: {result.stderr.strip()}")
-        return (json.loads(result.stdout).get("mapSelections") or {}).get("BM_AUTHORED")
 
-    def test_authored_baseline_text_is_not_an_executed_selection(self) -> None:
-        """A selection claims a test ran; authored prose makes no such claim.
 
-        `evidence` is author-written on a disposed preservation item, and the
-        producer happens to stamp its baseline command into that same field, so
-        a supported runner in authored text parses into real-looking targets.
-        """
-        marker = "AUTHORED_BASELINE_REPORTED_AS_A_SELECTION"
-        selection = self.authored_selection(
-            marker,
-            kind="preservation",
-            status="already-satisfied",
-            evidence="baseline-passed: python3 -m unittest test_authored.Probe.test_behavior",
-        )
-
-        self.assertIsNone(selection, marker)
-
-    def test_authored_proof_command_on_a_pending_item_is_not_green(self) -> None:
-        """proofCommand is not refused in authored documents; status must be."""
-        marker = "AUTHORED_GREEN_REPORTED_AS_A_SELECTION"
-        selection = self.authored_selection(
-            marker, proofCommand="python3 -m unittest tests.test_never_executed",
-        )
-
-        self.assertIsNone(selection, marker)
-
-    def test_malformed_authored_text_leaves_status_readable(self) -> None:
-        """Authored prose is never parsed, so its quoting cannot break the projection."""
-        marker = "MALFORMED_AUTHORED_TEXT_BROKE_STATUS"
-        selection = self.authored_selection(
-            marker,
-            kind="preservation",
-            status="already-satisfied",
-            evidence='baseline-passed: python3 -m unittest "unclosed',
-        )
-
-        self.assertIsNone(selection, marker)
 
     def test_status_exposes_red_green_and_baseline_selections(self) -> None:
         marker = "EXECUTED_SELECTIONS_ABSENT"
@@ -527,7 +481,7 @@ class ExecutedSelectionsTests(unittest.TestCase):
             pending_behavior("BM_BASELINED", red_failure="BASELINE_MARKER"),
         )
         failing = self.probe("test_proved", "PROVED_MARKER", passing=False)
-        self.assertEqual(self.tdd("red", "BM_PROVED", sys.executable, "-m", "unittest", failing).returncode, 0)
+        self.assertEqual(self.tdd("red", "BM_PROVED", sys.executable, "-m", "unittest", failing).returncode, 2)
         passing = self.probe("test_proved", "PROVED_MARKER", passing=True)
         self.assertEqual(self.tdd("green", "BM_PROVED", sys.executable, "-m", "unittest", passing).returncode, 0)
         baselined = self.probe("test_baselined", "BASELINE_MARKER", passing=True)
@@ -535,65 +489,19 @@ class ExecutedSelectionsTests(unittest.TestCase):
 
         selections = self.selections(marker)
 
-        self.assertEqual(selections["BM_PROVED"]["red"]["targets"], ["test_proved.Probe.test_behavior"], marker)
-        self.assertEqual(selections["BM_PROVED"]["green"]["targets"], ["test_proved.Probe.test_behavior"], marker)
+        self.assertEqual(selections["BM_PROVED"]["comparison"]["targets"], ["test_proved.Probe.test_behavior"], marker)
+        self.assertEqual(selections["BM_PROVED"]["comparison"]["targets"], ["test_proved.Probe.test_behavior"], marker)
         self.assertEqual(
-            selections["BM_BASELINED"]["baseline"]["targets"], ["test_baselined.Probe.test_behavior"], marker,
+            selections["BM_BASELINED"]["comparison"]["targets"], ["test_baselined.Probe.test_behavior"], marker,
         )
 
-    def test_a_replaced_map_reports_the_current_items_selections(self) -> None:
-        """Ownership follows the current map, not everything the pass ever ran."""
-        marker = "SUPERSEDED_SELECTIONS_REPORTED_AS_CURRENT"
-        self.record_map(pending_behavior("BM_FIRST", red_failure="FIRST_MARKER"))
-        failing = self.probe("test_first", "FIRST_MARKER", passing=False)
-        self.assertEqual(self.tdd("red", "BM_FIRST", sys.executable, "-m", "unittest", failing).returncode, 0)
-        passing = self.probe("test_first", "FIRST_MARKER", passing=True)
-        self.assertEqual(self.tdd("green", "BM_FIRST", sys.executable, "-m", "unittest", passing).returncode, 0)
-        self.assertIn("BM_FIRST", self.selections(marker), marker)
-
-        update = {
-            "sourceBehaviorId": "BM_FIRST",
-            "reassessment": "the replacement carries the behavior the first item named",
-            "items": [pending_behavior("BM_REPLACEMENT", red_failure="REPLACEMENT_MARKER")],
-            "dispositions": [{
-                "id": "BM_FIRST", "status": "superseded", "supersededBy": "BM_REPLACEMENT",
-                "evidence": "replaced by the item that now carries this behavior",
-            }],
-        }
-        mapped = subprocess.run(
-            [
-                sys.executable, str(WORKFLOW), "record", "tdd-map", "--repo", str(self.repo),
-                "--slug", self.slug, "--workflow-id", self.workflow_id, "--input", "-",
-            ],
-            input=json.dumps(update), cwd=self.repo, env=self.env, text=True,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
-        )
-        self.assertEqual(mapped.returncode, 0, mapped.stdout + mapped.stderr)
-        replacement = self.probe("test_replacement", "REPLACEMENT_MARKER", passing=False)
-        self.assertEqual(
-            self.tdd("red", "BM_REPLACEMENT", sys.executable, "-m", "unittest", replacement).returncode, 0,
-        )
-
-        selections = self.selections(marker)
-
-        # The replacement's own executed selection is what the map now owns.
-        self.assertEqual(
-            selections["BM_REPLACEMENT"]["red"]["targets"],
-            ["test_replacement.Probe.test_behavior"],
-            marker,
-        )
-        self.assertNotEqual(
-            selections.get("BM_FIRST", {}).get("green", {}).get("targets"),
-            selections["BM_REPLACEMENT"]["red"]["targets"],
-            marker,
-        )
 
     def test_the_checkpoint_payload_carries_none_of_the_new_fields(self) -> None:
         """These are machine-only graph details; the advisor's payload never sees them."""
         marker = "ADDED_FIELDS_LEAKED_INTO_ADVISOR_OR_COMPLETION"
         self.record_map(pending_behavior("BM_CHECKPOINT", red_failure="CHECKPOINT_MARKER"))
         failing = self.probe("test_checkpoint", "CHECKPOINT_MARKER", passing=False)
-        self.assertEqual(self.tdd("red", "BM_CHECKPOINT", sys.executable, "-m", "unittest", failing).returncode, 0)
+        self.assertEqual(self.tdd("red", "BM_CHECKPOINT", sys.executable, "-m", "unittest", failing).returncode, 2)
         self.assertIn("BM_CHECKPOINT", self.selections(marker), marker)
 
         result = self.workflow("checkpoint", "--phase", "preflight-advice")
@@ -608,7 +516,7 @@ class ExecutedSelectionsTests(unittest.TestCase):
         marker = "STATUS_MUTATED_STATE"
         self.record_map(pending_behavior("BM_READONLY", red_failure="READONLY_MARKER"))
         failing = self.probe("test_readonly", "READONLY_MARKER", passing=False)
-        self.assertEqual(self.tdd("red", "BM_READONLY", sys.executable, "-m", "unittest", failing).returncode, 0)
+        self.assertEqual(self.tdd("red", "BM_READONLY", sys.executable, "-m", "unittest", failing).returncode, 2)
 
         def history() -> str:
             result = self.workflow("history")
@@ -642,20 +550,20 @@ class ExecutedSelectionsTests(unittest.TestCase):
         self.probe("test_ambiguous", "AMBIGUOUS_MARKER", passing=True)
         ambiguous = self.tdd(
             "red", "BM_AMBIGUOUS", sys.executable, "-m", "pytest", "-q",
-            "--probe-label", "run-one", "test_ambiguous.py",
+            "--probe-label", "run-one", "test_ambiguous.py", support=("test_ambiguous.py", "conftest.py"),
         )
         self.assertEqual(ambiguous.returncode, 0, ambiguous.stdout + ambiguous.stderr)
-        whole = self.tdd("red", "BM_WHOLE_SUITE", sys.executable, "-m", "pytest", "-q")
+        whole = self.tdd("red", "BM_WHOLE_SUITE", sys.executable, "-m", "pytest", "-q", support=("test_ambiguous.py", "conftest.py"))
         self.assertEqual(whole.returncode, 0, whole.stdout + whole.stderr)
 
         selections = self.selections(marker)
 
-        undecidable = selections["BM_AMBIGUOUS"]["baseline"]
+        undecidable = selections["BM_AMBIGUOUS"]["comparison"]
         self.assertIsNone(undecidable["targets"], marker)
         self.assertTrue(str(undecidable.get("unknown") or "").strip(), marker)
         # Naming no target selects implicitly from pytest's own rootdir and
         # configuration, so no scope is named and [] would read as owning nothing.
-        whole_suite = selections["BM_WHOLE_SUITE"]["baseline"]
+        whole_suite = selections["BM_WHOLE_SUITE"]["comparison"]
         self.assertIsNone(whole_suite["targets"], marker)
         self.assertIn("implicit", str(whole_suite.get("unknown") or ""), marker)
 

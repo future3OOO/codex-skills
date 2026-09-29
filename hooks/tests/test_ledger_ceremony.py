@@ -79,8 +79,8 @@ print(json.dumps({"schemaVersion": 1, "verdict": "changes-required", "findings":
 
 
 def item(identifier: str, marker: str, *, kind: str = "contract", refs=(), **extra) -> dict[str, object]:
-    return {"id": identifier, "kind": kind, "basis": "fixture contract", "behavior": f"{identifier} behavior", "seam": "fixture app module",
-            "expected": "app.value is 2", "redFailure": marker, "status": "pending",
+    return {"id": identifier, "basis": "fixture contract", "behavior": f"{identifier} behavior", "seam": "fixture app module",
+            "expected": "app.value is 2",
             "sourceRefs": list(refs), **extra}
 
 
@@ -412,7 +412,7 @@ class AdvisorDiffBounded(Ceremony):
         self.assertEqual(self.wrapper("approved")[0].returncode, 0, marker)  # a preflight answer judges no commit
         advisor_disposition(identity, "ceremony", wid, "preflight", "none")
         self.record_preflight({"authoritativeContract": "c",
-                "behaviorMap": [item("BM_NONE", "NONE", kind="preservation", status="omitted", evidence="e", basis="b")]})
+                "behaviorMap": []})
         set_phase(identity, "tdd", "not-required")
         self.assertIn("JUDGED = 1", final("fix-before-commit", "# FIRST\n"), f"{marker}: a preflight advanced the judged tree")
         self.ok("record", "advisor-disposition", "--stage", "final", "--finding", "F-1", "--fixed",
@@ -725,8 +725,7 @@ class StepRegistry(Ceremony):
         record_advisor_result(identity, "ceremony", wid, "preflight", "codex-advisor", "completed")
         advisor_disposition(identity, "ceremony", wid, "preflight", "none")
         observed.append(self.snapshot())
-        self.record_preflight({"authoritativeContract": "matrix", "behaviorMap": [
-                item("BM_NONE", "NONE", kind="preservation", status="omitted", evidence="matrix fixture", basis="matrix")]})
+        self.record_preflight({"authoritativeContract": "matrix", "behaviorMap": []})
         observed.append(self.snapshot())
         set_phase(identity, "tdd", "not-required")
         observed.append(self.snapshot())
@@ -759,10 +758,10 @@ class StepRegistry(Ceremony):
 
 
 EXPECTED_MATRIX: list[dict[str, object]] = json.loads(r'''[
- {"next":"repo-context-forge","blockers":["repo-context-forge","preflight","tdd","verification"],"edit":[false,["repo-context-forge","production preflight","TDD RED or a recorded not-required decision (test-like edits stay open)"]],"complete":"workflow incomplete: repoContextForge, preflight, verification, tdd, codeReview, finalReview"},
- {"next":"preflight","blockers":["preflight","tdd","verification"],"edit":[false,["production preflight","TDD RED or a recorded not-required decision (test-like edits stay open)"]],"complete":"workflow incomplete: preflight, verification, tdd, codeReview, finalReview"},
- {"next":"preflight","blockers":["preflight","tdd","verification"],"edit":[false,["production preflight","TDD RED or a recorded not-required decision (test-like edits stay open)"]],"complete":"workflow incomplete: preflight, verification, tdd, codeReview, finalReview"},
- {"next":"tdd","blockers":["tdd","verification"],"edit":[false,["TDD RED or a recorded not-required decision (test-like edits stay open)"]],"complete":"workflow incomplete: verification, tdd, codeReview, finalReview"},
+ {"next":"repo-context-forge","blockers":["repo-context-forge","preflight","tdd","verification"],"edit":[false,["repo-context-forge","production preflight"]],"complete":"workflow incomplete: repoContextForge, preflight, verification, tdd, codeReview, finalReview"},
+ {"next":"preflight","blockers":["preflight","tdd","verification"],"edit":[false,["production preflight"]],"complete":"workflow incomplete: preflight, verification, tdd, codeReview, finalReview"},
+ {"next":"preflight","blockers":["preflight","tdd","verification"],"edit":[false,["production preflight"]],"complete":"workflow incomplete: preflight, verification, tdd, codeReview, finalReview"},
+ {"next":"verification","blockers":["verification"],"edit":[true,[]],"complete":"workflow incomplete: verification, codeReview, finalReview"},
  {"next":"verification","blockers":["verification"],"edit":[true,[]],"complete":"workflow incomplete: verification, codeReview, finalReview"},
  {"next":"verification","blockers":["verification"],"edit":[true,[]],"complete":"workflow incomplete: verification, codeReview, finalReview"},
  {"next":"verification","blockers":["verification"],"edit":[true,[]],"complete":"workflow incomplete: verification, codeReview, finalReview"},
@@ -892,15 +891,11 @@ class EveryViolation(Ceremony):
             item("BM_HOLD", "HOLD", kind="preservation")]})
         stored = self.ok("evidence", "--full", "--evidence-id", str(self.state()["preflightEvidence"]))["document"]
         self.assertEqual(stored["document"]["behaviorMap"][0]["basis"], "fixture contract")
-        lost += self.pairs("tdd-map", {"reassessment": "r", "items": [item("BM_NEW", "NEW_FAILED")], "dispositions": [
-            {"id": "BM_KEEP", "status": "omitted", "evidence": "e"}, {"id": "BM_ONE", "sourceRefs": [design]},
-            {"id": "BM_HOLD", "status": "omitted", "evidence": "e"}]}, {
-            "extra": (("extra",), 1), "reassessment": (("reassessment",), 5),
+        lost += self.pairs("tdd-map", {"items": [item("BM_NEW", "NEW_FAILED"), item("BM_KEEP", "KEEP")]}, {
             "item": (("items", 0, "behavior"), ""), "item-basis": (("items", 0, "basis"), _DROP),
-            "item-id": (("items", 0, "id"), "BM_ONE"),
-            "unknown": (("dispositions", 0, "bogus"), 1), "status": (("dispositions", 0, "status"), "sideways"),
-            "missing": (("dispositions", 1, "id"), "BM_NOPE"), "refs": (("dispositions", 1, "sourceRefs"), 5),
-            "duplicate": (("dispositions", 2, "id"), "BM_KEEP")})
+            "item-id": (("items", 0, "id"), "BM_KEEP"),
+            "unknown": (("items", 0, "bogus"), 1),
+            "refs": (("items", 1, "sourceRefs"), 5)})
         self.assertEqual(lost, [], "VIOLATION_HIDDEN: " + "; ".join(lost))
 
 
@@ -927,30 +922,27 @@ class RearmOpenOnly(Ceremony):
         marker = "REARM_REPEATS_SETTLED_WORK"
         self.begin()
         self.record_preflight({"authoritativeContract": "c", "behaviorMap": [
-            item("BM_OPEN_WORK", "VALUE_NOT_TWO"),
-            item("BM_SETTLED_KEEP", "KEEP_FAILED", kind="preservation", status="omitted", evidence="out of scope")]})
+            item("BM_OPEN_WORK", "VALUE_NOT_TWO")]})
         rearmed = subprocess.run([sys.executable, str(REARM)], env=self.env, capture_output=True, text=True,
                                  input=json.dumps({"cwd": str(self.repo), "source": "compact",
                                                    "hook_event_name": "SessionStart"}))
         context = json.loads(rearmed.stdout)["hookSpecificOutput"]["additionalContext"]
         self.assertIn("BM_OPEN_WORK", context, marker)
         self.assertIn("tdd=pending", context, marker)
-        self.ok("tdd", "--phase", "red", "--behavior-id", "BM_OPEN_WORK", "--", sys.executable, "-m", "unittest", "test_app")
+        self.cli("tdd", "--behavior-id", "BM_OPEN_WORK", "--", sys.executable, "-m", "unittest", "test_app")
         self.assertIn("tdd=in-progress", self.cli("summary").stdout, f"{marker}: step status misreported")
         for settled in ("BM_SETTLED_KEEP", "=ready", "repo-context-forge=", "preflight=passed"):
             self.assertNotIn(settled, context, f"{marker}: {settled!r} in {context}")
         self.assertIn("Missing state is pending, never success.", context, marker)
 
-    def test_the_rearm_omits_settled_late_proof(self) -> None:
+    def test_the_rearm_omits_settled_comparison(self) -> None:
         marker = "REARM_REPEATS_SETTLED_WORK"
         self.begin()
         self.record_preflight({"authoritativeContract": "c", "behaviorMap": [item("BM_LATE_SETTLED", "VALUE_NOT_TWO")]})
         (self.repo / "app.py").write_text("value = 1\nother = 1\n# changed before RED\n", encoding="utf-8")
         command = ("--", sys.executable, "-m", "unittest", "test_app")
-        self.ok("tdd", "--phase", "red", "--behavior-id", "BM_LATE_SETTLED", *command)
         (self.repo / "app.py").write_text("value = 2\nother = 1\n", encoding="utf-8")
-        self.ok("tdd", "--phase", "green", "--behavior-id", "BM_LATE_SETTLED", *command)
-        self.assertIn("Late RED: BM_LATE_SETTLED", self.cli("summary").stdout, f"{marker}: review lost the late label")
+        self.ok("tdd", "--behavior-id", "BM_LATE_SETTLED", *command)
         rearmed = subprocess.run([sys.executable, str(REARM)], env=self.env, capture_output=True, text=True,
                                  input=json.dumps({"cwd": str(self.repo), "source": "compact",
                                                    "hook_event_name": "SessionStart"}))
@@ -976,9 +968,9 @@ class AdvisoryDedup(Ceremony):
         self.assertEqual(self.edit(PRE_TOOL), "", f"{marker}: identical intake advice repeated")
         self.assertEqual(self.edit(PRE_TOOL, "other-session"), first, f"{marker}: another session lost it")
         self.record_preflight({"authoritativeContract": "c", "behaviorMap": [item("BM_ONE", "VALUE_NOT_TWO")]})
-        self.ok("tdd", "--phase", "red", "--behavior-id", "BM_ONE", "--", sys.executable, "-m", "unittest", "test_app")
+        self.cli("tdd", "--behavior-id", "BM_ONE", "--", sys.executable, "-m", "unittest", "test_app")
         changed = self.edit(PRE_TOOL)
-        self.assertIn("Behavior obligations", changed, f"{marker}: changed advice was suppressed")
+        self.assertIn("Probe obligations", changed, f"{marker}: changed advice was suppressed")
         self.assertEqual(self.edit(PRE_TOOL), "", f"{marker}: identical obligations repeated")
         (self.repo / "app.py").write_text("value = undefined_name\nother = 1\n", encoding="utf-8")
         post = {"tool_name": "apply_patch", "hook_event_name": "PostToolUse",
@@ -1032,15 +1024,11 @@ class ObservedCapture(Ceremony):
         self.assertTrue(runs[-1].get("treeManifestId"), marker)
         self.assertEqual(self.rows(session_root), session_rows, f"{marker}: receipt landed in the session root")
         reference = f"{state['verificationLatestEvidence']}:{runs[-1]['runIndex']}"
-        bind = ("tdd", "--behavior-id", "BM_ONE", "--test-id", "test_app.AppTest.test_value", "--from-evidence")
-        self.assertTrue(self.ok(*bind, reference, "--phase", "red")["valid"], f"{marker}: observed RED not bound")
         (self.repo / "app.py").write_text("value = 2\nother = 1\n", encoding="utf-8")
         passing = subprocess.run(["bash", "-c", rewritten], cwd=self.repo, env=self.env, capture_output=True, text=True)
         self.assertEqual(passing.returncode, 0, passing.stdout + passing.stderr)
         state = self.state()
         latest = evidence_document(resolve_repo_identity(self.repo), str(state["verificationLatestEvidence"]))["runs"][-1]
-        self.assertTrue(self.ok(*bind, f"{state['verificationLatestEvidence']}:{latest['runIndex']}", "--phase",
-                                "green")["valid"], f"{marker}: observed GREEN not bound")
         self.ok("verify", "--from-evidence", f"{state['verificationLatestEvidence']}:{latest['runIndex']}")
         self.assertEqual(self.state()["verification"], "passed", marker)
         refused = self.cli("verify", "--from-evidence", reference)
@@ -1263,9 +1251,11 @@ class ObservedInWorkflow(Ceremony):
         self.assertTrue(later["candidateTree"] != report["candidateTree"] and self.retrieval(printed, marker)[0] == report, f"{marker}: earlier locator moved")
 
 class FlagDisposition(Ceremony):
-    def tdd(self, phase: str, behavior: str, module: str = "test_app") -> str:
-        result = self.ok("tdd", "--slug", "ceremony", "--phase", phase, "--behavior-id", behavior, "--",
-                         sys.executable, "-m", "unittest", "-v", module)
+    def comparison(self, expected_exit: int, behavior: str, module: str = "test_app") -> str:
+        raw = self.cli("tdd", "--slug", "ceremony", "--behavior-id", behavior, "--",
+                       sys.executable, "-m", "unittest", "-v", module)
+        self.assertEqual(raw.returncode, expected_exit, repr(raw.stdout + raw.stderr))
+        result = json.loads(raw.stdout)
         return f"{result['summaryId']}:{result['runIndex']}"
 
     def intake(self, identity, wid: str, identifier: str) -> str:
@@ -1287,14 +1277,14 @@ class FlagDisposition(Ceremony):
                     item("BM_ATTACK", "VALUE_NOT_TWO", refs=[ref], basis="fixture"),
                     item("BM_LATER", "OTHER_NOT_TWO", basis="fixture")]})
         self.intake(identity, wid, "SPEC-2")
-        self.tdd("red", "BM_ATTACK")
+        self.comparison(2, "BM_ATTACK")
         (self.repo / "app.py").write_text("value = 2\nother = 1\n", encoding="utf-8")
-        green = self.tdd("green", "BM_ATTACK")
+        green = self.comparison(0, "BM_ATTACK")
         fixed = self.cli("record", "advisor-disposition", "--finding", "SPEC-1", "--fixed", "--evidence-ref", green)
         self.assertEqual(fixed.returncode, 0, f"{marker}: {fixed.stderr[-400:]}")
-        self.tdd("red", "BM_LATER", "test_other")
+        self.comparison(2, "BM_LATER", "test_other")
         (self.repo / "app.py").write_text("value = 2\nother = 2\n", encoding="utf-8")
-        later = self.tdd("green", "BM_LATER", "test_other")
+        later = self.comparison(0, "BM_LATER", "test_other")
         minted = self.cli("record", "advisor-disposition", "--finding", "SPEC-2", "--fixed", "--evidence-ref", later,
                           "--behavior-id", "BM_LATER", "--reason", "the later attack owns the second claim")
         self.assertEqual(minted.returncode, 0, f"{marker}: {minted.stderr[-400:]}")
@@ -1318,13 +1308,13 @@ class FlagRefusal(Ceremony):
                 "authoritativeContract": "fixture", "behaviorMap": [
                     item("BM_ATTACK", "VALUE_NOT_TWO", refs=[{"type": "finding", "evidenceId": intake, "id": "SPEC-1"}],
                          basis="fixture")]})
-        red = FlagDisposition.tdd(self, "red", "BM_ATTACK")
+        red = FlagDisposition.comparison(self, 2, "BM_ATTACK")
         passed = self.ok("verify", "--", sys.executable, "-c", "pass")
         success = f"{passed['evidenceId']}:{passed['runIndex']}"
         before = self.rows()
         for reason, extra in (("SPEC-9", ("--finding", "SPEC-9", "--fixed", "--evidence-ref", red)),
                               ("successful", ("--finding", "SPEC-1", "--fixed", "--evidence-ref", red)),
-                              ("GREEN", ("--finding", "SPEC-1", "--fixed", "--evidence-ref", success)),
+                              ("comparisons", ("--finding", "SPEC-1", "--fixed", "--evidence-ref", success)),
                               ("execution reference", ("--finding", "SPEC-1", "--fixed", "--evidence-ref", "evidence-missing:0")),
                               ("BM_NOPE", ("--finding", "SPEC-1", "--fixed", "--evidence-ref", red, "--behavior-id", "BM_NOPE"))):
             refused = self.cli("record", "advisor-disposition", *extra, "--reason", "attempt")
@@ -1356,13 +1346,11 @@ class MinimalDocuments(Ceremony):
     def test_documents_carry_only_consumed_fields(self) -> None:
         marker = "MINIMAL_DOCUMENT_REFUSED"
         self.begin()
-        document = {"authoritativeContract": "fixture", "behaviorMap": [
-            item("BM_KEEP", "KEEP_FAILED", kind="preservation", status="omitted")]}
+        document = {"authoritativeContract": "fixture", "behaviorMap": []}
         approve_preflight(self.repo, document)
         recorded = self.cli("record", "preflight", "--input", "-", input=json.dumps(document))
         self.assertEqual(recorded.returncode, 0, f"{marker}: {recorded.stderr[-300:]}")
         self.assertNotIn("intent", recorded.stdout, f"{marker}: the preflight receipt echoes the intent")
-        self.ok("tdd", "--not-required", "the fixture changes no behavior")
         self.ok("verify", "--", sys.executable, "-c", "pass")
         self.ok("verify", "--kind", "quality-gate", "--base-ref", "HEAD")
         review = {"findings": [{"id": "R-1", "claim": "a real claim", "material": True, "kind": "nonbehavioral",

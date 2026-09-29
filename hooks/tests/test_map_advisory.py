@@ -154,12 +154,12 @@ class MapAdvisoryTests(unittest.TestCase):
         result = subprocess.run(
             [
                 sys.executable, str(WORKFLOW), "tdd", "--repo", str(self.repo),
-                "--slug", self.slug, "--phase", phase, "--behavior-id", ITEM, "--", *runner,
+                "--slug", self.slug, "--behavior-id", ITEM, "--", *runner,
             ],
             cwd=self.repo, env={**self.env, **(env_extra or {})}, text=True,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
         )
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.returncode, 2 if phase == "red" else 0, result.stdout + result.stderr)
         return result
 
     def edit_compute(self, added: int = 2, *, unindexed: bool = False) -> None:
