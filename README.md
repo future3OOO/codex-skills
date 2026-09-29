@@ -12,9 +12,10 @@ The project is the source of truth; the estate is an install artifact.
 
 ## Layout
 
-- `AGENTS.md` — global Codex rules (`~/.codex/AGENTS.md`).
-- `decisions.md` — tracked project decisions, reasons and delivery status;
-  read at start/resume and update before handoff. It is not installed globally.
+- `docs/agents/global-rules.md` — global Codex rules, installed as
+  `~/.codex/AGENTS.md`. Not named `AGENTS.md`, so sessions in this repo load
+  the rules once.
+- `decisions.md` — tracked project decisions; not installed globally.
 - `skills/` — custom skills, one directory per skill. Codex-only extras that
   do not exist upstream: `codex-advisor` (the codex-side advisor name),
   `frontend-design`, `setup-pre-commit`, `.system/` is excluded.
@@ -64,7 +65,7 @@ For a full project installation:
 ```
 
 Backs up touched paths to `~/.codex-backups/<ts>/`, rsyncs `hooks/` and
-`skills/` (excluding tests), copies `AGENTS.md`, merges `hooks.json` entries,
+`skills/` (excluding tests), copies the global rules, merges `hooks.json` entries,
 and appends `[mcp_servers.gitnexus]` to `config.toml` when absent. Codex
 requires hook trust: approve the hooks once via `/hooks` in an interactive
 session, or run automation with `--dangerously-bypass-hook-trust`.
@@ -83,6 +84,13 @@ estate="${CODEX_HOME:-$HOME/.codex}"
 backup="$HOME/.codex-backups/$(date +%Y%m%d-%H%M%S)"
 rsync -acR --backup --backup-dir="$backup" -- "${paths[@]}" "$estate/" &&
   for path in "${paths[@]}"; do cmp -- "$path" "$estate/$path" || exit 1; done
+```
+
+The global rules install under a different name, so never list them in `paths`:
+
+```bash
+rsync -a --backup --backup-dir="$backup" -- docs/agents/global-rules.md "$estate/AGENTS.md" &&
+  cmp -- docs/agents/global-rules.md "$estate/AGENTS.md"
 ```
 
 Back up and remove only explicitly owned obsolete files. Record the source SHA,
@@ -136,7 +144,7 @@ printed to stderr.
 
 Diverged files (manual merge — sync will not overwrite):
 
-- `AGENTS.md` — codex rules file (own conventions: `$skill` invocation,
+- `docs/agents/global-rules.md` — codex rules file (own conventions: `$skill` invocation,
   `spawn_agent`/`agent_type` subagent policy, RCF path)
 - `config.toml` / `hooks.json` — TOML config and live-managed hook entries
 - `README.md`, `install.sh`, `decisions.md`, `mcp_config.json`

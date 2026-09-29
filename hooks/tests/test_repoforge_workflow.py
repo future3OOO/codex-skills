@@ -21,7 +21,7 @@ BOOTSTRAP = ROOT / "skills" / "repo-context-forge" / "scripts" / "bootstrap.py"
 QUALITY_GATE = ROOT / "skills" / "production-code" / "scripts" / "code_quality_gate.py"
 CANONICAL_BOOTSTRAP = Path("/home/prop_/.local/share/repo-context-forge/current/scripts/codex_context_bootstrap.py")
 GITNEXUS = shutil.which("gitnexus")
-OWNER_RULES = ("QG54-OWNER-COMPETITION-PRODUCTION", "QG54-OWNER-COMPETITION-TEST")
+OWNER_RULES = ("QG54-OWNER-COMPETITION-PRODUCTION",)
 
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -523,7 +523,7 @@ class RepoForgeWorkflowTests(unittest.TestCase):
 
         The whole chain is real: the producer analyzes the dirty candidate, the
         bootstrap records the evidence, and typed verification must hand that
-        recorded evidence to the gate so both owner-competition rules evaluate
+        recorded evidence to the gate so the owner-competition rule evaluates
         instead of reporting the unestablished-scope gap.
         """
         self.git("branch", "-M", "main")
@@ -538,6 +538,9 @@ class RepoForgeWorkflowTests(unittest.TestCase):
             gaps = finding["completeness"]["gaps"]
             self.assertNotEqual(finding["status"], "incomplete", f"{rule_id} could not evaluate: {gaps}")
             self.assertTrue(finding["completeness"]["complete"], f"{rule_id} gaps: {gaps}")
+        # The summary verify prints is that graph-backed evaluation.
+        self.assertIn("- QG54-OWNER-COMPETITION-PRODUCTION: pass", verified.stdout, "VERIFY_SUMMARY_WITHOUT_GRAPH")
+        self.assertNotIn("graph evidence", verified.stdout, "VERIFY_SUMMARY_WITHOUT_GRAPH")
 
     @unittest.skipUnless(GITNEXUS, "the real GitNexus CLI is unavailable")
     def test_evidence_bound_to_a_different_snapshot_keeps_the_owner_rules_incomplete(self) -> None:

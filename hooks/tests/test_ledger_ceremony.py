@@ -649,6 +649,16 @@ class EvidenceParts(Ceremony):
                                  for value in row if isinstance(value, (str, bytes)))
         return count
 
+    def test_the_gate_report_is_stored_compressed(self) -> None:
+        marker = "REPORT_STORED_UNCOMPRESSED"
+        self.begin()
+        for index in range(11):
+            (self.repo / f"escape{index:02}.py").write_text(f"X = {index}  # TO" + "DO later\n", encoding="utf-8")
+        self.cli("verify", "--kind", "quality-gate", "--base-ref", "HEAD")
+        with sqlite3.connect(f"file:{database_path(resolve_repo_identity(self.repo))}?mode=ro", uri=True) as connection:
+            plain = connection.execute("SELECT COUNT(*) FROM evidence WHERE document_json LIKE '%escape10.py:1%'").fetchone()[0]
+        self.assertEqual((plain, self.rows_containing("escape10.py:1") > 0), (0, True), marker)
+
     def test_items_and_runs_are_stored_once_and_history_keeps_its_meaning(self) -> None:
         marker = "EVIDENCE_NOT_CONTENT_ADDRESSED"
         self.begin()
@@ -1165,17 +1175,92 @@ class ObservedInWorkflow(Ceremony):
         self.assertEqual(replaced.returncode, 0, f"{marker}: {replaced.stderr[-300:]}")
         self.assertEqual(self.state()["verification"], "passed", marker)
 
-    def test_the_typed_gate_shows_its_warnings(self) -> None:
-        marker = "GATE_WARNINGS_HIDDEN"
-        self.begin()
-        body = "    total = 0\n    for item in items:\n        total += item * 2\n        total -= 1\n    return total\n"
-        (self.repo / "alpha.py").write_text("def alpha(items):\n" + body, encoding="utf-8")
-        (self.repo / "beta.py").write_text("def beta(items):\n" + body, encoding="utf-8")
-        gate = self.cli("verify", "--kind", "quality-gate", "--base-ref", "HEAD")
-        self.assertIn("QG54-OWNER-COMPETITION", gate.stdout, f"{marker}: {gate.stdout[-400:]}")
-        run = evidence_document(resolve_repo_identity(self.repo), str(self.state()["verificationLatestEvidence"]))["runs"][-1]
-        self.assertEqual(set(run["gate"]), {"ok", "errors"}, marker)
+    def gate(self, copies: int = 0, *flags: str) -> subprocess.CompletedProcess[str]:
+        """Typed verify over three duplicated sources, eleven escapes and `copies` long-named copies."""
+        body = "    total = 0\n    for item in items:\n        total += item * 2\n        total -= 1\n        total += 3\n        total *= 2\n    return total\n"
+        for name in ("alpha", "beta", "gamma", *(f"copy_{index:03d}_{'x' * 60}" for index in range(copies))):
+            (self.repo / f"{name}.py").write_text(f"def {name}(items):\n" + body, encoding="utf-8")
+        for index in range(11):
+            (self.repo / f"escape{index:02}.py").write_text(f"X = {index}  # TO" + "DO later\n", encoding="utf-8")
+        self.env["TMPDIR"] = str(self.tmp)  # where the printed retrieval saves the report
+        return self.cli("verify", "--kind", "quality-gate", "--base-ref", "HEAD", *flags)
 
+    def retrieval(self, stdout: str, marker: str) -> tuple[dict[str, object], str]:
+        """Runs the printed save, which must print nothing, and returns the saved report and the printed projection."""
+        saves = [line.strip() for line in stdout.splitlines() if " evidence " in line and " > " in line]
+        projections = [line.strip() for line in stdout.splitlines() if line.strip().startswith("jq ")]
+        self.assertTrue(len(saves) == len(projections) == 1, f"{marker}: {stdout[-700:]}")
+        saved = subprocess.run(saves[0], shell=True, env=self.env, capture_output=True, text=True)
+        self.assertEqual((saved.returncode, saved.stdout, saved.stderr), (0, "", ""), marker)
+        return json.loads(Path(shlex.split(saves[0])[-1]).read_text(encoding="utf-8"))["document"]["report"][0], projections[0]
+
+    def test_the_typed_gate_summary_stays_bounded(self) -> None:
+        marker = "VERIFY_OUTPUT_UNBOUNDED"
+        self.begin()
+        printed = self.gate(150).stdout  # 153 duplicated regions: 24,748 bytes printed whole before
+        self.assertTrue(printed.startswith("Production Code Quality Gate\nverdict: fail")
+                        and "- QG54-OWNER-COMPETITION-PRODUCTION [" in printed, f"GATE_SUMMARY_NOT_SHOWN: {printed[:80]}")
+        self.assertLessEqual(len(printed.encode()), 6000, marker)
+        self.assertIn("- no-quality-escapes: fail (escape00.py:1, escape01.py:1, escape02.py:1, +8 more)", printed, marker)
+        self.assertIn(", +150 more", printed, marker)
+        receipt = json.loads(printed.splitlines()[-1])
+        self.assertTrue(receipt["valid"] is False and receipt["next"]["command"], f"{marker}: {receipt}")
+        run = evidence_document(resolve_repo_identity(self.repo), str(self.state()["verificationLatestEvidence"]))["runs"][-1]
+        self.assertEqual(set(run["gate"]), {"ok", "errors"}, "GATE_WARNINGS_HIDDEN")
+
+    def multibyte(self, count: int, part: str = chr(0x1F9EA) * 10, name: str = chr(0x1F525) * 30) -> None:
+        """`count` duplicate, escape, conflict and temp files per `name` under eight `part` directories (kilobytes)."""
+        deep = self.repo.joinpath(*[part] * 8)
+        deep.mkdir(parents=True)
+        body = "    total = 0\n    for item in items:\n        total += item * 2\n        total -= 1\n    return total\n"
+        for index in range(count):
+            stem = deep / f"{name}{index}"
+            Path(f"{stem}a.py").write_text(f"def f{index}(items):\n" + body, encoding="utf-8")
+            Path(f"{stem}b.py").write_text(f"X = {index}  # TO" + "DO later\n", encoding="utf-8")
+            Path(f"{stem}c.py").write_text("<" * 7 + " ours\n" + "=" * 7 + "\n" + ">" * 7 + " theirs\n", encoding="utf-8")
+            Path(f"{stem}d.tmp").write_text("tmp\n", encoding="utf-8")
+
+    def test_the_typed_gate_summary_is_bounded_in_bytes(self) -> None:
+        marker = "VERIFY_OUTPUT_OVER_BYTE_BOUND"
+        self.begin()
+        self.multibyte(4)
+        printed = self.gate().stdout
+        self.assertLessEqual(len(printed.encode()), 6000, f"{marker}: {len(printed)} characters")
+
+    def test_the_printed_projection_is_bounded_in_bytes(self) -> None:
+        marker = "PROJECTION_OVER_BYTE_BOUND"
+        self.begin()  # just past each cutoff: 7 locations per check and finding, locations over 100 JSON-escaped bytes
+        self.multibyte(7, chr(0x1F9EA) * 10, '"\\\x01' * 12)
+        ran = subprocess.run(self.retrieval(self.gate().stdout, marker)[1], shell=True, env=self.env,
+                             capture_output=True, text=True)
+        shown = ran.stdout
+        at = [len(json.dumps(item, ensure_ascii=False).encode()) for line in shown.splitlines() for item in json.loads(line)["at"]]
+        self.assertTrue(ran.returncode == 0 < len(shown.encode()) <= 4200 and max(at) <= 100, f"{marker}: {len(shown.encode())} bytes, {max(at)}")
+
+    def test_the_typed_gate_names_its_complete_retained_report(self) -> None:
+        marker = "VERIFY_REPORT_NOT_RETAINED"
+        self.begin()
+        printed = self.gate(150).stdout
+        report, projection = self.retrieval(printed, marker)  # the save prints nothing
+        shown = subprocess.run(projection, shell=True, env=self.env, capture_output=True, text=True)
+        direct = subprocess.run([sys.executable, str(ROOT / "skills/production-code/scripts/code_quality_gate.py"), "check",
+                                 "--repo", str(self.repo), "--base-ref", "HEAD", "--json"], env=self.env, capture_output=True, text=True)
+        escapes = next(check for check in report["checks"] if check["name"] == "no-quality-escapes")
+        self.assertTrue(report == json.loads(direct.stdout) and "escape10.py:1" in escapes["sample"]
+                        and shown.returncode == 0 < len(shown.stdout.encode()) <= 4200
+                        and "QG54-DUPLICATE-ADDED-BLOCK" in shown.stdout, marker)
+        cut = self.gate(150, "--timeout", "0")  # no verdict, so no report to name
+        self.assertTrue(cut.returncode == 2 and "complete report" not in cut.stdout, f"{marker}: {cut.stdout[-300:]}")
+        self.git(self.repo, "commit", "--allow-empty", "-qm", "second base")  # overlapping runs over distinct bases
+        bases = [subprocess.run(["git", "rev-parse", ref], cwd=self.repo, env=self.env, capture_output=True, text=True).stdout.strip()
+                 for ref in ("HEAD", "HEAD~1")]
+        racing = [subprocess.Popen([sys.executable, str(WORKFLOW), "verify", "--kind", "quality-gate", "--base-ref", base],
+                                   cwd=self.repo, env=self.env, stdout=subprocess.PIPE, text=True) for base in bases]
+        self.assertEqual([self.retrieval(run.communicate()[0], marker)[0]["evaluation"]["base"]["commit"] for run in racing], bases,
+                         f"{marker}: overlapping runs")
+        (self.repo / "later.py").write_text("LATER = 1\n", encoding="utf-8")
+        later = self.retrieval(self.cli("verify", "--kind", "quality-gate", "--base-ref", "HEAD").stdout, marker)[0]
+        self.assertTrue(later["candidateTree"] != report["candidateTree"] and self.retrieval(printed, marker)[0] == report, f"{marker}: earlier locator moved")
 
 class FlagDisposition(Ceremony):
     def tdd(self, phase: str, behavior: str, module: str = "test_app") -> str:

@@ -925,6 +925,7 @@ def commit_verification(
     run: JsonObject,
     *,
     tree_before: dict[str, str] | None,
+    report: JsonObject | None = None,
 ) -> tuple[JsonObject, str, JsonObject]:
     """Merge one completed run with the verification evidence current at commit.
 
@@ -952,6 +953,9 @@ def commit_verification(
         )
         prior_manifest_id = state.get("qualityGateManifestId")
         run = dict(run)
+        kept = [evidence_write(str(state["workflowId"]), "quality-gate-report", {"report": [report]})] if report is not None else []
+        if kept:
+            run["reportEvidenceId"] = kept[0].evidence_id
         typed = run.get("kind") == "quality-gate"
         observed = run.get("kind") == "observed"
         try:
@@ -1045,7 +1049,7 @@ def commit_verification(
             transaction,
             state,
             "record-verification",
-            evidence=[write],
+            evidence=[*kept, write],
             manifests=manifests,
         ), write.evidence_id, run
 

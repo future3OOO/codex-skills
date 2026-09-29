@@ -6,6 +6,15 @@ Issue bodies own implementation scope; this record preserves decisions and their
 status. New decisions supersede earlier ones explicitly; observations and open
 acceptance gaps are not completed delivery.
 
+## 2026-09-29 — Issue 107: rules loaded once, bounded gate output, retained report
+
+**Decision:** [PR #111](https://github.com/future3OOO/codex-skills/pull/111) finishes #107's revised
+brief: rules install from `docs/agents/global-rules.md` (loaded once), no decisions-record mandate or
+test-owner rule, targeted graph/reading rules, and typed verify printing a bounded summary, a save-to-file
+command and a bounded `jq` projection for the complete report kept as compressed ledger parts. Supersedes
+the 2026-09-23 "whole report shown" note. **Status:** rebased on main 3f78d26 (PR #121 merged); estate cleanup follows merge
+(#107); the pre-existing long-path gate bypass is #122.
+
 ## 2026-09-28 — Workflow continuation and readiness repair
 
 [PR #121](https://github.com/future3OOO/codex-skills/pull/121) follows
