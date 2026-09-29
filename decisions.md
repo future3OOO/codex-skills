@@ -6,6 +6,27 @@ Issue bodies own implementation scope; this record preserves decisions and their
 status. New decisions supersede earlier ones explicitly; observations and open
 acceptance gaps are not completed delivery.
 
+## 2026-09-28 — Workflow continuation and readiness repair
+
+[PR #121](https://github.com/future3OOO/codex-skills/pull/121) follows
+[issue #95](https://github.com/future3OOO/codex-skills/issues/95). The existing
+continuation owner selects consultation, reconsultation or approved recording;
+changed drafts receive recovery guidance. Both provider launch modes bind cwd.
+These measured repairs replace the earlier help-only proposal and retain the
+existing approval transaction. No new phase, validator, Module or skill is added.
+
+The initial preflight-only acceptance was too narrow. A captured issue35 workflow
+exposed withdrawal retaining a revalidation flag; a separate CLI probe found
+revalidation left TDD passed. The TDD transaction now derives readiness from its
+admitted map, replacing competing map/runner decisions. Valid withdrawal clears
+revalidation; repeating it recovers older stranded records without changing history.
+Phase, cycles and current downstream evidence survive reassessment; source drift
+still invalidates evidence. Attacked and finding-owned obligations remain guarded.
+
+Real caller navigation and copied-ledger recovery are distinct proofs. The earlier
+paired recorder avoided a 7,524-byte repeat transfer; no runtime speed or universal
+agent-autonomy claim follows. Delivery: PR #121; unmerged and not installed.
+
 ## 2026-09-28 — PR118 snapshot review correction
 
 Share the existing nonblocking regular-file snapshot policy between design and

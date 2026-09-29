@@ -2064,7 +2064,7 @@ class MapCorrectionAttacks(AttackHarness):
                 flagged = self.map_update(slug, dispositions=requested)
                 self.assertEqual(flagged.returncode, 0, flagged.stdout + flagged.stderr)
                 after = self.status()
-                self.assertEqual(after["phase"], before["phase"])
+                self.assertEqual((after["phase"], after["tdd"]), (before["phase"], "in-progress"))
                 self.assertEqual(after["verification"], before["verification"])
                 self.assertEqual(after["tddCycleCount"], before["tddCycleCount"])
                 history = self.ok_text("history")

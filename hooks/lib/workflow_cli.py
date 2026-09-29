@@ -37,6 +37,7 @@ from .workflow_state import (
     complete,
     evidence_document,
     execution_receipt,
+    next_operation,
     operation_receipt as _receipt,
     pause,
     public_status,
@@ -131,7 +132,8 @@ def parser() -> argparse.ArgumentParser:
         command = _repo(kinds.add_parser(kind, epilog=f"accepted shape: {shape}",
                                          formatter_class=argparse.RawDescriptionHelpFormatter), instance=True)
         command.add_argument("--check", action="store_true", help="validate against the ledger without recording")
-        command.add_argument("--input", help="document path, or - for stdin")
+        command.add_argument("--input", help="document path, or - for stdin" + (
+            "; defaults to the retained approved draft" if kind == "preflight" else ""))
         if kind == "review":
             command.add_argument("--review-context-id")
         elif kind == "advisor-result":
@@ -378,14 +380,21 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
         _emit_json({key: value for key, value in receipt.items() if key not in {"evidenceId", "summaryId"}}
                    | {"checked": True} if args.check else receipt)
     if args.kind == "preflight":
-        if not args.input:
-            raise ValueError("record preflight requires --input <path|->")
-        document = preflight_document(args.input)
-        status = "passed"  # Approval records once; unsettled items remain TDD obligations.
-        state, evidence_id = commit_evidence_phase(identity, slug, workflow_id, "preflight", {
-            "schemaVersion": 1, "slug": slug, "workflowId": workflow_id, "document": document,
-            "recordedAt": utc_timestamp()}, status=status)
-        emit(_receipt(state, identity, evidenceId=evidence_id, status=status))
+        intake = evidence_document(identity, (state.get("advisorPreflight") or {}).get("intakeEvidence")) or {}
+        document = preflight_document(args.input) if args.input is not None else intake.get("preflightDraft")
+        try:
+            if not isinstance(document, dict):
+                raise WorkflowError("preflight requires advisor approval bound to a retained draft")
+            state, evidence_id = commit_evidence_phase(identity, slug, workflow_id, "preflight", {
+                "schemaVersion": 1, "slug": slug, "workflowId": workflow_id, "document": document,
+                "recordedAt": utc_timestamp()})
+        except WorkflowError as exc:
+            print(str(exc), file=sys.stderr)
+            _emit_json({"error": str(exc), "next": next_operation(
+                identity, bound_state(identity, slug, workflow_id), preflight_draft=document,
+                preflight_file=str(Path(args.input).resolve()) if args.input and args.input != "-" else None)})
+            return 2
+        emit(_receipt(state, identity, evidenceId=evidence_id, status="passed"))
         return 0
     if args.kind == "review":
         if not args.input:

@@ -323,21 +323,17 @@ printf 'codex_advisor_session raw_slug=%q normalized_slug=%q mode=%s sid_prefix=
 
 output_file="$transport_dir/provider-output"
 if [[ "$provider" == "codex" ]]; then
-  run_codex_exec() {
-    local exec_args
-    if [[ -n "$codex_resume_sid" ]]; then
-      exec_args=(exec resume "$codex_resume_sid" --model "$model")
-    else
-      exec_args=(exec --sandbox read-only -C "$repo_root" --model "$model")
-    fi
-    if [[ -n "$codex_effort" ]]; then
-      exec_args+=(-c "model_reasoning_effort=$codex_effort")
-    fi
-    env "${provider_env[@]}" codex "${exec_args[@]}" - <"$prompt_file" >"$output_file" \
-      2>"$transport_dir/provider-stderr"
-  }
+  if [[ -n "$codex_resume_sid" ]]; then
+    exec_args=(exec resume "$codex_resume_sid" --model "$model")
+  else
+    exec_args=(exec --sandbox read-only --model "$model")
+  fi
+  if [[ -n "$codex_effort" ]]; then
+    exec_args+=(-c "model_reasoning_effort=$codex_effort")
+  fi
   set +e
-  run_codex_exec
+  (cd "$repo_root" && env "${provider_env[@]}" codex "${exec_args[@]}" -) \
+    <"$prompt_file" >"$output_file" 2>"$transport_dir/provider-stderr"
   status=$?
   set -e
   captured_sid="$(sed -n 's/^session id: //p' "$transport_dir/provider-stderr" | tail -1)"
