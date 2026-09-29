@@ -164,13 +164,12 @@ def format_text(result: dict[str, object]) -> str:
         f"changedScope: {result['changedScope']}",
         f"changedFilesCount: {result['changedFilesCount']}",
         f"sourceFilesCount: {result['sourceFilesCount']}",
-        "",
-        "Checks:",
+        "", "Errors:", *([f"- {error}" for error in _some(result["errors"])] or ["- none"]), "", "Checks:",
     ]
     for check in result["checks"]:
         outcome = "incomplete" if check["passed"] is None else "pass" if check["passed"] else "fail"
         lines.append(f"- {check['name']}: {outcome}" + (f" ({', '.join(_some(check['sample']))})" if check.get("sample") else ""))
-    lines += ["", "Errors:", *([f"- {error}" for error in _some(result["errors"])] or ["- none"]), "", "Warnings:"]
+    lines += ["", "Warnings:"]
     # Measured growth stays visible even when unbased, then each rule's first located findings.
     net = result["evaluation"]["growth"]["humanAuthored"]["net"]
     active = [f"{RULE_GROWTH}: human-authored net growth {net} exceeds the 500-line review budget"] if net > 500 else []
@@ -183,10 +182,15 @@ def format_text(result: dict[str, object]) -> str:
                 "for " + item["evidence"]["affectedRuleId"] if "affectedRuleId" in item["evidence"] else None))) + ": "
                 + ", ".join(_some(item["evidence"].get("gaps") or item["evidence"].get("owners") or [
                     f"{r['path']}:{r['displayLine']}" for g in item["evidence"].get("duplicates", ()) for r in g["regions"]])))
-    for rule, rendered in by_rule.items():
-        active += rendered[:_SHOWN] + ([f"{rule}: +{len(rendered) - _SHOWN} more"] if len(rendered) > _SHOWN else [])
-    lines.extend([f"- {warning}" for warning in active + _some(result["warnings"])] or ["- none"])
-    data = "\n".join(lines).encode("utf-8", "surrogateescape")
+    shown = {rule: min(_SHOWN, len(rendered)) for rule, rendered in by_rule.items()}
+    while True:  # counts and errors lead, where the byte limit cannot cut them; drop findings from the end to fit
+        omitted = [f"{len(r) - shown[k]} {k.removeprefix('QG54-').lower()} findings omitted — see retained report"
+                   for k, r in by_rule.items() if len(r) > shown[k]]
+        details = [f"- {w}" for w in active + [x for k, r in by_rule.items() for x in r[:shown[k]]] + _some(result["warnings"])]
+        data = "\n".join(lines[:5] + omitted + lines[5:] + (details or ([] if omitted else ["- none"]))).encode("utf-8", "surrogateescape")
+        if len(data) <= _SUMMARY_BYTES or not any(shown.values()):
+            break
+        shown[next(k for k in reversed(by_rule) if shown[k])] -= 1
     if len(data) > _SUMMARY_BYTES:  # a last guard in bytes, cut at a line: every list above is already bounded
         cut = data.rindex(b"\n", 0, _SUMMARY_BYTES - 20)
         data = data[:cut] + b"\n+%d more lines" % data.count(b"\n", cut)

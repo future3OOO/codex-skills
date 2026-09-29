@@ -71,8 +71,8 @@ tests, build, or domain-specific gates.
   only each rule's pass/status/gaps, and top-level `warnings` carries only
   optional-input read failures. An immediate check's `sample` lists every
   location it found.
-- Text mode prints a bounded summary (three items per list and findings per rule,
-  items clipped at 160 characters, omissions counted, 4,000 bytes), then the whole
+- Text mode prints a bounded summary (omission counts and errors first, then up to three items
+  per list and findings per rule, items clipped at 160 characters, 4,000 bytes), then the whole
   JSON on one line: redirect a direct run to a file; typed verify keeps it out of chat.
 - Checks are path-aware through one stored classification per entry (role,
   parser language, human-authored/source status, test-like compatibility,
