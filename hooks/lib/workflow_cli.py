@@ -381,6 +381,9 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
         reason = recorded.get("bindingError") or ("verification command failed" if exit_code else "the runner reported no executed test")
         print(f"{reason}; verification stays pending until its rerun is green", file=sys.stderr)
         return 2
+    if args.kind == "quality-gate" and not state.get("revalidation"):
+        from .tdd_workflow import refresh_comparisons
+        return 0 if refresh_comparisons(identity, state) else 2
     return 0
 
 

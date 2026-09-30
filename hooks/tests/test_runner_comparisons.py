@@ -2,6 +2,7 @@
 import json
 import os
 import signal
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -44,6 +45,77 @@ class RunnerComparisonTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0,
                          "RUNNER_COMPARISON_ENTRYPOINT_MISSING: " + result.stdout + result.stderr)
 
+    def test_current_test_environment_is_retained_and_bound(self):
+        case = self.case
+        (case.repo / "tests").mkdir()
+        (case.repo / "tests/__init__.py").write_text("")
+        helper = case.repo / "tests/support.py"
+        helper.write_text("expected = 1\n")
+        (case.repo / "test_removed.py").write_text("raise AssertionError('obsolete test')\n")
+        case.git("add", ".")
+        case.git("commit", "-qm", "historical test environment")
+        slug, _ = case.begin_with_map([self.item(2)])
+        (case.repo / "test_removed.py").unlink()
+        helper.write_text("expected = 2\n")
+        (case.repo / "app.py").write_text("value = 2\n")
+        (case.repo / "test_value.py").write_text(
+            "import unittest, app\nfrom pathlib import Path\nfrom tests.support import expected\n"
+            "class Value(unittest.TestCase):\n"
+            "    def test_value(self):\n"
+            "        self.assertFalse(Path('test_removed.py').exists())\n"
+            "        self.assertEqual(app.value, expected)\n")
+        command = ("tdd", "--repo", str(case.repo), "--slug", slug, "--behavior-id", "BM_VALUE",
+                   "--", sys.executable, "-m", "unittest", "test_value")
+        first = case.cli(*command)
+        self.assertEqual(first.returncode, 0, "TEST_ENVIRONMENT_MISSING: " + first.stdout + first.stderr)
+        self.assertEqual([a["outcome"] for a in json.loads(first.stdout)["arms"]], ["failed", "passed"])
+        helper.write_text("expected = 3\n")
+        changed = case.cli(*command)
+        self.assertEqual(changed.returncode, 2, "HELPER_CHANGE_REUSED_SUCCESS: " + changed.stdout)
+        self.assertEqual([a["outcome"] for a in json.loads(changed.stdout)["arms"]], ["failed", "failed"])
+
+    def test_quality_gate_refreshes_comparisons_only_after_success(self):
+        self.assertEqual(self.operation(2).returncode, 0)
+        case = self.case
+
+        def runs():
+            state = json.loads(case.cli("status", "--repo", str(case.repo)).stdout)
+            return json.loads(case.cli("evidence", "--repo", str(case.repo), "--evidence-id",
+                                      state["tddEvidence"], "--full").stdout)["document"]["runs"]
+
+        initial = len(runs())
+        (case.repo / "app.py").write_text("from typing import Any\nvalue: Any = 2\n")
+        command = ("verify", "--repo", str(case.repo), "--kind", "quality-gate", "--base-ref", "HEAD")
+        failed = case.cli(*command)
+        self.assertEqual(failed.returncode, 2, failed.stdout + failed.stderr)
+        self.assertEqual(len(runs()), initial, "FAILED_GATE_RAN_COMPARISONS")
+        (case.repo / "app.py").write_text("value: int = 2\n")
+        passed = case.cli(*command)
+        self.assertEqual(passed.returncode, 0, passed.stdout + passed.stderr)
+        refreshed = runs()
+        self.assertEqual(len(refreshed), initial + 1, "QUALITY_GATE_DID_NOT_REFRESH_PROOF")
+        self.assertTrue(refreshed[-1]["valid"])
+        self.assertEqual(case.cli(*command).returncode, 0)
+        self.assertEqual(len(runs()), len(refreshed), "UNCHANGED_GATE_REPEATED_COMPARISON")
+        (case.repo / "app.py").write_text("value: int = 3\n")
+        self.assertEqual(case.cli(*command).returncode, 2, "FAILING_COMPARISON_PASSED_VERIFICATION")
+        self.assertFalse(runs()[-1]["valid"])
+        (case.repo / "app.py").write_text("value: int = 2\n")
+        missing = pending_behavior("BM_MISSING", behavior="another obligation", expected="its own proof")
+        update = case.tmp / "map.json"
+        update.write_text(json.dumps({"items": [self.item(2), missing]}))
+        result = case.cli("record", "tdd-map", "--repo", str(case.repo), "--input", str(update))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        result = case.cli(*command)
+        self.assertEqual(result.returncode, 2, "UNBOUND_PROBE_PASSED_VERIFICATION")
+        self.assertIn('"unresolvedProbe": "BM_MISSING"', result.stdout)
+
+    def test_snapshot_git_objects_remain_readable(self):
+        self.case.begin_with_map([self.item()])
+        result = self.case.cli("tdd", "--repo", str(self.case.repo), "--behavior-id", "BM_VALUE", "--",
+                               sys.executable, "-c", "import subprocess; assert subprocess.check_output(['git', 'show', 'HEAD:app.py']) == b'value = 1\\n'; print('Git source readable')")
+        self.assertEqual(result.returncode, 0, "GIT_SOURCE_UNREADABLE: " + result.stdout + result.stderr)
+
     def test_empty_approved_list_needs_no_proof_bookkeeping(self):
         self.case.begin_with_map([])
         state = json.loads(self.case.cli("status", "--repo", str(self.case.repo)).stdout)
@@ -57,6 +129,33 @@ class RunnerComparisonTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, "INLINE_OPERATION_REFUSED: " + repr(result.stdout + result.stderr))
         self.assertEqual([a["outcome"] for a in json.loads(result.stdout)["arms"]], ["failed", "passed"])
 
+    def test_python_option_forms_preserve_inline_operations(self):
+        self.operation()
+        for options in (("-uc",), ("-Buc",), ("-Wignore", "-c"),
+                        ("--check-hash-based-pycs", "always", "-c")):
+            with self.subTest(options=options):
+                result = self.case.cli("tdd", "--repo", str(self.case.repo), "--behavior-id", "BM_VALUE", "--",
+                                       sys.executable, *options, "import app; assert app.value == 1; print(app.value)")
+                self.assertEqual(result.returncode, 0, "INLINE_FLAGS_REFUSED: " + result.stdout + result.stderr)
+                self.assertEqual([a["outcome"] for a in json.loads(result.stdout)["arms"]], ["passed", "passed"])
+
+    def test_external_pytest_probe_cannot_reuse_unbound_success(self):
+        self.operation()
+        probe = self.case.tmp / "test_external.py"
+        local = self.case.repo / "test_external.py"
+        local.write_text("import app\ndef test_value(): assert app.value == 1\n")
+        for options in (("-m",), ("-u", "-m"), ("-um",)):
+            with self.subTest(options=options):
+                command = ("tdd", "--repo", str(self.case.repo), "--behavior-id", "BM_VALUE", "--",
+                           sys.executable, *options, "pytest", "-q")
+                for assertion in ("True", "False"):
+                    probe.write_text(f"def test_value(): assert {assertion}\n")
+                    result = self.case.cli(*command, str(probe))
+                    self.assertNotEqual(result.returncode, 0, "EXTERNAL_RUNNER_PROBE_UNBOUND: " + result.stdout)
+                    self.assertIn("proof target(s) do not resolve under the repository root", result.stderr)
+                allowed = self.case.cli(*command, str(local))
+                self.assertEqual(allowed.returncode, 0, allowed.stdout + allowed.stderr)
+
     def test_original_and_candidate_are_executed(self):
         result = self.operation(2)
         marker = "RECORDED_SOURCE_COMPARISON_MISSING: " + result.stdout + result.stderr
@@ -65,6 +164,70 @@ class RunnerComparisonTests(unittest.TestCase):
         self.assertEqual(receipt.get("comparison"), "changed", marker)
         self.assertEqual([arm["outcome"] for arm in receipt["arms"]], ["failed", "passed"], marker)
         self.assertNotEqual(receipt["arms"][0]["sourceTree"], receipt["arms"][1]["sourceTree"], marker)
+
+    def test_editable_package_uses_recorded_source(self):
+        case = self.case
+        package = case.repo / "src/auditpkg"
+        package.mkdir(parents=True)
+        (package / "__init__.py").write_text("value = 1\n")
+        (case.repo / "setup.py").write_text("from setuptools import setup\nsetup(name='auditpkg',version='0.0.1',package_dir={'':'src'},packages=['auditpkg'])\n")
+        case.git("add", "src", "setup.py")
+        case.git("commit", "-qm", "editable source")
+        venv = case.repo / ".venv"
+        subprocess.run([sys.executable, "-m", "venv", "--system-site-packages", str(venv)], check=True, capture_output=True)
+        python = str(venv / "bin/python")
+        subprocess.run([python, "-m", "pip", "install", "--no-deps", "--no-build-isolation", "-e", str(case.repo)], check=True, capture_output=True)
+        case.begin_with_map([self.item(2)])
+        (package / "__init__.py").write_text("value = 2\n")
+        (case.repo / "test_value.py").write_text("import auditpkg, unittest\nclass Value(unittest.TestCase):\n def test_value(self): self.assertEqual(auditpkg.value, 2)\n")
+        command = ("tdd", "--repo", str(case.repo), "--behavior-id", "BM_VALUE", "--", python, "-m", "unittest", "test_value")
+        for route in (None, str(case.repo / "src")):
+            if route:
+                case.env["PYTHONPATH"] = route
+            result = case.cli(*command)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual([a["outcome"] for a in json.loads(result.stdout)["arms"]], ["failed", "passed"])
+        (package / "added.py").write_text("value = 2\n")
+        (case.repo / "test_value.py").write_text("from auditpkg import added\nimport unittest\nclass Value(unittest.TestCase):\n def test_value(self): self.assertEqual(added.value, 2)\n")
+        result = case.cli(*command)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertFalse(json.loads(result.stdout)["valid"])
+
+    def test_external_script_is_not_unbound_proof(self):
+        self.operation()
+        for path in (self.case.tmp / "replay.py", self.case.repo / "test_replay.py"):
+            path.write_text("import app\nassert app.value == 1\nprint(app.value)\n")
+            command = ("tdd", "--repo", str(self.case.repo), "--behavior-id", "BM_VALUE", "--", sys.executable, str(path))
+            first, repeat = self.case.cli(*command), self.case.cli(*command)
+            if path.parent == self.case.repo:
+                self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+                self.assertTrue(json.loads(repeat.stdout)["reused"])
+            path.write_text("import app\nassert app.value == 99, 'VALUE_CHANGED'\nprint(app.value)\n")
+            changed = self.case.cli(*command)
+            self.assertNotEqual(changed.returncode, 0, changed.stdout + changed.stderr)
+
+    def test_unavailable_binding_is_incomplete_and_retryable(self):
+        self.operation(2)
+        path = self.case.tmp / "bin"
+        path.mkdir()
+        for tool in ("git", "realpath", "cksum"):
+            (path / tool).symlink_to(shutil.which(tool))
+        previous = self.case.env["PATH"]
+        self.case.env["PATH"] = str(path)
+        result = self.operation(2)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(json.loads(result.stdout)["valid"])
+        self.case.env["PATH"] = previous
+        self.assertEqual(self.operation(2).returncode, 0)
+
+    def test_denied_binding_is_not_a_production_failure(self):
+        self.operation(2)
+        result = subprocess.run(["bwrap", "--unshare-user", "--disable-userns", "--dev-bind", "/", "/", "--",
+            sys.executable, str(self.case.workflow), "tdd", "--repo", str(self.case.repo), "--behavior-id", "BM_VALUE",
+            "--", sys.executable, "-c", "import app; assert app.value == 2; print(app.value)"],
+            cwd=self.case.repo, env=self.case.env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertEqual([a["outcome"] for a in json.loads(result.stdout)["arms"]], ["incomplete", "incomplete"])
 
     def test_incomplete_execution_is_not_preservation(self):
         prefix = "import unittest, app\nclass Value(unittest.TestCase):\n"
@@ -93,6 +256,12 @@ class RunnerComparisonTests(unittest.TestCase):
         marker = "COMPARISON_REUSE_MISSING: " + first.stdout + second.stdout + second.stderr
         self.assertEqual(second.returncode, 0, repr(marker))
         before, after = (json.loads(result.stdout.splitlines()[-1]) for result in (first, second))
+        evidence = self.case.cli("evidence", "--repo", str(self.case.repo),
+                                 "--evidence-id", before["summaryId"], "--full")
+        arms = json.loads(evidence.stdout)["document"]["runs"][0]["arms"]
+        self.assertEqual(len({arm["requestedTree"] for arm in arms}), 2)
+        self.assertEqual(len({arm["sourceTree"] for arm in arms}), 1,
+                         "WITHIN_COMPARISON_REUSE_MISSING: " + first.stdout)
         self.assertEqual(before["summaryId"], after["summaryId"], marker)
         self.assertTrue(after.get("reused"), marker)
 

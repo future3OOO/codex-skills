@@ -136,9 +136,11 @@ Source and probe edits invalidate affected proof and reopen required verificatio
 ### 9. Verification
 
 After coherent repair and cleanup, assess the intended outcome against the
-verification derived in step 2. Carry applicable observations forward; run missing
-or invalidated operations, real-Seam probes of the changed Interface, and
-required lint/typecheck/build and typed gate, with
+verification derived in step 2. Run the typed quality gate before manually repeating
+recorded comparisons: after it passes, verification refreshes stale comparisons
+through their retained commands. Correct all reported occurrences before retrying.
+Carry applicable observations forward; run missing real-Seam probes and required
+lint/typecheck/build, with
 graph reanalysis when required. Follow AGENTS.md's attack-probe and verification rules.
 CI's `contracts` job owns the full runner here and step 12 waits for it.
 Verification records only through the unified CLI runner, which executes the command it records and derives status
@@ -149,8 +151,8 @@ changed between its start and its commit is retained invalid naming the
 drifted paths:
 
 ```bash
-python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" verify -- <verification command>
 python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" verify --kind quality-gate --base-ref "<base>"
+python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" verify -- <verification command>
 ```
 
 A lone pytest/unittest command the lead runs is already a receipt (the

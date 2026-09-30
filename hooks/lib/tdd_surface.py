@@ -1,20 +1,10 @@
-"""TDD surface identity and structured RED proof.
-
-RED and GREEN must select the same tests, not use byte-identical command text.
-Direct pytest and unittest commands establish reach: the runner reports an
-executed test whose own failure carries the mapped marker. Any other command is
-an operation at the production Interface: its failure is recorded with reach
-unresolved and review establishes that the observed failure is the mapped
-promise. The workflow ledger is continuity, not an attestation system.
-"""
+"""Probe selection and observed terminal failures for source comparisons."""
 from __future__ import annotations
 
 import re
 import shlex
 from collections.abc import Mapping, Sequence
 from pathlib import Path, PurePosixPath
-
-from .state_store import is_test_path
 
 SURFACE_SCHEMA_VERSION = 1
 INTERPRETER = re.compile(r"^python(3(\.\d+)?)?$")
@@ -46,7 +36,7 @@ PYTEST_SUMMARY = re.compile(r"(?m)^(?:=+ )?(.+?) in \d+\.\d+s(?: \([^)]*\))?(?: 
 # that could not start, the Python, Node and shell loaders' missing-target
 # reports, and the import and syntax exception classes. Nothing else is classified.
 PRE_INTERFACE_FAILURE = re.compile(
-    r"^(?:\[Errno \d+\] |\S+: (?:No module named |can't open file )"
+    r"^(?:bwrap: |\[Errno \d+\] |\S+: (?:No module named |can't open file )"
     r"|Error(?: \[\w+\])?: Cannot find (?:module|package) "
     r"|\S+: (?:line )?\d+: \S+: (?:command )?not found$"
     r"|(?:\w+\.)*(?:ModuleNotFoundError|ImportError|SyntaxError|IndentationError)\b)"
@@ -60,8 +50,6 @@ PYTEST_CAPTURED_HEADER = re.compile(r"^-+ Captured .+ -+$")
 # pytest closes each traceback frame with `path:line:` (the exception class only
 # on the last); unittest frames are `File "..."` lines. Object reprs carry the
 # process's addresses, which say nothing about what was observed.
-PYTEST_LOCATION = re.compile(r"^(\S+):(\d+): ?\w*$")
-UNITTEST_FRAME = re.compile(r'^  File "([^"]+)", line (\d+), in ')
 OBJECT_ADDRESS = re.compile(r" at 0x[0-9a-fA-F]+")
 PYTEST_SUMMARY_RECORDS = (
     "FAILED ",
@@ -288,58 +276,32 @@ def repository_resolution(surface: Mapping[str, object], root: object) -> str | 
     return None
 
 
-def evaluate_red(
-    surface: Mapping[str, object], output: str, marker: str, root: Path | None = None
-) -> tuple[dict[str, object] | None, str]:
-    """Evidence that RED reached the mapped failure, or why it did not: a runner's
-    report decides for runner surfaces; a non-runner operation is classified by
-    its final diagnostic and keeps its marker line with reach unresolved.
-
-    A proof also records what the failure observed apart from the authored marker
-    (issue #54): `observation` is the terminal rendering with the marker elided and
-    object addresses dropped; `site` is the last test-side frame of the terminal
-    traceback with that source line when ``root`` resolves it, or the command for
-    a non-runner operation. The same observation cannot open RED for two items."""
+def evaluate_red(surface: Mapping[str, object], output: str) -> tuple[dict[str, object] | None, str]:
     runner = surface.get("runner")
     output = ANSI_ESCAPE.sub("", output)
     lines = [line for line in output.splitlines() if line.strip()]
     diagnostic = _final_diagnostic(lines)
     if runner not in {"unittest", "pytest"} and (refusal := _pre_interface_refusal(diagnostic)):
         return None, refusal
-    if marker not in output:
-        return None, f"output did not contain the mapped redFailure marker {marker!r}"
     if runner == "unittest":
-        return _with_observation(_unittest_red(output, marker), marker, root)
+        return _with_observation(_unittest_red(output))
     if runner == "pytest":
         arguments = surface.get("arguments")
         return _with_observation(
-            _pytest_red(output, marker, arguments if isinstance(arguments, list) else ()), marker, root,
+            _pytest_red(output, arguments if isinstance(arguments, list) else ()),
         )
-    observed = diagnostic if marker in diagnostic else next(line.strip() for line in lines if marker in line)
     return {"quality": "failure-observed", "reach": "unresolved", "runner": str(runner),
-            "observedFailure": observed, "observation": [observed.replace(marker, "")],
-            "site": shlex.join(str(token) for token in surface.get("arguments") or [])}, ""
+            "observedFailure": diagnostic, "observation": [diagnostic]}, ""
 
 
 def _with_observation(
-    result: tuple[dict[str, object] | None, str], marker: str, root: Path | None
+    result: tuple[dict[str, object] | None, str]
 ) -> tuple[dict[str, object] | None, str]:
-    """Replace the runner proof's raw rendering with the recorded observation and site."""
     proof, _ = result
     if proof is None:
         return result
     rendering = proof.pop("rendering")
-    location = proof.pop("location")
-    observation = [OBJECT_ADDRESS.sub("", line.replace(marker, "")) for line in rendering if line]
-    site = location
-    if root is not None and location:
-        path, _, line_number = location.rpartition(":")
-        try:
-            source = (Path(root) / path).read_text(encoding="utf-8", errors="replace").splitlines()
-            site = f"{location} {source[int(line_number) - 1].strip()}"
-        except (OSError, IndexError, ValueError):
-            site = location
-    return {**proof, "observation": observation, "site": site}, ""
+    return {**proof, "observation": [OBJECT_ADDRESS.sub("", line) for line in rendering if line]}, ""
 
 
 def _final_diagnostic(lines: list[str]) -> str:
@@ -355,20 +317,12 @@ def _final_diagnostic(lines: list[str]) -> str:
     return last
 
 
-def _not_terminal(runner: str, terminal: list[str]) -> str:
-    return f"mapped marker was not carried by the failure that ended an executed {runner} test" + (
-        ": " + terminal[-1] if terminal else ""
-    )
-
-
 def _pre_interface_refusal(diagnostic: str) -> str | None:
     prefix = "the operation failed before reaching the production Interface: "
     return prefix + diagnostic if PRE_INTERFACE_FAILURE.match(diagnostic) else None
 
 
-def _unittest_red(
-    output: str, marker: str, *, test_id: str | None = None
-) -> tuple[dict[str, object] | None, str]:
+def _unittest_red(output: str) -> tuple[dict[str, object] | None, str]:
     runs = list(UNITTEST_RAN.finditer(output))
     ran = runs[-1] if runs else None
     if ran is None or int(ran.group(1)) < 1:
@@ -385,7 +339,7 @@ def _unittest_red(
         if count:
             summary_counts[count.group(1)] = int(count.group(2))
     failures = _unittest_terminal_failures(output)
-    report_counts = tuple(sum(header.startswith(kind) for _, header, _, _, _ in failures)
+    report_counts = tuple(sum(header.startswith(kind) for header, _, _ in failures)
                           for kind in ("FAIL: ", "ERROR: "))
     expected_counts = (
         summary_counts.get("failures", 0),
@@ -398,27 +352,14 @@ def _unittest_red(
         )
     if summary_counts.get("failures", 0) + summary_counts.get("errors", 0) < 1:
         return None, "unittest did not report a failed test"
-    if test_id is not None:
-        selected = []
-        for block in failures:
-            match = re.fullmatch(r"(?:FAIL|ERROR): (\S+) \(([^)]+)\)", block[1])
-            if match is not None:
-                name, parent = match.groups()
-                identifier = parent if parent.endswith('.' + name) else parent + '.' + name
-                if identifier == test_id:
-                    selected.append(block)
-        if len(selected) != 1:
-            return None, "the selected test has no unique terminal failure"
-        failures = selected
-    unreached = next((reason for reason in (_unittest_unreached(*block[1:3]) for block in failures) if reason), None)
+    unreached = next((reason for reason in (_unittest_unreached(*block[:2]) for block in failures) if reason), None)
     if unreached is not None:
         return None, "the operation failed before reaching the production Interface: " + unreached
-    found = next((block for block in failures for line in block[3] if marker in line), None)
-    if found is None:
-        return None, _not_terminal("unittest", [rendering[0] for _, _, _, rendering, _ in failures if rendering])
-    rendering = found[3]
-    head, observed = rendering[0], next(line for line in rendering if marker in line)
-    refusal = _pre_interface_refusal(head)
+    rendering = next((block[2] for block in failures if block[2]), [])
+    if not rendering:
+        return None, "unittest reported no terminal failure"
+    observed = rendering[0]
+    refusal = _pre_interface_refusal(observed)
     if refusal is not None:
         return None, refusal
     return {
@@ -427,7 +368,6 @@ def _unittest_red(
         "testsExecuted": int(ran.group(1)),
         "observedFailure": observed,
         "rendering": rendering,
-        "location": found[4],
     }, ""
 
 
@@ -445,21 +385,16 @@ def _unittest_unreached(header: str, frames: list[str]) -> str | None:
     return f"unittest failed in {fixture} before the test body" if fixture else None
 
 
-def _unittest_terminal_failures(output: str) -> list[tuple[int, str, list[str], list[str], str]]:
-    """Per framed FAIL or ERROR block: its offset, header, frame functions of the terminal
-    traceback unittest itself reported, that traceback's rendering (exception line
-    first) and its site: the last test-side frame as ``path:line``, else the
-    innermost. Earlier chained segments and captured output after Stdout:/Stderr:
-    never count: the failure that ended the test governs."""
-    failures: list[tuple[int, str, list[str], list[str], str]] = []
+def _unittest_terminal_failures(output: str) -> list[tuple[str, list[str], list[str]]]:
+    """Terminal traceback headers, frame functions and exceptions, excluding captured output."""
+    failures: list[tuple[str, list[str], list[str]]] = []
     reading = False
     previous = ""
-    offset = 0
     for raw_line in output.splitlines(keepends=True):
         line = raw_line.rstrip("\r\n")
         stripped = line.strip()
         if _rule(previous, "=") and line.startswith(("FAIL: ", "ERROR: ")):
-            failures.append((offset, line, [], [], ""))
+            failures.append((line, [], []))
             reading = True
         elif _rule(previous, "-") and line.startswith("Ran "):
             break  # the report's footer: anything after it is the process's own output
@@ -468,21 +403,17 @@ def _unittest_terminal_failures(output: str) -> list[tuple[int, str, list[str], 
         elif stripped in {"Stdout:", "Stderr:"}:
             reading = False
         elif stripped == "Traceback (most recent call last):":
-            failures[-1] = (*failures[-1][:2], [], [], "")
+            failures[-1] = (failures[-1][0], [], [])
         elif line.startswith('  File "'):
-            failures[-1][2].append(line.rsplit(", in ", 1)[-1])
-            frame = UNITTEST_FRAME.match(line)
-            if frame and (is_test_path(frame.group(1)) or not failures[-1][4]):
-                failures[-1] = (*failures[-1][:4], f"{frame.group(1)}:{frame.group(2)}")
-        elif failures[-1][2] and (failures[-1][3] or (line and not line[0].isspace())):
-            failures[-1][3].append(stripped)
+            failures[-1][1].append(line.rsplit(", in ", 1)[-1])
+        elif failures[-1][1] and (failures[-1][2] or (line and not line[0].isspace())):
+            failures[-1][2].append(stripped)
         previous = line
-        offset += len(raw_line)
     return failures
 
 
 def _pytest_red(
-    output: str, marker: str, arguments: Sequence[object] = ()
+    output: str, arguments: Sequence[object] = ()
 ) -> tuple[dict[str, object] | None, str]:
     if any(argument in PYTEST_TB_SUPPRESSED for argument in arguments):
         return None, (
@@ -515,13 +446,11 @@ def _pytest_red(
             f"holds {headers} header-shaped lines; printed header-shaped text "
             "cannot be attributed to a test - remove it or narrow the command"
         )
-    renderings, locations = _pytest_terminal_renderings(failures)
-    found = next((index for index, block in enumerate(renderings) for line in block if marker in line), None)
-    if found is None:
-        return None, _not_terminal("pytest", [block[0] for block in renderings if block])
-    rendering = renderings[found]
-    head, observed = rendering[0], next(line for line in rendering if marker in line)
-    refusal = _pre_interface_refusal(head)
+    rendering = next((block for block in _pytest_terminal_renderings(failures) if block), [])
+    if not rendering:
+        return None, "pytest reported no terminal failure"
+    observed = rendering[0]
+    refusal = _pre_interface_refusal(observed)
     if refusal is not None:
         return None, refusal
     return {
@@ -530,7 +459,6 @@ def _pytest_red(
         "testsExecuted": counts["failed"] + counts["passed"],
         "observedFailure": observed,
         "rendering": rendering,
-        "location": locations[found],
     }, ""
 
 
@@ -566,21 +494,14 @@ def _pytest_summary(lines: list[str]) -> tuple[dict[str, int | bool] | None, int
     return None, start
 
 
-def _pytest_terminal_renderings(lines: list[str]) -> tuple[list[list[str]], list[str]]:
-    """Per failed test's block, the E-prefixed rendering of its terminal chain
-    segment, first line first, and that segment's site: the last test-side frame
-    as ``path:line``, else the innermost; earlier segments and captured output
-    never count."""
+def _pytest_terminal_renderings(lines: list[str]) -> list[list[str]]:
+    """Terminal E-prefixed exceptions, excluding earlier chain segments and captured output."""
     blocks: list[list[str]] = []
-    locations: list[str] = []
-    innermost: list[str] = []
     captured = False
     for line in lines:
         # Every header is genuine here: _pytest_red matched the header count already.
         if PYTEST_FAILURE_HEADER.match(line):
             blocks.append([])
-            locations.append("")
-            innermost.append("")
             captured = False
         elif not blocks:
             continue
@@ -590,31 +511,51 @@ def _pytest_terminal_renderings(lines: list[str]) -> tuple[list[list[str]], list
             continue
         elif line.startswith(("During handling of the above exception", "The above exception was")):
             blocks[-1] = []
-            locations[-1] = innermost[-1] = ""
         elif line.startswith("E "):
             blocks[-1].append(line[1:].strip())
-        elif location := PYTEST_LOCATION.match(line):
-            innermost[-1] = f"{location.group(1)}:{location.group(2)}"
-            if is_test_path(location.group(1)):
-                locations[-1] = innermost[-1]
-    return blocks, [site or inner for site, inner in zip(locations, innermost)]
+    return blocks
 
 
 def _rule(line: str, character: str) -> bool:
     return len(line) >= 20 and set(line) == {character}
 
 
+def python_entry(command: Sequence[str]) -> tuple[str, str, int] | None:
+    """Locate Python's script, module or inline entry after interpreter options."""
+    if not command or not INTERPRETER.fullmatch(PurePosixPath(command[0]).name):
+        return None
+    index = 1
+    while index < len(command):
+        token = command[index]
+        index += 1
+        if token == "--":
+            return ("script", command[index], index + 1) if index < len(command) else None
+        if token == "-":
+            return None
+        if not token.startswith("-"):
+            return "script", token, index
+        if token.startswith("--"):
+            index += token == "--check-hash-based-pycs"
+            continue
+        for offset, option in enumerate(token[1:], 2):
+            if option in "cmWX":
+                value = token[offset:]
+                if not value and index < len(command):
+                    value = command[index]
+                    index += 1
+                if option in "cm":
+                    return option, value, index
+                break
+    return None
+
+
 def _recognise(command: Sequence[str]) -> tuple[str | None, Sequence[str]]:
     if not command:
         return None, ()
     executable = PurePosixPath(command[0]).name
-    if (
-        len(command) >= 3
-        and INTERPRETER.match(executable)
-        and command[1] == "-m"
-        and command[2] in IGNORED_BY_RUNNER
-    ):
-        return command[2], command[:3]
+    entry = python_entry(command)
+    if entry and entry[0] == "m" and entry[1] in IGNORED_BY_RUNNER:
+        return entry[1], command[:entry[2]]
     if executable in DIRECT_RUNNERS:
         return DIRECT_RUNNERS[executable], command[:1]
     return None, ()

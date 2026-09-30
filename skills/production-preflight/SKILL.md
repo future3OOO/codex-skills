@@ -87,6 +87,8 @@ local work short; transaction-sensitive work names the full surrounding surface.
 
 ### `authoritativeContract`
 
+For each removed or narrowed predicate or term, trace all branches it guards in the original source and derive a decisive input for every role outside the authorized removal, reusing existing `behaviorMap` items and probes.
+
 Before choosing an implementation or writing tests, investigate each behavioral
 predicate that decides an outcome:
 

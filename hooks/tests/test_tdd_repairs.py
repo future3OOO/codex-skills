@@ -137,7 +137,6 @@ class MappedTddRepairTests(unittest.TestCase):
     def tdd(
         self,
         slug: str,
-        phase: str,
         behavior_id: str,
         command: tuple[str, ...],
     ) -> subprocess.CompletedProcess[str]:
@@ -206,7 +205,6 @@ class MappedTddRepairTests(unittest.TestCase):
         )
         result = self.tdd(
             slug,
-            "red",
             "BM_BAD",
             (sys.executable, "-m", "unittest", "test_bad"),
         )
@@ -218,7 +216,7 @@ class MappedTddRepairTests(unittest.TestCase):
         slug, _ = self.begin_with_map(
             [pending_behavior("BM_UNIT", red_failure=marker)], "unittest-red"
         )
-        result = self.tdd(slug, "red", "BM_UNIT", self.write_unittest(2, marker))
+        result = self.tdd(slug, "BM_UNIT", self.write_unittest(2, marker))
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         proof = self.evidence()["runs"][-1]["arms"][-1]["proof"]
         self.assertEqual(proof["quality"], "assertion-reached")
@@ -245,7 +243,6 @@ class MappedTddRepairTests(unittest.TestCase):
         )
         result = self.tdd(
             slug,
-            "red",
             "BM_UNIT_FORGED",
             (sys.executable, "-m", "unittest", "test_forged"),
         )
@@ -276,7 +273,6 @@ class MappedTddRepairTests(unittest.TestCase):
         )
         result = self.tdd(
             slug,
-            "red",
             "BM_EXPECTED",
             (sys.executable, "-m", "unittest", "test_expected"),
         )
@@ -297,7 +293,7 @@ class MappedTddRepairTests(unittest.TestCase):
             f"raise AssertionError({marker!r})\n", encoding="utf-8"
         )
         result = self.tdd(
-            slug, "red", "BM_PY_BAD", ("pytest", "-q", "test_bad_pytest.py")
+            slug, "BM_PY_BAD", ("pytest", "-q", "test_bad_pytest.py")
         )
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
 
@@ -315,7 +311,7 @@ class MappedTddRepairTests(unittest.TestCase):
             encoding="utf-8",
         )
         result = self.tdd(
-            slug, "red", "BM_PY", ("pytest", "-q", "test_app_pytest.py")
+            slug, "BM_PY", ("pytest", "-q", "test_app_pytest.py")
         )
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         proof = self.evidence()["runs"][-1]["arms"][-1]["proof"]
@@ -338,7 +334,6 @@ class MappedTddRepairTests(unittest.TestCase):
         )
         result = self.tdd(
             slug,
-            "red",
             "BM_CAPTURE",
             ("pytest", "-q", "test_capture_pytest.py"),
         )
@@ -352,18 +347,16 @@ class MappedTddRepairTests(unittest.TestCase):
         )
 
     def test_runner_tokens_after_sentinel_are_runner_owned(self) -> None:
-        marker = "RUNNER_HELP_MARKER"
         slug, _ = self.begin_with_map(
-            [pending_behavior("BM_RUNNER", red_failure=marker)], "runner-token"
+            [pending_behavior("BM_RUNNER")], "runner-token"
         )
-        probe = self.repo / "runner_probe.py"
+        probe = self.repo / "test_runner_probe.py"
         probe.write_text(
             "import sys\nprint(sys.argv[1])\nraise SystemExit(1)\n",
             encoding="utf-8",
         )
         result = self.tdd(
             slug,
-            "red",
             "BM_RUNNER",
             (sys.executable, str(probe), "--help"),
         )

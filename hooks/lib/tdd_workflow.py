@@ -82,47 +82,20 @@ def _active_candidate(identity: RepoIdentity, value: str | None) -> tuple[JsonOb
 
 
 def _probe_files(surface: JsonObject, root: Path, support: list[str]) -> list[str]:
-    targets, discover, ambiguous, unresolved = (tdd_surface.proof_targets(surface, root)
-        if surface.get("runner") in {"pytest", "unittest"} else ([], False, False, []))
-    if ambiguous or (unresolved and not targets):
-        if not support:
-            raise WorkflowError("name the probe's local test target or --support: " + str(unresolved or ambiguous))
-        targets = []
-    paths = set()
+    names = _git(resolve_repo_identity(root), "ls-files", "--cached", "--others", "--exclude-standard", "-z")
+    paths = {name for raw in names.split(b"\0") if raw
+             and is_test_path(name := os.fsdecode(raw)) and (root / name).exists()}
     arguments = surface.get("arguments") or []
-    if (surface.get("runner") == "exact" and len(arguments) > 1
-            and tdd_surface.INTERPRETER.fullmatch(Path(arguments[0]).name)
-            and arguments[1].endswith(".py") and is_test_path(arguments[1])):
-        paths.add(os.path.relpath(root / arguments[1], root))
-    for target in targets:
-        scope = _target_scope(target, root, discover or surface.get("runner") == "pytest")
-        if scope is None:
-            raise WorkflowError("probe target cannot be resolved: " + target)
-        if scope[2]:
-            names = _git(resolve_repo_identity(root), "ls-files", "--cached", "--others", "--exclude-standard", "-z")
-            paths.update(name for raw in names.split(b"\0") if raw
-                         and is_test_path(name := os.fsdecode(raw))
-                         and (root / name).exists()
-                         and (root / name).is_relative_to(root / scope[0]))
-        else:
-            paths.add(scope[0])
+    entry = tdd_surface.python_entry(arguments)
+    if surface.get("runner") == "exact" and entry and entry[0] == "script":
+        paths.add(os.path.relpath(root / entry[1], root))
     paths.update(support)
-    for name in list(paths):
+    for name in paths:
         path = root / name
         if not path.is_file() or path.is_symlink() or not path.resolve().is_relative_to(root):
             raise WorkflowError("probe support must be an in-repository regular file: " + name)
         if not is_test_path(name):
             raise WorkflowError("production source cannot be overlaid as test support: " + name)
-        for parent in path.relative_to(root).parents:
-            init = root / parent / "__init__.py"
-            if init.is_file() and is_test_path(str(init.relative_to(root))):
-                paths.add(str(init.relative_to(root)))
-        for parent in [path.parent, *path.parent.parents]:
-            if not parent.is_relative_to(root):
-                break
-            conf = parent / "conftest.py"
-            if conf.is_file():
-                paths.add(str(conf.relative_to(root)))
     return sorted(paths)
 
 
@@ -151,7 +124,9 @@ def _execution_key(identity: RepoIdentity, source: str, probe: str, files: list[
     executable_state = os.stat(execution["executable"])
     config = json.dumps([command, timeout, execution,
                          executable_state.st_size, executable_state.st_mtime_ns], sort_keys=True).encode()
-    return hashlib.sha256(b"\0".join(production) + support + config).hexdigest()
+    producer = b"".join(Path(__file__).with_name(name).read_bytes()
+                       for name in ("tdd_workflow.py", "tdd_surface.py", "command_runner.py"))
+    return hashlib.sha256(b"\0".join(production) + support + config + producer).hexdigest()
 
 
 def _reviewed_sources(identity: RepoIdentity, state: JsonObject, mapped: JsonObject) -> dict[str, str]:
@@ -181,34 +156,35 @@ def _execute_tree(identity: RepoIdentity, source_tree: str, candidate_tree: str,
                   command: list[str], surface: JsonObject, timeout: float) -> JsonObject:
     with tempfile.TemporaryDirectory(prefix="workflow-proof-") as temporary:
         root = Path(temporary) / "source"
-        subprocess.run(["git", "clone", "--quiet", "--shared", "--no-checkout", identity.root, str(root)],
+        subprocess.run(["git", "clone", "--quiet", "--no-checkout", identity.root, str(root)],
                        check=True, capture_output=True)
         snapshot = resolve_repo_identity(root)
         _git(snapshot, "read-tree", source_tree)
         _git(snapshot, "checkout-index", "--all")
         for raw in _git(snapshot, "ls-files", "-z").split(b"\0"):
-            if raw and is_test_path(name := os.fsdecode(raw)):
+            if raw and is_test_path(name := os.fsdecode(raw)) and name not in files:
                 (root / name).unlink(missing_ok=True)
         for name in files:
             path = root / name
             if any(parent.is_symlink() for parent in path.parents if parent.is_relative_to(root)):
                 raise WorkflowError("snapshot probe parent is a symlink: " + name)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(_git(identity, "show", f"{candidate_tree}:{name}"))
-            mode = int(_git(identity, "ls-tree", candidate_tree, "--", name).split()[0], 8)
-            path.chmod(mode & 0o777)
+        _git(snapshot, "read-tree", candidate_tree)
+        _git(snapshot, "checkout-index", "--force", "-z", "--stdin",
+             stdin=b"".join(os.fsencode(name) + b"\0" for name in files))
+        _git(snapshot, "read-tree", source_tree)
         env = _environment()
-        search = env.get("PYTHONPATH", "").replace(str(identity.root), str(root))
-        env.update(PYTHONPATH=os.pathsep.join(filter(None, (str(root), search))), PWD=str(root), TMPDIR=temporary,
+        env.update(PYTHONPATH=os.pathsep.join(filter(None, (identity.root, env.get("PYTHONPATH")))), PWD=identity.root, TMPDIR=temporary,
                    CODEX_WORKFLOW_STATE_ROOT=str(Path(temporary) / "state"))
-        actual = [token.replace(str(identity.root) + "/", str(root) + "/") for token in command]
-        if tdd_surface.INTERPRETER.fullmatch(Path(command[0]).name) or surface.get("runner") in {"pytest", "unittest"}:
-            actual[0] = _executable(identity, command[0])
+        actual = [_executable(identity, command[0]), *command[1:]]
+        binding = ["bwrap", "--die-with-parent", "--dev-bind", "/", "/", "--bind", str(root), identity.root]
+        runtime = Path(actual[0]).parent.parent
+        if runtime.is_relative_to(identity.root) and (runtime / "pyvenv.cfg").is_file():
+            binding.extend(["--ro-bind", str(runtime), str(runtime)])
         if surface.get("runner") == "pytest":
             position = actual.index("--") if "--" in actual else len(actual)
             actual.insert(position, "--override-ini=addopts=")
         try:
-            raw, code, timed_out = _run(actual, snapshot, timeout, env=env)
+            raw, code, timed_out = _run([*binding, "--chdir", identity.root, "--", *actual], snapshot, timeout, env=env)
         except OSError as exc:
             raw, code, timed_out = str(exc).encode(), 127, False
         output = raw.decode("utf-8", errors="replace")
@@ -217,10 +193,10 @@ def _execute_tree(identity: RepoIdentity, source_tree: str, candidate_tree: str,
             if code == 0:
                 proof, error = _pass_proof(surface, output)
             else:
-                proof, error = tdd_surface.evaluate_red(surface, output, "", root)
+                proof, error = tdd_surface.evaluate_red(surface, output)
         outcome = ("passed" if code == 0 else "failed") if proof else "incomplete"
         return _run_entry(raw, code, timed_out, sourceTree=source_tree, outcome=outcome,
-                          proof=proof, error=error, output=output, loadedRoot=str(root))
+                          proof=proof, error=error, output=output, loadedRoot=identity.root)
 
 
 def _run_tdd(values: list[str]) -> int:
@@ -230,7 +206,7 @@ def _run_tdd(values: list[str]) -> int:
     parser.add_argument("--slug")
     parser.add_argument("--behavior-id", required=True)
     parser.add_argument("--support", action="append", default=[])
-    parser.add_argument("--timeout", type=float, default=900)
+    parser.add_argument("--timeout", type=float, default=900.0)
     args = parser.parse_args(values[:dash])
     command = values[dash + 1:]
     if not command or args.timeout <= 0:
@@ -267,6 +243,8 @@ def _run_tdd(values: list[str]) -> int:
         if arm is None:
             arm = _execute_tree(identity, source, candidate, files, command, surface, args.timeout)
             arm["key"] = key
+            if arm["outcome"] in {"passed", "failed"}:
+                cache[(key, source)] = arm
         arms.append({**arm, "requestedTree": source})
     outcomes = [arm["outcome"] for arm in arms]
     valid = outcomes[-1] == "passed" and all(outcome in {"passed", "failed"} for outcome in outcomes[:-1])
@@ -287,6 +265,25 @@ def _run_tdd(values: list[str]) -> int:
                summaryId=evidence, runIndex=len(document["runs"])-1, valid=run["valid"],
                comparison=comparison, arms=behavior_map.comparison_view(run)["arms"]))
     return 0 if run["valid"] else 2
+
+
+def refresh_comparisons(identity: RepoIdentity, state: JsonObject) -> bool:
+    """Refresh recorded operations after quality succeeds, without caller reassembly."""
+    items, _ = current_map(identity, state)
+    for item in items or []:
+        if behavior_map.producer_proved(item):
+            continue
+        proof = item.get("comparison")
+        if not proof:
+            _emit_json({"unresolvedProbe": item["id"], "reason": "no recorded command"})
+            return False
+        arguments = ["--repo", str(identity.root), "--slug", state["slug"],
+                     "--behavior-id", item["id"], "--timeout", str(proof["timeout"])]
+        for name in proof["support"]:
+            arguments.extend(["--support", name])
+        if _run_tdd([*arguments, "--", *shlex.split(proof["command"])]):
+            return False
+    return True
 
 
 def map_update(identity: RepoIdentity, state: JsonObject, value: JsonObject) -> JsonObject:

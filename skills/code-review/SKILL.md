@@ -69,7 +69,7 @@ expected/observed results under those same verification rules.
 
 ## 5. Review both axes
 
-Derive decisive inputs independently from changed predicates and their remaining uses. Apply Production Code's purpose-qualified deletion rule to the expectation itself. A check that finds words in the request or confirms the observed difference does not refute a finding that the difference is unauthorized. Reuse applicable proof; require no interpretation form or second coverage inventory.
+For each removed or narrowed predicate or term, trace all branches it guards in the original source and independently derive a decisive input for every role outside the authorized removal, reusing existing `behaviorMap` items and probes. A check that finds words in the request or confirms the observed difference does not refute a finding that the difference is unauthorized. Reuse applicable proof; require no interpretation form or second coverage inventory.
 
 Run **Standards** and **Spec** independently:
 
