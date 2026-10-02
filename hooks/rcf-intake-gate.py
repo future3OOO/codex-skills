@@ -148,8 +148,10 @@ def main() -> int:
                            and owner.get("implementerContextId") and owner.get("reviewerContextId")
                            and owner["implementerContextId"] != owner["reviewerContextId"]]
                 if repairs:
+                    # A continuation names its target relative to the caller or canonically.
                     if not (tool_name in {"followup_task", "send_input", "resume_agent"}
-                            and any(target is not None and target == owner.get("implementerContextId")
+                            and any(isinstance(target, str) and target.strip("/")
+                                    and ("/" + str(owner.get("implementerContextId")).strip("/")).endswith("/" + target.strip("/"))
                                     and session is not None and session == owner.get("reviewerContextId") for owner in repairs)):
                         missing.append("second recurrence requires continuation of the retained reviewer for repair")
                 else:

@@ -518,17 +518,19 @@ class PendingAdvisorRetries(AttackHarness):
         # A fresh reviewer cannot be spawned over the recurring failure; the retained one stays continuable once named.
         self.assertIn('"deny"', dispatch("spawn_agent"), marker)
         # The named reviewer reports the recurring defect it observes; its review names the owner.
-        self.ok("record", "review", "--slug", "pending-retry", "--workflow-id", wid, "--review-context-id", "retry-fixture",
+        self.ok("record", "review", "--slug", "pending-retry", "--workflow-id", wid, "--review-context-id", "/root/retry-fixture",
                 "--input", str(self.json_file("named.json", {"findings": [{**self.CAPTURED, "id": "SPEC-1"}]})))
         self.assertEqual(self.status()["findingStates"][-1].get("repairOwner"),
-                         {"implementerContextId": "retry-fixture", "reviewerContextId": self.env["CODEX_THREAD_ID"]}, marker)
-        self.assertNotIn('"deny"', dispatch("followup_task", "retry-fixture"), marker)
+                         {"implementerContextId": "/root/retry-fixture", "reviewerContextId": self.env["CODEX_THREAD_ID"]}, marker)
+        # obs6: the lead continues its reviewer by the relative name spawn_agent returned beside the canonical one
+        for target, denied in (("retry-fixture", False), ("/root/retry-fixture", False), ("fixture", True)):
+            self.assertEqual('"deny"' in dispatch("followup_task", target), denied, f"{marker}: {target}")
         # The retained reviewer's repair turns the refreshed comparison green; the lead then certifies it.
         (self.repo / "app.py").write_text("value = 2\n")
         self.ok("verify", "--slug", "pending-retry", "--kind", "quality-gate", "--base-ref", "HEAD")
-        review = self.json_file("lead-review.json", {"findings": [], "implementationContextId": "retry-fixture"})
+        review = self.json_file("lead-review.json", {"findings": [], "implementationContextId": "/root/retry-fixture"})
         refused = self.cli("record", "review", "--slug", "pending-retry", "--workflow-id", wid,
-                           "--review-context-id", "retry-fixture", "--input", str(review))
+                           "--review-context-id", "/root/retry-fixture", "--input", str(review))
         self.assertIn("--review-context-id", refused.stderr, marker)
         self.ok("record", "review", "--slug", "pending-retry", "--workflow-id", wid,
                 "--review-context-id", self.env["CODEX_THREAD_ID"], "--input", str(review))
