@@ -13,7 +13,7 @@ import uuid
 from pathlib import Path
 from typing import Callable, Sequence
 
-from . import behavior_map, tdd_surface
+from . import behavior_map
 from ._workflow_db import (
     CHECK_ONLY,
     EvidenceWrite,
@@ -745,52 +745,6 @@ def record_base_oid(identity: RepoIdentity, slug: str, workflow_id: str | None, 
             return state
         state["baseOid"] = oid
         return _commit(transaction, state, "record-base-oid")
-
-
-PASS_START_SNAPSHOT_FIELDS = ("indexRepo", "indexPath", "analysisRepo", "sourceCommit", "indexedTree", "recordedAt")
-
-
-def record_pass_start_snapshot(
-    identity: RepoIdentity, slug: str, workflow_id: str | None,
-    snapshot: JsonObject | None = None, gap: str | None = None,
-) -> JsonObject:
-    """Record the index this pass started against, immutable for the life of the pass.
-
-    This names the index built at intake: its GitNexus selector, index
-    directory, analysis checkout, source commit, and the tree the index was
-    built from. Revalidation re-indexes the dirty candidate and records its own
-    identity in that run's evidence, which is a different graph and never this
-    baseline — so the first recorded snapshot wins here exactly as `baseOid`
-    does, and a differing rerun is reported by the caller rather than absorbed.
-
-    A partial identity is never stored as a snapshot: a missing field is not an
-    absent baseline, and inventing one would record a snapshot nothing
-    measured. Its measured reason is recorded as a gap instead, and unlike the
-    snapshot a gap is replaceable — a later intake that does resolve an
-    identity is the pass's baseline, where a recorded snapshot is already the
-    answer and stands.
-    """
-    if (snapshot is None) == (gap is None):
-        raise ValueError("record either a pass-start snapshot or its measured gap")
-    recorded = None
-    if snapshot is not None:
-        missing = [name for name in PASS_START_SNAPSHOT_FIELDS if not str(snapshot.get(name) or "").strip()]
-        if missing:
-            raise ValueError("pass-start snapshot is missing " + ", ".join(missing))
-        recorded = {name: str(snapshot[name]).strip() for name in PASS_START_SNAPSHOT_FIELDS}
-    elif not str(gap).strip():
-        raise ValueError("a pass-start snapshot gap requires its measured reason")
-    with mutation(identity) as transaction:
-        state = _bound_instance_state(transaction.state, slug, workflow_id)
-        existing = state.get("passStartSnapshot")
-        if isinstance(existing, dict) and existing:
-            return state
-        if recorded is None:
-            state["passStartSnapshotGap"] = str(gap).strip()
-        else:
-            state["passStartSnapshot"] = recorded
-            state.pop("passStartSnapshotGap", None)
-        return _commit(transaction, state, "record-pass-start-snapshot")
 
 
 def _verification_key(run: JsonObject) -> str:
@@ -2164,8 +2118,6 @@ def public_status(state: JsonObject, identity: RepoIdentity | None = None, *,
     candidate = candidate_tree
     if identity is not None and (graph_needed or fields is None or "activeCandidateTree" in fields):
         candidate = candidate or _active_candidate_tree(identity)
-    selections = (_executed_selections(identity, state)
-                  if identity is not None and (fields is None or "mapSelections" in fields) else None)
     graph_id = state.get("repoContextForgeEvidence")
     graph_document = (
         evidence_document(identity, graph_id)
@@ -2182,9 +2134,6 @@ def public_status(state: JsonObject, identity: RepoIdentity | None = None, *,
     result = {
         **state,
         **({"activeCandidateTree": candidate} if candidate is not None else {}),
-        # Only when the map has executed something: an empty projection would
-        # change the shape every reader sees while saying nothing at all.
-        **({"mapSelections": selections} if selections else {}),
         "repoContextForge": stored if ready or stored != "passed" else "pending",
         "gitnexus": "passed" if ready else "pending",
     }
@@ -2200,53 +2149,6 @@ def public_status(state: JsonObject, identity: RepoIdentity | None = None, *,
         result.pop("intent", None)
         return result
     return {key: value for key, value in result.items() if key in fields}
-
-
-def _selection(command: str, root: object) -> JsonObject:
-    """The tests one recorded command selected, or why that cannot be decided.
-
-    Ownership that cannot be decided is reported as unknown, never as an empty
-    selection: a reader comparing these against an impacted-test set would read
-    an empty list as "this proof owns nothing" and an unknown as "ask someone
-    else", and only one of those is safe to act on.
-    """
-    surface = tdd_surface.identify(shlex.split(command))
-    if surface.get("runner") not in {"unittest", "pytest"}:
-        return {"command": command, "targets": None, "unknown": "the runner is not a supported test surface"}
-    targets, discover, ambiguous, unresolved = tdd_surface.proof_targets(surface, root)
-    if ambiguous:
-        return {
-            "command": command, "targets": None,
-            "unknown": "an unrecognized option may own these tokens: " + ", ".join(sorted(ambiguous)),
-        }
-    if unresolved:
-        return {
-            "command": command, "targets": None,
-            "unknown": f"{unresolved} is not resolved by the recorded surface, so the selected tests are unknown",
-        }
-    return {"command": command, "targets": sorted(targets), **({"discover": True} if discover else {})}
-
-
-def _executed_selections(identity: RepoIdentity, state: JsonObject) -> JsonObject | None:
-    """Per current map item, the tests each recorded proof actually selected."""
-    try:
-        items = behavior_map.recorded_map(
-            evidence_document(identity, state.get("tddEvidence")),
-            evidence_document(identity, state.get("preflightEvidence")),
-        )
-    except (WorkflowError, LedgerError, ValueError):
-        return None
-    if items is None:
-        return None
-    selections: JsonObject = {}
-    for entry in items:
-        executed = {
-            phase: _selection(command, identity.root)
-            for phase, command in behavior_map.executed_commands(entry).items()
-        }
-        if executed:
-            selections[str(entry["id"])] = executed
-    return selections
 
 
 def _earned_split(identity: RepoIdentity, state: JsonObject, labels: bool) -> str:
@@ -2380,7 +2282,7 @@ def summary(identity: RepoIdentity, limit: int = 3000, *, labels: bool = True) -
     if state is None:
         return "Workflow state unavailable; do not infer that any workflow step passed."
     state = public_status(state, identity, recovery=True,
-                          fields=(set(state) | {"activeCandidateTree", "bindingError"}) - {"mapSelections"})
+                          fields=set(state) | {"activeCandidateTree", "bindingError"})
     gate_drift = state.get("bindingError")
     advisor = state.get("advisorPreflight") if isinstance(state.get("advisorPreflight"), dict) else {}
     code_review = state.get("codeReview") if isinstance(state.get("codeReview"), dict) else {}

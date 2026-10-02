@@ -992,6 +992,16 @@ class AdvisoryDedup(Ceremony):
         (self.tmp / "state" / "_advisories").write_text("", encoding="utf-8")
         self.advise(REARM, "dedup-session", hook_event_name="PostCompact", trigger="auto")  # asserts exit 0
 
+    def test_the_edit_survives_a_closed_stdout_reader(self) -> None:
+        # Lint feedback rides the hook's stdout; a broken reader loses it, never the edit.
+        (self.repo / "app.py").write_text("value = undefined_name\nother = 1\n", encoding="utf-8")
+        proc = subprocess.Popen([sys.executable, str(POST_TOOL)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, text=True, cwd=self.repo, env=self.env)
+        proc.stdout.close()
+        _, err = proc.communicate(input=json.dumps({"tool_input": {"file_path": str(self.repo / "app.py")},
+                                                    "session_id": "closed-reader"}), timeout=120)
+        self.assertEqual((proc.returncode, "BrokenPipeError" in err), (0, False), "EDIT_FAILS_ON_CLOSED_STDOUT: " + err[-200:])
+
 
 class ObservedCapture(Ceremony):
     def hook(self, command: str, cwd: Path) -> dict[str, object]:
@@ -1313,6 +1323,18 @@ class FlagDisposition(Ceremony):
         self.ok_raw("verify", "--kind", "quality-gate", "--base-ref", "HEAD")
         fixed = self.cli("record", "advisor-disposition", "--finding", "SPEC-1", "--fixed", "--reason", "relinked owner")
         self.assertEqual(fixed.returncode, 0, "RELINK_DROPPED_PROOF: " + fixed.stderr[-400:])
+
+    def test_gate_republishes_readiness_left_stale_by_a_transient_edit(self) -> None:
+        self.begin()
+        self.record_preflight({"authoritativeContract": "fixture", "behaviorMap": [item("BM_ATTACK", basis="fixture")]})
+        (self.repo / "app.py").write_text("value = 2\nother = 1\n", encoding="utf-8")
+        self.comparison(0, "BM_ATTACK")
+        (self.repo / "app.py").write_text("value = 4\nother = 1\n", encoding="utf-8")
+        for items in ([item("BM_ATTACK", basis="fixture"), item("BM_EXTRA", basis="fixture")], [item("BM_ATTACK", basis="fixture")]):
+            self.ok("record", "tdd-map", "--input", "-", input=json.dumps({"items": items}))
+        (self.repo / "app.py").write_text("value = 2\nother = 1\n", encoding="utf-8")
+        self.ok_raw("verify", "--kind", "quality-gate", "--base-ref", "HEAD")
+        self.assertEqual(self.state()["tdd"], "passed", "GATE_LEFT_STALE_READINESS")
 
 
 class FlagRefusal(Ceremony):

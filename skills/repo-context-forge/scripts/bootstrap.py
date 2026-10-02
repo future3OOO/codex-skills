@@ -30,7 +30,6 @@ from hooks.lib.workflow_state import (  # noqa: E402
     instance_id,
     read_workflow,
     record_base_oid,
-    record_pass_start_snapshot,
     safe_slug,
 )
 
@@ -182,54 +181,6 @@ def _record_pass_base(identity: RepoIdentity, slug: str, workflow_id: str, packe
         sys.stderr.write(
             f"note: pass base already recorded as {recorded}; this bootstrap resolved "
             f"{merge_base}; keeping the immutable recorded base\n"
-        )
-
-
-def _pass_start_snapshot(packet: Path) -> tuple[dict[str, str] | None, str]:
-    """The identity of the index this intake analysed, or None when it is not complete.
-
-    Its recorded presence keeps later intakes in the candidate slot. The tree
-    is the index's own `indexedTree`, written by the producer that built it, not
-    the packet's `indexed_candidate_tree`. Anything short of the whole identity
-    records nothing, because a missing field is not an absent baseline.
-    """
-    payload = json.loads(packet.read_text(encoding="utf-8"))
-    gitnexus = payload.get("gitnexus")
-    target = payload.get("target_state")
-    gitnexus = gitnexus if isinstance(gitnexus, dict) else {}
-    target = target if isinstance(target, dict) else {}
-    index_path = str(gitnexus.get("index_path") or "")
-    if not index_path:
-        return None, "the packet names no index directory for this analysis"
-    try:
-        meta = json.loads((Path(index_path) / "meta.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        return None, f"the index metadata at {index_path} could not be read: {exc}"
-    snapshot = {
-        "indexRepo": str(gitnexus.get("repo") or ""),
-        "indexPath": index_path,
-        "analysisRepo": str(target.get("analysis_repo") or gitnexus.get("expected_repo_path") or ""),
-        "sourceCommit": str(meta.get("lastCommit") or ""),
-        "indexedTree": str(meta.get("indexedTree") or ""),
-        "recordedAt": str(meta.get("indexedAt") or ""),
-    }
-    missing = sorted(name for name, value in snapshot.items() if not value.strip())
-    if missing:
-        return None, f"the index at {index_path} records no {', '.join(missing)}"
-    return snapshot, ""
-
-
-def _record_pass_start(identity: RepoIdentity, slug: str, workflow_id: str, packet: Path) -> None:
-    """Record the pass-start index identity, first run wins, differing reruns reported."""
-    snapshot, gap = _pass_start_snapshot(packet)
-    if snapshot is None:
-        record_pass_start_snapshot(identity, slug, workflow_id, gap=gap)
-        return
-    recorded = record_pass_start_snapshot(identity, slug, workflow_id, snapshot).get("passStartSnapshot")
-    if recorded != snapshot:
-        sys.stderr.write(
-            f"note: pass-start snapshot already recorded as {recorded}; this intake resolved "
-            f"{snapshot}; keeping the immutable recorded snapshot\n"
         )
 
 
@@ -558,10 +509,6 @@ def main(argv: list[str]) -> int:
     except (WorkflowError, RepoIdentityError, ValueError) as exc:
         sys.stderr.write(f"<blocker>cannot bind Repo Context Forge to the active workflow: {exc}</blocker>\n")
         return 2
-    if state.get("passStartSnapshot"):
-        # The pass already indexed a checkout and recorded it as its baseline;
-        # the producer's candidate slot keeps this intake off that one.
-        args.append("--candidate-slot")
     # The machine packet is asked of the same packet-generation pass that renders the
     # prompt, into a private directory this process owns: one graph execution, and
     # nothing written to the user's checkout or the state root.
@@ -595,10 +542,6 @@ def main(argv: list[str]) -> int:
                 ),
             )
             _record_pass_base(identity, slug, captured_workflow_id, packet)
-            if not revalidate:
-                # Revalidation analyses the dirty candidate, a different graph
-                # the typed gate consumes; the pass-start index stays recorded.
-                _record_pass_start(identity, slug, captured_workflow_id, packet)
         except (WorkflowError, RepoIdentityError, ValueError) as exc:
             sys.stderr.write(
                 f"<blocker>cannot record Repo Context Forge graph evidence: {exc}; "

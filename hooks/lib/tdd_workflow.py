@@ -265,7 +265,7 @@ def _run_tdd(values: list[str]) -> int:
     previous = [item.get("comparison") for item in mapped]
     if (all(proof and proof.get("valid") and proof.get("fresh") and proof.get("candidateKey") == keys[-1] for proof in previous)
             and len({proof["runIndex"] for proof in previous}) == 1
-            and state.get("tdd") == ("in-progress" if behavior_map.unresolved(items) else "passed")):
+            and not _readiness_stale(state, items)):
         _emit_json(operation_receipt(state, identity, kind="tdd", **selection,
                    summaryId=state["tddEvidence"], runIndex=previous[0]["runIndex"], valid=True, reused=True,
                    comparison=previous[0]["comparison"], arms=behavior_map.comparison_view(previous[0])["arms"]))
@@ -303,12 +303,14 @@ def _run_tdd(values: list[str]) -> int:
 
 
 def refresh_comparisons(identity: RepoIdentity, state: JsonObject) -> bool:
-    """Refresh recorded operations after quality succeeds, without caller reassembly."""
+    """Refresh recorded operations after quality succeeds, without caller reassembly.
+    Stale recorded readiness republishes through one owning operation's cached arms."""
     items, _ = current_map(identity, state)
     refreshed = set()
+    stale = _readiness_stale(state, items or [])
     for item in items or []:
         proof = item.get("comparison")
-        if not proof or proof.get("fresh") or proof["runIndex"] in refreshed:
+        if not proof or (proof.get("fresh") and not stale) or proof["runIndex"] in refreshed:
             continue
         arguments = ["--repo", str(identity.root), "--slug", state["slug"], "--timeout", str(proof["timeout"])]
         for owner in items:
@@ -319,7 +321,12 @@ def refresh_comparisons(identity: RepoIdentity, state: JsonObject) -> bool:
         if _run_tdd([*arguments, "--", *shlex.split(proof["command"])]):
             return False
         refreshed.add(proof["runIndex"])
+        stale = False
     return True
+
+
+def _readiness_stale(state: JsonObject, items: list[JsonObject]) -> bool:
+    return state.get("tdd") != ("in-progress" if behavior_map.unresolved(items) else "passed")
 
 
 def map_update(identity: RepoIdentity, state: JsonObject, value: JsonObject) -> JsonObject:
