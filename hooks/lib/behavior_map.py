@@ -105,12 +105,32 @@ def producer_proved(entry: JsonObject) -> bool:
 
 def comparison_view(run: JsonObject) -> JsonObject:
     """Bound reviewer context; complete process evidence remains in the ledger."""
+    original = _operation_lines(run["arms"][0])
     return {**{key: run[key] for key in ("comparison", "valid", "fresh", "runIndex", "command") if key in run},
             "arms": [{"tree": arm["requestedTree"],
                       "outcome": arm["outcome"], "error": arm["error"][:500],
-                      "observation": "\n".join((arm.get("proof") or {}).get("observation", []))[:1000],
+                      "observation": _changed_lines(original, _operation_lines(arm))
+                      or "\n".join((arm.get("proof") or {}).get("observation", []))[:1000],
                       "testsExecuted": (arm.get("proof") or {}).get("testsExecuted")}
                      for arm in run["arms"]]}
+
+
+def _operation_lines(arm: JsonObject) -> list[str] | None:
+    """A passing operation probe's output lines; test runners report through assertions instead."""
+    if (arm.get("proof") or {}).get("quality") != "operation-succeeded" or arm.get("outcome") != "passed":
+        return None
+    return str(arm.get("output", "")).replace(str(arm.get("loadedRoot")), "<source>").splitlines()
+
+
+def _changed_lines(original: list[str] | None, lines: list[str] | None) -> str:
+    """The cases whose printed outcome differs from the original arm's."""
+    if original is None or lines is None:
+        return ""
+    if len(original) == len(lines):
+        pairs = [(old, new) for old, new in zip(original, lines) if old != new]
+    else:
+        pairs = [(old, None) for old in original if old not in lines] + [(None, new) for new in lines if new not in original]
+    return "\n".join(f"{sign} {line}" for pair in pairs for sign, line in zip("-+", pair) if line is not None)[:2000]
 
 
 def unresolved(items: list[JsonObject]) -> list[str]:

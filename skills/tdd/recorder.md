@@ -13,7 +13,7 @@ The compact receipt names each compared tree with its outcome; trees with identi
 For changed obligations, submit the complete list through `record tdd-map --input FILE`:
 
 ```json
-{"items":[{"id":"BM_X","basis":"original request","behavior":"requested observable behavior","seam":"public operation","expected":"observable result","sourceRefs":[{"type":"finding","evidenceId":"INTAKE","id":"R-1"}]}]}
+{"items":[{"id":"BM_X","basis":"original request","behavior":"requested observable behavior","seam":"owning Module's Interface","expected":"observable result","sourceRefs":[{"type":"finding","evidenceId":"INTAKE","id":"R-1"}]}]}
 ```
 
 `sourceRefs` is optional unless the probe owns a finding. Unchanged items retain applicable proof; changed items require comparison. The runner refuses deletion of the only material finding owner. An unchanged list writes no event. Use existing review dispositions for measured rejections; changing a list is not a finding disposition.

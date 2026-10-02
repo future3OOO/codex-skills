@@ -1760,7 +1760,7 @@ def completion_missing(state: JsonObject) -> list[str]:
     return missing if instance_id(state) else ["workflowId", *missing]
 
 
-CHECKPOINT_PHASES = {"preflight-advice", "final-review"}
+CHECKPOINT_PHASES = {"preflight-advice", "code-review", "final-review"}
 
 
 def _recorded_items(
@@ -1862,10 +1862,11 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
         "preflight-advice": {"preflight"},
         "final-review": {"final-review", "appeal-final-review", "re-consult-final-review", "complete-workflow"},
     }
+    reviewing = phase == "code-review"
     requirements = (
         ("workflowId", workflow_id is not None),
         ("open-workflow", open_for_phase),
-        ("advisor-stage", reconsult or state.get("nextAction") in stage_actions[phase]
+        ("advisor-stage", reviewing or reconsult or state.get("nextAction") in stage_actions[phase]
          or phase == "final-review" and _review_assessed(state)),
         ("passStartOid", _is_commit_oid(identity, state.get("passStartOid"))),
         *(
@@ -1873,7 +1874,7 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
             if phase == "preflight-advice"
             else (
                 ("verification", _allows_next(state, "verification")),
-                ("code-review", _allows_next(state, "code-review") or _review_assessed(state)),
+                *(() if reviewing else (("code-review", _allows_next(state, "code-review") or _review_assessed(state)),)),
             )
         ),
     )
@@ -1934,9 +1935,11 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
     if channel_dir is None:
         return result
     ledger = _finding_ledger(identity, state, items)
-    map_content = [{**{key: value for key, value in item.items() if key != "comparison"},
-                    **({"comparison": behavior_map.comparison_view(item["comparison"])} if item.get("comparison") else {})}
-                   for item in items]
+    contract = ((evidence_document(identity, state.get("preflightEvidence")) or {}).get("document") or {}).get("authoritativeContract")
+    map_content = {"authoritativeContract": contract,
+                   "items": [{**{key: value for key, value in item.items() if key != "comparison"},
+                              **({"comparison": behavior_map.comparison_view(item["comparison"])} if item.get("comparison") else {})}
+                             for item in items]} if contract or items else None
     if phase == "preflight-advice" and preflight_draft is not None:
         previous = evidence_document(identity, (state.get("advisorPreflight") or {}).get("intakeEvidence")) or {}
         prior = previous.get("preflightDraft") if reconsult else None

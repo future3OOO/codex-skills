@@ -16,11 +16,12 @@ this estate's recorder, a temporary `CODEX_WORKFLOW_STATE_ROOT`) and clean up.
 
 ## 1. Fix the review target
 
-In a governed pass obtain missing contract and candidate identity (`intent`,
-`workflowId`, `activeCandidateTree`, `baseOid`) from
-`python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" status --repo "$PWD"`
-and its recorded evidence; use `--fields` for only the missing facts. Otherwise
-take them from the PR or request. Record
+In a governed pass first load the review package and read every channel it lists:
+`python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" checkpoint --repo "$PWD" --phase code-review --channel-dir "$(mktemp -d)"`.
+It holds the original request, the recorded contract with each probe's bound
+original/reviewed/candidate outcomes, the finding ledger and the diff; judge
+expectations against them, not a paraphrase. Otherwise take the target from the
+PR or request. Record
 repository, branch, base and head SHAs, and dirty/staged state. Review the
 actual diff and current files, not a prose summary; if the target changes, the
 review is stale. Open your report with the checkout, workflow id, and tree

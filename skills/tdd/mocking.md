@@ -4,7 +4,7 @@ The canonical mock-ban statement lives in `AGENTS.md` and governs every claimed 
 
 Use the real production Interface that owns the claimed behavior:
 
-- **In-process behavior:** call the public Interface with real implementation code.
+- **In-process behavior:** call the owning Module's Interface with real implementation code.
 - **Filesystem/local runtime:** use a temporary filesystem or real local runtime that executes the production contract.
 - **Owned remote service:** use the owned integration environment or a real service instance configured for tests.
 - **Third-party provider:** use its sandbox/test tenant or an owned end-to-end environment. Captured fixtures may support contract analysis but do not replace the live production Seam.

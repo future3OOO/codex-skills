@@ -147,6 +147,16 @@ class RunnerComparisonTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, "INLINE_OPERATION_REFUSED: " + repr(result.stdout + result.stderr))
         self.assertEqual([a["outcome"] for a in json.loads(result.stdout)["arms"]], ["failed", "passed"])
 
+    def test_operation_receipt_names_the_changed_cases(self):
+        self.operation()
+        (self.case.repo / "app.py").write_text("value = 2\n")
+        probe = "import app\nfor case in ('a', 'b', 'c'): print(case, app.value if case == 'b' else 0)\nprint('done')"
+        result = self.case.cli("tdd", "--repo", str(self.case.repo), "--behavior-id", "BM_VALUE", "--",
+                               sys.executable, "-c", probe)
+        arms = json.loads(result.stdout)["arms"]
+        self.assertEqual(json.loads(result.stdout)["comparison"], "changed", result.stdout + result.stderr)
+        self.assertEqual(arms[-1]["observation"], "- b 1\n+ b 2", "CHANGED_CASES_HIDDEN: " + repr(arms))
+
     def test_python_option_forms_preserve_inline_operations(self):
         self.operation()
         for options in (("-uc",), ("-Buc",), ("-Wignore", "-c"),

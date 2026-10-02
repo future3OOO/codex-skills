@@ -78,10 +78,10 @@ readings of one behavior, is a pending `behaviorMap` item, not an unknown.
 
 ### `behaviorMap`
 
-Record concrete falsifiers of the load-bearing public promises. Each item requires `id`, `basis`, `behavior`, `seam` and `expected`; `sourceRefs` is optional. IDs are stable uppercase identifiers. The basis ties the expectation to the original request or affected preservation; the Seam names the real public operation.
+Record concrete falsifiers of the load-bearing public promises. Each item requires `id`, `basis`, `behavior`, `seam` and `expected`; `sourceRefs` is optional. IDs are stable uppercase identifiers. The basis ties the expectation to the original request or affected preservation; the Seam is the Interface of the Module that owns the affected behavior, built with its production caller's setup. An outer operation is the Seam only for behavior that outer Module owns; one owner probe printing each case replaces outer tests re-asserting those decisions.
 
 ```json
-[{"id":"BM_EXPIRY","basis":"the deadline is inclusive","behavior":"expires at the deadline","seam":"public expiry operation","expected":"now equal to expiresAt is expired"}]
+[{"id":"BM_EXPIRY","basis":"the deadline is inclusive","behavior":"expires at the deadline","seam":"Expiry.is_expired with a real clock","expected":"now equal to expiresAt is expired"}]
 ```
 
 Derive attacks from actual promises: atomicity needs supported failure and cancellation; persistence needs reopen and another connection; shared state needs material writer interleavings; parsers need decisive boundaries and captured production inputs. Use real collaborators and observe results and state effects. A missing entrypoint is not proof of its downstream guarantees.

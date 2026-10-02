@@ -1336,6 +1336,20 @@ class FlagDisposition(Ceremony):
         self.ok_raw("verify", "--kind", "quality-gate", "--base-ref", "HEAD")
         self.assertEqual(self.state()["tdd"], "passed", "GATE_LEFT_STALE_READINESS")
 
+    def test_reviewer_package_carries_the_contract_and_comparison_outcomes(self) -> None:
+        self.begin()
+        self.record_preflight({"authoritativeContract": "Create keeps its suppression", "behaviorMap": [item("BM_ATTACK", basis="fixture")]})
+        (self.repo / "app.py").write_text("value = 2\nother = 1\n", encoding="utf-8")
+        self.comparison(0, "BM_ATTACK")
+        self.ok_raw("verify", "--kind", "quality-gate", "--base-ref", "HEAD")
+        package = self.cli("checkpoint", "--phase", "code-review", "--channel-dir", str(self.tmp))
+        self.assertEqual(package.returncode, 0, "REVIEW_PACKAGE_MISSING: " + package.stderr[-300:])
+        channels = {channel["name"]: Path(channel["contentPath"]).read_text() for channel in json.loads(package.stdout)["channels"]}
+        self.assertLessEqual({"behavior-map", "diff", "intent"}, set(channels), "REVIEW_PACKAGE_MISSING")
+        work = json.loads(channels["behavior-map"])
+        self.assertEqual((work["authoritativeContract"], [arm["outcome"] for arm in work["items"][0]["comparison"]["arms"]]),
+                         ("Create keeps its suppression", ["failed", "passed"]), "REVIEW_PACKAGE_MISSING")
+
 
 class FlagRefusal(Ceremony):
     def test_refused_flag_dispositions_mutate_nothing(self) -> None:

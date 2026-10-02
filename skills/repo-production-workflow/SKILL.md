@@ -178,8 +178,8 @@ Before final advisor review, obtain independent `code-review` of the original
 objective and current candidate. Lead self-cleanup and later GitHub review do not replace this
 step. For initial non-trivial review use a fresh native Codex background
 delegate (`spawn_agent`, `agent_type=default`, `fork_turns="none"`, normal native
-model selection) in the lead's native task checkout. Supply the target, original contract, correction
-delta and applicable evidence handles; instruct it to apply `code-review`.
+model selection) in the lead's native task checkout. Supply the target and correction delta; instruct it to apply `code-review`,
+which loads the request, contract, comparison outcomes and diff itself.
 Wait without editing the candidate. It returns a
 Standards/Spec review and a findings intake. Verify every finding and
 disposition each one. A disposition is invalid

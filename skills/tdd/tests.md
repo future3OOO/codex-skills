@@ -1,16 +1,16 @@
 # Behavior Test Reference
 
-A strong test is a real probe of one **independently-failable observable outcome** through the production Interface or externally observable state governed by that Interface. Use the CLI, application operation or public call that exercises the claimed behavior; a test runner or CI result alone establishes no coverage.
+A strong test is a real probe of one **independently-failable observable outcome** through the Interface of the Module that owns it, called with its production caller's setup, or the externally observable state governed by that Interface; a test runner or CI result alone establishes no coverage.
 
 A behavior test survives internal refactoring: if observable behavior is unchanged but the test breaks, the test is coupled to implementation. Several assertions are valid when they jointly prove one behavior; one assertion can still hide an over-broad behavior.
 
-Comparison probes need not be committed. Keep uncommitted probes runnable
-in a Git-ignored path in the task worktree until pass completion.
-A direct-operation probe must print or assert its outcome; exit 0 alone
-proves nothing.
+Comparison probes need not be committed. Keep an uncommitted probe at a
+test path (for example `tests/probe_intent.py`) until pass completion; the
+runner refuses non-test paths as production overlays. A direct-operation probe
+must print or assert its outcome; exit 0 alone proves nothing.
 
 Commit a probe only for regression coverage no existing check has, as the
-smallest case in an existing harness. Additional checks
+smallest case calling that owner. Additional checks
 require distinct coverage, with defect sensitivity
 and no narrowing of the contract; they do not replace production acceptance. Apply
 [Production Code's comparison rules](../production-code/SKILL.md#minimum-implementation-decision)
@@ -35,7 +35,7 @@ Assert meaningful public outputs and state effects with real collaborators. For 
 
 ## Observable state
 
-Verify through the public Interface or the externally observable state governed by that Interface. Do not inspect an internal store merely because it is convenient. Direct state inspection is valid when the state itself is a public product artifact, or when the Interface explicitly promises its exact persisted state.
+Verify through the owner's Interface or the externally observable state governed by that Interface. Do not inspect an internal store merely because it is convenient. Direct state inspection is valid when the state itself is a public product artifact, or when the Interface explicitly promises its exact persisted state.
 
 Avoid tests that:
 
