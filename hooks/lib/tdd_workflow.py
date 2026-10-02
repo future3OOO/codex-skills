@@ -191,9 +191,9 @@ def _reviewed_sources(identity: RepoIdentity, state: JsonObject, mapped: JsonObj
 # a call is credited when probe code (a test file or inline -c/stdin code) called into a
 # changed file to reach it, and is attributed to the enclosing test function; reaching the
 # change through an unchanged outer Module earns no credit. Later processes are children.
-# A probe that cannot be proof stops at once: when a child runs the changed code, or when a
-# test and the next test's setup never call it while an earlier test did or nothing (a
-# one-time class or module setup included) has yet, the whole probe process group is killed.
+# Setup credit (setUpClass, setUp, fixtures, import-time calls) covers the tests of the class or
+# module whose code made the call. A probe that cannot be proof stops at once, killing its process
+# group: when a child runs the changed code, or a finished test is neither a hit nor covered.
 _REACH_SITE = """import os, sys
 _site, _root = os.environ.get("WORKFLOW_REACH"), os.environ.get("WORKFLOW_REACH_ROOT", "")
 if _site:
@@ -206,7 +206,11 @@ if _site:
         _plan = json.load(_stream)
     _probes, _owned = set(_plan["probes"]), {tuple(span) for span in _plan["owned"]}
     _files = {span[0] for span in _owned}
-    _codes, _tests, _hits, _current, _monitor = set(), set(), set(), [None, False, False], hasattr(sys, "monitoring")
+    _codes, _tests, _hits, _current, _monitor = set(), set(), set(), [None, False], hasattr(sys, "monitoring")
+    def _covered(test):
+        return test in _hits or any(test.startswith(scope) for scope in _hits if scope.endswith((".", "::")))
+    def _missed():
+        return _owned and _current[0] is not None and not (_current[1] or _covered(_current[0]))
     def _relative(code):
         if code.co_filename.startswith("<"):  # frozen or generated code, inline probe code aside
             return code.co_filename if code.co_filename in _probes else None
@@ -223,25 +227,25 @@ if _site:
             span in _owned and _stop("a process the probe started ran")
             return
         if relative in _probes and code.co_name.startswith("test"):
-            if _owned and _current[0] is not None and not _current[1] and (_hits or not _current[2]):
-                _stop("test " + _current[0] + " never ran")
+            _missed() and _stop("test " + _current[0] + " never ran")
             _current[:2] = relative + "::" + code.co_qualname, False
             _tests.add(_current[0])
             _monitor and sys.monitoring.restart_events()
             return
-        test, probe, entry, caller = "", None, relative, frame.f_back
+        test, scope, probe, entry, caller = "", "", None, relative, frame.f_back
         while caller is not None and not test:
-            owner = _relative(caller.f_code)
+            owner, name = _relative(caller.f_code), caller.f_code.co_qualname
             if owner in _probes:
                 probe = entry in _files if probe is None else probe
-                test = owner + "::" + caller.f_code.co_qualname if caller.f_code.co_name.startswith("test") else ""
+                test = owner + "::" + name if caller.f_code.co_name.startswith("test") else ""
+                scope = owner + "::" + (name.split(".")[0] + "." if "." in name else "")
             elif owner is not None and probe is None:
                 entry = owner
             caller = caller.f_back
-        _codes.add((*span, test, bool(probe)))
+        _codes.add((*span, test or scope, bool(probe)))
         if probe and span in _owned:
-            _current[1] = _current[2] = True
-            test and _hits.add(test)
+            _hits.add(test or scope)
+            _current[1] = _current[1] or test == _current[0]
         # A call of changed code through an unchanged Module keeps watching for the probe's own call.
         return span in _owned and not probe
     if _monitor:
@@ -259,7 +263,7 @@ if _site:
     def _stop(reason):
         _write(reason)
         os.killpg(0, signal.SIGKILL)
-    atexit.register(_write)
+    atexit.register(lambda: _write("test " + _current[0] + " never ran" if _missed() else ""))
 """
 
 
@@ -422,7 +426,8 @@ def _run_tdd(values: list[str]) -> int:
         arm = arms[index] = {**arm, "requestedTree": source, "unreached": ""}
         reached = [span for span in arm.get("reach", []) if tuple(span[:4]) in owned and span[5:6] == [True]]
         hit = {span[4] for span in reached if span[4]}
-        missed = sorted(set(arm.get("tests", [])) - hit) if hit else []
+        missed = sorted(test for test in arm.get("tests", []) if test not in hit
+                        and not any(test.startswith(scope) for scope in hit if scope.endswith((".", "::"))))
         child = any(tuple(span[:4]) in owned for span in arm.get("childReach", []))
         if owned and (not reached or missed or child or arm.get("stopped")):
             arm["unreached"] = (("a process the probe started ran" if child else arm.get("stopped") or

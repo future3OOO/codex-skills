@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import difflib
 import re
 
 JsonObject = dict[str, object]
@@ -126,11 +127,7 @@ def _changed_lines(original: list[str] | None, lines: list[str] | None) -> str:
     """The cases whose printed outcome differs from the original arm's."""
     if original is None or lines is None:
         return ""
-    if len(original) == len(lines):
-        pairs = [(old, new) for old, new in zip(original, lines) if old != new]
-    else:
-        pairs = [(old, None) for old in original if old not in lines] + [(None, new) for new in lines if new not in original]
-    return "\n".join(f"{sign} {line}" for pair in pairs for sign, line in zip("-+", pair) if line is not None)[:2000]
+    return "\n".join(line for line in difflib.ndiff(original, lines) if line.startswith(("- ", "+ ")))[:2000]
 
 
 def unresolved(items: list[JsonObject]) -> list[str]:

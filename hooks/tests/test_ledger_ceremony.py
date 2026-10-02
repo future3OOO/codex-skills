@@ -1071,6 +1071,11 @@ class ObservedCapture(Ceremony):
         # R-12: only the pass's lead is refused; a reviewer in the same checkout keeps its test runs
         self.assertNotEqual(self.hook(composed[0], self.repo, session="reviewer").get("permissionDecision"), "deny",
                             f"{marker}: reviewer refused")
+        # final SPEC-2: a reviewer's lone run is rewritten to the observed form, which must run it too
+        rewritten = str(self.hook(command, self.repo, session="reviewer")["updatedInput"]["command"])
+        reviewer = subprocess.run(["bash", "-c", rewritten], cwd=self.repo, capture_output=True, text=True,
+                                  env={**self.env, "CODEX_THREAD_ID": "reviewer"})
+        self.assertIn("VALUE_NOT_TWO", reviewer.stdout + reviewer.stderr, f"{marker}: reviewer run refused")
 
 
 class ObservedDrift(Ceremony):

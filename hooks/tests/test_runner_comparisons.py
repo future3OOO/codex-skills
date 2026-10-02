@@ -156,6 +156,10 @@ class RunnerComparisonTests(unittest.TestCase):
         arms = json.loads(result.stdout)["arms"]
         self.assertEqual(json.loads(result.stdout)["comparison"], "changed", result.stdout + result.stderr)
         self.assertEqual(arms[-1]["observation"], "- b 1\n+ b 2", "CHANGED_CASES_HIDDEN: " + repr(arms))
+        # final SPEC-3: an extra repeated line is a changed case too
+        result = self.case.cli("tdd", "--repo", str(self.case.repo), "--behavior-id", "BM_VALUE", "--",
+                               sys.executable, "-c", "import app\nfor _ in range(app.value): print('event')")
+        self.assertEqual(json.loads(result.stdout)["arms"][-1]["observation"], "+ event", "CHANGED_CASES_HIDDEN: " + result.stdout)
 
     def test_only_a_probe_whose_own_process_runs_the_change_is_proof(self):
         case = self.case
@@ -250,6 +254,10 @@ class RunnerComparisonTests(unittest.TestCase):
             "    def test_a(self): self.assertEqual(self.value, 3, 'DECISION')\n"
             "    def test_b(self): self.assertGreater(self.value, 1, 'DECISION')\n")
         self.assertEqual(compare(*unit, "test_once"), (0, "changed"), "OWNER_PROBE_REFUSED: setUpClass")
+        # final SPEC-4: setup credit covers its own class only; an unrelated batched test is waste
+        (case.repo / "test_once.py").write_text((case.repo / "test_once.py").read_text()
+            + "class Unrelated(unittest.TestCase):\n    def test_unused(self): self.assertEqual(1, 1)\n")
+        self.assertEqual(compare(*unit, "test_once"), (2, "incomplete"), "OUTSIDE_REACH_ADMITTED: unrelated class")
         (case.repo / "app.py").write_text("LIMIT = 2\n\n\ndef decide(x):\n    return x + 1\n")
         (case.repo / "test_value.py").write_text(
             "import unittest, app\nclass Value(unittest.TestCase):\n"

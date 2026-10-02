@@ -199,9 +199,10 @@ def _passed(command: str, exit_code: object, output: str) -> bool:
 
 
 def _duplicate(identity: RepoIdentity, state: dict, command: list[str]) -> bool:
-    """A unittest/pytest run once comparisons cover every mapped behavior repeats them."""
+    """The pass lead's unittest/pytest run once the probe list is recorded repeats or bypasses its comparisons."""
     from .tdd_workflow import COVERED, covered
-    if identify(command).get("runner") in {"pytest", "unittest"} and covered(identity, state):
+    if (identify(command).get("runner") in {"pytest", "unittest"} and covered(identity, state)
+            and state.get("leadContextId") in {None, os.environ.get("CODEX_THREAD_ID")}):
         print("error: " + COVERED, file=sys.stderr)
         return True
     return False
