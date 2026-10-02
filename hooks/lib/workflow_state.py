@@ -552,6 +552,14 @@ def _validate_disposition_context(identity: RepoIdentity, state: JsonObject, doc
     return manifest, _head_oid(identity)
 
 
+def same_agent(recorded: object, named: object) -> bool:
+    """One agent named canonically (/root/a/b) or relative to a caller (b, a/b) matches either spelling."""
+    if not isinstance(recorded, str) or not isinstance(named, str) or not recorded.strip("/") or not named.strip("/"):
+        return False
+    left, right = "/" + recorded.strip("/"), "/" + named.strip("/")
+    return left.endswith(right) or right.endswith(left)
+
+
 def _finding_unresolved(entry: JsonObject) -> bool:
     return (
         (entry.get("status") in {"pending", "accepted-for-proof"} and entry.get("material") is not False)
@@ -599,10 +607,11 @@ def commit_review(
                 for entry in repairs:
                     if entry.get("kind") == "behavioral" and not entry.get("repairOwner"):
                         entry["repairOwner"] = {"implementerContextId": reviewer, "reviewerContextId": lead}
-            selected = [entry for entry in repairs if entry.get("repairOwner", {}).get("implementerContextId")
-                        == summary_doc.get("implementationContextId")
-                        and entry.get("repairOwner", {}).get("reviewerContextId")
-                        == summary_doc.get("reviewContextId")]
+            selected = [entry for entry in repairs
+                        if same_agent(entry.get("repairOwner", {}).get("implementerContextId"),
+                                      summary_doc.get("implementationContextId"))
+                        and same_agent(entry.get("repairOwner", {}).get("reviewerContextId"),
+                                       summary_doc.get("reviewContextId"))]
             succession = summary_doc.get("repairSuccession")
             if succession is not None:
                 _validate_disposition_context(identity, state, succession)
@@ -635,9 +644,9 @@ def commit_review(
                 owner = entry.get("repairOwner", {})
                 implementer = owner.get("implementerContextId")
                 reviewer = owner.get("reviewerContextId")
-                if (not implementer or not reviewer or implementer == reviewer
-                        or summary_doc.get("reviewContextId") != reviewer
-                        or summary_doc.get("implementationContextId") != implementer):
+                if (not implementer or not reviewer or same_agent(implementer, reviewer)
+                        or not same_agent(reviewer, summary_doc.get("reviewContextId"))
+                        or not same_agent(implementer, summary_doc.get("implementationContextId"))):
                     raise WorkflowError("second recurrence requires retained reviewer repair and independent lead review")
                 if any(_finding_state(state, write.evidence_id, finding["id"]) is entry for finding in intake):
                     entry.pop("repairReviewEvidence", None)

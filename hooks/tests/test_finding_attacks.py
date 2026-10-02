@@ -528,7 +528,8 @@ class PendingAdvisorRetries(AttackHarness):
         # The retained reviewer's repair turns the refreshed comparison green; the lead then certifies it.
         (self.repo / "app.py").write_text("value = 2\n")
         self.ok("verify", "--slug", "pending-retry", "--kind", "quality-gate", "--base-ref", "HEAD")
-        review = self.json_file("lead-review.json", {"findings": [], "implementationContextId": "/root/retry-fixture"})
+        # R-25: the lead's review names the implementer as it continued it, relatively
+        review = self.json_file("lead-review.json", {"findings": [], "implementationContextId": "retry-fixture"})
         refused = self.cli("record", "review", "--slug", "pending-retry", "--workflow-id", wid,
                            "--review-context-id", "/root/retry-fixture", "--input", str(review))
         self.assertIn("--review-context-id", refused.stderr, marker)
