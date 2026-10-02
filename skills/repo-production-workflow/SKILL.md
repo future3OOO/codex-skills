@@ -136,17 +136,15 @@ Source and probe edits invalidate affected proof and reopen required verificatio
 ### 9. Verification
 
 After coherent repair and cleanup, assess the intended outcome against the
-verification derived in step 2. Run the typed quality gate before manually repeating
-recorded comparisons: after it passes, verification refreshes stale comparisons
-through their retained commands. Correct all reported occurrences before retrying.
-Carry current comparison proof into verification; run only missing affected probes and required
-lint/typecheck/build, with
-graph reanalysis when required. Follow AGENTS.md's attack-probe and verification rules.
+verification derived in step 2. Run the typed quality gate; after it passes it
+refreshes stale comparisons through their retained commands, so recorded probes are
+already verified on the current candidate: do not rerun them through `verify --`.
+Use generic verification only for required lint/typecheck/build or checks no
+comparison covers, with graph reanalysis when required. Follow AGENTS.md's attack-probe and verification rules.
 CI's `contracts` job owns the full runner here and step 12 waits for it.
 Verification records only through the unified CLI runner, which executes the command it records and derives status
 per-command-latest for explicit verification. Failed explicit checks need a passing rerun
-or valid `--replaces` correction. Repair observed failures with affected checks; their
-commands need no replay. Overlapping runs record in completion order; a run whose
+or valid `--replaces` correction. Overlapping runs record in completion order; a run whose
 reviewable tree drifts stays invalid and names the changed paths:
 
 ```bash
@@ -160,7 +158,7 @@ Typed verification needs no generic acknowledgement or dummy command. Correct a
 failed generic invocation with `verify --replaces <evidenceId>:<runIndex> --reason
 "<correction>" -- <command>`; only a valid current success retires that particular
 active failure. Other failures, stale/concurrent results and drift stay effective.
-Use preflight's selected resource/correctness operation in the ordinary verification call. Reuse the returned evidence ID and operation output; the returned manifest binds a generic receipt to its measured tree. Which commands suffice remains review judgment. Completion additionally requires the typed `quality-gate` run over the current reviewable tree.
+Which commands suffice remains review judgment. Completion requires the typed `quality-gate` run over the current reviewable tree.
 
 The typed runner uses the recorded graph input; reuse it when its binding and
 scope match the candidate. Refresh Repo Context Forge after relevant edits or
@@ -220,8 +218,10 @@ exactly `false`; otherwise
 rejection requires zero occurrence on a complete domain. `report-only` resolves
 completion without authorizing an edit and cannot later become `fixed`. A
 behavioral finding is fixed by owning it: add the attack item with its finding
-`sourceRefs` through `record tdd-map`, run the owning comparison, then record
-`fixed` with the zero-count complete-domain occurrence; nonbehavioral
+`sourceRefs` through `record tdd-map`, run the owning comparison, then record the
+`fixed` receipt above (`finding_id`, `status`, `reason`) or, for an advisor finding,
+`record advisor-disposition --finding <ID> --fixed --behavior-id <BM_ID>`; the
+recorder binds the owning comparison's current run. Nonbehavioral
 corrections record their current-tree evidence directly. A later map update
 that would leave a fixed finding without its owning attack refuses.
 
@@ -277,7 +277,10 @@ to the original objective before judging implementation and dispositions. Missin
 acceptance evidence forbids `commit-ready`. Address and disposition material findings. The
 wrapper leaves final findings pending; the lead explicitly records `none` or
 `addressed` only after validating the output. After a production edit, satisfy current-candidate verification, continue review
-on the affected delta, and repeat final review. Reuse applicable evidence.
+on the affected delta, and repeat final review. Reuse applicable evidence. Once every
+final finding is dispositioned (`nextAction` `complete-workflow`), a requested
+reassessment of the unchanged candidate runs the same `final-review` phase and records
+as a fresh final result.
 
 ### 12. Delivery and reviewer completion
 

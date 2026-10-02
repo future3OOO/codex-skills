@@ -106,7 +106,7 @@ def producer_proved(entry: JsonObject) -> bool:
 def comparison_view(run: JsonObject) -> JsonObject:
     """Bound reviewer context; complete process evidence remains in the ledger."""
     return {**{key: run[key] for key in ("comparison", "valid", "fresh", "runIndex", "command") if key in run},
-            "arms": [{"sourceTree": arm["sourceTree"], "requestedTree": arm["requestedTree"],
+            "arms": [{"tree": arm["requestedTree"],
                       "outcome": arm["outcome"], "error": arm["error"][:500],
                       "observation": "\n".join((arm.get("proof") or {}).get("observation", []))[:1000],
                       "testsExecuted": (arm.get("proof") or {}).get("testsExecuted")}

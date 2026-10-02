@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import hashlib
 import json
 import os
@@ -10,6 +11,7 @@ import shlex
 import shutil
 import subprocess
 import tempfile
+import threading
 from pathlib import Path
 
 from . import behavior_map, tdd_surface
@@ -117,7 +119,7 @@ def _probe_files(surface: JsonObject, root: Path, support: list[str]) -> list[st
                 paths.add(name)
             if not option:
                 shell = False
-    paths.update(support)
+    paths.update(os.path.relpath(os.path.normpath(root / name), root) for name in support)
     for name in paths:
         path = root / name
         if not path.is_file() or not path.resolve().is_relative_to(root):
@@ -151,8 +153,7 @@ def _execution_key(identity: RepoIdentity, source: str, probe: str, files: list[
     support = _git(identity, "ls-tree", "-r", "-z", probe, "--", *files) if files else b""
     executable_state = os.stat(execution["executable"])
     config = json.dumps([command, timeout, execution,
-                         executable_state.st_size, executable_state.st_mtime_ns,
-                         sorted(_environment().items())], sort_keys=True).encode()
+                         executable_state.st_size, executable_state.st_mtime_ns], sort_keys=True).encode()
     producer = b"".join(Path(__file__).with_name(name).read_bytes()
                        for name in ("tdd_workflow.py", "tdd_surface.py", "command_runner.py"))
     return hashlib.sha256(b"\0".join(production) + support + config + producer).hexdigest()
@@ -184,7 +185,8 @@ def _reviewed_sources(identity: RepoIdentity, state: JsonObject, mapped: JsonObj
 
 
 def _execute_tree(identity: RepoIdentity, source_tree: str, candidate_tree: str, files: list[str],
-                  command: list[str], surface: JsonObject, timeout: float) -> JsonObject:
+                  command: list[str], surface: JsonObject, timeout: float,
+                  cancel: threading.Event | None = None) -> JsonObject:
     with tempfile.TemporaryDirectory(prefix="workflow-proof-") as temporary:
         root = Path(temporary) / "source"
         subprocess.run(["git", "clone", "--quiet", "--no-checkout", identity.root, str(root)],
@@ -214,7 +216,8 @@ def _execute_tree(identity: RepoIdentity, source_tree: str, candidate_tree: str,
             position = actual.index("--") if "--" in actual else len(actual)
             actual.insert(position, "--override-ini=addopts=")
         try:
-            raw, code, timed_out = _run([*binding, "--chdir", identity.root, "--", *actual], snapshot, timeout, env=env)
+            raw, code, timed_out = _run([*binding, "--chdir", identity.root, "--", *actual], snapshot, timeout,
+                                        env=env, cancel=cancel)
         except OSError as exc:
             raw, code, timed_out = str(exc).encode(), 127, False
         output = raw.decode("utf-8", errors="replace")
@@ -271,15 +274,25 @@ def _run_tdd(values: list[str]) -> int:
         return 0
     cache = {(arm.get("key"), arm.get("sourceTree")): arm for run in (current or {}).get("runs", [])
              for arm in run.get("arms", []) if arm.get("outcome") in {"passed", "failed"}}
+    held = {key: arm for (key, _), arm in cache.items()}
+    # Each arm owns its clone, TMPDIR and state root, so distinct production runs at once.
+    pending = {key: source for source, key in reversed(list(zip(sources, keys))) if key not in held}
+    cancel = threading.Event()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(pending))) as pool:
+        futures = {key: pool.submit(_execute_tree, identity, source, candidate, files, command, surface,
+                                    args.timeout, cancel) for key, source in pending.items()}
+        try:
+            concurrent.futures.wait(futures.values())
+        except BaseException:
+            cancel.set()
+            raise
+        for key, future in futures.items():
+            arm = future.result()
+            arm["key"] = key
+            held[key] = arm
     arms = []
     for source, key in zip(sources, keys):
-        arm = cache.get((key, source)) or next((arm for (held, _), arm in cache.items() if held == key), None)
-        if arm is None:
-            arm = _execute_tree(identity, source, candidate, files, command, surface, args.timeout)
-            arm["key"] = key
-            if arm["outcome"] in {"passed", "failed"}:
-                cache[(key, source)] = arm
-        arms.append({**arm, "requestedTree": source})
+        arms.append({**(cache.get((key, source)) or held[key]), "requestedTree": source})
     outcomes = [arm["outcome"] for arm in arms]
     valid = outcomes[-1] == "passed" and all(outcome in {"passed", "failed"} for outcome in outcomes[:-1])
     preserved = all(outcome == "passed" for outcome in outcomes)

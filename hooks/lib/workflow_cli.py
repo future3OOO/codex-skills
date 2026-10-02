@@ -60,8 +60,8 @@ RECORD_SHAPES = {
     "advisor-result": ('the advisor envelope {"schemaVersion":1,"findings":[{"id":"SPEC-1","claim":"...",'
                        '"material":true,"kind":"behavioral|nonbehavioral"}],"verdict":"approved|changes-required|completed|commit-ready|'
                        'fix-before-commit|context-mismatch"}, or --verdict unavailable --reason TEXT'),
-    "advisor-disposition": ("--finding F --fixed|--rejected|--report-only|--follow-up REF --evidence-ref E:i "
-                            "[--behavior-id BM] [--reason TEXT]; or --stage S --findings none; or --input "
+    "advisor-disposition": ("--finding F --fixed [--behavior-id BM] (binds the owning comparison); or --finding F "
+                            "--rejected|--report-only|--follow-up REF --evidence-ref E:i --reason TEXT; or --stage S --findings none; or --input "
                             '{"intakeEvidenceId":"...","context":{...},"dispositions":[...]}, each disposition:\n'
                             + DOCUMENT_SHAPE_TABLE),
     "tdd-map": f'{{"items":[{ITEM_SHAPE}]}}',
@@ -457,9 +457,9 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
         if args.finding is not None:
             status = next((DISPOSITION_FLAGS[name] for name in DISPOSITION_FLAGS if getattr(args, name)),
                           "accepted-follow-up" if args.follow_up else None)
-            if status is None or not args.evidence_ref or args.input is not None:
+            if status is None or not args.evidence_ref and status != "fixed" or args.input is not None:
                 raise ValueError("--finding needs one of --fixed/--rejected/--report-only/--follow-up, "
-                                 "at least one --evidence-ref, and no --input")
+                                 "--evidence-ref unless --fixed resolves its owning comparison, and no --input")
             if status != "fixed" and not (args.reason and args.reason.strip()):
                 raise ValueError(f"{status} needs --reason with the measured judgment")
             flag = {"finding": args.finding, "status": status, "evidenceRefs": args.evidence_ref,

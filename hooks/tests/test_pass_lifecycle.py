@@ -2203,10 +2203,8 @@ class PassLifecycleTests(unittest.TestCase):
         self.owner_phase("code-review", "passed", findings="none")
         appeal_args = ("record", "advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final",
                        "--source", "codex-advisor", "--input", str(envelope))
-        events = len(self.history_events()); appealed = self.cli(*appeal_args); state = json.loads(self.cli("status").stdout)
-        events = len(self.history_events()); second = self.cli(*appeal_args); delta = len(self.history_events()) - events; completed = self.cli("complete")
-        self.assertEqual((appealed.returncode, state["finalAppealConsumed"], second.returncode, delta, completed.returncode),
-                         (0, True, 2, 0, 0), marker)
+        appealed = self.cli(*appeal_args); state = json.loads(self.cli("status").stdout); completed = self.cli("complete")
+        self.assertEqual((appealed.returncode, state["finalAppealConsumed"], completed.returncode), (0, True, 0), marker)
 
         slug = "appeal-concession"; wid, _ = reject(slug, ("SPEC-1", "SPEC-2"))
         appeal = self.json_file("appeal-concession.json", {"schemaVersion": 1, "findings": [
@@ -2226,11 +2224,78 @@ class PassLifecycleTests(unittest.TestCase):
             "materialConsequence": {"claim": "runtime", "command": "inspect", "result": "false"}, "evidence": "no consequence"}]})
         self.assertEqual(self.dispose(slug, wid, "final", "addressed", str(closure)).returncode, 0, marker)
         closed = json.loads(self.cli("status").stdout)
-        events = len(self.history_events()); second = self.cli("record", "advisor-result", "--slug", slug, "--workflow-id", wid,
-            "--stage", "final", "--source", "codex-advisor", "--input", str(appeal))
-        self.assertEqual((closed["nextAction"], next(x for x in closed["findingStates"] if x["findingId"] == "SPEC-NEW")["appealStatus"],
-                          self.checkpoint("final-review")["ready"], second.returncode, len(self.history_events()) - events),
-                         ("complete-workflow", "disagreement", False, 2, 0), "REJECTION_AFTER_APPEAL_DID_NOT_STAND")
+        self.assertEqual((closed["nextAction"], next(x for x in closed["findingStates"] if x["findingId"] == "SPEC-NEW")["appealStatus"]),
+                         ("complete-workflow", "disagreement"), "REJECTION_AFTER_APPEAL_DID_NOT_STAND")
+
+    def test_a_requested_final_reassessment_records_in_the_open_pass(self) -> None:
+        marker, slug = "FINAL_REASSESSMENT_REFUSED", "final-reassessment"
+        wid = self.begin_slug(slug); self.advance_to_verification(slug, wid)
+        self.owner_phase("code-review", "passed", findings="none")
+        spec = {"id": "SPEC-1", "claim": "proof is missing", "material": True, "kind": "behavioral"}
+        status = lambda: json.loads(self.cli("status").stdout)
+        frozen = lambda state: [state.get(key) for key in ("finalReview", "judgedTree", "findingStates", "nextAction")]
+
+        def final(name: str, verdict: str, *findings: dict[str, object]) -> subprocess.CompletedProcess[str]:
+            envelope = self.json_file(name, {"schemaVersion": 1, "findings": list(findings), "verdict": verdict})
+            return self.cli("record", "advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final",
+                            "--source", "codex-advisor", "--input", str(envelope))
+
+        def reject(name: str) -> None:
+            document = self.json_file(name, {"context": self.disposition_context(),
+                "intakeEvidenceId": status()["finalReview"]["intakeEvidence"], "dispositions": [{
+                "finding_id": "SPEC-1", "status": "rejected-with-evidence", "kind": "behavioral",
+                "premise": {"claim": "proof is missing", "command": "inspect", "result": "false"},
+                "occurrence": {"domain": "fixture", "count": 0, "complete": True, "command": "inspect", "result": "zero"},
+                "materialConsequence": {"claim": "material", "command": "inspect", "result": "material"},
+                "evidence": "the current tree disproves the premise"}]})
+            result = self.dispose(slug, wid, "final", "addressed", str(document))
+            self.assertEqual(result.returncode, 0, marker + result.stdout + result.stderr)
+
+        def refused(result: subprocess.CompletedProcess[str], before: dict[str, object], events: int) -> None:
+            self.assertEqual((result.returncode, len(self.history_events()) - events, frozen(status())),
+                             (2, 0, frozen(before)), "COMPLETED_PASS_REOPENED" + result.stdout + result.stderr)
+
+        def stand() -> None:
+            reject(f"reject-{len(self.history_events())}.json")
+            self.assertEqual(status()["nextAction"], "appeal-final-review", marker)
+            self.assertEqual(final(f"appeal-{len(self.history_events())}.json", "fix-before-commit", spec).returncode, 0, marker)
+            reject(f"stand-{len(self.history_events())}.json")
+            self.assertEqual(status()["nextAction"], "complete-workflow", marker)
+
+        self.assertEqual(final("first.json", "fix-before-commit", spec).returncode, 0, marker)
+        stand()
+        self.assertTrue(self.checkpoint("final-review")["ready"], marker + str(self.checkpoint("final-review")["missing"]))
+        before, events = status(), len(self.history_events())
+        (self.repo / "app.py").write_text("value = 2\n", encoding="utf-8")
+        refused(final("stale-review.json", "commit-ready"), before, events)
+        (self.repo / "app.py").write_text("value = 1\n", encoding="utf-8")
+        mismatch = final("mismatch.json", "context-mismatch")
+        self.assertEqual((mismatch.returncode, status()["nextAction"], status()["finalReview"]),
+                         (0, "re-consult-final-review", before["finalReview"]), marker + mismatch.stderr)
+        conceded = final("concede.json", "commit-ready", {**spec, "material": False})
+        state = status()
+        self.assertEqual((conceded.returncode, state["finalReview"]["status"], state["finalReview"]["findings"],
+                          state.get("finalAppealConsumed"), state["nextAction"]),
+                         (0, "commit-ready", "none", None, "complete-workflow"), marker + conceded.stdout + conceded.stderr)
+        events = len(self.history_events())
+        self.assertEqual((final("repeat.json", "commit-ready").returncode, len(self.history_events()) - events), (0, 1), marker)
+        self.assertEqual(final("re-raise.json", "fix-before-commit", spec).returncode, 0, marker)
+        self.assertEqual(status()["nextAction"], "classify-current-findings", marker)
+        before, events = status(), len(self.history_events())
+        refused(final("demotion.json", "commit-ready", {**spec, "material": False}), before, events)
+        stand()
+        (self.repo / "app.py").write_text("value = 3\n", encoding="utf-8")
+        self.owner_phase("code-review", "passed", findings="none")
+        before, events = status(), len(self.history_events())
+        refused(final("stale-quality.json", "commit-ready"), before, events)
+        (self.repo / "app.py").write_text("value = 1\n", encoding="utf-8")
+        self.owner_phase("code-review", "passed", findings="none")
+        self.assertEqual(final("closing.json", "commit-ready").returncode, 0, marker)
+        completed = self.cli("complete")
+        self.assertEqual(completed.returncode, 0, marker + completed.stdout + completed.stderr)
+        before, events = status(), len(self.history_events())
+        self.assertIn("open-workflow", self.checkpoint("final-review")["missing"], "COMPLETED_PASS_REOPENED")
+        refused(final("terminal.json", "commit-ready"), before, events)
 
     def test_terminal_context_mismatch_allows_reconsult(self) -> None:
         marker, slug = "TERMINAL_MISMATCH_RECONSULT_REJECTED", "terminal-mismatch-reconsult"

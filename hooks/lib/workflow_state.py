@@ -1063,7 +1063,7 @@ def _register_finding_intake(
         if len(matches) > 1:
             raise WorkflowError("ambiguous finding identity; reference an existing finding with priorFinding")
         prior = latest[next(iter(matches))] if matches else None
-        if prior and prior.get("kind") == "behavioral" and prior.get("material") is True and (
+        if prior and _finding_unresolved(prior) and prior.get("kind") == "behavioral" and prior.get("material") is True and (
             item["kind"] != "behavioral" or item["material"] is not True
         ):
             raise WorkflowError("a material behavioral finding requires a measured disposition, not demotion")
@@ -1243,15 +1243,18 @@ def record_advisor_result(
                     and entry.get("status") == "rejected-with-evidence"
                     and entry.get("appealStatus") == "pending"
                 ]
-                if state.get("finalAppealConsumed") and (
+                correction = _stage_unresolved(state, stage, source, rejected)
+                # A requested reassessment of a dispositioned candidate, like the re-consult of a
+                # mismatched one, is a fresh final result with its own single appeal.
+                fresh = not rejected and not correction and (
+                    state.get("nextAction") == "complete-workflow" or bool(state.get("finalReviewContextMismatchEvidence")))
+                if state.get("finalAppealConsumed") and not fresh and (
                     rejected or isinstance(record, dict) and record.get("status") != "pending"
                 ):
                     raise WorkflowError("final appeal already consumed")
-                correction = _stage_unresolved(state, stage, source, rejected)
                 if rejected and correction:
                     raise WorkflowError("final appeal is blocked by unresolved final-review work")
-                if not rejected and isinstance(record, dict) and record.get("status") != "pending" and (
-                    not state.get("finalReviewContextMismatchEvidence") or correction):
+                if not rejected and not fresh and isinstance(record, dict) and record.get("status") != "pending":
                     raise WorkflowError("final review result already recorded for the current candidate")
                 if rejected:
                     appeal_write = evidence_write(str(state["workflowId"]), "finding-appeal-final", intake)
@@ -1716,7 +1719,8 @@ def _flag_disposition(
     # The lead's judgment doubles as the repair mechanism a behavioral fixed needs.
     judgment = {"reason": flag["reason"], "mechanism": flag["reason"]} if flag.get("reason") else {}
     return str(entry["stage"]), {"intakeEvidenceId": entry["intakeEvidenceId"], "dispositions": [{
-        "finding_id": finding_id, "status": flag["status"], "evidenceRefs": list(flag["evidenceRefs"]), **judgment,
+        "finding_id": finding_id, "status": flag["status"],
+        **({"evidenceRefs": list(flag["evidenceRefs"])} if flag["evidenceRefs"] else {}), **judgment,
         **({"reference": flag["reference"]} if flag.get("reference") else {})}]}
 
 
@@ -1902,7 +1906,7 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
     open_for_phase = not terminal and not (phase == "preflight-advice" and revalidation)
     stage_actions = {
         "preflight-advice": {"preflight"},
-        "final-review": {"final-review", "appeal-final-review", "re-consult-final-review"},
+        "final-review": {"final-review", "appeal-final-review", "re-consult-final-review", "complete-workflow"},
     }
     requirements = (
         ("workflowId", workflow_id is not None),

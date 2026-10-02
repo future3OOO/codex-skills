@@ -209,5 +209,5 @@ If transport is genuinely unavailable, record the preflight result as
 review. No nonce, skip file, stamp, attestation, or audited exception authorizes
 completion.
 
-Close final findings with `workflow.py record advisor-disposition --finding <ID> --fixed --evidence-ref <evidenceId>:<runIndex>`; add `--behavior-id <BM_ID>` for an owning Behavior Map item.
+Close a repaired final finding with `workflow.py record advisor-disposition --finding <ID> --fixed --behavior-id <BM_ID>`; the recorder binds that owning comparison's current run.
 See `record advisor-disposition --help` for other dispositions.

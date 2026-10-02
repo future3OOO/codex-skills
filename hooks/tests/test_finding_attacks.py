@@ -508,20 +508,28 @@ class PendingAdvisorRetries(AttackHarness):
         state = self.recur_twice(wid, {**self.CAPTURED, "id": "SPEC-1"})
         self.assertNotIn("repairOwner", state["findingStates"][-1], marker)
         record_context_forge(self.repo, self.tmp)
-        self.ok("verify", "--slug", "pending-retry", "--kind", "quality-gate", "--base-ref", "HEAD")
-        # The reviewer whose named review recovers ownership must remain dispatchable.
-        spawned = subprocess.run([sys.executable, str(ROOT / "hooks/rcf-intake-gate.py")], env=self.env, text=True,
-            capture_output=True, input=json.dumps({"tool_name": "spawn_agent", "session_id": self.env["CODEX_THREAD_ID"],
-                                                   "cwd": str(self.repo), "tool_input": {}}))
-        self.assertNotIn('"deny"', spawned.stdout, f"{marker}: {spawned.stdout}")
-        review = self.json_file("lead-review.json", {"findings": [], "implementationContextId": "retry-fixture"})
-        refused = self.cli("record", "review", "--slug", "pending-retry", "--workflow-id", wid,
-                           "--review-context-id", self.env["CODEX_THREAD_ID"], "--input", str(review))
-        self.assertIn("--review-context-id", refused.stderr, marker)
+        # The gate passes; its refresh truthfully reports the recurring defect's failing comparison.
+        gate = self.cli("verify", "--slug", "pending-retry", "--kind", "quality-gate", "--base-ref", "HEAD")
+        self.assertEqual((gate.returncode, self.status()["verification"]), (2, "passed"), marker + gate.stderr)
+        def dispatch(tool: str, target: str | None = None) -> str:
+            return subprocess.run([sys.executable, str(ROOT / "hooks/rcf-intake-gate.py")], env=self.env, text=True,
+                capture_output=True, input=json.dumps({"tool_name": tool, "session_id": self.env["CODEX_THREAD_ID"],
+                                                       "cwd": str(self.repo), "tool_input": {"target": target}})).stdout
+        # A fresh reviewer cannot be spawned over the recurring failure; the retained one stays continuable once named.
+        self.assertIn('"deny"', dispatch("spawn_agent"), marker)
+        # The named reviewer reports the recurring defect it observes; its review names the owner.
         self.ok("record", "review", "--slug", "pending-retry", "--workflow-id", wid, "--review-context-id", "retry-fixture",
-                "--input", str(self.json_file("named.json", {"findings": []})))
+                "--input", str(self.json_file("named.json", {"findings": [{**self.CAPTURED, "id": "SPEC-1"}]})))
         self.assertEqual(self.status()["findingStates"][-1].get("repairOwner"),
                          {"implementerContextId": "retry-fixture", "reviewerContextId": self.env["CODEX_THREAD_ID"]}, marker)
+        self.assertNotIn('"deny"', dispatch("followup_task", "retry-fixture"), marker)
+        # The retained reviewer's repair turns the refreshed comparison green; the lead then certifies it.
+        (self.repo / "app.py").write_text("value = 2\n")
+        self.ok("verify", "--slug", "pending-retry", "--kind", "quality-gate", "--base-ref", "HEAD")
+        review = self.json_file("lead-review.json", {"findings": [], "implementationContextId": "retry-fixture"})
+        refused = self.cli("record", "review", "--slug", "pending-retry", "--workflow-id", wid,
+                           "--review-context-id", "retry-fixture", "--input", str(review))
+        self.assertIn("--review-context-id", refused.stderr, marker)
         self.ok("record", "review", "--slug", "pending-retry", "--workflow-id", wid,
                 "--review-context-id", self.env["CODEX_THREAD_ID"], "--input", str(review))
 

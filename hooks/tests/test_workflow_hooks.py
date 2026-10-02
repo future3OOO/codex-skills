@@ -257,7 +257,7 @@ class WorkflowHookTests(HookHarness):
                 with self.subTest(cwd=cwd, tool=tool):
                     result = self.hook_output(INTAKE, cwd, tool=tool)
                     decision = json.loads(result or "{}").get("hookSpecificOutput", {}).get("permissionDecision")
-                    self.assertEqual(decision == "deny", denied, marker + result)
+                    self.assertEqual(decision == "deny", denied and tool != "send_message", marker + result)
         binding.write_text("{")
         self.assertEqual(self.hook_output(INTAKE, task), "", marker)
         binding.unlink()
@@ -354,6 +354,9 @@ class WorkflowHookTests(HookHarness):
         self.assertEqual(self.state("begin", "--slug", "delegation").returncode, 0)
         before = json.loads(self.state("history").stdout)
         self.assertEqual(dispatch().get("permissionDecision"), "deny", "PREMATURE_REVIEW_DELEGATION_ADMITTED")
+        for tool in ("collaborationsend_message", "send_message"):
+            with self.subTest(report=tool):
+                self.assertNotIn("permissionDecision", dispatch(tool), "REVIEWER_REPORT_DENIED")
         self.assertNotIn("permissionDecision", dispatch(role="explorer"))
         with self.subTest(preflight_continuation=True):
             self.assertEqual(dispatch("collaborationfollowup_task").get("permissionDecision"), "deny", "PREMATURE_REVIEW_CONTINUATION_ADMITTED")

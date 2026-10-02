@@ -27,7 +27,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from hooks.lib.workflow_documents import graph_evidence_document  # noqa: E402
-from hooks.tests.support import build_no_change_document, checkpoint_channels, fixture_env, graph_packet  # noqa: E402
+from hooks.tests.support import approve_preflight, build_no_change_document, checkpoint_channels, fixture_env, graph_packet  # noqa: E402
 
 
 @unittest.skipUnless(CANONICAL_BOOTSTRAP.is_file(), "real Repo Context Forge source is unavailable")
@@ -68,6 +68,10 @@ class RepoForgeWorkflowTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
 
     def pass_state(self, *args: str) -> subprocess.CompletedProcess[str]:
+        if args[:3] == ("checkpoint", "--phase", "preflight-advice"):
+            draft = self.tmp / "preflight-draft.json"
+            draft.write_text(json.dumps(build_no_change_document("context checkpoint draft")), encoding="utf-8")
+            args = (*args, "--preflight-file", str(draft))
         return subprocess.run(
             [sys.executable, str(WORKFLOW), *args, "--repo", str(self.repo)],
             cwd=self.repo, env=self.env, text=True,
@@ -185,10 +189,12 @@ class RepoForgeWorkflowTests(unittest.TestCase):
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, timeout=600,
         )
         self.assertEqual(forged.returncode, 0, marker + "\n" + forged.stdout + forged.stderr)
+        draft = Path(env["CODEX_WORKFLOW_STATE_ROOT"]).parent / "preflight-draft.json"
+        draft.write_text(json.dumps(build_no_change_document("context checkpoint draft")), encoding="utf-8")
 
         checkpoint = subprocess.run(
             [sys.executable, str(WORKFLOW), "checkpoint", "--repo", str(repo),
-             "--phase", "preflight-advice"],
+             "--phase", "preflight-advice", "--preflight-file", str(draft)],
             cwd=repo, env=env, text=True,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
         )
@@ -436,57 +442,22 @@ class RepoForgeWorkflowTests(unittest.TestCase):
         ):
             result = self.pass_state(*step)
             self.assertEqual(result.returncode, 0, " ".join(step) + "\n" + result.stdout + result.stderr)
-        # This suite proves growth-per-cycle accounting, not candidate policy;
-        # its free-form tdd() plumbing rides the legacy path, so the fixture
-        # commits a map-less pre-Behavior-Map preflight - a setup shortcut
-        # producing the legacy document shape - inside the suite's own
-        # state-root environment. Setup only.
         document = build_no_change_document("issue-106 typed verification fixture")
-        document.pop("behaviorMap", None)
-        doc_path = self.tmp / "legacy-preflight.json"
+        previous = os.environ.get("CODEX_WORKFLOW_STATE_ROOT")
+        os.environ["CODEX_WORKFLOW_STATE_ROOT"] = self.env["CODEX_WORKFLOW_STATE_ROOT"]
+        try:
+            approve_preflight(self.repo, document)
+        finally:
+            os.environ.pop("CODEX_WORKFLOW_STATE_ROOT") if previous is None else os.environ.update(CODEX_WORKFLOW_STATE_ROOT=previous)
+        doc_path = self.tmp / "preflight.json"
         doc_path.write_text(json.dumps(document), encoding="utf-8")
-        committed = subprocess.run(
-            [sys.executable, "-c",
-             "import json, sys; sys.path.insert(0, sys.argv[1]); "
-             "from hooks.lib.repo_identity import resolve_repo_identity; "
-             "from hooks.lib import workflow_state as w; "
-             "w.commit_evidence_phase(resolve_repo_identity(sys.argv[2]), sys.argv[3], sys.argv[4], "
-             "'preflight', json.load(open(sys.argv[5])))",
-             str(ROOT), str(self.repo), slug, wid, str(doc_path)],
-            cwd=str(ROOT), env=self.env, text=True,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-        self.assertEqual(committed.returncode, 0, committed.stdout + committed.stderr)
-
-    def tdd(self, phase: str, behavior: str, result_value: int,
-            *, expected: str | None = None) -> subprocess.CompletedProcess[str]:
-        """One real RED or GREEN through the recorder CLI, over the fixture's own Seam."""
-        args = [sys.executable, str(WORKFLOW), "tdd", "--cwd", str(self.repo), "--slug", self.slug,
-                "--phase", phase, "--behavior", behavior, "--seam", "app.compute import Interface"]
-        if expected:
-            args += ["--expected-failure", expected]
-        args += ["--", sys.executable, "-c",
-                 f"import app; assert app.compute(1) == {result_value}, 'AssertionError: {behavior}'"]
-        return subprocess.run(
-            args, cwd=self.repo, env=self.env, text=True,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
-        )
-
-    def compute_returns(self, offset: int) -> None:
-        self.repo.joinpath("app.py").write_text(
-            f"def compute(value):\n    return value + {offset}\n", encoding="utf-8"
-        )
+        recorded = self.pass_state("record", "preflight", "--slug", slug, "--workflow-id", wid, "--input", str(doc_path))
+        self.assertEqual(recorded.returncode, 0, recorded.stdout + recorded.stderr)
 
     def advance_to_typed_verification(self) -> None:
         """The real recorders between recorded context evidence and typed verification."""
         self.advance_to_tdd()
-        state = self.status()
-        slug = str(state["slug"])
-        for step in (
-            ("tdd", "--slug", slug, "--not-required",
-             "fixture pass proves evidence wiring, not a fixture behavior change"),
-        ):
-            result = self.pass_state(*step)
-            self.assertEqual(result.returncode, 0, " ".join(step) + "\n" + result.stdout + result.stderr)
+        self.assertEqual(self.status()["tdd"], "passed", "an empty approved probe list left tdd pending")
 
     def typed_quality_gate_run(self, base_ref: str) -> tuple[subprocess.CompletedProcess[str], dict[str, object]]:
         """One typed quality-gate verification and the run entry it recorded."""
@@ -1019,55 +990,6 @@ class RepoForgeWorkflowTests(unittest.TestCase):
         forged = self.graph_bootstrap()
         self.assertEqual(forged.returncode, 0, forged.stdout + forged.stderr)
         self.assertEqual(self.status().get("baseOid"), main, "MAIN_BASED_PASS_CHANGED_BASE")
-
-    @unittest.skipUnless(GITNEXUS, "the real GitNexus CLI is unavailable")
-    def test_the_recorder_counts_cycle_openings_and_nothing_else(self) -> None:
-        """`tddCycleCount` is the recorder's own count of cycle-opening REDs.
-
-        Every other outcome leaves it alone: a rerun of the active candidate, the
-        GREEN that closes a cycle, the reopen a GREEN regression records under the
-        same ambiguous `tdd-reopen` action, and a RED that no longer fails.
-        """
-        forged = self.graph_bootstrap()
-        self.assertEqual(forged.returncode, 0, forged.stdout + forged.stderr)
-        self.advance_to_tdd()
-        self.assertNotIn("tddCycleCount", self.status(), "a pass with no cycle already counted one")
-
-        first = self.tdd("red", "compute adds two", 3, expected="AssertionError")
-        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
-        self.assertEqual(self.status().get("tddCycleCount"), 1, "the first valid RED opened no cycle")
-
-        rerun = self.tdd("red", "compute adds two", 3, expected="AssertionError")
-        self.assertEqual(rerun.returncode, 0, rerun.stdout + rerun.stderr)
-        self.assertEqual(self.status().get("tddCycleCount"), 1, "a rerun of the active candidate counted again")
-
-        self.compute_returns(2)
-        green = self.tdd("green", "compute adds two", 3)
-        self.assertEqual(green.returncode, 0, green.stdout + green.stderr)
-        self.assertEqual(self.status().get("tddCycleCount"), 1, "GREEN counted as a cycle opening")
-
-        second = self.tdd("red", "compute adds three", 4, expected="AssertionError")
-        self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
-        self.assertEqual(self.status().get("tddCycleCount"), 2, "the next tracer RED opened no cycle")
-
-        self.compute_returns(3)
-        second_green = self.tdd("green", "compute adds three", 4)
-        self.assertEqual(second_green.returncode, 0, second_green.stdout + second_green.stderr)
-
-        # A GREEN that regresses reopens the cycle through the same recorder
-        # action a cycle-opening RED uses, which is exactly why the count cannot
-        # be reconstructed from the ledger.
-        self.compute_returns(2)
-        regressed = self.tdd("green", "compute adds three", 4)
-        self.assertEqual(regressed.returncode, 2, regressed.stdout + regressed.stderr)
-        self.assertEqual(self.status()["tdd"], "in-progress", "the regression did not reopen the cycle")
-        self.assertEqual(self.status().get("tddCycleCount"), 2, "a regression reopen counted as a cycle opening")
-
-        # A RED that no longer fails is not a cycle: it proves nothing.
-        self.compute_returns(3)
-        passing_red = self.tdd("red", "compute adds three", 4, expected="AssertionError")
-        self.assertEqual(passing_red.returncode, 2, passing_red.stdout + passing_red.stderr)
-        self.assertEqual(self.status().get("tddCycleCount"), 2, "an invalid RED counted as a cycle opening")
 
 
 class GraphEvidenceContractTests(unittest.TestCase):

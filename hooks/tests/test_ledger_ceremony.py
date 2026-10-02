@@ -1285,9 +1285,9 @@ class FlagDisposition(Ceremony):
         self.comparison(2, "BM_LATER", "test_other")
         (self.repo / "app.py").write_text("value = 2\nother = 2\n", encoding="utf-8")
         later = self.comparison(0, "BM_LATER", "test_other")
-        minted = self.cli("record", "advisor-disposition", "--finding", "SPEC-2", "--fixed", "--evidence-ref", later,
+        minted = self.cli("record", "advisor-disposition", "--finding", "SPEC-2", "--fixed",
                           "--behavior-id", "BM_LATER", "--reason", "the later attack owns the second claim")
-        self.assertEqual(minted.returncode, 0, f"{marker}: {minted.stderr[-400:]}")
+        self.assertEqual(minted.returncode, 0, f"FLAG_FIXED_NEEDS_EVIDENCE_REF: {minted.stderr[-400:]}")
         states = {entry["findingId"]: entry["status"] for entry in self.state()["findingStates"]}
         self.assertEqual(states, {"SPEC-1": "fixed", "SPEC-2": "fixed"}, marker)
         tdd = evidence_document(identity, str(self.state()["tddEvidence"]))
@@ -1296,6 +1296,10 @@ class FlagDisposition(Ceremony):
         self.assertIn(self.state()["tddEvidence"], linked, f"{marker}: the minted map revision has no event")
         self.assertIn({"type": "finding", "evidenceId": str(self.state()["advisorPreflight"]["intakeEvidence"]), "id": "SPEC-2"},
                       owners["BM_LATER"], marker)
+        disposition = evidence_document(identity, str(next(entry["dispositionEvidenceId"] for entry in self.state()["findingStates"]
+                                                            if entry["findingId"] == "SPEC-2")))
+        self.assertEqual(disposition["dispositions"][0]["evidenceRefs"], [f"{self.state()['tddEvidence']}:{later.rsplit(':', 1)[1]}"],
+                         "FLAG_FIXED_NEEDS_EVIDENCE_REF")
 
 
 class FlagRefusal(Ceremony):
@@ -1311,17 +1315,22 @@ class FlagRefusal(Ceremony):
         red = FlagDisposition.comparison(self, 2, "BM_ATTACK")
         passed = self.ok("verify", "--", sys.executable, "-c", "pass")
         success = f"{passed['evidenceId']}:{passed['runIndex']}"
-        before = self.rows()
-        for reason, extra in (("SPEC-9", ("--finding", "SPEC-9", "--fixed", "--evidence-ref", red)),
-                              ("successful", ("--finding", "SPEC-1", "--fixed", "--evidence-ref", red)),
-                              ("comparisons", ("--finding", "SPEC-1", "--fixed", "--evidence-ref", success)),
-                              ("execution reference", ("--finding", "SPEC-1", "--fixed", "--evidence-ref", "evidence-missing:0")),
-                              ("BM_NOPE", ("--finding", "SPEC-1", "--fixed", "--evidence-ref", red, "--behavior-id", "BM_NOPE"))):
-            refused = self.cli("record", "advisor-disposition", *extra, "--reason", "attempt")
-            self.assertEqual(refused.returncode, 2, f"{marker}: {extra} {refused.stdout}")
-            self.assertIn(reason, refused.stderr, f"{marker}: refused for another reason: {refused.stderr[-300:]}")
-            self.assertEqual(self.rows(), before, f"{marker}: {extra} mutated the ledger")
-        self.assertEqual(self.state()["findingStates"][0]["status"], "pending", marker)
+        def refuse(*cases):
+            before = self.rows()
+            for reason, extra in cases:
+                refused = self.cli("record", "advisor-disposition", *extra, "--reason", "attempt")
+                self.assertEqual(refused.returncode, 2, f"{marker}: {extra} {refused.stdout}")
+                self.assertIn(reason, refused.stderr, f"{marker}: refused for another reason: {refused.stderr[-300:]}")
+                self.assertEqual(self.rows(), before, f"{marker}: {extra} mutated the ledger")
+            self.assertEqual(self.state()["findingStates"][0]["status"], "pending", marker)
+        refuse(("SPEC-9", ("--finding", "SPEC-9", "--fixed", "--evidence-ref", red)),
+               ("BM_NOPE", ("--finding", "SPEC-1", "--fixed", "--evidence-ref", red, "--behavior-id", "BM_NOPE")),
+               *(("BM_ATTACK has no successful comparison", ("--finding", "SPEC-1", "--fixed", *ref))
+                 for ref in ((), ("--evidence-ref", red), ("--evidence-ref", success))))
+        (self.repo / "app.py").write_text("value = 2\nother = 1\n", encoding="utf-8")
+        FlagDisposition.comparison(self, 0, "BM_ATTACK")
+        refuse(("execution reference", ("--finding", "SPEC-1", "--fixed", "--evidence-ref", "evidence-missing:0")),
+               ("stale, unbound", ("--finding", "SPEC-1", "--fixed", "--evidence-ref", success)))
 
 
 class RemovedSurfaces(Ceremony):

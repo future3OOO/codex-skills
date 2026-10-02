@@ -44,6 +44,9 @@ class RunnerComparisonTests(unittest.TestCase):
         result = self.operation()
         self.assertEqual(result.returncode, 0,
                          "RUNNER_COMPARISON_ENTRYPOINT_MISSING: " + result.stdout + result.stderr)
+        reader = subprocess.run([sys.executable, str(self.case.workflow), "summary", "--repo", str(self.case.repo)],
+                                env={**self.case.env, "UNRELATED_READER_VARIABLE": "1"}, text=True, capture_output=True)
+        self.assertIn("Probes compared=1/1", reader.stdout, "READER_ENVIRONMENT_STALED_PROOF: " + reader.stdout)
 
     def test_current_test_environment_is_retained_and_bound(self):
         case = self.case
@@ -80,12 +83,12 @@ class RunnerComparisonTests(unittest.TestCase):
             self.assertEqual(changed.returncode, 0, changed.stdout + changed.stderr)
             self.assertFalse(json.loads(changed.stdout).get("reused", False))
             expected_calls.extend(["1", "2"])
-            self.assertEqual(calls.read_text().splitlines(), expected_calls, "CHANGED_SUPPORT_NOT_EXECUTED")
+            self.assertEqual(sorted(calls.read_text().splitlines()), sorted(expected_calls), "CHANGED_SUPPORT_NOT_EXECUTED")
         helper.write_text("expected = 3\n")
         changed = case.cli(*command)
         self.assertEqual(changed.returncode, 2, "HELPER_CHANGE_REUSED_SUCCESS: " + changed.stdout)
         self.assertEqual([a["outcome"] for a in json.loads(changed.stdout)["arms"]], ["failed", "failed"])
-        self.assertEqual(calls.read_text().splitlines(), expected_calls + ["1", "2"])
+        self.assertEqual(sorted(calls.read_text().splitlines()), sorted(expected_calls + ["1", "2"]))
 
     def test_quality_gate_refreshes_comparisons_only_after_success(self):
         self.assertEqual(self.operation(2).returncode, 0)
@@ -177,7 +180,42 @@ class RunnerComparisonTests(unittest.TestCase):
         receipt = json.loads(result.stdout.splitlines()[-1])
         self.assertEqual(receipt.get("comparison"), "changed", marker)
         self.assertEqual([arm["outcome"] for arm in receipt["arms"]], ["failed", "passed"], marker)
-        self.assertNotEqual(receipt["arms"][0]["sourceTree"], receipt["arms"][1]["sourceTree"], marker)
+        self.assertNotEqual(receipt["arms"][0]["tree"], receipt["arms"][1]["tree"], marker)
+
+    def test_distinct_arms_execute_concurrently(self):
+        rendezvous = self.case.tmp / "rendezvous"
+        rendezvous.mkdir()
+        body = ("import os, pathlib, time, unittest, app\nclass Value(unittest.TestCase):\n"
+                "    def test_value(self):\n"
+                f"        here = pathlib.Path({str(rendezvous)!r})\n"
+                "        (here / str(app.value)).touch()\n"
+                "        deadline = time.monotonic() + 10\n"
+                "        while len(list(here.iterdir())) < 2 and time.monotonic() < deadline:\n"
+                "            time.sleep(0.02)\n"
+                "        self.assertEqual(len(list(here.iterdir())), 2, 'ARMS_RAN_SEQUENTIALLY')\n")
+        result = self.operation(2, body=body)
+        receipt = json.loads(result.stdout.splitlines()[-1])
+        self.assertEqual([arm["outcome"] for arm in receipt["arms"]], ["passed", "passed"],
+                         "ARMS_RAN_SEQUENTIALLY: " + result.stdout)
+
+    def test_support_spellings_cannot_overlay_production(self):
+        def support(spelling, link=False):
+            self.case.tearDown(); self.case.setUp()
+            (self.case.repo / "tests").mkdir()
+            (self.case.repo / "tests" / "test_extra.py").write_text("EXTRA = 1\n")
+            if link:
+                (self.case.repo / "tests" / "link.py").symlink_to("../app.py")
+            result = self.operation(2, extra=("--support", spelling.replace("<root>", str(self.case.repo))))
+            receipt = json.loads(result.stdout.splitlines()[-1]) if result.stdout.strip() else {}
+            return result.returncode, [arm["outcome"] for arm in receipt.get("arms", [])], result.stderr
+        for spelling in ("tests/../app.py", "./tests/../app.py", "tests//../app.py", "<root>/app.py", "/tmp/outside.py"):
+            with self.subTest(spelling=spelling):
+                code, arms, error = support(spelling)
+                self.assertEqual((code, arms), (2, []), "SUPPORT_PATH_OVERLAID_PRODUCTION: " + error)
+        for spelling, link in (("<root>/tests/test_extra.py", False), ("tests/./test_extra.py", False), ("tests/link.py", True)):
+            with self.subTest(spelling=spelling):
+                code, arms, error = support(spelling, link)
+                self.assertEqual((code, arms), (0, ["failed", "passed"]), "SUPPORT_PATH_OVERLAID_PRODUCTION: " + error)
 
     def test_editable_package_uses_recorded_source(self):
         case = self.case
@@ -277,10 +315,15 @@ class RunnerComparisonTests(unittest.TestCase):
         before, after = (json.loads(result.stdout.splitlines()[-1]) for result in (first, second))
         evidence = self.case.cli("evidence", "--repo", str(self.case.repo),
                                  "--evidence-id", before["summaryId"], "--full")
-        arms = json.loads(evidence.stdout)["document"]["runs"][0]["arms"]
+        run = json.loads(evidence.stdout)["document"]["runs"][0]
+        arms = run["arms"]
         self.assertEqual(len({arm["requestedTree"] for arm in arms}), 2)
         self.assertEqual(len({arm["sourceTree"] for arm in arms}), 1,
                          "WITHIN_COMPARISON_REUSE_MISSING: " + first.stdout)
+        self.assertEqual([arm for view in before["arms"] for arm in view if arm in {"sourceTree", "requestedTree"}], [],
+                         "REUSED_ARM_NAMES_ANOTHER_TREE: " + first.stdout)
+        self.assertEqual([arm.get("tree") for arm in before["arms"]], [run["originalTree"], run["candidateTree"]],
+                         "REUSED_ARM_NAMES_ANOTHER_TREE: " + first.stdout)
         self.assertEqual(before["summaryId"], after["summaryId"], marker)
         self.assertTrue(after.get("reused"), marker)
         update = self.case.tmp / "map.json"
@@ -510,9 +553,17 @@ class RunnerComparisonTests(unittest.TestCase):
 
     def test_comparison_receipt_closes_finding(self):
         evidence, _ = self.repair()
+        test = self.case.repo / "test_review.py"
+        test.write_text(test.read_text() + "\n# changed support before closure\n")
+        stale = self.fix(evidence)
+        self.assertEqual(stale.returncode, 2, "STALE_SUPPORT_CLOSED_FINDING: " + stale.stdout + stale.stderr)
+        current = self.case.cli("tdd", "--repo", str(self.case.repo), "--behavior-id", "BM_VALUE",
+                                "--", sys.executable, "-m", "unittest", "test_review")
+        self.assertEqual(current.returncode, 0, current.stdout + current.stderr)
+        self.assertEqual([arm["outcome"] for arm in json.loads(current.stdout)["arms"]], ["passed", "failed", "passed"],
+                         "STALE_SUPPORT_CLOSED_FINDING: " + current.stdout)
         result = self.fix(evidence)
         self.assertEqual(result.returncode, 0, "COMPARISON_RECEIPT_UNUSABLE: " + result.stdout + result.stderr)
-        test = self.case.repo / "test_review.py"
         test.write_text(test.read_text() + "\n# changed support after closure\n")
         command = ("tdd", "--repo", str(self.case.repo), "--behavior-id", "BM_VALUE",
                    "--", sys.executable, "-m", "unittest", "test_review")
@@ -540,39 +591,42 @@ class RunnerComparisonTests(unittest.TestCase):
                 self.cancel_probe(signum)
 
     def cancel_probe(self, signum):
-        self.operation()
-        ready = self.case.tmp / "probe.pid"
-        ready.unlink(missing_ok=True)
+        self.operation(2)
+        ready = self.case.tmp / f"probes-{signum}"
+        ready.mkdir()
         (self.case.repo / "test_value.py").write_text(
-            "import json, os, pathlib, time, unittest\nclass Value(unittest.TestCase):\n"
+            "import json, os, pathlib, time, unittest, app\nclass Value(unittest.TestCase):\n"
             "    def test_value(self):\n"
             "        output = pathlib.Path(os.environ['TMPDIR']) / 'probe-output'\n"
             "        output.write_text('live output')\n"
-            f"        pathlib.Path({str(ready)!r}).write_text(json.dumps([os.getpid(), str(output)]))\n"
+            f"        (pathlib.Path({str(ready)!r}) / str(app.value)).write_text(json.dumps([os.getpid(), str(output)]))\n"
             "        time.sleep(30)\n"
         )
         process = subprocess.Popen([sys.executable, str(harness.WORKFLOW), "tdd", "--repo", str(self.case.repo),
                                     "--behavior-id", "BM_VALUE", "--", sys.executable, "-m", "unittest", "test_value"],
                                    env=self.case.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        child = None
+        children = []
         try:
-            deadline = time.monotonic() + 5
-            while not ready.exists() and process.poll() is None and time.monotonic() < deadline:
+            deadline = time.monotonic() + 10
+            while len(list(ready.iterdir())) < 2 and process.poll() is None and time.monotonic() < deadline:
                 time.sleep(.01)
-            self.assertTrue(ready.exists(), "probe did not start")
-            child, output = json.loads(ready.read_text())
-            self.assertEqual(Path(output).read_text(), "live output")
+            started = [json.loads(path.read_text()) for path in ready.iterdir()]
+            self.assertEqual(len(started), 2, "INTERRUPTED_PROOF_PUBLISHED: both arms did not start")
+            children = [child for child, _ in started]
+            for _, output in started:
+                self.assertEqual(Path(output).read_text(), "live output")
             process.send_signal(signum)
             process.communicate(timeout=5)
-            with self.assertRaises(ProcessLookupError, msg="INTERRUPTED_PROOF_PUBLISHED: executing child survived cancellation"):
-                os.kill(child, 0)
-            self.assertFalse(Path(output).exists(), "INTERRUPTED_OUTPUT_NOT_CLEANED")
+            for child, output in started:
+                with self.assertRaises(ProcessLookupError, msg="INTERRUPTED_PROOF_PUBLISHED: executing child survived cancellation"):
+                    os.kill(child, 0)
+                self.assertFalse(Path(output).exists(), "INTERRUPTED_OUTPUT_NOT_CLEANED")
         finally:
             if process.poll() is None:
                 process.kill()
                 process.communicate()
-            if child is not None:
+            for child in children:
                 try:
                     os.kill(child, signal.SIGKILL)
                 except ProcessLookupError:
-                    child = None
+                    pass
