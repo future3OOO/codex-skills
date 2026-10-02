@@ -3,7 +3,9 @@
 
 For edits, it names what the pass has not recorded yet and lets the edit
 through; comparisons run on recorded source trees, so edit order needs no gate.
-A shell command that is exactly one pytest/unittest invocation is rewritten to
+Once the pass records its probe list, a shell line that starts a pytest/unittest
+run anywhere is denied: behavior runs through tdd comparisons. Before that, a
+shell command that is exactly one pytest/unittest invocation is rewritten to
 run through `workflow verify --observed`, which keeps its receipt in the
 checkout where it runs and returns its exit code; while it keeps a receipt,
 the command's stderr is merged into stdout.
@@ -26,7 +28,7 @@ from hooks.lib.hook_input import advise, edited_path, emit, is_explorer_continua
 from hooks.lib.repo_identity import RepoIdentityError, resolve_repo_identity, try_resolve_repo_identity  # noqa: E402
 from hooks.lib.state_store import is_reviewable_path, is_test_path  # noqa: E402
 from hooks.lib.tdd_surface import identify  # noqa: E402
-from hooks.lib.tdd_workflow import edit_blockers  # noqa: E402
+from hooks.lib.tdd_workflow import COVERED, covered, edit_blockers  # noqa: E402
 from hooks.lib.workflow_state import (  # noqa: E402
     WorkflowError,
     _finding_unresolved,
@@ -40,6 +42,50 @@ WORKFLOW = ROOT / "skills" / "repo-production-workflow" / "scripts" / "workflow.
 SHELL_SYNTAX = re.compile(r"[;&|<>`$()\n\r\\]")
 # Unquoted, these the shell would expand or drop; quoted, they reach the runner verbatim.
 SHELL_EXPANSION = re.compile(r"[*?\[\]{}~#]")
+HEREDOC = re.compile(r"(?<!<)<<(?!<)-?\s*['\"]?([A-Za-z_]\w*)")
+ASSIGNMENT = re.compile(r"[A-Za-z_]\w*=.*", re.DOTALL)
+
+
+def runs_tests(command: object) -> bool:
+    """Whether any simple command of a shell line, here-document bodies aside, starts a pytest/unittest run."""
+    if not isinstance(command, str):
+        return False
+    kept, bodies = [], []
+    for line in command.split("\n"):
+        if bodies:
+            if line.strip() == bodies[0]:
+                bodies.pop(0)
+            continue
+        kept.append(line)
+        bodies += HEREDOC.findall(line)
+    lexer = shlex.shlex("\n".join(kept), posix=True, punctuation_chars=";&|()<>\n")
+    lexer.whitespace, lexer.whitespace_split = " \t\r", True
+    try:
+        tokens = [*lexer, ";"]
+    except ValueError:
+        return False
+    simple: list[str] = []
+    for token in tokens:
+        if set(token) <= set(";&|()\n"):
+            while simple and ASSIGNMENT.fullmatch(simple[0]):
+                simple.pop(0)
+            if identify(simple).get("runner") in {"pytest", "unittest"}:
+                return True
+            simple = []
+        else:
+            simple.append(token)
+    return False
+
+
+def covered_pass(payload: dict[str, object]) -> bool:
+    """An open pass with a recorded probe list; an unreadable ledger never stops a command."""
+    try:
+        identity = try_resolve_repo_identity(working_directory(payload))
+        state = read_workflow(identity) if identity is not None else None
+        return (state is not None and not (state.get("phase") == "complete" and not state.get("revalidation"))
+                and covered(identity, state))
+    except (RepoIdentityError, WorkflowError, LedgerError, OSError, ValueError, sqlite3.Error):
+        return False
 
 
 def observed(command: object) -> str | None:
@@ -63,9 +109,13 @@ def main() -> int:
     tool_name = payload.get("tool_name")
     tool_name = tool_name.removeprefix("collaboration") if isinstance(tool_name, str) else ""
     inputs = payload.get("tool_input")
-    if tool_name == "Bash" and isinstance(inputs, dict) and (rewritten := observed(inputs.get("command"))):
-        emit("PreToolUse", permissionDecision="allow", updatedInput={**inputs, "command": rewritten})
-        return 0
+    if tool_name == "Bash" and isinstance(inputs, dict):
+        if runs_tests(inputs.get("command")) and covered_pass(payload):
+            emit("PreToolUse", permissionDecision="deny", permissionDecisionReason=COVERED)
+            return 0
+        if rewritten := observed(inputs.get("command")):
+            emit("PreToolUse", permissionDecision="allow", updatedInput={**inputs, "command": rewritten})
+            return 0
     if tool_name in {"Agent", "spawn_agent", "followup_task", "send_input", "resume_agent"}:
         missing: list[str] = []
         try:

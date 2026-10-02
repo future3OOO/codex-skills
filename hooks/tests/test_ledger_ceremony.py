@@ -1051,6 +1051,21 @@ class ObservedCapture(Ceremony):
         # bash passes `-q\rtests` to pytest as one argument; split, it would select tests
         self.assertNotIn("updatedInput", self.hook("pytest -q\rtests", self.repo), "CARRIAGE_RETURN_REWRITTEN")
 
+    def test_a_composed_test_run_is_refused_once_the_probe_list_is_recorded(self) -> None:
+        # obs1/obs2 ran `$(rg ...)` selections and `rg ...; python3 -m unittest ...` past the lone-command refusal
+        marker = "COMPOSED_TEST_RUN_ADMITTED"
+        command = f"{sys.executable} -m unittest -v test_app"
+        composed = (f"git status; {command} 2>&1 | tail -3", f"cd {self.repo} && \\\n  {command}",
+                    f"{sys.executable} -m unittest -v $(ls test_*.py)", "pytest -q\rtest_app.py")
+        self.begin()
+        self.assertIsNone(self.hook(composed[0], self.repo).get("permissionDecision"), f"{marker}: exploration refused")
+        self.record_preflight({"authoritativeContract": "c", "behaviorMap": [item("BM_ONE")]})
+        for refused in composed:
+            self.assertEqual(self.hook(refused, self.repo).get("permissionDecision"), "deny", f"{marker}: {refused!r}")
+        for other in (f"git diff | head; {sys.executable} {WORKFLOW} tdd --behavior-id BM_ONE -- {command}",
+                      "git diff --check | head -5"):
+            self.assertEqual(self.hook(other, self.repo), {}, f"{marker}: refused {other!r}")
+
 
 class ObservedDrift(Ceremony):
     def test_a_run_spanning_an_edit_binds_nothing(self) -> None:
