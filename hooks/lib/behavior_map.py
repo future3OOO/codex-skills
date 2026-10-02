@@ -108,7 +108,7 @@ def comparison_view(run: JsonObject) -> JsonObject:
     original = _operation_lines(run["arms"][0])
     return {**{key: run[key] for key in ("comparison", "valid", "fresh", "runIndex", "command") if key in run},
             "arms": [{"tree": arm["requestedTree"],
-                      "outcome": arm["outcome"], "error": (arm["error"] or arm.get("unreached", ""))[:500],
+                      "outcome": arm["outcome"], "error": (arm.get("unreached") or arm["error"])[:500],
                       "observation": _changed_lines(original, _operation_lines(arm))
                       or "\n".join((arm.get("proof") or {}).get("observation", []))[:1000],
                       "testsExecuted": (arm.get("proof") or {}).get("testsExecuted")}

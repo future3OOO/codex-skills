@@ -188,8 +188,11 @@ def _reviewed_sources(identity: RepoIdentity, state: JsonObject, mapped: JsonObj
 # children would inherit): which code objects under the source root that process ran,
 # each with the test function that ran it, and every test function started.
 # Every Python process the probe starts records the source-tree code it ran. In the first,
-# each call is credited when probe code (a test file or inline -c/stdin code) is on its
-# stack, and attributed to the enclosing test function; later processes are the probe's children.
+# a call is credited when probe code (a test file or inline -c/stdin code) called into a
+# changed file to reach it, and is attributed to the enclosing test function; reaching the
+# change through an unchanged outer Module earns no credit. Later processes are children.
+# A probe that cannot be proof stops at once: when a child runs the changed code, or when a
+# test and the next test's setup never call it, the whole probe process group is killed.
 _REACH_SITE = """import os, sys
 _site, _root = os.environ.get("WORKFLOW_REACH"), os.environ.get("WORKFLOW_REACH_ROOT", "")
 if _site:
@@ -197,10 +200,15 @@ if _site:
     _child = bool(os.environ.get("WORKFLOW_REACH_CHILD"))
     os.environ["WORKFLOW_REACH_CHILD"] = "1"
     _out = os.path.join(_site, "child-%d.json" % os.getpid() if _child else "reach.json")
+    import signal
     with open(os.path.join(_site, "probes.json")) as _stream:
-        _probes = set(json.load(_stream))
-    _codes, _tests, _monitor = set(), set(), hasattr(sys, "monitoring")
+        _plan = json.load(_stream)
+    _probes, _owned = set(_plan["probes"]), {tuple(span) for span in _plan["owned"]}
+    _files = {span[0] for span in _owned}
+    _codes, _tests, _hits, _current, _monitor = set(), set(), set(), [None, False], hasattr(sys, "monitoring")
     def _relative(code):
+        if code.co_filename.startswith("<"):  # frozen or generated code, inline probe code aside
+            return code.co_filename if code.co_filename in _probes else None
         name = code.co_filename if os.path.isabs(code.co_filename) else os.path.abspath(code.co_filename)
         return name[len(_root):] if name.startswith(_root) else None
     def _seen(code, frame):
@@ -211,31 +219,44 @@ if _site:
                 code.co_name)
         if _child:
             _codes.add(span)
+            span in _owned and _stop("a process the probe started ran")
             return
         if relative in _probes and code.co_name.startswith("test"):
-            _tests.add(relative + "::" + code.co_qualname)
+            _owned and _current[0] is not None and not _current[1] and _stop("test " + _current[0] + " never ran")
+            _current[:] = relative + "::" + code.co_qualname, False
+            _tests.add(_current[0])
             _monitor and sys.monitoring.restart_events()
             return
-        test, probe, caller = "", False, frame.f_back
+        test, probe, entry, caller = "", None, relative, frame.f_back
         while caller is not None and not test:
             owner = _relative(caller.f_code)
             if owner in _probes:
-                probe = True
+                probe = entry in _files if probe is None else probe
                 test = owner + "::" + caller.f_code.co_qualname if caller.f_code.co_name.startswith("test") else ""
+            elif owner is not None and probe is None:
+                entry = owner
             caller = caller.f_back
-        _codes.add((*span, test, probe))
+        _codes.add((*span, test, bool(probe)))
+        if probe and span in _owned:
+            _current[1] = True
+            test and _hits.add(test)
+        # A call of changed code through an unchanged Module keeps watching for the probe's own call.
+        return span in _owned and not probe
     if _monitor:
         sys.monitoring.use_tool_id(3, "workflow-reach")
         sys.monitoring.register_callback(3, sys.monitoring.events.PY_START,
-                                         lambda code, _: _seen(code, sys._getframe(1)) or sys.monitoring.DISABLE)
+                                         lambda code, _: None if _seen(code, sys._getframe(1)) else sys.monitoring.DISABLE)
         sys.monitoring.set_events(3, sys.monitoring.events.PY_START)
     else:
         _profile = lambda frame, event, _: event == "call" and _seen(frame.f_code, frame)
         sys.setprofile(_profile); threading.setprofile(_profile)
-    def _write():
+    def _write(stopped=""):
         with open(_out + ".part", "w") as stream:
-            stream.write(json.dumps({"reach": sorted(_codes), "tests": sorted(_tests)}))
+            stream.write(json.dumps({"reach": sorted(_codes), "tests": sorted(_tests), "stopped": stopped}))
         os.replace(_out + ".part", _out)
+    def _stop(reason):
+        _write(reason)
+        os.killpg(0, signal.SIGKILL)
     atexit.register(_write)
 """
 
@@ -277,7 +298,7 @@ def _changed_code(identity: RepoIdentity, original: str, candidate: str) -> tupl
 
 
 def _execute_tree(identity: RepoIdentity, source_tree: str, candidate_tree: str, files: list[str],
-                  command: list[str], surface: JsonObject, timeout: float) -> JsonObject:
+                  command: list[str], surface: JsonObject, timeout: float, owned: set) -> JsonObject:
     with tempfile.TemporaryDirectory(prefix="workflow-proof-") as temporary:
         root = Path(temporary) / "source"
         subprocess.run(["git", "clone", "--quiet", "--no-checkout", identity.root, str(root)],
@@ -298,7 +319,9 @@ def _execute_tree(identity: RepoIdentity, source_tree: str, candidate_tree: str,
         site = Path(temporary) / "reach"
         site.mkdir()
         (site / "sitecustomize.py").write_text(_REACH_SITE, encoding="utf-8")
-        (site / "probes.json").write_text(json.dumps([name for name in files if os.fsencode(name) not in set(production)] + ["<string>", "<stdin>"]))
+        production = set(production)
+        (site / "probes.json").write_text(json.dumps({"owned": sorted(owned),
+            "probes": [name for name in files if os.fsencode(name) not in production] + ["<string>", "<stdin>"]}))
         env = _environment()
         env.update(PYTHONPATH=os.pathsep.join(filter(None, (str(site), identity.root, env.get("PYTHONPATH")))), PWD=identity.root,
                    TMPDIR=temporary, CODEX_WORKFLOW_STATE_ROOT=str(Path(temporary) / "state"),
@@ -327,7 +350,7 @@ def _execute_tree(identity: RepoIdentity, source_tree: str, candidate_tree: str,
         children = sorted({tuple(span) for path in site.glob("child-*.json")
                            for span in json.loads(path.read_text())["reach"] if not is_test_path(span[0])})
         return _run_entry(raw, code, timed_out, sourceTree=source_tree, outcome=outcome, proof=proof, error=error,
-                          output=output, loadedRoot=identity.root, childReach=children,
+                          output=output, loadedRoot=identity.root, childReach=children, stopped=reach.get("stopped", ""),
                           reach=[span for span in reach.get("reach", []) if not is_test_path(span[0])],
                           tests=[test for test in reach.get("tests", []) if is_test_path(test.split("::")[0])])
 
@@ -385,17 +408,23 @@ def _run_tdd(values: list[str]) -> int:
     # Proof calls the code it judges: on both sides probe code must call the changed code in its
     # own process, from every selected test, and no process it starts may run it; a miss stops the run.
     for index in (len(sources) - 1, *range(len(sources) - 1)):
-        source, key, owned = sources[index], keys[index], sides.get(index)
-        if key not in held:
-            held[key] = {**_execute_tree(identity, source, candidate, files, command, surface, args.timeout), "key": key}
-        arm = arms[index] = {**(cache.get((key, source)) or held[key]), "requestedTree": source, "unreached": ""}
-        reached = [span for span in arm.get("reach", []) if tuple(span[:4]) in (owned or ()) and span[5:6] == [True]]
+        source, key, owned = sources[index], keys[index], sides.get(index) or set()
+        # Reach credit depends on the changed code it was recorded against.
+        want = [list(span) for span in sorted(owned)]
+        arm = cache.get((key, source))
+        if arm is None or arm.get("owned") != want:
+            if held.get(key, {}).get("owned") != want:
+                held[key] = {**_execute_tree(identity, source, candidate, files, command, surface, args.timeout, owned),
+                             "key": key, "owned": want}
+            arm = held[key]
+        arm = arms[index] = {**arm, "requestedTree": source, "unreached": ""}
+        reached = [span for span in arm.get("reach", []) if tuple(span[:4]) in owned and span[5:6] == [True]]
         hit = {span[4] for span in reached if span[4]}
         missed = sorted(set(arm.get("tests", [])) - hit) if hit else []
-        child = any(tuple(span[:4]) in (owned or ()) for span in arm.get("childReach", []))
-        if owned and (not reached or missed or child):
-            arm["unreached"] = (("a process the probe started ran" if child else
-                                 f"tests {', '.join(missed)} never ran" if missed else "the probe's own code never ran")[:300]
+        child = any(tuple(span[:4]) in owned for span in arm.get("childReach", []))
+        if owned and (not reached or missed or child or arm.get("stopped")):
+            arm["unreached"] = (("a process the probe started ran" if child else arm.get("stopped") or
+                                 (f"tests {', '.join(missed)} never ran" if missed else "the probe's own code never ran"))[:300]
                                 + " the changed code (" + ", ".join(sorted(f"{name}:{low}" for name, low, *_ in owned))[:200]
                                 + "); call its owning Interface in-process from the probe instead")
             break

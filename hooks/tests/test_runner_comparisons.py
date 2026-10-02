@@ -212,28 +212,37 @@ class RunnerComparisonTests(unittest.TestCase):
         case = self.case
         (case.repo / "app.py").write_text("LIMIT = 1\n\n\ndef decide(x):\n    return x + 1\n")
         (case.repo / "cli.py").write_text("import app\nassert app.decide(1) == 3, 'DECISION'\n")
-        case.git("add", "cli.py")
+        (case.repo / "outer.py").write_text("import app\n\n\ndef packet(x):\n    return {'decision': app.decide(x)}\n")
+        case.git("add", "cli.py", "outer.py")
         case.git("commit", "-qam", "decision owner")
         slug, _ = case.begin_with_map([self.item(2)])
         (case.repo / "app.py").write_text("LIMIT = 2\n\n\ndef decide(x):\n    return x + 2\n")
         (case.repo / "test_value.py").write_text(
-            "import subprocess, sys, unittest, app\nclass Value(unittest.TestCase):\n"
+            "import subprocess, sys, unittest, app, outer\nclass Value(unittest.TestCase):\n"
+            "    def test_through_outer(self): self.assertEqual(outer.packet(1)['decision'], 3, 'DECISION')\n"
+            "    def test_outer_then_owner(self): outer.packet(1); self.assertEqual(app.decide(1), 3, 'DECISION')\n"
             "    def test_mixed(self):\n"
+            f"        open({str(case.repo.parent / 'ran')!r}, 'a').write('m')\n"
             "        self.assertEqual(app.decide(1), 3, 'DECISION')\n"
             "        child = subprocess.run([sys.executable, '-c', 'import app; print(app.decide(1))'], capture_output=True, text=True)\n"
             "        self.assertEqual(child.stdout.strip(), '3', 'DECISION')\n"
-            "    def test_import_only(self): self.assertEqual(app.LIMIT, 2, 'DECISION')\n"
-            "    def test_owner(self): self.assertEqual(app.decide(1) + app.LIMIT, 5, 'DECISION')\n")
+            f"    def test_import_only(self): open({str(case.repo.parent / 'ran')!r}, 'a').write('i'); self.assertEqual(app.LIMIT, 2, 'DECISION')\n"
+            f"    def test_owner(self): open({str(case.repo.parent / 'ran')!r}, 'a').write('o'); self.assertEqual(app.decide(1) + app.LIMIT, 5, 'DECISION')\n")
         def compare(*command):
             raw = case.cli("tdd", "--repo", str(case.repo), "--slug", slug, "--behavior-id", "BM_VALUE", "--", *command)
             return raw.returncode, json.loads(raw.stdout)["comparison"]
         unit = (sys.executable, "-m", "unittest")
-        for test in ("test_mixed", "test_import_only"):
+        # R-18: obs4 compared the unchanged make_packet and bootstrap entry around the changed resolver
+        for test in ("test_mixed", "test_import_only", "test_through_outer"):
             self.assertEqual(compare(*unit, f"test_value.Value.{test}"), (2, "incomplete"), f"OUTSIDE_REACH_ADMITTED: {test}")
         self.assertEqual(compare("bash", "-c", f"{sys.executable} cli.py"), (2, "incomplete"), "OUTSIDE_REACH_ADMITTED: production CLI")
+        (case.repo.parent / "ran").unlink()
+        self.assertEqual(compare(*unit, "test_value"), (2, "incomplete"), "OUTSIDE_REACH_ADMITTED: module")
+        self.assertEqual((case.repo.parent / "ran").read_text(), "i", "REFUSED_PROBE_RAN_ON")
         self.assertEqual(compare("bash", "-c", " ".join([*unit, "test_value.Value.test_owner"])), (0, "changed"),
                          "WRAPPED_OWNER_PROBE_REFUSED")
-        self.assertEqual(compare(*unit, "test_value.Value.test_owner"), (0, "changed"), "OWNER_PROBE_REFUSED")
+        for test in ("test_owner", "test_outer_then_owner"):
+            self.assertEqual(compare(*unit, f"test_value.Value.{test}"), (0, "changed"), f"OWNER_PROBE_REFUSED: {test}")
         (case.repo / "app.py").write_text("LIMIT = 2\n\n\ndef decide(x):\n    return x + 1\n")
         (case.repo / "test_value.py").write_text(
             "import unittest, app\nclass Value(unittest.TestCase):\n"
@@ -549,11 +558,12 @@ class RunnerComparisonTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         item = {key: value for key, value in self.item().items()
                 if key in {"id", "basis", "behavior", "seam", "expected", "sourceRefs"}}
-        path = self.case.tmp / "same-map.json"
-        path.write_text(json.dumps({"items": [item]}))
+        from hooks.lib.repo_identity import resolve_repo_identity
+        from hooks.lib.tdd_workflow import map_update
+        from hooks.lib.workflow_state import read_workflow
+        identity = resolve_repo_identity(self.case.repo)
         before = self.ledger_counts()
-        result = self.case.cli("record", "tdd-map", "--repo", str(self.case.repo), "--input", str(path))
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        map_update(identity, read_workflow(identity), {"items": [item]})  # the owner `record tdd-map` calls
         self.assertEqual(self.ledger_counts(), before, "LEDGER_STATE_REGRESSION_HIDDEN")
 
     def test_probe_text_keeps_supported_whitespace_normalization(self):
