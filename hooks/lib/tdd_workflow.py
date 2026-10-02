@@ -207,8 +207,6 @@ if _site:
     _probes, _owned = set(_plan["probes"]), {tuple(span) for span in _plan["owned"]}
     _files = {span[0] for span in _owned}
     _codes, _tests, _hits, _current, _monitor = set(), set(), set(), [None, False], hasattr(sys, "monitoring")
-    def _covered(test):
-        return test in _hits or any(test.startswith(scope) for scope in _hits if scope.endswith((".", "::")))
     def _qual(frame):
         # A method is named by the instance's class, so inherited tests stay distinct.
         name, holder = frame.f_code.co_qualname, frame.f_locals.get("self", frame.f_locals.get("cls"))
@@ -216,7 +214,9 @@ if _site:
             return name
         return (holder if isinstance(holder, type) else type(holder)).__qualname__ + "." + frame.f_code.co_name
     def _missed():
-        return _owned and _current[0] is not None and not (_current[1] or _covered(_current[0]))
+        # Covered by this invocation's own call or by setup credit for its class or module, never by an earlier run.
+        return _owned and _current[0] is not None and not (
+            _current[1] or any(_current[0].startswith(scope) for scope in _hits if scope.endswith((".", "::"))))
     def _relative(code):
         if code.co_filename.startswith("<"):  # frozen or generated code, inline probe code aside
             return code.co_filename if code.co_filename in _probes else None

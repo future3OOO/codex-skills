@@ -270,6 +270,8 @@ class RunnerComparisonTests(unittest.TestCase):
             "        if len(Base.runs) == 1: self.assertEqual(app.decide(1), 3, 'DECISION')\n"
             "class First(Base, unittest.TestCase): pass\nclass Second(Base, unittest.TestCase): pass\n")
         self.assertEqual(compare(*unit, "test_inherited"), (2, "incomplete"), "OUTSIDE_REACH_ADMITTED: repeated test")
+        self.assertEqual(compare(*unit, "test_inherited.First.test_x", "test_inherited.First.test_x"), (2, "incomplete"),
+                         "OUTSIDE_REACH_ADMITTED: same test twice")
         (case.repo / "app.py").write_text("LIMIT = 2\n\n\ndef decide(x):\n    return x + 1\n")
         (case.repo / "test_value.py").write_text(
             "import unittest, app\nclass Value(unittest.TestCase):\n"
