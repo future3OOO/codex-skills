@@ -170,9 +170,9 @@ class RunnerComparisonTests(unittest.TestCase):
             "        self.assertEqual(child.stdout.strip(), '3', 'DECISION')\n"
             "    def test_owner(self):\n"
             "        self.assertEqual(app.decide(1), 3, 'DECISION')\n")
-        def compare(test):
+        def compare(*tests):
             raw = case.cli("tdd", "--repo", str(case.repo), "--slug", slug, "--behavior-id", "BM_VALUE", "--",
-                           sys.executable, "-m", "unittest", f"test_value.Value.{test}")
+                           sys.executable, "-m", "unittest", *(f"test_value.Value.{test}" for test in tests))
             return raw.returncode, json.loads(raw.stdout)["comparison"]
         self.assertEqual(compare("test_outer"), (2, "incomplete"), "OUTER_PROBE_ADMITTED")
         self.assertEqual(compare("test_owner"), (0, "changed"), "OWNER_PROBE_REFUSED")
@@ -186,6 +186,30 @@ class RunnerComparisonTests(unittest.TestCase):
             self.assertEqual(refused.returncode, 2, "DUPLICATE_TEST_RUN_ADMITTED: " + refused.stdout + refused.stderr)
         self.assertEqual(self.ledger_counts(), before, "DUPLICATE_TEST_RUN_ADMITTED")
         self.assertEqual(self.case.cli("verify", "--repo", str(self.case.repo), "--", "git", "diff", "--check").returncode, 0)
+
+    def test_a_child_process_test_batched_with_an_owner_test_is_not_proof(self):
+        case = self.case
+        (case.repo / "app.py").write_text("def decide(x):\n    return x + 1\n")
+        case.git("commit", "-qam", "decision owner")
+        slug, _ = case.begin_with_map([self.item(2)])
+        (case.repo / "app.py").write_text("def decide(x):\n    return x + 2\n")
+        (case.repo / "test_value.py").write_text(
+            "import subprocess, sys, unittest, app\nclass Value(unittest.TestCase):\n"
+            "    def test_owner(self): self.assertEqual(app.decide(1), 3, 'DECISION')\n"
+            "    def test_outer(self):\n"
+            "        child = subprocess.run([sys.executable, '-c', 'import app; print(app.decide(1))'], capture_output=True, text=True)\n"
+            "        self.assertEqual(child.stdout.strip(), '3', 'DECISION')\n")
+        raw = case.cli("tdd", "--repo", str(case.repo), "--slug", slug, "--behavior-id", "BM_VALUE", "--",
+                       sys.executable, "-m", "unittest", "test_value.Value.test_owner", "test_value.Value.test_outer")
+        self.assertEqual((raw.returncode, json.loads(raw.stdout)["comparison"]), (2, "incomplete"),
+                         "BATCHED_OUTER_TEST_ADMITTED: " + raw.stdout[-600:])
+
+    def test_verify_refuses_test_runs_once_the_probe_list_is_recorded(self):
+        self.case.begin_with_map([self.item(2)])
+        (self.case.repo / "test_value.py").write_text("import unittest\nclass Value(unittest.TestCase):\n    def test_value(self): pass\n")
+        before = self.ledger_counts()
+        refused = self.case.cli("verify", "--repo", str(self.case.repo), "--", sys.executable, "-m", "unittest", "test_value")
+        self.assertEqual((refused.returncode, self.ledger_counts()), (2, before), "TEST_RUN_BEFORE_COMPARISON_ADMITTED")
 
     def test_python_option_forms_preserve_inline_operations(self):
         self.operation()

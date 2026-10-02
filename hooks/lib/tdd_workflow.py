@@ -183,24 +183,40 @@ def _reviewed_sources(identity: RepoIdentity, state: JsonObject, mapped: JsonObj
 
 
 # Imported first by the probe's first Python process only (it removes the variable its
-# children would inherit): which code objects under the source root that process ran.
+# children would inherit): which code objects under the source root that process ran,
+# each with the test function that ran it, and every test function started.
 _REACH_SITE = """import os, sys
 _out, _root = os.environ.pop("WORKFLOW_REACH", None), os.environ.pop("WORKFLOW_REACH_ROOT", "")
 if _out:
     import atexit, json, threading
-    _codes = set()
-    def _seen(code):
+    _codes, _tests, _monitor = set(), set(), hasattr(sys, "monitoring")
+    def _relative(code):
         name = code.co_filename if os.path.isabs(code.co_filename) else os.path.abspath(code.co_filename)
-        if name.startswith(_root):
-            _codes.add((name[len(_root):], code.co_firstlineno, max((l for _, _, l in code.co_lines() if l), default=code.co_firstlineno)))
-    if hasattr(sys, "monitoring"):
+        return name[len(_root):] if name.startswith(_root) else None
+    def _seen(code, frame):
+        relative = _relative(code)
+        if relative is None:
+            return
+        if code.co_name.startswith("test"):
+            _tests.add(relative + "::" + code.co_qualname)
+            _monitor and sys.monitoring.restart_events()
+            return
+        test, caller = "", frame.f_back
+        while caller is not None and not test:
+            owner = _relative(caller.f_code)
+            test = owner + "::" + caller.f_code.co_qualname if owner and caller.f_code.co_name.startswith("test") else ""
+            caller = caller.f_back
+        _codes.add((relative, code.co_firstlineno, max((l for _, _, l in code.co_lines() if l), default=code.co_firstlineno),
+                    code.co_name, test))
+    if _monitor:
         sys.monitoring.use_tool_id(3, "workflow-reach")
-        sys.monitoring.register_callback(3, sys.monitoring.events.PY_START, lambda code, _: _seen(code) or sys.monitoring.DISABLE)
+        sys.monitoring.register_callback(3, sys.monitoring.events.PY_START,
+                                         lambda code, _: _seen(code, sys._getframe(1)) or sys.monitoring.DISABLE)
         sys.monitoring.set_events(3, sys.monitoring.events.PY_START)
     else:
-        _profile = lambda frame, event, _: event == "call" and _seen(frame.f_code)
+        _profile = lambda frame, event, _: event == "call" and _seen(frame.f_code, frame)
         sys.setprofile(_profile); threading.setprofile(_profile)
-    atexit.register(lambda: open(_out, "w").write(json.dumps(sorted(_codes))))
+    atexit.register(lambda: open(_out, "w").write(json.dumps({"reach": sorted(_codes), "tests": sorted(_tests)})))
 """
 
 
@@ -227,7 +243,8 @@ def _changed_code(identity: RepoIdentity, original: str, candidate: str) -> tupl
             while pending:
                 code = pending.pop()
                 pending.extend(const for const in code.co_consts if hasattr(const, "co_lines"))
-                spans.append((code.co_firstlineno, max((l for _, _, l in code.co_lines() if l), default=code.co_firstlineno)))
+                spans.append((code.co_firstlineno, max((l for _, _, l in code.co_lines() if l), default=code.co_firstlineno),
+                              code.co_name))
             for low, high in ranges:
                 hit = [span for span in spans if span[0] <= high and span[1] >= low]
                 owners[side].update((name, *span) for span in hit
@@ -281,9 +298,11 @@ def _execute_tree(identity: RepoIdentity, source_tree: str, candidate_tree: str,
             else:
                 proof, error = tdd_surface.evaluate_red(surface, output)
         outcome = ("passed" if code == 0 else "failed") if proof else "incomplete"
-        reach = json.loads((site / "reach.json").read_text()) if (site / "reach.json").is_file() else []
+        reach = json.loads((site / "reach.json").read_text()) if (site / "reach.json").is_file() else {}
         return _run_entry(raw, code, timed_out, sourceTree=source_tree, outcome=outcome, proof=proof, error=error,
-                          output=output, loadedRoot=identity.root, reach=[span for span in reach if not is_test_path(span[0])])
+                          output=output, loadedRoot=identity.root,
+                          reach=[span for span in reach.get("reach", []) if not is_test_path(span[0])],
+                          tests=[test for test in reach.get("tests", []) if is_test_path(test.split("::")[0])])
 
 
 @interruptible()
@@ -338,11 +357,16 @@ def _run_tdd(values: list[str]) -> int:
     arms = []
     for source, key in zip(sources, keys):
         arms.append({**(cache.get((key, source)) or held[key]), "requestedTree": source, "unreached": ""})
-    # Proof calls the code it judges: the probe's own process must run the changed code on both sides.
+    # Proof calls the code it judges: on both sides the probe's own process, and each test
+    # function that ran changed code there, must cover every selected test.
     for arm, owned in zip((arms[0], arms[-1]), _changed_code(identity, original, candidate)):
-        if owned and not owned & {tuple(span) for span in arm.get("reach", [])}:
-            arm["unreached"] = ("the probe's own process never ran the changed code (" + ", ".join(sorted(
-                f"{name}:{low}" for name, low, _ in owned))[:300] + "); call its owning Interface in-process")
+        reached = [span for span in arm.get("reach", []) if tuple(span[:4]) in owned]
+        hit = {span[4] for span in reached if span[4]}
+        missed = sorted(set(arm.get("tests", [])) - hit) if hit else []
+        if owned and (not reached or missed):
+            arm["unreached"] = ((f"tests {', '.join(missed)} never ran" if missed else "the probe's own process never ran")[:300]
+                                + " the changed code (" + ", ".join(sorted(f"{name}:{low}" for name, low, *_ in owned))[:200]
+                                + ") in the probe's own process; call its owning Interface in-process")
     outcomes = [arm["outcome"] for arm in arms]
     valid = (outcomes[-1] == "passed" and all(outcome in {"passed", "failed"} for outcome in outcomes[:-1])
              and not any(arm["unreached"] for arm in arms))
@@ -366,14 +390,14 @@ def _run_tdd(values: list[str]) -> int:
     return 0 if run["valid"] else 2
 
 
-COVERED = ("every mapped behavior already has a comparison of original and candidate; the quality gate refreshes "
-           "stale ones and the suite belongs to CI. Add uncovered affected behavior to the map and compare it with tdd")
+COVERED = ("the probe list is recorded: behavior runs through tdd comparisons, which the quality gate refreshes, "
+           "and the suite belongs to CI. Add uncovered affected behavior to the list and compare it with tdd")
 
 
 def covered(identity: RepoIdentity, state: JsonObject) -> bool:
-    """Every mapped behavior already has a valid comparison, so a test-runner rerun duplicates it."""
+    """A recorded probe list owns behavior execution, so a test-runner run duplicates or bypasses it."""
     items, _ = current_map(identity, state)
-    return bool(items) and all((item.get("comparison") or {}).get("valid") for item in items)
+    return bool(items)
 
 
 def refresh_comparisons(identity: RepoIdentity, state: JsonObject) -> bool:

@@ -1018,7 +1018,7 @@ class ObservedCapture(Ceremony):
         self.begin(session_root, slug="session")
         session_rows = self.rows(session_root)
         self.begin()
-        self.record_preflight({"authoritativeContract": "c", "behaviorMap": [item("BM_ONE")]})
+        self.record_preflight({"authoritativeContract": "c", "behaviorMap": []})  # no probe list owns test runs
         spec = self.hook(command, session_root)
         self.assertEqual(spec.get("permissionDecision"), "allow", f"{marker}: {spec}")
         rewritten = str(spec["updatedInput"]["command"])
