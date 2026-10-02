@@ -2,11 +2,11 @@
 
 Preflight records the initial probe list. One invocation owns source selection, isolated execution, attribution, comparison, freshness and transactional evidence publication:
 
-```bash
-python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" tdd --behavior-id BM_X --timeout 900 -- python3 -m unittest tests.test_feature
+```text
+workflow.py tdd --behavior-id BM_X --timeout 900 -- COMMAND [ARG...]
 ```
 
-Use the real pytest or unittest target. The runner retains the complete current test environment on each recorded production tree and binds all test content into its execution key. Historical tests removed from the candidate stay removed. Production files cannot be overlaid as test support. Collaborators remain real; provide isolated mutable resources where the operation reaches outside the runner's private checkout and workflow state.
+Drive the retained attack probe through its real production Interface and collaborators. Repeat `--behavior-id` to share its command across behaviors. The runner binds the complete probe environment on each recorded production tree. Removed probes stay removed; production files cannot be overlaid as support. Isolate mutable resources outside the runner's private checkout and workflow state.
 
 The compact receipt identifies each executed source, outcome and evidence reference. Full output stays in the existing evidence ledger. Repeating an unchanged comparison reuses its evidence. After coherent edits, quality verification checks the gate first, then refreshes stale recorded comparisons automatically. Missing commands and incomplete execution remain unresolved.
 

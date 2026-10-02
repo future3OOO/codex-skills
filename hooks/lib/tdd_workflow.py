@@ -40,18 +40,22 @@ def current_map(identity: RepoIdentity, state: JsonObject) -> tuple[list[JsonObj
 
 def refresh_proof(identity: RepoIdentity, items: list[JsonObject], state: JsonObject) -> None:
     candidate = _active_candidate_tree(identity)
+    execution_keys: dict[str, str | None] = {}
     for item in items:
         proof = item.get("comparison")
         if proof:
             command = shlex.split(proof["command"])
             try:
-                files = _probe_files(tdd_surface.identify(command), Path(identity.root), proof.get("support", []))
+                binding = json.dumps([command, proof["timeout"], proof.get("support", []), proof.get("execution")], sort_keys=True)
+                if binding not in execution_keys:
+                    files = _probe_files(tdd_surface.identify(command), Path(identity.root), proof.get("support", []))
+                    execution_keys[binding] = (_execution_key(identity, candidate, candidate, files,
+                        command, proof["timeout"], proof["execution"]) if proof.get("execution") else None)
                 reviewed = _reviewed_sources(identity, state, item)
                 if set(reviewed.values()) <= {arm["requestedTree"] for arm in proof["arms"]}:
                     proof["reviewSources"] = reviewed
-                proof["fresh"] = (bool(proof.get("execution")) and files == proof["probeFiles"]
-                    and proof.get("candidateKey") == _execution_key(identity, candidate, candidate, files,
-                        command, proof["timeout"], proof["execution"])
+                proof["fresh"] = (bool(proof.get("execution"))
+                    and proof.get("candidateKey") == execution_keys[binding]
                     and proof.get("reviewSources", {}) == reviewed)
             except (WorkflowError, OSError, RuntimeError):
                 proof["fresh"] = False
@@ -82,20 +86,44 @@ def _active_candidate(identity: RepoIdentity, value: str | None) -> tuple[JsonOb
 
 
 def _probe_files(surface: JsonObject, root: Path, support: list[str]) -> list[str]:
-    names = _git(resolve_repo_identity(root), "ls-files", "--cached", "--others", "--exclude-standard", "-z")
+    identity = resolve_repo_identity(root)
+    names = _git(identity, "ls-files", "--cached", "--others", "--exclude-standard", "-z")
     paths = {name for raw in names.split(b"\0") if raw
              and is_test_path(name := os.fsdecode(raw)) and (root / name).exists()}
     arguments = surface.get("arguments") or []
-    entry = tdd_surface.python_entry(arguments)
-    if surface.get("runner") == "exact" and entry and entry[0] == "script":
-        paths.add(os.path.relpath(root / entry[1], root))
+    if surface.get("runner") == "exact" and arguments:
+        shell = Path(arguments[0]).name in {"bash", "sh", "dash"}
+        entry = tdd_surface.python_entry(arguments)
+        if entry and entry[0] == "script":
+            paths.add(os.path.relpath(root / entry[1], root))
+        executable = Path(_executable(identity, arguments[0]))
+        with executable.open("rb") as source:
+            direct = source.read(2) == b"#!"
+        if direct:
+            paths.add(os.path.relpath(executable, root))
+        for index, argument in enumerate(arguments[1:], 1):
+            option = argument.startswith("-") and arguments[index - 1] != "--"
+            inline = re.fullmatch(r"-[a-zA-Z]*c[a-zA-Z]*", argument)
+            if (shell and option and ((inline and len(arguments) > index + 2)
+                    or (not inline and not re.fullmatch(r"--(?:norc|noprofile)?|-[efuvx]+", argument)))):
+                raise WorkflowError("unsupported shell probe option: " + argument)
+            value = argument.partition("=")[2] if option and "=" in argument else argument
+            if value.lower().startswith("file:"):
+                raise WorkflowError("unsupported probe file URI: " + value)
+            if value and (not shell or not option) and os.path.lexists(root / value):
+                name = os.path.relpath(root / value, root)
+                if not shell and not is_test_path(name) and (root / name).resolve().is_relative_to(root):
+                    continue
+                paths.add(name)
+            if not option:
+                shell = False
     paths.update(support)
     for name in paths:
         path = root / name
-        if not path.is_file() or path.is_symlink() or not path.resolve().is_relative_to(root):
+        if not path.is_file() or not path.resolve().is_relative_to(root):
             raise WorkflowError("probe support must be an in-repository regular file: " + name)
         if not is_test_path(name):
-            raise WorkflowError("production source cannot be overlaid as test support: " + name)
+            raise WorkflowError("unsupported probe: production source cannot be overlaid as test support: " + name)
     return sorted(paths)
 
 
@@ -123,7 +151,8 @@ def _execution_key(identity: RepoIdentity, source: str, probe: str, files: list[
     support = _git(identity, "ls-tree", "-r", "-z", probe, "--", *files) if files else b""
     executable_state = os.stat(execution["executable"])
     config = json.dumps([command, timeout, execution,
-                         executable_state.st_size, executable_state.st_mtime_ns], sort_keys=True).encode()
+                         executable_state.st_size, executable_state.st_mtime_ns,
+                         sorted(_environment().items())], sort_keys=True).encode()
     producer = b"".join(Path(__file__).with_name(name).read_bytes()
                        for name in ("tdd_workflow.py", "tdd_surface.py", "command_runner.py"))
     return hashlib.sha256(b"\0".join(production) + support + config + producer).hexdigest()
@@ -139,7 +168,9 @@ def _reviewed_sources(identity: RepoIdentity, state: JsonObject, mapped: JsonObj
             keys = [finding.get("canonicalFinding"), {"evidenceId": finding["intakeEvidenceId"], "id": finding["findingId"]},
                     *finding.get("observations", [])]
             if any(key and (key["evidenceId"], key["id"]) == (reference["evidenceId"], reference["id"]) for key in keys):
-                aliases = [key for key in keys if key]
+                aliases = [] if finding.get("status") == "fixed" else [key for key in keys if key]
+        if not aliases:
+            continue
         latest = aliases[-1]
         intake = evidence_document(identity, latest["evidenceId"])
         if not intake or intake.get("workflowId") != state["workflowId"]:
@@ -160,18 +191,17 @@ def _execute_tree(identity: RepoIdentity, source_tree: str, candidate_tree: str,
                        check=True, capture_output=True)
         snapshot = resolve_repo_identity(root)
         _git(snapshot, "read-tree", source_tree)
-        _git(snapshot, "checkout-index", "--all")
-        for raw in _git(snapshot, "ls-files", "-z").split(b"\0"):
-            if raw and is_test_path(name := os.fsdecode(raw)) and name not in files:
-                (root / name).unlink(missing_ok=True)
+        production = [raw for raw in _git(snapshot, "ls-files", "-z").split(b"\0")
+                      if raw and not is_test_path(os.fsdecode(raw))]
+        _git(snapshot, "checkout-index", "-z", "--stdin", stdin=b"".join(name + b"\0" for name in production))
         for name in files:
             path = root / name
             if any(parent.is_symlink() for parent in path.parents if parent.is_relative_to(root)):
                 raise WorkflowError("snapshot probe parent is a symlink: " + name)
-        _git(snapshot, "read-tree", candidate_tree)
-        _git(snapshot, "checkout-index", "--force", "-z", "--stdin",
-             stdin=b"".join(os.fsencode(name) + b"\0" for name in files))
-        _git(snapshot, "read-tree", source_tree)
+        if files:
+            _git(snapshot, "--literal-pathspecs", "restore", "--worktree", "--source=" + candidate_tree,
+                 "--pathspec-from-file=-", "--pathspec-file-nul",
+                 stdin=b"".join(os.fsencode(name) + b"\0" for name in files))
         env = _environment()
         env.update(PYTHONPATH=os.pathsep.join(filter(None, (identity.root, env.get("PYTHONPATH")))), PWD=identity.root, TMPDIR=temporary,
                    CODEX_WORKFLOW_STATE_ROOT=str(Path(temporary) / "state"))
@@ -204,7 +234,7 @@ def _run_tdd(values: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="workflow tdd", description="Compare one probe on recorded original and candidate sources")
     parser.add_argument("--repo", "--cwd", dest="repo", default=".")
     parser.add_argument("--slug")
-    parser.add_argument("--behavior-id", required=True)
+    parser.add_argument("--behavior-id", required=True, action="append")
     parser.add_argument("--support", action="append", default=[])
     parser.add_argument("--timeout", type=float, default=900.0)
     args = parser.parse_args(values[:dash])
@@ -216,7 +246,8 @@ def _run_tdd(values: list[str]) -> int:
     items, current = current_map(identity, state)
     if items is None:
         raise WorkflowError("tdd requires a recorded probe list")
-    mapped = behavior_map.item(items, args.behavior_id)
+    mapped = [behavior_map.item(items, identifier) for identifier in dict.fromkeys(args.behavior_id)]
+    selection = {"behaviorId": mapped[0]["id"]} if len(mapped) == 1 else {"behaviorIds": [item["id"] for item in mapped]}
     surface = tdd_surface.identify(command)
     if refusal := tdd_surface.repository_resolution(surface, identity.root):
         raise WorkflowError(refusal)
@@ -224,16 +255,19 @@ def _run_tdd(values: list[str]) -> int:
     before = tree_manifest(identity)
     candidate = _active_candidate_tree(identity)
     original = _git(identity, "rev-parse", f"{state['passStartOid']}^{{tree}}").decode().strip()
-    reviewed = _reviewed_sources(identity, state, mapped)
+    owner_sources = {item["id"]: _reviewed_sources(identity, state, item) for item in mapped}
+    reviewed = {reference: tree for sources in owner_sources.values() for reference, tree in sources.items()}
     sources = [original, *dict.fromkeys(reviewed.values()), candidate]
     execution = {"executable": _executable(identity, command[0]),
+                 "support": args.support,
                  "environment": hashlib.sha256(json.dumps(sorted(_environment().items())).encode()).hexdigest()}
     keys = [_execution_key(identity, source, candidate, files, command, args.timeout, execution) for source in sources]
-    previous = mapped.get("comparison")
-    if previous and previous.get("valid") and previous.get("fresh") and previous.get("candidateKey") == keys[-1]:
-        _emit_json(operation_receipt(state, identity, kind="tdd", behaviorId=args.behavior_id,
-                   summaryId=state["tddEvidence"], runIndex=previous["runIndex"], valid=True, reused=True,
-                   comparison=previous["comparison"], arms=behavior_map.comparison_view(previous)["arms"]))
+    previous = [item.get("comparison") for item in mapped]
+    if (all(proof and proof.get("valid") and proof.get("fresh") and proof.get("candidateKey") == keys[-1] for proof in previous)
+            and len({proof["runIndex"] for proof in previous}) == 1):
+        _emit_json(operation_receipt(state, identity, kind="tdd", **selection,
+                   summaryId=state["tddEvidence"], runIndex=previous[0]["runIndex"], valid=True, reused=True,
+                   comparison=previous[0]["comparison"], arms=behavior_map.comparison_view(previous[0])["arms"]))
         return 0
     cache = {(arm.get("key"), arm.get("sourceTree")): arm for run in (current or {}).get("runs", [])
              for arm in run.get("arms", []) if arm.get("outcome") in {"passed", "failed"}}
@@ -256,12 +290,13 @@ def _run_tdd(values: list[str]) -> int:
            "probeFiles": files, "support": args.support, "timeout": args.timeout, "candidateKey": keys[-1], "reviewSources": reviewed,
            "comparison": comparison, "arms": arms, "valid": valid, "execution": execution,
            "exitCode": 0 if valid else 1, "timedOut": any(arm["timedOut"] for arm in arms)}
-    mapped["comparison"] = run
+    for item in mapped:
+        item["comparison"] = {**run, "reviewSources": owner_sources[item["id"]]}
     document = {"workflowId": workflow_id, "slug": slug, "kind": "comparison", "behaviorMap": items,
                 "runs": [*(current or {}).get("runs", []), run], "updatedAt": utc_timestamp()}
     state, evidence = commit_tdd(identity, slug, workflow_id, document,
                                 expected_evidence_id=state.get("tddEvidence"), tree_before=before)
-    _emit_json(operation_receipt(state, identity, kind="tdd", behaviorId=args.behavior_id,
+    _emit_json(operation_receipt(state, identity, kind="tdd", **selection,
                summaryId=evidence, runIndex=len(document["runs"])-1, valid=run["valid"],
                comparison=comparison, arms=behavior_map.comparison_view(run)["arms"]))
     return 0 if run["valid"] else 2
@@ -270,19 +305,20 @@ def _run_tdd(values: list[str]) -> int:
 def refresh_comparisons(identity: RepoIdentity, state: JsonObject) -> bool:
     """Refresh recorded operations after quality succeeds, without caller reassembly."""
     items, _ = current_map(identity, state)
+    refreshed = set()
     for item in items or []:
-        if behavior_map.producer_proved(item):
-            continue
         proof = item.get("comparison")
-        if not proof:
-            _emit_json({"unresolvedProbe": item["id"], "reason": "no recorded command"})
-            return False
-        arguments = ["--repo", str(identity.root), "--slug", state["slug"],
-                     "--behavior-id", item["id"], "--timeout", str(proof["timeout"])]
+        if not proof or proof.get("fresh") or proof["runIndex"] in refreshed:
+            continue
+        arguments = ["--repo", str(identity.root), "--slug", state["slug"], "--timeout", str(proof["timeout"])]
+        for owner in items:
+            if owner.get("comparison", {}).get("runIndex") == proof["runIndex"]:
+                arguments.extend(["--behavior-id", owner["id"]])
         for name in proof["support"]:
             arguments.extend(["--support", name])
         if _run_tdd([*arguments, "--", *shlex.split(proof["command"])]):
             return False
+        refreshed.add(proof["runIndex"])
     return True
 
 

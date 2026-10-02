@@ -799,16 +799,6 @@ def _verification_key(run: JsonObject) -> str:
     return "quality-gate" if kind == "quality-gate" else f"{kind}:{run.get('command')}"
 
 
-BASELINE_PROOF_QUALITIES = frozenset({"baseline-passed", "operation-succeeded"})
-
-
-def run_recorded_baseline(run: object) -> bool:
-    """The run recorded a baseline settlement for its item: a runner's
-    ``baseline-passed`` or a non-runner ``operation-succeeded`` redProof."""
-    proof = run.get("redProof") if isinstance(run, dict) else None
-    return isinstance(proof, dict) and proof.get("quality") in BASELINE_PROOF_QUALITIES
-
-
 def execution_digest(run: object) -> str | None:
     """Stable identity of a stored execution across reference spellings and
     cumulative evidence-document copies: the canonical run record."""
@@ -1393,8 +1383,10 @@ def _behavioral_finding_closure(intake_id: str, finding_id: str, *, owned,
         raise WorkflowError(f"finding {finding_id} requires an owning probe with its finding sourceRef")
     if admit_pending:
         return
-    if any(identifier in pending or not behavior_map.producer_proved(entry) for identifier, entry in linked.items()):
-        raise WorkflowError(f"finding {finding_id} requires current successful owning comparisons")
+    unresolved = [identifier for identifier, entry in linked.items()
+                  if identifier in pending or not behavior_map.producer_proved(entry)]
+    if unresolved:
+        raise WorkflowError(f"finding {finding_id} requires current successful owning comparisons: {', '.join(unresolved)}")
     if require_green:
         reference = f"{intake_id}:{finding_id}"
         if not any(arm.get("requestedTree") == entry["comparison"].get("reviewSources", {}).get(reference)
@@ -1448,7 +1440,7 @@ def _finding_proof_blockers(
             try:
                 _behavioral_finding_closure(
                     str(entry.get("intakeEvidenceId")), str(entry.get("findingId")),
-                    require_green=entry.get("status") == "fixed", owned=owned,
+                    require_green=False, owned=owned,
                     pending=pending,
                 )
             except WorkflowError as exc:
@@ -1506,18 +1498,44 @@ def _resolve_disposition_receipts(identity: RepoIdentity, transaction: LedgerMut
         raise WorkflowError("receipt disposition requires an owned immutable intake")
     findings = {item["id"]: item for item in intake.get("findings", [])}
     receipts: dict[str, JsonObject] = {}
+    proof_document = transaction.evidence(state.get("tddEvidence"))
+    owned = _linked_finding_items(transaction, proof_document, state=state)
     for item in document["dispositions"]:
-        if "evidenceRefs" not in item:
+        if "evidenceRefs" not in item and not (item["status"] == "fixed" and "occurrence" not in item):
             continue
         finding = findings.get(item["finding_id"])
         if finding is None:
             raise WorkflowError("receipt disposition references a finding outside its intake")
         item["kind"] = finding["kind"]
+        supplied = item.get("evidenceRefs", [])
+        owners = {}
+        if item["status"] == "fixed":
+            owners = owned.get((document["intakeEvidenceId"], item["finding_id"]), {})
+            selected = []
+            for identifier, owner in owners.items():
+                proof = owner.get("comparison")
+                if not proof or proof.get("valid") is not True:
+                    raise WorkflowError(f"finding {item['finding_id']} operation {identifier} has no successful comparison")
+                selected.append(f"{state['tddEvidence']}:{proof['runIndex']}")
+            if "evidenceRefs" not in item:
+                if not selected:
+                    raise WorkflowError(f"finding {item['finding_id']} has no owning comparisons to resolve")
+                item["evidenceRefs"] = selected
+            elif owners:
+                item["evidenceRefs"] = list(dict.fromkeys([*item["evidenceRefs"], *selected]))
         for reference in item["evidenceRefs"]:
             if reference not in receipts:
-                receipts[reference], _ = execution_receipt(identity, state, reference, transaction)
+                try:
+                    receipts[reference], _ = execution_receipt(identity, state, reference, transaction)
+                except WorkflowError as exc:
+                    raise WorkflowError(f"finding {item['finding_id']} receipt {reference}: {exc}") from exc
+        for reference in supplied if owners else []:
+            run = receipts[reference]
+            if not any(run.get("runIndex") == owner["comparison"]["runIndex"]
+                       and run.get("candidateKey") == owner["comparison"].get("candidateKey") for owner in owners.values()):
+                raise WorkflowError(f"finding {item['finding_id']} receipt {reference} is not a current owning operation")
         if item["status"] == "fixed" and not any(
-            run.get("exitCode") == 0 and (run.get("valid") is True or run_recorded_baseline(run))
+            run.get("exitCode") == 0 and run.get("valid") is True
             for run in (receipts[ref] for ref in item["evidenceRefs"])
         ):
             raise WorkflowError("fixed requires a successful current executed receipt")
@@ -1602,7 +1620,7 @@ def _apply_finding_dispositions(
             if kind == "behavioral" and current in {"fixed", "report-only"} and status in {"report-only", "rejected-with-evidence"}:
                 try:
                     _behavioral_finding_closure(
-                        intake_id, identifier, require_green=current == "fixed",
+                        intake_id, identifier, require_green=False,
                         owned=owned, pending=pending,
                     )
                 except WorkflowError:
@@ -1720,6 +1738,9 @@ def advisor_disposition(
         writes: list[EvidenceWrite] = []
         if flag is not None:
             stage, document = _flag_disposition(transaction, state, flag, writes)
+        if stage is None and document is not None:
+            intake = transaction.evidence(document.get("intakeEvidenceId"))
+            stage = intake.get("stage") if isinstance(intake, dict) else None
         if stage not in {"preflight", "final"}:
             raise ValueError(f"unsupported advisor stage: {stage}")
         if findings == "addressed" and document is None:

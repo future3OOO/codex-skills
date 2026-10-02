@@ -55,8 +55,8 @@ RECORD_SHAPES = {
     "preflight": f'{{"authoritativeContract":"text","behaviorMap":[{ITEM_SHAPE}]}}',
     "review": ('intake {"findings":[{"id":"R-1","claim":"...","material":true,"kind":"behavioral|nonbehavioral",'
                '"priorFinding":{"evidenceId":"...","id":"..."}}],"implementationContextId":"optional"} or '
-               'disposition {"intakeEvidenceId":"...","dispositions":[{"finding_id":"R-1","status":"fixed|'
-               'rejected-with-evidence|report-only|accepted-follow-up","reason":"...","evidenceRefs":["E:0"]}]}'),
+               'disposition {"intakeEvidenceId":"...","dispositions":[{"finding_id":"R-1","status":"fixed","reason":"..."}]} '
+               '(fixed resolves every owning comparison; other dispositions use measured evidenceRefs)'),
     "advisor-result": ('the advisor envelope {"schemaVersion":1,"findings":[{"id":"SPEC-1","claim":"...",'
                        '"material":true,"kind":"behavioral|nonbehavioral"}],"verdict":"approved|changes-required|completed|commit-ready|'
                        'fix-before-commit|context-mismatch"}, or --verdict unavailable --reason TEXT'),
@@ -151,7 +151,9 @@ def parser() -> argparse.ArgumentParser:
             command.add_argument("--expected-candidate-tree")
             command.add_argument("--preflight-file")
         elif kind == "advisor-disposition":
-            command.add_argument("--stage")
+            command.add_argument("--stage", choices=("preflight", "final"),
+                                 type=lambda value: {"preflight-advice": "preflight", "final-review": "final"}.get(value, value),
+                                 help="defaults to the referenced intake's stage; workflow phase names are accepted")
             command.add_argument("--findings", choices=("none", "addressed"))
             command.add_argument("--finding")
             status = command.add_mutually_exclusive_group()

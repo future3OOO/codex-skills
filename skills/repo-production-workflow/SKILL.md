@@ -125,11 +125,11 @@ Invoke `production-code` for its standards and baseline gate. Reuse the existing
 
 Make the smallest change, then let the existing runner execute the same probe on recorded original, reviewed and candidate sources:
 
-```bash
-python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" tdd --behavior-id BM_X -- python3 -m unittest tests.test_feature
+```text
+workflow.py tdd --behavior-id BM_X -- COMMAND [ARG...]
 ```
 
-Inspect concrete outcomes, not just the command's exit status. Matching successful checks establish exercised preservation; historical assertion failure followed by success demonstrates exercised change. Setup errors, skips, timeouts and equal failures remain incomplete. The runner retains full evidence, reuses applicable executions and binds proof to source and probe content. Review decides whether the difference is authorized by the original request, including whether the assertion itself expects a regression. A review-added probe runs against the recorded reviewed tree without reverting current edits.
+Use [TDD](../tdd/SKILL.md) to judge the bound outcomes against the original request.
 
 Source and probe edits invalidate affected proof and reopen required verification/review. There are no manual RED/GREEN/baseline phases or late-RED recovery steps.
 
@@ -139,25 +139,22 @@ After coherent repair and cleanup, assess the intended outcome against the
 verification derived in step 2. Run the typed quality gate before manually repeating
 recorded comparisons: after it passes, verification refreshes stale comparisons
 through their retained commands. Correct all reported occurrences before retrying.
-Carry applicable observations forward; run missing real-Seam probes and required
+Carry current comparison proof into verification; run only missing affected probes and required
 lint/typecheck/build, with
 graph reanalysis when required. Follow AGENTS.md's attack-probe and verification rules.
 CI's `contracts` job owns the full runner here and step 12 waits for it.
 Verification records only through the unified CLI runner, which executes the command it records and derives status
-per-command-latest — any distinct command whose latest run failed keeps
-verification pending until that same command reruns green, overlapping runs
-record in completion order without rerunning, and a run whose reviewable tree
-changed between its start and its commit is retained invalid naming the
-drifted paths:
+per-command-latest for explicit verification. Failed explicit checks need a passing rerun
+or valid `--replaces` correction. Repair observed failures with affected checks; their
+commands need no replay. Overlapping runs record in completion order; a run whose
+reviewable tree drifts stays invalid and names the changed paths:
 
 ```bash
 python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" verify --kind quality-gate --base-ref "<base>"
 python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" verify -- <verification command>
 ```
 
-A lone pytest/unittest command the lead runs is already a receipt (the
-PreToolUse hook observes it); `verify --from-evidence <evidenceId>:<runIndex>`
-binds a current one instead of rerunning it.
+`verify --from-evidence <evidenceId>:<runIndex>` binds a captured execution receipt without replay.
 
 Typed verification needs no generic acknowledgement or dummy command. Correct a
 failed generic invocation with `verify --replaces <evidenceId>:<runIndex> --reason
@@ -205,7 +202,7 @@ the current candidate.
 
 Record the delegate's JSON intake (`{"findings":[{"id","claim","material","kind"}]}`),
 then, when it has findings, dispositions against the returned `summaryId`:
-`{"intakeEvidenceId":"<summaryId>","dispositions":[{"finding_id":"R-1","status":"fixed","evidenceRefs":["E:0"],"reason":"..."}]}`.
+`{"intakeEvidenceId":"<summaryId>","dispositions":[{"finding_id":"R-1","status":"fixed","reason":"..."}]}`.
 `record review --help` prints both shapes; a document carrying both refuses.
 Pass `--review-context-id <agent-id>` with the delegate's review: a second
 recurrence hands its repair to the first reviewer a review names.

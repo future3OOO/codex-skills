@@ -58,21 +58,34 @@ class RunnerComparisonTests(unittest.TestCase):
         (case.repo / "test_removed.py").unlink()
         helper.write_text("expected = 2\n")
         (case.repo / "app.py").write_text("value = 2\n")
-        (case.repo / "test_value.py").write_text(
+        calls = case.tmp / "calls"
+        test = case.repo / "test_value.py"
+        test.write_text(
             "import unittest, app\nfrom pathlib import Path\nfrom tests.support import expected\n"
             "class Value(unittest.TestCase):\n"
             "    def test_value(self):\n"
+            f"        with Path({str(calls)!r}).open('a') as calls: calls.write(str(app.value)+'\\n')\n"
             "        self.assertFalse(Path('test_removed.py').exists())\n"
             "        self.assertEqual(app.value, expected)\n")
         command = ("tdd", "--repo", str(case.repo), "--slug", slug, "--behavior-id", "BM_VALUE",
-                   "--", sys.executable, "-m", "unittest", "test_value")
+                   "--", sys.executable, "-m", "unittest", "test_value.Value.test_value")
         first = case.cli(*command)
         self.assertEqual(first.returncode, 0, "TEST_ENVIRONMENT_MISSING: " + first.stdout + first.stderr)
         self.assertEqual([a["outcome"] for a in json.loads(first.stdout)["arms"]], ["failed", "passed"])
+        expected_calls = ["1", "2"]
+        for path, body in ((case.repo / "test_unrelated.py", "UNUSED = 1\n"),
+                           (test, test.read_text() + "    def test_creation(self): self.assertEqual(app.value, 99)\n")):
+            path.write_text(body)
+            changed = case.cli(*command)
+            self.assertEqual(changed.returncode, 0, changed.stdout + changed.stderr)
+            self.assertFalse(json.loads(changed.stdout).get("reused", False))
+            expected_calls.extend(["1", "2"])
+            self.assertEqual(calls.read_text().splitlines(), expected_calls, "CHANGED_SUPPORT_NOT_EXECUTED")
         helper.write_text("expected = 3\n")
         changed = case.cli(*command)
         self.assertEqual(changed.returncode, 2, "HELPER_CHANGE_REUSED_SUCCESS: " + changed.stdout)
         self.assertEqual([a["outcome"] for a in json.loads(changed.stdout)["arms"]], ["failed", "failed"])
+        self.assertEqual(calls.read_text().splitlines(), expected_calls + ["1", "2"])
 
     def test_quality_gate_refreshes_comparisons_only_after_success(self):
         self.assertEqual(self.operation(2).returncode, 0)
@@ -103,12 +116,13 @@ class RunnerComparisonTests(unittest.TestCase):
         (case.repo / "app.py").write_text("value: int = 2\n")
         missing = pending_behavior("BM_MISSING", behavior="another obligation", expected="its own proof")
         update = case.tmp / "map.json"
-        update.write_text(json.dumps({"items": [self.item(2), missing]}))
+        update.write_text(json.dumps({"items": [missing, self.item(2)]}))
         result = case.cli("record", "tdd-map", "--repo", str(case.repo), "--input", str(update))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         result = case.cli(*command)
-        self.assertEqual(result.returncode, 2, "UNBOUND_PROBE_PASSED_VERIFICATION")
-        self.assertIn('"unresolvedProbe": "BM_MISSING"', result.stdout)
+        self.assertEqual(result.returncode, 0, "UNRECORDED_PROBE_BLOCKED_REFRESH: " + result.stdout)
+        self.assertTrue(runs()[-1]["valid"])
+        self.assertEqual(json.loads(case.cli("status", "--repo", str(case.repo)).stdout)["tdd"], "in-progress")
 
     def test_snapshot_git_objects_remain_readable(self):
         self.case.begin_with_map([self.item()])
@@ -195,16 +209,21 @@ class RunnerComparisonTests(unittest.TestCase):
 
     def test_external_script_is_not_unbound_proof(self):
         self.operation()
-        for path in (self.case.tmp / "replay.py", self.case.repo / "test_replay.py"):
-            path.write_text("import app\nassert app.value == 1\nprint(app.value)\n")
-            command = ("tdd", "--repo", str(self.case.repo), "--behavior-id", "BM_VALUE", "--", sys.executable, str(path))
-            first, repeat = self.case.cli(*command), self.case.cli(*command)
-            if path.parent == self.case.repo:
-                self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
-                self.assertTrue(json.loads(repeat.stdout)["reused"])
-            path.write_text("import app\nassert app.value == 99, 'VALUE_CHANGED'\nprint(app.value)\n")
-            changed = self.case.cli(*command)
-            self.assertNotEqual(changed.returncode, 0, changed.stdout + changed.stderr)
+        for executable, suffix in ((sys.executable, ".py"), (shutil.which("bash"), ".sh"), (None, ".sh")):
+            for folder in (self.case.tmp, self.case.repo / "tests"):
+                folder.mkdir(exist_ok=True)
+                path = folder / ("test_replay" + suffix)
+                command = ("tdd", "--repo", str(self.case.repo), "--behavior-id", "BM_VALUE", "--",
+                           *((executable, str(path)) if executable else (str(path),)))
+                for value in (1, 1, 99):
+                    code = f"import app; assert app.value == {value}; print(app.value)"
+                    path.write_text(code + "\n" if suffix == ".py" else "#!/bin/bash\npython3 -c " + repr(code) + "\n")
+                    path.chmod(0o755)
+                    result = self.case.cli(*command)
+                    if value == 99 or folder == self.case.tmp:
+                        self.assertEqual(result.returncode, 2, "BM_SHELL_BINDING_MISSING: " + result.stdout)
+                    else:
+                        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_unavailable_binding_is_incomplete_and_retryable(self):
         self.operation(2)
@@ -264,6 +283,22 @@ class RunnerComparisonTests(unittest.TestCase):
                          "WITHIN_COMPARISON_REUSE_MISSING: " + first.stdout)
         self.assertEqual(before["summaryId"], after["summaryId"], marker)
         self.assertTrue(after.get("reused"), marker)
+        update = self.case.tmp / "map.json"
+        update.write_text(json.dumps({"items": [self.item(), pending_behavior("BM_OTHER")]}))
+        mapped = self.case.cli("record", "tdd-map", "--repo", str(self.case.repo), "--input", str(update))
+        self.assertEqual(mapped.returncode, 0, mapped.stdout + mapped.stderr)
+        command = ("tdd", "--repo", str(self.case.repo), "--behavior-id", "BM_VALUE", "--behavior-id", "BM_OTHER",
+                   "--", sys.executable, "-m", "unittest", "test_value")
+        shared = self.case.cli(*command)
+        self.assertEqual(shared.returncode, 0, shared.stdout + shared.stderr)
+        receipt = json.loads(shared.stdout)
+        evidence = self.case.cli("evidence", "--repo", str(self.case.repo), "--evidence-id", receipt["summaryId"], "--full")
+        owners = json.loads(evidence.stdout)["document"]["behaviorMap"]
+        self.assertEqual({item["comparison"]["runIndex"] for item in owners}, {receipt["runIndex"]})
+        repeated = self.case.cli(*command)
+        self.assertEqual(repeated.returncode, 0, repeated.stdout + repeated.stderr)
+        self.assertEqual(json.loads(repeated.stdout)["summaryId"], receipt["summaryId"])
+        self.assertTrue(json.loads(repeated.stdout).get("reused"))
 
     def test_shell_bookkeeping_does_not_invalidate_comparison(self):
         first = self.operation()
@@ -340,6 +375,9 @@ class RunnerComparisonTests(unittest.TestCase):
     def test_each_source_arm_has_private_durable_state(self):
         body = ("import os, pathlib, sqlite3, unittest, app\nclass Value(unittest.TestCase):\n"
                 "    def test_value(self):\n"
+                "        output = pathlib.Path(os.environ['TMPDIR']) / 'probe-output'\n"
+                "        self.assertEqual(app.value, int(output.read_text()) if output.exists() else 1)\n"
+                "        output.write_text('99')\n"
                 "        root = pathlib.Path(os.environ['CODEX_WORKFLOW_STATE_ROOT'])\n"
                 "        root.mkdir(exist_ok=True)\n"
                 "        with sqlite3.connect(root / 'probe.db') as db:\n"
@@ -347,12 +385,21 @@ class RunnerComparisonTests(unittest.TestCase):
                 "            self.assertEqual(db.execute('select count(*) from rows').fetchone()[0], 0)\n"
                 "            db.execute('insert into rows values (?)', (app.value,))\n"
                 "        with sqlite3.connect(root / 'probe.db') as reader:\n"
-                "            self.assertEqual(reader.execute('select value from rows').fetchall(), [(1,)])\n")
+                "            self.assertEqual(reader.execute('select value from rows').fetchall(), [(app.value,)])\n")
         result = self.operation(body=body)
         self.assertEqual(result.returncode, 0, "CROSS_ARM_STATE_CONTAMINATION: " + repr(result.stdout + result.stderr))
         self.assertEqual([a["outcome"] for a in json.loads(result.stdout)["arms"]], ["passed", "passed"])
         self.assertFalse((self.case.tmp / "state" / "probe.db").exists())
         self.assertEqual((self.case.repo / "app.py").read_text(), "value = 1\n")
+        command = ("tdd", "--repo", str(self.case.repo), "--behavior-id", "BM_VALUE", "--",
+                   sys.executable, "-m", "unittest", "test_value")
+        repeated = self.case.cli(*command)
+        self.assertEqual(repeated.returncode, 0, repeated.stdout + repeated.stderr)
+        self.assertTrue(json.loads(repeated.stdout).get("reused"))
+        (self.case.repo / "app.py").write_text("value = 99\n")
+        changed = self.case.cli(*command)
+        self.assertEqual(changed.returncode, 2, changed.stdout + changed.stderr)
+        self.assertEqual([a["outcome"] for a in json.loads(changed.stdout)["arms"]], ["passed", "failed"])
 
     def test_unchanged_probe_list_does_not_write_an_event(self):
         result = self.operation()
@@ -381,15 +428,15 @@ class RunnerComparisonTests(unittest.TestCase):
         self.assertEqual(json.loads(initial.stdout)["summaryId"], json.loads(current.stdout)["summaryId"])
 
     def test_source_edit_invalidates_comparison(self):
+        self.case.env["PYTHONPATH"] = str(harness.ROOT)
         result = self.operation()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         code = ("import json; from hooks.lib.repo_identity import resolve_repo_identity; "
                 "from hooks.lib.tdd_workflow import completion_blockers; "
                 "from hooks.lib.workflow_state import read_workflow; "
                 "i=resolve_repo_identity('.'); print(json.dumps(completion_blockers(i,read_workflow(i))))")
-        env = {**self.case.env, "PYTHONPATH": str(harness.ROOT)}
         def blockers():
-            result = subprocess.run([sys.executable, "-c", code], cwd=self.case.repo, env=env,
+            result = subprocess.run([sys.executable, "-c", code], cwd=self.case.repo, env=self.case.env,
                                     capture_output=True, text=True, check=True)
             return json.loads(result.stdout)
         self.assertEqual(blockers(), [])
@@ -434,10 +481,11 @@ class RunnerComparisonTests(unittest.TestCase):
         receipt = json.loads(result.stdout)
         return evidence, receipt
 
-    def fix(self, evidence, receipt):
+    def fix(self, evidence, receipt=None):
         path = self.case.tmp / "fixed.json"
         path.write_text(json.dumps({"intakeEvidenceId": evidence, "dispositions": [{
-            "finding_id": "R1", "status": "fixed", "evidenceRefs": [f"{receipt['summaryId']}:{receipt['runIndex']}"],
+            "finding_id": "R1", "status": "fixed",
+            **({"evidenceRefs": [f"{receipt['summaryId']}:{receipt['runIndex']}"]} if receipt else {}),
             "reason": "The owning comparison executes the real value read on the defective reviewed tree and repaired candidate."}]}))
         return self.case.cli("record", "review", "--repo", str(self.case.repo), "--input", str(path))
 
@@ -461,9 +509,22 @@ class RunnerComparisonTests(unittest.TestCase):
         self.assertEqual(closed.returncode, 0, "EARLIER_REPAIR_CLOSED_RECURRENCE: " + closed.stdout + closed.stderr)
 
     def test_comparison_receipt_closes_finding(self):
-        evidence, receipt = self.repair()
-        result = self.fix(evidence, receipt)
+        evidence, _ = self.repair()
+        result = self.fix(evidence)
         self.assertEqual(result.returncode, 0, "COMPARISON_RECEIPT_UNUSABLE: " + result.stdout + result.stderr)
+        test = self.case.repo / "test_review.py"
+        test.write_text(test.read_text() + "\n# changed support after closure\n")
+        command = ("tdd", "--repo", str(self.case.repo), "--behavior-id", "BM_VALUE",
+                   "--", sys.executable, "-m", "unittest", "test_review")
+        refreshed = self.case.cli(*command)
+        self.assertEqual(refreshed.returncode, 0, refreshed.stdout + refreshed.stderr)
+        receipt = json.loads(refreshed.stdout)
+        self.assertEqual([arm["outcome"] for arm in receipt["arms"]], ["passed", "passed"],
+                         "CLOSED_FINDING_REPLAYS_HISTORICAL_DEFECT")
+        repeated = self.case.cli(*command)
+        self.assertEqual(repeated.returncode, 0, repeated.stdout + repeated.stderr)
+        self.assertTrue(json.loads(repeated.stdout).get("reused"))
+        self.assertEqual(json.loads(repeated.stdout)["runIndex"], receipt["runIndex"])
 
     def test_deleting_only_owner_cannot_discharge_finding(self):
         self.operation()
@@ -483,8 +544,11 @@ class RunnerComparisonTests(unittest.TestCase):
         ready = self.case.tmp / "probe.pid"
         ready.unlink(missing_ok=True)
         (self.case.repo / "test_value.py").write_text(
-            "import os, pathlib, time, unittest\nclass Value(unittest.TestCase):\n"
-            f"    def test_value(self):\n        pathlib.Path({str(ready)!r}).write_text(str(os.getpid()))\n"
+            "import json, os, pathlib, time, unittest\nclass Value(unittest.TestCase):\n"
+            "    def test_value(self):\n"
+            "        output = pathlib.Path(os.environ['TMPDIR']) / 'probe-output'\n"
+            "        output.write_text('live output')\n"
+            f"        pathlib.Path({str(ready)!r}).write_text(json.dumps([os.getpid(), str(output)]))\n"
             "        time.sleep(30)\n"
         )
         process = subprocess.Popen([sys.executable, str(harness.WORKFLOW), "tdd", "--repo", str(self.case.repo),
@@ -496,11 +560,13 @@ class RunnerComparisonTests(unittest.TestCase):
             while not ready.exists() and process.poll() is None and time.monotonic() < deadline:
                 time.sleep(.01)
             self.assertTrue(ready.exists(), "probe did not start")
-            child = int(ready.read_text())
+            child, output = json.loads(ready.read_text())
+            self.assertEqual(Path(output).read_text(), "live output")
             process.send_signal(signum)
             process.communicate(timeout=5)
             with self.assertRaises(ProcessLookupError, msg="INTERRUPTED_PROOF_PUBLISHED: executing child survived cancellation"):
                 os.kill(child, 0)
+            self.assertFalse(Path(output).exists(), "INTERRUPTED_OUTPUT_NOT_CLEANED")
         finally:
             if process.poll() is None:
                 process.kill()

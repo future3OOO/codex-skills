@@ -743,7 +743,8 @@ class PendingAdvisorRetries(AttackHarness):
         c = {**a, "id": "C"}
         first = self.accept(wid, [a, b] if shared else [a], stage="final")
         original = first["finalReview"]["intakeEvidence"]
-        self.assertEqual(self.close_finding(wid, original, a, stage="final").returncode, 0)
+        self.assertEqual(self.close_finding(wid, original, a, stage="final-review").returncode, 0,
+                         "EXECUTED_RECEIPT_REFUSED")
         envelope = self.json_file("appeal.json", {"schemaVersion": 1, "findings": [a, b, c] if shared else [a, b],
                                                  "verdict": "fix-before-commit"})
         reads_file = self.tmp / "reads.json"
@@ -1624,18 +1625,14 @@ class WorkflowRecovery(AttackHarness):
         intake = self.behavioral_intake(slug, wid, "app.value must be two")
         self.assertEqual(self.record_preflight(slug, wid, self.owned_map(intake, marker="VALUE_UNCORRECTED")).returncode, 0)
         self.drive_attack_green(slug, "VALUE_UNCORRECTED")
-        counter = self.tmp / "executions"
-        operation = ("import app,sys; from pathlib import Path; p=Path(sys.argv[1]); "
-                     "p.write_text(p.read_text()+'x' if p.exists() else 'x'); assert app.value == 2")
-        result = self.cli("verify", "--slug", slug, "--", sys.executable, "-c", operation, str(counter))
-        self.assertEqual(result.returncode, 0, result.stderr)
-        receipt = json.loads(result.stdout.splitlines()[-1])
+        evidence = self.status()["tddEvidence"]
+        proof = self.ok("evidence", "--full", "--evidence-id", evidence)["document"]["behaviorMap"][0]["comparison"]
         document = self.json_file("disposition.json", {
             "intakeEvidenceId": intake, "dispositions": [{
                 "finding_id": "SPEC-1", "status": "fixed",
                 "reason": "The owning attack and current app read both return two; the tested read has zero incorrect results.",
                 "mechanism": "The initializer supplied the wrong constant to all readers; setting it to 2 corrects the complete read surface, including the fresh import counterexample.",
-                "evidenceRefs": [receipt["evidenceId"] + ":0"],
+                "evidenceRefs": [evidence + ":" + str(proof["runIndex"])],
             }],
         })
         (self.repo / "app.py").write_text("value = 1\n")
@@ -1646,9 +1643,9 @@ class WorkflowRecovery(AttackHarness):
         self.assertEqual(self.status()["advisorPreflight"]["findings"], "pending")
         (self.repo / "app.py").write_text("value = 2\n")
         disposed = self.cli("record", "advisor-disposition", "--slug", slug, "--workflow-id", wid,
-                            "--stage", "preflight", "--findings", "addressed", "--input", str(document))
+                            "--findings", "addressed", "--input", str(document))
         self.assertEqual(disposed.returncode, 0, marker + disposed.stderr)
-        self.assertEqual(counter.read_text(), "x", marker)
+        self.assertEqual(self.status()["tddEvidence"], evidence, marker)
         self.assertEqual(self.status()["advisorPreflight"]["findings"], "addressed")
 
 
