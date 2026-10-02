@@ -138,9 +138,9 @@ Source and probe edits invalidate affected proof and reopen required verificatio
 After coherent repair and cleanup, assess the intended outcome against the
 verification derived in step 2. Run the typed quality gate; after it passes it
 refreshes stale comparisons through their retained commands, so recorded probes are
-already verified on the current candidate: do not rerun them through `verify --`.
-Use generic verification only for required lint/typecheck/build or checks no
-comparison covers, with graph reanalysis when required. Follow AGENTS.md's attack-probe and verification rules.
+already verified on the current candidate; once every mapped behavior has a
+comparison, `verify` refuses unittest/pytest runs. Use generic verification for
+required lint/typecheck/build, with graph reanalysis when required. Follow AGENTS.md's attack-probe and verification rules.
 CI's `contracts` job owns the full runner here and step 12 waits for it.
 Verification records only through the unified CLI runner, which executes the command it records and derives status
 per-command-latest for explicit verification. Failed explicit checks need a passing rerun

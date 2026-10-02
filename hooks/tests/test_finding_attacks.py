@@ -1529,7 +1529,7 @@ class WorkflowRecovery(AttackHarness):
     def test_new_obligation_retains_measurements_and_blocks_closure(self) -> None:
         marker = "OBLIGATION_DISCARDED_RECEIPTS"
         slug, wid = self.settled()
-        self.ok("verify", "--slug", slug, "--", sys.executable, "-m", "unittest", "test_attack_probe")
+        self.ok("verify", "--slug", slug, "--", "git", "diff", "--check")
         self.ok("verify", "--slug", slug, "--kind", "quality-gate", "--base-ref", "HEAD")
         before = self.status()
         self.add_claim(slug, wid, "BM_SECOND")
@@ -1548,7 +1548,7 @@ class WorkflowRecovery(AttackHarness):
         intake = self.behavioral_intake(slug, wid, "app.value must be two")
         self.assertEqual(self.record_preflight(slug, wid, self.owned_map(intake, marker="VALUE_WRONG")).returncode, 0)
         self.drive_attack_green(slug, "VALUE_WRONG")
-        executed = self.cli("verify", "--slug", slug, "--", sys.executable, "-m", "unittest", "test_attack_probe")
+        executed = self.cli("verify", "--slug", slug, "--", "git", "diff", "--check")
         self.assertEqual(executed.returncode, 0, executed.stderr)
         run = json.loads(executed.stdout.splitlines()[-1])
         self.ok("verify", "--slug", slug, "--kind", "quality-gate", "--base-ref", "HEAD")
@@ -1583,13 +1583,13 @@ class WorkflowRecovery(AttackHarness):
         slug, _ = self.settled()
         self.ok("verify", "--slug", slug, "--kind", "quality-gate", "--base-ref", "HEAD")
         self.assertEqual(self.status()["verification"], "passed", marker)
-        failed = self.cli("verify", "--slug", slug, "--", sys.executable, "-m", "unittest", "missing_test")
+        failed = self.cli("verify", "--slug", slug, "--", sys.executable, "-c", "import missing_module")
         self.assertEqual(failed.returncode, 2)
         receipt = json.loads(failed.stdout.splitlines()[-1])
         reference = receipt["evidenceId"] + ":1"
         fixed = self.cli("verify", "--slug", slug, "--replaces", reference,
                          "--reason", "Correct the misspelled test module",
-                         "--", sys.executable, "-m", "unittest", "test_attack_probe")
+                         "--", sys.executable, "-c", "import app")
         self.assertEqual(fixed.returncode, 0, marker + fixed.stderr)
         self.assertEqual(self.status()["verification"], "passed")
         self.assertIn("qualityGateManifestId", self.status())

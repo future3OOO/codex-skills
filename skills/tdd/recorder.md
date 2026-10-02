@@ -6,9 +6,9 @@ Preflight records the initial probe list. One invocation owns source selection, 
 workflow.py tdd --behavior-id BM_X --timeout 900 -- COMMAND [ARG...]
 ```
 
-Drive the retained attack probe through its real production Interface and collaborators. Repeat `--behavior-id` to share its command across behaviors. The runner binds the complete probe environment on each recorded production tree. Removed probes stay removed; production files cannot be overlaid as support. Isolate mutable resources outside the runner's private checkout and workflow state.
+Drive the retained attack probe through its real production Interface and collaborators. A comparison counts only when the probe's own Python process runs the changed code on the original and candidate trees; a test reaching it through a child process (a CLI or bootstrap subprocess) stays incomplete. Repeat `--behavior-id` to share its command across behaviors. The runner binds the complete probe environment on each recorded production tree. Removed probes stay removed; production files cannot be overlaid as support. Isolate mutable resources outside the runner's private checkout and workflow state.
 
-The compact receipt names each compared tree with its outcome; trees with identical production share one execution; distinct ones run one at a time in isolated checkouts. Full output stays in the existing evidence ledger. Repeating an unchanged comparison reuses its evidence. After coherent edits, quality verification checks the gate first, then refreshes stale recorded comparisons automatically, so do not rerun them by hand. Missing commands and incomplete execution remain unresolved.
+The compact receipt names each compared tree with its outcome; trees with identical production share one execution; distinct ones run one at a time in isolated checkouts. Full output stays in the existing evidence ledger. Repeating an unchanged comparison reuses its evidence. After coherent edits, quality verification checks the gate first, then refreshes stale recorded comparisons automatically, and once every mapped behavior has a comparison, `verify` refuses unittest/pytest runs. Missing commands and incomplete execution remain unresolved.
 
 For changed obligations, submit the complete list through `record tdd-map --input FILE`:
 

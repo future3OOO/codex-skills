@@ -182,6 +182,59 @@ def _reviewed_sources(identity: RepoIdentity, state: JsonObject, mapped: JsonObj
     return trees
 
 
+# Imported first by the probe's first Python process only (it removes the variable its
+# children would inherit): which code objects under the source root that process ran.
+_REACH_SITE = """import os, sys
+_out, _root = os.environ.pop("WORKFLOW_REACH", None), os.environ.pop("WORKFLOW_REACH_ROOT", "")
+if _out:
+    import atexit, json, threading
+    _codes = set()
+    def _seen(code):
+        name = code.co_filename if os.path.isabs(code.co_filename) else os.path.abspath(code.co_filename)
+        if name.startswith(_root):
+            _codes.add((name[len(_root):], code.co_firstlineno, max((l for _, _, l in code.co_lines() if l), default=code.co_firstlineno)))
+    if hasattr(sys, "monitoring"):
+        sys.monitoring.use_tool_id(3, "workflow-reach")
+        sys.monitoring.register_callback(3, sys.monitoring.events.PY_START, lambda code, _: _seen(code) or sys.monitoring.DISABLE)
+        sys.monitoring.set_events(3, sys.monitoring.events.PY_START)
+    else:
+        _profile = lambda frame, event, _: event == "call" and _seen(frame.f_code)
+        sys.setprofile(_profile); threading.setprofile(_profile)
+    atexit.register(lambda: open(_out, "w").write(json.dumps(sorted(_codes))))
+"""
+
+
+def _changed_code(identity: RepoIdentity, original: str, candidate: str) -> tuple[set, set]:
+    """Per side, the innermost code objects each changed production Python hunk touches."""
+    hunks: tuple[dict, dict] = ({}, {})
+    names: list[str | None] = [None, None]
+    diff = _git(identity, "diff", "-U0", "--no-color", "--no-ext-diff", "--no-renames", original, candidate, "--", "*.py")
+    for line in diff.decode("utf-8", errors="replace").splitlines():
+        if line.startswith(("--- ", "+++ ")):
+            names[line.startswith("+++")] = None if line.endswith("/dev/null") else line[6:]
+        elif match := re.match(r"@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", line):
+            for side, name, start, count in ((0, names[0], match[1], match[2]), (1, names[1], match[3], match[4])):
+                if name and not is_test_path(name):
+                    start, count = int(start), 1 if count is None else int(count)
+                    hunks[side].setdefault(name, []).append((start, start + count - 1 if count else start + 1))
+    owners: tuple[set, set] = (set(), set())
+    for side, tree in ((0, original), (1, candidate)):
+        for name, ranges in hunks[side].items():
+            try:
+                pending, spans = [compile(_git(identity, "show", f"{tree}:{name}"), name, "exec")], []
+            except (SyntaxError, ValueError):
+                continue
+            while pending:
+                code = pending.pop()
+                pending.extend(const for const in code.co_consts if hasattr(const, "co_lines"))
+                spans.append((code.co_firstlineno, max((l for _, _, l in code.co_lines() if l), default=code.co_firstlineno)))
+            for low, high in ranges:
+                hit = [span for span in spans if span[0] <= high and span[1] >= low]
+                owners[side].update((name, *span) for span in hit
+                                    if not any(other != span and span[0] <= other[0] and other[1] <= span[1] for other in hit))
+    return owners
+
+
 def _execute_tree(identity: RepoIdentity, source_tree: str, candidate_tree: str, files: list[str],
                   command: list[str], surface: JsonObject, timeout: float) -> JsonObject:
     with tempfile.TemporaryDirectory(prefix="workflow-proof-") as temporary:
@@ -201,9 +254,13 @@ def _execute_tree(identity: RepoIdentity, source_tree: str, candidate_tree: str,
             _git(snapshot, "--literal-pathspecs", "restore", "--worktree", "--source=" + candidate_tree,
                  "--pathspec-from-file=-", "--pathspec-file-nul",
                  stdin=b"".join(os.fsencode(name) + b"\0" for name in files))
+        site = Path(temporary) / "reach"
+        site.mkdir()
+        (site / "sitecustomize.py").write_text(_REACH_SITE, encoding="utf-8")
         env = _environment()
-        env.update(PYTHONPATH=os.pathsep.join(filter(None, (identity.root, env.get("PYTHONPATH")))), PWD=identity.root, TMPDIR=temporary,
-                   CODEX_WORKFLOW_STATE_ROOT=str(Path(temporary) / "state"))
+        env.update(PYTHONPATH=os.pathsep.join(filter(None, (str(site), identity.root, env.get("PYTHONPATH")))), PWD=identity.root,
+                   TMPDIR=temporary, CODEX_WORKFLOW_STATE_ROOT=str(Path(temporary) / "state"),
+                   WORKFLOW_REACH=str(site / "reach.json"), WORKFLOW_REACH_ROOT=identity.root + os.sep)
         actual = [_executable(identity, command[0]), *command[1:]]
         binding = ["bwrap", "--die-with-parent", "--dev-bind", "/", "/", "--bind", str(root), identity.root]
         runtime = Path(actual[0]).parent.parent
@@ -224,8 +281,9 @@ def _execute_tree(identity: RepoIdentity, source_tree: str, candidate_tree: str,
             else:
                 proof, error = tdd_surface.evaluate_red(surface, output)
         outcome = ("passed" if code == 0 else "failed") if proof else "incomplete"
-        return _run_entry(raw, code, timed_out, sourceTree=source_tree, outcome=outcome,
-                          proof=proof, error=error, output=output, loadedRoot=identity.root)
+        reach = json.loads((site / "reach.json").read_text()) if (site / "reach.json").is_file() else []
+        return _run_entry(raw, code, timed_out, sourceTree=source_tree, outcome=outcome, proof=proof, error=error,
+                          output=output, loadedRoot=identity.root, reach=[span for span in reach if not is_test_path(span[0])])
 
 
 @interruptible()
@@ -279,13 +337,19 @@ def _run_tdd(values: list[str]) -> int:
             held[key] = {**_execute_tree(identity, source, candidate, files, command, surface, args.timeout), "key": key}
     arms = []
     for source, key in zip(sources, keys):
-        arms.append({**(cache.get((key, source)) or held[key]), "requestedTree": source})
+        arms.append({**(cache.get((key, source)) or held[key]), "requestedTree": source, "unreached": ""})
+    # Proof calls the code it judges: the probe's own process must run the changed code on both sides.
+    for arm, owned in zip((arms[0], arms[-1]), _changed_code(identity, original, candidate)):
+        if owned and not owned & {tuple(span) for span in arm.get("reach", [])}:
+            arm["unreached"] = ("the probe's own process never ran the changed code (" + ", ".join(sorted(
+                f"{name}:{low}" for name, low, _ in owned))[:300] + "); call its owning Interface in-process")
     outcomes = [arm["outcome"] for arm in arms]
-    valid = outcomes[-1] == "passed" and all(outcome in {"passed", "failed"} for outcome in outcomes[:-1])
+    valid = (outcomes[-1] == "passed" and all(outcome in {"passed", "failed"} for outcome in outcomes[:-1])
+             and not any(arm["unreached"] for arm in arms))
     preserved = all(outcome == "passed" for outcome in outcomes)
     if preserved and surface.get("runner") not in {"pytest", "unittest"}:
         preserved = len({arm["output"].replace(arm["loadedRoot"], "<source>") for arm in arms}) == 1
-    comparison = "preserved" if preserved else "changed" if valid else "incomplete"
+    comparison = "incomplete" if not valid else "preserved" if preserved else "changed"
     run = {"runIndex": len((current or {}).get("runs", [])), "command": shlex.join(command), "candidateTree": candidate, "originalTree": original,
            "probeFiles": files, "support": args.support, "timeout": args.timeout, "candidateKey": keys[-1], "reviewSources": reviewed,
            "comparison": comparison, "arms": arms, "valid": valid, "execution": execution,
@@ -300,6 +364,16 @@ def _run_tdd(values: list[str]) -> int:
                summaryId=evidence, runIndex=len(document["runs"])-1, valid=run["valid"],
                comparison=comparison, arms=behavior_map.comparison_view(run)["arms"]))
     return 0 if run["valid"] else 2
+
+
+COVERED = ("every mapped behavior already has a comparison of original and candidate; the quality gate refreshes "
+           "stale ones and the suite belongs to CI. Add uncovered affected behavior to the map and compare it with tdd")
+
+
+def covered(identity: RepoIdentity, state: JsonObject) -> bool:
+    """Every mapped behavior already has a valid comparison, so a test-runner rerun duplicates it."""
+    items, _ = current_map(identity, state)
+    return bool(items) and all((item.get("comparison") or {}).get("valid") for item in items)
 
 
 def refresh_comparisons(identity: RepoIdentity, state: JsonObject) -> bool:

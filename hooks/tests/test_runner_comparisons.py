@@ -157,6 +157,36 @@ class RunnerComparisonTests(unittest.TestCase):
         self.assertEqual(json.loads(result.stdout)["comparison"], "changed", result.stdout + result.stderr)
         self.assertEqual(arms[-1]["observation"], "- b 1\n+ b 2", "CHANGED_CASES_HIDDEN: " + repr(arms))
 
+    def test_only_a_probe_whose_own_process_runs_the_change_is_proof(self):
+        case = self.case
+        (case.repo / "app.py").write_text("def decide(x):\n    return x + 1\n")
+        case.git("commit", "-qam", "decision owner")
+        slug, _ = case.begin_with_map([self.item(2)])
+        (case.repo / "app.py").write_text("def decide(x):\n    return x + 2\n")
+        (case.repo / "test_value.py").write_text(
+            "import subprocess, sys, unittest, app\nclass Value(unittest.TestCase):\n"
+            "    def test_outer(self):\n"
+            "        child = subprocess.run([sys.executable, '-c', 'import app; print(app.decide(1))'], capture_output=True, text=True)\n"
+            "        self.assertEqual(child.stdout.strip(), '3', 'DECISION')\n"
+            "    def test_owner(self):\n"
+            "        self.assertEqual(app.decide(1), 3, 'DECISION')\n")
+        def compare(test):
+            raw = case.cli("tdd", "--repo", str(case.repo), "--slug", slug, "--behavior-id", "BM_VALUE", "--",
+                           sys.executable, "-m", "unittest", f"test_value.Value.{test}")
+            return raw.returncode, json.loads(raw.stdout)["comparison"]
+        self.assertEqual(compare("test_outer"), (2, "incomplete"), "OUTER_PROBE_ADMITTED")
+        self.assertEqual(compare("test_owner"), (0, "changed"), "OWNER_PROBE_REFUSED")
+
+    def test_verify_refuses_test_runs_the_comparisons_cover(self):
+        self.operation(2)
+        before = self.ledger_counts()
+        for form in ((), ("--observed",)):
+            refused = self.case.cli("verify", "--repo", str(self.case.repo), *form, "--",
+                                    sys.executable, "-m", "unittest", "test_value")
+            self.assertEqual(refused.returncode, 2, "DUPLICATE_TEST_RUN_ADMITTED: " + refused.stdout + refused.stderr)
+        self.assertEqual(self.ledger_counts(), before, "DUPLICATE_TEST_RUN_ADMITTED")
+        self.assertEqual(self.case.cli("verify", "--repo", str(self.case.repo), "--", "git", "diff", "--check").returncode, 0)
+
     def test_python_option_forms_preserve_inline_operations(self):
         self.operation()
         for options in (("-uc",), ("-Buc",), ("-Wignore", "-c"),

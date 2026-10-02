@@ -198,6 +198,15 @@ def _passed(command: str, exit_code: object, output: str) -> bool:
     return exit_code == 0 and (surface.get("runner") not in {"pytest", "unittest"} or _pass_proof(surface, output)[0] is not None)
 
 
+def _duplicate(identity: RepoIdentity, state: dict, command: list[str]) -> bool:
+    """A unittest/pytest run once comparisons cover every mapped behavior repeats them."""
+    from .tdd_workflow import COVERED, covered
+    if identify(command).get("runner") in {"pytest", "unittest"} and covered(identity, state):
+        print("error: " + COVERED, file=sys.stderr)
+        return True
+    return False
+
+
 def _observed(command: list[str]) -> int:
     """Run a hook-rewritten test command as asked; at the root of a checkout with an
     open workflow, also keep its receipt. The exit code is the command's; while a
@@ -211,6 +220,8 @@ def _observed(command: list[str]) -> int:
             print(f"workflow receipt not recorded: {exc}", file=sys.stderr)
     if state is None or state.get("phase") == "complete" and not state.get("revalidation"):
         return subprocess.run(command, check=False).returncode
+    if _duplicate(identity, state, command):
+        return 2
     binding_error = None
     try:
         tree_before: dict[str, str] | None = tree_manifest(identity)
@@ -250,6 +261,8 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
         raise ValueError("only generic verification can replace a failed invocation")
     state = bound_state(identity, args.slug, args.workflow_id)
     slug, workflow_id = str(state["slug"]), str(state["workflowId"])
+    if args.kind == "generic" and not args.from_evidence and _duplicate(identity, state, _command(args.runner_command)):
+        return 2
     if args.from_evidence:
         if args.runner_command or args.kind != "generic":
             raise ValueError("--from-evidence binds a recorded receipt and takes no command")
