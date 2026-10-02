@@ -192,7 +192,8 @@ def _reviewed_sources(identity: RepoIdentity, state: JsonObject, mapped: JsonObj
 # changed file to reach it, and is attributed to the enclosing test function; reaching the
 # change through an unchanged outer Module earns no credit. Later processes are children.
 # A probe that cannot be proof stops at once: when a child runs the changed code, or when a
-# test and the next test's setup never call it, the whole probe process group is killed.
+# test and the next test's setup never call it while an earlier test did or nothing (a
+# one-time class or module setup included) has yet, the whole probe process group is killed.
 _REACH_SITE = """import os, sys
 _site, _root = os.environ.get("WORKFLOW_REACH"), os.environ.get("WORKFLOW_REACH_ROOT", "")
 if _site:
@@ -205,7 +206,7 @@ if _site:
         _plan = json.load(_stream)
     _probes, _owned = set(_plan["probes"]), {tuple(span) for span in _plan["owned"]}
     _files = {span[0] for span in _owned}
-    _codes, _tests, _hits, _current, _monitor = set(), set(), set(), [None, False], hasattr(sys, "monitoring")
+    _codes, _tests, _hits, _current, _monitor = set(), set(), set(), [None, False, False], hasattr(sys, "monitoring")
     def _relative(code):
         if code.co_filename.startswith("<"):  # frozen or generated code, inline probe code aside
             return code.co_filename if code.co_filename in _probes else None
@@ -222,8 +223,9 @@ if _site:
             span in _owned and _stop("a process the probe started ran")
             return
         if relative in _probes and code.co_name.startswith("test"):
-            _owned and _current[0] is not None and not _current[1] and _stop("test " + _current[0] + " never ran")
-            _current[:] = relative + "::" + code.co_qualname, False
+            if _owned and _current[0] is not None and not _current[1] and (_hits or not _current[2]):
+                _stop("test " + _current[0] + " never ran")
+            _current[:2] = relative + "::" + code.co_qualname, False
             _tests.add(_current[0])
             _monitor and sys.monitoring.restart_events()
             return
@@ -238,7 +240,7 @@ if _site:
             caller = caller.f_back
         _codes.add((*span, test, bool(probe)))
         if probe and span in _owned:
-            _current[1] = True
+            _current[1] = _current[2] = True
             test and _hits.add(test)
         # A call of changed code through an unchanged Module keeps watching for the probe's own call.
         return span in _owned and not probe

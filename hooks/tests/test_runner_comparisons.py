@@ -243,6 +243,13 @@ class RunnerComparisonTests(unittest.TestCase):
                          "WRAPPED_OWNER_PROBE_REFUSED")
         for test in ("test_owner", "test_outer_then_owner"):
             self.assertEqual(compare(*unit, f"test_value.Value.{test}"), (0, "changed"), f"OWNER_PROBE_REFUSED: {test}")
+        # R-23: results computed once in class setup stay proof
+        (case.repo / "test_once.py").write_text(
+            "import unittest, app\nclass Once(unittest.TestCase):\n"
+            "    @classmethod\n    def setUpClass(cls): cls.value = app.decide(1)\n"
+            "    def test_a(self): self.assertEqual(self.value, 3, 'DECISION')\n"
+            "    def test_b(self): self.assertGreater(self.value, 1, 'DECISION')\n")
+        self.assertEqual(compare(*unit, "test_once"), (0, "changed"), "OWNER_PROBE_REFUSED: setUpClass")
         (case.repo / "app.py").write_text("LIMIT = 2\n\n\ndef decide(x):\n    return x + 1\n")
         (case.repo / "test_value.py").write_text(
             "import unittest, app\nclass Value(unittest.TestCase):\n"
