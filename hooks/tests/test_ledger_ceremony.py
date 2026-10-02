@@ -1004,9 +1004,9 @@ class AdvisoryDedup(Ceremony):
 
 
 class ObservedCapture(Ceremony):
-    def hook(self, command: str, cwd: Path) -> dict[str, object]:
+    def hook(self, command: str, cwd: Path, session: str = "ceremony-lead") -> dict[str, object]:
         result = subprocess.run([sys.executable, str(PRE_TOOL)], env=self.env, capture_output=True, text=True,
-                                input=json.dumps({"tool_name": "Bash", "session_id": "ceremony-lead", "cwd": str(cwd),
+                                input=json.dumps({"tool_name": "Bash", "session_id": session, "cwd": str(cwd),
                                                   "tool_input": {"command": command}}))
         self.assertEqual(result.returncode, 0, result.stderr)
         return json.loads(result.stdout).get("hookSpecificOutput", {}) if result.stdout.strip() else {}
@@ -1056,15 +1056,21 @@ class ObservedCapture(Ceremony):
         marker = "COMPOSED_TEST_RUN_ADMITTED"
         command = f"{sys.executable} -m unittest -v test_app"
         composed = (f"git status; {command} 2>&1 | tail -3", f"cd {self.repo} && \\\n  {command}",
-                    f"{sys.executable} -m unittest -v $(ls test_*.py)", "pytest -q\rtest_app.py")
+                    f"{sys.executable} -m unittest -v $(ls test_*.py)", "pytest -q\rtest_app.py",
+                    # R-13: wrapped runs from captured history
+                    f"timeout 600 {command}", f"FOO=1 env BAR=2 {command}", "uv run pytest -q", f"time {command}",
+                    f"for t in a b; do {command}; done", "nohup pytest -q &", f"bash -lc 'cd x && {command}'")
         self.begin()
         self.assertIsNone(self.hook(composed[0], self.repo).get("permissionDecision"), f"{marker}: exploration refused")
         self.record_preflight({"authoritativeContract": "c", "behaviorMap": [item("BM_ONE")]})
         for refused in composed:
             self.assertEqual(self.hook(refused, self.repo).get("permissionDecision"), "deny", f"{marker}: {refused!r}")
         for other in (f"git diff | head; {sys.executable} {WORKFLOW} tdd --behavior-id BM_ONE -- {command}",
-                      "git diff --check | head -5"):
+                      "git diff --check | head -5", "pgrep -f pytest; ls -la .venv/bin/pytest; command -v pytest"):
             self.assertEqual(self.hook(other, self.repo), {}, f"{marker}: refused {other!r}")
+        # R-12: only the pass's lead is refused; a reviewer in the same checkout keeps its test runs
+        self.assertNotEqual(self.hook(composed[0], self.repo, session="reviewer").get("permissionDecision"), "deny",
+                            f"{marker}: reviewer refused")
 
 
 class ObservedDrift(Ceremony):

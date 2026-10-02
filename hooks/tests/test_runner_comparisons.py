@@ -207,6 +207,39 @@ class RunnerComparisonTests(unittest.TestCase):
         self.assertEqual((raw.returncode, json.loads(raw.stdout)["comparison"]), (2, "incomplete"),
                          "BATCHED_OUTER_TEST_ADMITTED: " + raw.stdout[-600:])
 
+    def test_changed_code_run_outside_the_probe_test_is_not_proof(self):
+        # R-11: obs3 admitted a test that called the resolver and then ran bootstrap subprocesses
+        case = self.case
+        (case.repo / "app.py").write_text("LIMIT = 1\n\n\ndef decide(x):\n    return x + 1\n")
+        (case.repo / "cli.py").write_text("import app\nassert app.decide(1) == 3, 'DECISION'\n")
+        case.git("add", "cli.py")
+        case.git("commit", "-qam", "decision owner")
+        slug, _ = case.begin_with_map([self.item(2)])
+        (case.repo / "app.py").write_text("LIMIT = 2\n\n\ndef decide(x):\n    return x + 2\n")
+        (case.repo / "test_value.py").write_text(
+            "import subprocess, sys, unittest, app\nclass Value(unittest.TestCase):\n"
+            "    def test_mixed(self):\n"
+            "        self.assertEqual(app.decide(1), 3, 'DECISION')\n"
+            "        child = subprocess.run([sys.executable, '-c', 'import app; print(app.decide(1))'], capture_output=True, text=True)\n"
+            "        self.assertEqual(child.stdout.strip(), '3', 'DECISION')\n"
+            "    def test_import_only(self): self.assertEqual(app.LIMIT, 2, 'DECISION')\n"
+            "    def test_owner(self): self.assertEqual(app.decide(1) + app.LIMIT, 5, 'DECISION')\n")
+        def compare(*command):
+            raw = case.cli("tdd", "--repo", str(case.repo), "--slug", slug, "--behavior-id", "BM_VALUE", "--", *command)
+            return raw.returncode, json.loads(raw.stdout)["comparison"]
+        unit = (sys.executable, "-m", "unittest")
+        for test in ("test_mixed", "test_import_only"):
+            self.assertEqual(compare(*unit, f"test_value.Value.{test}"), (2, "incomplete"), f"OUTSIDE_REACH_ADMITTED: {test}")
+        self.assertEqual(compare("bash", "-c", f"{sys.executable} cli.py"), (2, "incomplete"), "OUTSIDE_REACH_ADMITTED: production CLI")
+        self.assertEqual(compare("bash", "-c", " ".join([*unit, "test_value.Value.test_owner"])), (0, "changed"),
+                         "WRAPPED_OWNER_PROBE_REFUSED")
+        self.assertEqual(compare(*unit, "test_value.Value.test_owner"), (0, "changed"), "OWNER_PROBE_REFUSED")
+        (case.repo / "app.py").write_text("LIMIT = 2\n\n\ndef decide(x):\n    return x + 1\n")
+        (case.repo / "test_value.py").write_text(
+            "import unittest, app\nclass Value(unittest.TestCase):\n"
+            "    def test_owner(self): self.assertEqual(app.decide(1) + app.LIMIT, 4, 'DECISION')\n")
+        self.assertEqual(compare(*unit, "test_value.Value.test_owner"), (0, "changed"), "MODULE_ONLY_OWNER_REFUSED")
+
     def test_verify_refuses_test_runs_once_the_probe_list_is_recorded(self):
         self.case.begin_with_map([self.item(2)])
         (self.case.repo / "test_value.py").write_text("import unittest\nclass Value(unittest.TestCase):\n    def test_value(self): pass\n")
