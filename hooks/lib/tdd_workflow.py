@@ -350,23 +350,26 @@ def _run_tdd(values: list[str]) -> int:
     cache = {(arm.get("key"), arm.get("sourceTree")): arm for run in (current or {}).get("runs", [])
              for arm in run.get("arms", []) if arm.get("outcome") in {"passed", "failed"}}
     held = {key: arm for (key, _), arm in cache.items()}
-    # Arms share HOME, network and host paths, so they run one at a time.
-    for source, key in zip(sources, keys):
+    sides = dict(zip((len(sources) - 1, 0), reversed(_changed_code(identity, original, candidate))))
+    arms: list[JsonObject] = [{"requestedTree": source, "sourceTree": source, "key": key, "outcome": "incomplete",
+                               "error": "not run: an earlier arm never ran the changed code", "output": "",
+                               "timedOut": False, "unreached": ""} for source, key in zip(sources, keys)]
+    # Arms share HOME, network and host paths, so they run one at a time, the candidate first.
+    # Proof calls the code it judges: on both sides the probe's own process, and each test
+    # function that ran changed code there, must cover every selected test; a miss stops the run.
+    for index in (len(sources) - 1, *range(len(sources) - 1)):
+        source, key, owned = sources[index], keys[index], sides.get(index)
         if key not in held:
             held[key] = {**_execute_tree(identity, source, candidate, files, command, surface, args.timeout), "key": key}
-    arms = []
-    for source, key in zip(sources, keys):
-        arms.append({**(cache.get((key, source)) or held[key]), "requestedTree": source, "unreached": ""})
-    # Proof calls the code it judges: on both sides the probe's own process, and each test
-    # function that ran changed code there, must cover every selected test.
-    for arm, owned in zip((arms[0], arms[-1]), _changed_code(identity, original, candidate)):
-        reached = [span for span in arm.get("reach", []) if tuple(span[:4]) in owned]
+        arm = arms[index] = {**(cache.get((key, source)) or held[key]), "requestedTree": source, "unreached": ""}
+        reached = [span for span in arm.get("reach", []) if tuple(span[:4]) in (owned or ())]
         hit = {span[4] for span in reached if span[4]}
         missed = sorted(set(arm.get("tests", [])) - hit) if hit else []
         if owned and (not reached or missed):
             arm["unreached"] = ((f"tests {', '.join(missed)} never ran" if missed else "the probe's own process never ran")[:300]
                                 + " the changed code (" + ", ".join(sorted(f"{name}:{low}" for name, low, *_ in owned))[:200]
                                 + ") in the probe's own process; call its owning Interface in-process")
+            break
     outcomes = [arm["outcome"] for arm in arms]
     valid = (outcomes[-1] == "passed" and all(outcome in {"passed", "failed"} for outcome in outcomes[:-1])
              and not any(arm["unreached"] for arm in arms))

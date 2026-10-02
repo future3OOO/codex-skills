@@ -159,6 +159,7 @@ class RunnerComparisonTests(unittest.TestCase):
 
     def test_only_a_probe_whose_own_process_runs_the_change_is_proof(self):
         case = self.case
+        runs = case.repo.parent / "outer-runs"
         (case.repo / "app.py").write_text("def decide(x):\n    return x + 1\n")
         case.git("commit", "-qam", "decision owner")
         slug, _ = case.begin_with_map([self.item(2)])
@@ -166,6 +167,7 @@ class RunnerComparisonTests(unittest.TestCase):
         (case.repo / "test_value.py").write_text(
             "import subprocess, sys, unittest, app\nclass Value(unittest.TestCase):\n"
             "    def test_outer(self):\n"
+            f"        open({str(runs)!r}, 'a').write('x')\n"
             "        child = subprocess.run([sys.executable, '-c', 'import app; print(app.decide(1))'], capture_output=True, text=True)\n"
             "        self.assertEqual(child.stdout.strip(), '3', 'DECISION')\n"
             "    def test_owner(self):\n"
@@ -175,6 +177,7 @@ class RunnerComparisonTests(unittest.TestCase):
                            sys.executable, "-m", "unittest", *(f"test_value.Value.{test}" for test in tests))
             return raw.returncode, json.loads(raw.stdout)["comparison"]
         self.assertEqual(compare("test_outer"), (2, "incomplete"), "OUTER_PROBE_ADMITTED")
+        self.assertEqual(runs.read_text(), "x", "REFUSED_PROBE_RAN_EVERY_ARM")
         self.assertEqual(compare("test_owner"), (0, "changed"), "OWNER_PROBE_REFUSED")
 
     def test_verify_refuses_test_runs_the_comparisons_cover(self):
