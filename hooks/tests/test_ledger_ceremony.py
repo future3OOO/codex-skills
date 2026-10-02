@@ -1301,6 +1301,19 @@ class FlagDisposition(Ceremony):
         self.assertEqual(disposition["dispositions"][0]["evidenceRefs"], [f"{self.state()['tddEvidence']}:{later.rsplit(':', 1)[1]}"],
                          "FLAG_FIXED_NEEDS_EVIDENCE_REF")
 
+    def test_finding_relink_keeps_proof_for_the_gate_refresh(self) -> None:
+        wid = self.begin()
+        identity = resolve_repo_identity(self.repo)
+        self.record_preflight({"authoritativeContract": "fixture", "behaviorMap": [item("BM_ATTACK", basis="fixture")]})
+        (self.repo / "app.py").write_text("value = 3\nother = 1\n", encoding="utf-8")
+        ref = {"type": "finding", "evidenceId": self.intake(identity, wid, "SPEC-1"), "id": "SPEC-1"}
+        (self.repo / "app.py").write_text("value = 2\nother = 1\n", encoding="utf-8")
+        self.comparison(0, "BM_ATTACK")
+        self.ok("record", "tdd-map", "--input", "-", input=json.dumps({"items": [item("BM_ATTACK", refs=[ref], basis="fixture")]}))
+        self.ok_raw("verify", "--kind", "quality-gate", "--base-ref", "HEAD")
+        fixed = self.cli("record", "advisor-disposition", "--finding", "SPEC-1", "--fixed", "--reason", "relinked owner")
+        self.assertEqual(fixed.returncode, 0, "RELINK_DROPPED_PROOF: " + fixed.stderr[-400:])
+
 
 class FlagRefusal(Ceremony):
     def test_refused_flag_dispositions_mutate_nothing(self) -> None:

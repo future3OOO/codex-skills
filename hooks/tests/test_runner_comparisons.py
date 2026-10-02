@@ -593,6 +593,28 @@ class RunnerComparisonTests(unittest.TestCase):
     def test_refresh_cancellation_reaps_the_executing_probe(self):
         self.cancel_probe(signal.SIGTERM, "verify", "--kind", "quality-gate", "--base-ref", "HEAD")
 
+    def test_refresh_cancellation_during_arm_setup_removes_the_snapshot(self):
+        case = self.case
+        (case.repo / "pkg").mkdir()
+        for index in range(1500):
+            (case.repo / "pkg" / f"m{index}.py").write_text(f"VALUE = {index}\n")
+        case.git("add", "pkg")
+        case.git("commit", "-qm", "enough production files to widen arm setup")
+        self.assertEqual(self.operation(2).returncode, 0)
+        (case.repo / "app.py").write_text("value: int = 2\n")
+        arms = case.tmp / "arms"
+        arms.mkdir()
+        process = subprocess.Popen([sys.executable, str(case.workflow), "verify", "--repo", str(case.repo), "--kind",
+                                    "quality-gate", "--base-ref", "HEAD"], cwd=case.repo, env={**case.env, "TMPDIR": str(arms)},
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        deadline = time.monotonic() + 60
+        while not any(arms.glob("workflow-proof-*/source")) and process.poll() is None and time.monotonic() < deadline:
+            time.sleep(.002)
+        self.assertTrue(any(arms.glob("workflow-proof-*/source")), "arm setup did not start")
+        process.send_signal(signal.SIGTERM)
+        process.communicate(timeout=30)
+        self.assertEqual(list(arms.glob("workflow-proof-*")), [], "REFRESH_SETUP_CANCEL_LEAKED: interrupted arm checkout remains")
+
     def cancel_probe(self, signum, *command):
         self.operation(2)
         ready = self.case.tmp / "probe.pid"

@@ -188,13 +188,10 @@ def _record_pass_base(identity: RepoIdentity, slug: str, workflow_id: str, packe
 def _pass_start_snapshot(packet: Path) -> tuple[dict[str, str] | None, str]:
     """The identity of the index this intake analysed, or None when it is not complete.
 
-    The advisory reaches this pass's index through the GitNexus selector and
-    diffs the current candidate against the tree that index was built from. That
-    tree is the index's own `indexedTree`, written by the producer that built it:
-    the packet's `indexed_candidate_tree` is the analysed checkout's HEAD tree,
-    which is a different object and not the baseline `detect-changes` reports
-    using. Anything short of the whole identity records nothing, because a
-    consumer cannot tell a missing field from an absent baseline.
+    Its recorded presence keeps later intakes in the candidate slot. The tree
+    is the index's own `indexedTree`, written by the producer that built it, not
+    the packet's `indexed_candidate_tree`. Anything short of the whole identity
+    records nothing, because a missing field is not an absent baseline.
     """
     payload = json.loads(packet.read_text(encoding="utf-8"))
     gitnexus = payload.get("gitnexus")
@@ -600,8 +597,7 @@ def main(argv: list[str]) -> int:
             _record_pass_base(identity, slug, captured_workflow_id, packet)
             if not revalidate:
                 # Revalidation analyses the dirty candidate, a different graph
-                # the typed gate consumes; the advisory's baseline stays the
-                # index this pass started against.
+                # the typed gate consumes; the pass-start index stays recorded.
                 _record_pass_start(identity, slug, captured_workflow_id, packet)
         except (WorkflowError, RepoIdentityError, ValueError) as exc:
             sys.stderr.write(

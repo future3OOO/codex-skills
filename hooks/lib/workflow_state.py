@@ -756,20 +756,19 @@ def record_pass_start_snapshot(
 ) -> JsonObject:
     """Record the index this pass started against, immutable for the life of the pass.
 
-    The advisory diffs the current candidate against the index built at intake,
-    so this names that one: its GitNexus selector, index directory, analysis
-    checkout, source commit, and the tree the index was built from. Revalidation
-    re-indexes the dirty candidate and records its own identity in that run's
-    evidence, which is a different graph and never this baseline — so the first
-    recorded snapshot wins here exactly as `baseOid` does, and a differing rerun
-    is reported by the caller rather than absorbed.
+    This names the index built at intake: its GitNexus selector, index
+    directory, analysis checkout, source commit, and the tree the index was
+    built from. Revalidation re-indexes the dirty candidate and records its own
+    identity in that run's evidence, which is a different graph and never this
+    baseline — so the first recorded snapshot wins here exactly as `baseOid`
+    does, and a differing rerun is reported by the caller rather than absorbed.
 
-    A partial identity is never stored as a snapshot: a consumer cannot tell a
-    missing field from an absent baseline, and inventing one would bind the
-    advisory to a snapshot nothing measured. Its measured reason is recorded as
-    a gap instead, and unlike the snapshot a gap is replaceable — a later intake
-    that does resolve an identity is the pass's baseline, where a recorded
-    snapshot is already the answer and stands.
+    A partial identity is never stored as a snapshot: a missing field is not an
+    absent baseline, and inventing one would record a snapshot nothing
+    measured. Its measured reason is recorded as a gap instead, and unlike the
+    snapshot a gap is replaceable — a later intake that does resolve an
+    identity is the pass's baseline, where a recorded snapshot is already the
+    answer and stands.
     """
     if (snapshot is None) == (gap is None):
         raise ValueError("record either a pass-start snapshot or its measured gap")

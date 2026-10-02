@@ -540,9 +540,7 @@ def main(argv: list[str] | None = None) -> int:
         # The TDD verb's parsing travels with its implementation.
         if values and values[0] == "tdd":
             from .tdd_workflow import _run_tdd
-            from .command_runner import interruptible
-            with interruptible():
-                return _run_tdd(values[1:])
+            return _run_tdd(values[1:])
         return _dispatch(parser().parse_args(values))
     except (RepoIdentityError, LedgerError, WorkflowError, ValueError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)

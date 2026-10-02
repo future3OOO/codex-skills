@@ -106,16 +106,8 @@ commit or HEAD change does not invalidate it. The edit hook advises, never
 refuses (hook table below). The runner compares original, reviewed and candidate sources and retains bound results. Update the list only when obligations change. A normally
 completed workflow is terminal: every mutation except `begin` is rejected.
 
-After a successful production edit in an active pass, the PostToolUse edit
-hook runs one GitNexus `detect-changes` against the pass-start index and names
-in its `additionalContext` the impacted tests the current map's recorded
-selections do not own, or a short gap when that cannot be decided against this
-pass's index. Complete ownership is silent, an identical result repeats neither
-notice nor write, a completed or revalidating pass gets no scan, and the
-advisory never changes the edit's outcome or the workflow state; a comparison
-issues no second scan. It is advisory and incomplete by nature, and full-map
-reconciliation stays the completeness authority. The installed
-automatic advisory replaces the manual pre-commit detect-changes step.
+The edit hook runs no impacted-test scan: a file-level list sent agents into
+whole test modules without naming the tests a change breaks.
 
 A governance-document edit after completion is the sole controlled revalidation exception: it opens a window in
 which only verification, code review, the final advisor review, and completion
@@ -204,7 +196,7 @@ session and defers the rest here.
 |---|---|
 | `PreToolUse(Edit\|Write\|apply_patch)` | Advise, never refuse: name what the pass has not recorded and admit the edit; docs, scratch, and non-repository paths are silent; test-like paths skip only the comparison advice |
 | `PreToolUse(Bash)` | Rewrite a lone pytest/unittest command to `workflow.py verify --observed -- <command>`: the same exit code, plus a receipt in the checkout of the command's own working directory; while it records, the command's stderr is merged into stdout |
-| `PostToolUse(Edit\|Write\|apply_patch\|Bash)` | Observe explicit edit paths and actual Git changes, invalidate downstream readiness, then return batched lint and the map advisory |
+| `PostToolUse(Edit\|Write\|apply_patch\|Bash)` | Observe explicit edit paths and actual Git changes, invalidate downstream readiness, then return batched lint |
 | `PostCompact` | Forget which advisories this session has heard, so each returns once after compaction |
 | `SessionStart(compact)` | Restore the discipline line and the pass's open work from committed SQLite state |
 

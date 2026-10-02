@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""The pass-start snapshot identity and the map's executed test selections (#212 slice 2).
+"""The pass-start snapshot identity and the map's executed test selections.
 
-Both are inputs the advisory reads later, so every attack here drives the real
-adapter or the real tdd producer as a subprocess and reads the result back
-through a fresh `workflow.py status`, never through the library.
+Every attack here drives the real adapter or the real tdd producer as a
+subprocess and reads the result back through a fresh `workflow.py status`,
+never through the library.
 """
 from __future__ import annotations
 
@@ -160,7 +160,7 @@ class PassStartSnapshotTests(unittest.TestCase):
 
         An index built before the producer recorded `indexedTree` is the real
         shape of this: the graph resolves and the intake succeeds, but the one
-        field the advisory diffs against is missing.
+        field that identifies its tree is missing.
         """
         marker = "PARTIAL_IDENTITY_RECORDED_AS_COMPLETE"
         self.assertEqual(self.intake().returncode, 0)
@@ -237,9 +237,8 @@ class PassStartSnapshotTests(unittest.TestCase):
 class ExecutedSelectionsTests(unittest.TestCase):
     """What the current map's recorded proofs actually selected, read from status.
 
-    The advisory compares these against the tests a graph diff says are
-    impacted, so an undecidable selection has to stay undecidable rather than
-    collapsing into "selects nothing" and silently owning the whole surface.
+    An undecidable selection has to stay undecidable rather than collapsing
+    into "selects nothing" and silently owning the whole surface.
     """
 
     def setUp(self) -> None:
@@ -368,9 +367,8 @@ class ExecutedSelectionsTests(unittest.TestCase):
         """A filter decides which of a path's tests run, so the path stops saying.
 
         The recorded run really excludes: the file holds two tests and `-k`
-        selects one. Publishing the path would claim both, which is how an
-        advisory comes to suppress a notice for a test nothing exercised. The
-        other forms carry the same claim and are checked through the projection
+        selects one. Publishing the path would claim both, including a test
+        nothing exercised. The other forms carry the same claim and are checked through the projection
         owner below, since their exclusion needs runner state this fixture has
         no reason to build.
         """
@@ -403,24 +401,6 @@ class ExecutedSelectionsTests(unittest.TestCase):
             record = _selection(f"{sys.executable} {form}", self.repo)
             self.assertEqual(record["targets"], expected, f"{marker}: {form}")
             self.assertNotIn("unknown", record, f"{marker}: {form}")
-
-        # A few regression checks of the advisory matcher over the scopes these
-        # selections resolve to, so the per-selector advisory fixtures can go: ./
-        # normalizes to the file; a class scope owns its own method but not a
-        # different class; a non-recursive package owns no subtree; a recursive
-        # directory owns its subtree but not a sibling. Unknown handling stays
-        # with the advisory recorder case (it exercises _owned_scopes itself).
-        from hooks.lib.tdd_workflow import _target_scope, _is_owned
-
-        dot = _target_scope("./suite/test_x.py", self.repo, False)
-        self.assertTrue(dot and _is_owned("suite/test_x.py", "T.t", [dot]), f"{marker}: ./-prefix not normalized")
-        cls = _target_scope("suite.test_x.Probe", self.repo, False)
-        self.assertTrue(_is_owned("suite/test_x.py", "Probe.test_it", [cls]), f"{marker}: class lost its method")
-        self.assertFalse(_is_owned("suite/test_x.py", "Rogue.test_it", [cls]), f"{marker}: class owned another class")
-        self.assertIsNone(_target_scope("suite", self.repo, False), f"{marker}: non-recursive package owned a subtree")
-        rec = _target_scope("suite", self.repo, True)
-        self.assertTrue(_is_owned("suite/sub/test_y.py", "", [rec]), f"{marker}: recursive directory lost its subtree")
-        self.assertFalse(_is_owned("other/test_z.py", "", [rec]), f"{marker}: recursive directory owned a sibling")
 
     def test_a_cluster_of_only_irrelevant_options_still_resolves(self) -> None:
         """`-xq` is fail-fast plus quiet, so the path still says which tests ran."""
