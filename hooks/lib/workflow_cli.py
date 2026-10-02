@@ -387,6 +387,12 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
                                 "evidence", "--repo", str(identity.root), "--evidence-id", str(recorded["reportEvidenceId"]),
                                 "--full"]) + f" > {location}\n  jq -c {shlex.quote(REPORT_PROJECTION)} {location}\n").encode()
     _print_output(shown)
+    refreshed = True
+    if recorded["valid"] is True and args.kind == "quality-gate" and not state.get("revalidation"):
+        from .tdd_workflow import refresh_comparisons
+        # Refreshed comparisons print their own receipts; the gate's receipt comes last, from the refreshed state.
+        refreshed = refresh_comparisons(identity, state)
+        state = read_workflow(identity) or state
     _emit_json(_receipt(state, identity, **{
         "evidenceId": evidence_id,
         "exitCode": exit_code,
@@ -401,10 +407,7 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
         reason = recorded.get("bindingError") or ("verification command failed" if exit_code else "the runner reported no executed test")
         print(f"{reason}; verification stays pending until its rerun is green", file=sys.stderr)
         return 2
-    if args.kind == "quality-gate" and not state.get("revalidation"):
-        from .tdd_workflow import refresh_comparisons
-        return 0 if refresh_comparisons(identity, state) else 2
-    return 0
+    return 0 if refreshed else 2
 
 
 def _document(args: argparse.Namespace, label: str) -> dict[str, object]:

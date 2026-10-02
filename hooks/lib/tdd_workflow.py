@@ -279,7 +279,8 @@ def _changed_code(identity: RepoIdentity, original: str, candidate: str) -> tupl
     code (module or class body) is owned through the functions of its file, when it has any."""
     hunks: tuple[dict, dict] = ({}, {})
     names: list[str | None] = [None, None]
-    diff = _git(identity, "diff", "-U0", "--no-color", "--no-ext-diff", "--no-renames", original, candidate, "--", "*.py")
+    diff = _git(identity, "diff", "-U0", "--no-color", "--no-ext-diff", "--no-renames", "--src-prefix=a/", "--dst-prefix=b/",
+                original, candidate, "--", "*.py")
     for line in diff.decode("utf-8", errors="replace").splitlines():
         if line.startswith(("--- ", "+++ ")):
             names[line.startswith("+++")] = None if line.endswith("/dev/null") else line[6:]

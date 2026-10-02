@@ -109,6 +109,8 @@ class RunnerComparisonTests(unittest.TestCase):
         (case.repo / "app.py").write_text("value: int = 2\n")
         passed = case.cli(*command)
         self.assertEqual(passed.returncode, 0, passed.stdout + passed.stderr)
+        # CodeRabbit: the gate's own receipt is the last line, after the refresh receipts
+        self.assertEqual(json.loads(passed.stdout.strip().splitlines()[-1])["kind"], "quality-gate", "GATE_RECEIPT_NOT_LAST")
         refreshed = runs()
         self.assertEqual(len(refreshed), initial + 1, "QUALITY_GATE_DID_NOT_REFRESH_PROOF")
         self.assertTrue(refreshed[-1]["valid"])
@@ -220,6 +222,7 @@ class RunnerComparisonTests(unittest.TestCase):
         # R-11: obs3 admitted a test that called the resolver and then ran bootstrap subprocesses
         case = self.case
         (case.repo / "app.py").write_text("LIMIT = 1\n\n\ndef decide(x):\n    return x + 1\n")
+        case.git("config", "diff.noprefix", "true")  # CodeRabbit: a user's diff prefixes must not break attribution
         (case.repo / "cli.py").write_text("import app\nassert app.decide(1) == 3, 'DECISION'\n")
         (case.repo / "outer.py").write_text("import app\n\n\ndef packet(x):\n    return {'decision': app.decide(x)}\n")
         case.git("add", "cli.py", "outer.py")
@@ -239,6 +242,7 @@ class RunnerComparisonTests(unittest.TestCase):
             f"    def test_owner(self): open({str(case.repo.parent / 'ran')!r}, 'a').write('o'); self.assertEqual(app.decide(1) + app.LIMIT, 5, 'DECISION')\n")
         def compare(*command):
             raw = case.cli("tdd", "--repo", str(case.repo), "--slug", slug, "--behavior-id", "BM_VALUE", "--", *command)
+            self.assertTrue(raw.stdout.strip(), "DIFF_PREFIX_CRASHED: " + raw.stderr[-300:])
             return raw.returncode, json.loads(raw.stdout)["comparison"]
         unit = (sys.executable, "-m", "unittest")
         # R-18: obs4 compared the unchanged make_packet and bootstrap entry around the changed resolver
