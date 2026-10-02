@@ -443,7 +443,7 @@ _ABSOLUTE_PATH = re.compile(r"(?<![\w./-])(/[^\s'\"`;|&<>()]+)")
 
 def _temp_paths(text: object, label: str) -> list[str]:
     """A measurement cited from the temp directory is a throwaway probe, not proof
-    the repository keeps; the tdd recorder refuses those targets at cycle open and
+    the repository keeps; the comparison runner refuses those targets and
     dispositions refuse them here."""
     temp = os.path.realpath(tempfile.gettempdir())
     return [f"{label} cites {token}, a temporary-directory path; measurement scripts live in the repository"
@@ -512,14 +512,15 @@ def _finding_disposition(item: object, allowed: set[str], seen: set[str]) -> lis
                              and not (_text(mechanism) or isinstance(mechanism, dict) and set(mechanism) == {
                                  "evidenceId", "id"} and all(_text(v) for v in mechanism.values())) else [])]
     mechanism_fields = {"mechanism"} if "mechanism" in item else set()
-    if "evidenceRefs" in item:
-        refs = item["evidenceRefs"]
+    automatic = status == "fixed" and set(item) <= {"finding_id", "status", "reason", "mechanism"}
+    if "evidenceRefs" in item or automatic:
+        refs = item.get("evidenceRefs", [])
         extra = {"reference"} if status == "accepted-follow-up" else set()
         # Identity keys are judged above; the status-dependent shape only under a known status.
-        if (known and (set(item) - {"reason", "finding_id", "status"} != {"evidenceRefs"} | extra | mechanism_fields
+        if (known and (set(item) - {"reason", "finding_id", "status"} != (set() if automatic else {"evidenceRefs"}) | extra | mechanism_fields
                        or extra and not _text(item.get("reference")))
                 or known and status != "fixed" and not _text(item.get("reason"))
-                or "reason" in item and not _text(item.get("reason")) or not isinstance(refs, list) or not refs
+                or "reason" in item and not _text(item.get("reason")) or not isinstance(refs, list) or not refs and not automatic
                 or not all(_text(ref) for ref in refs)):
             problems.append("receipt disposition requires finding_id, status and non-empty evidenceRefs; non-fixed status requires a non-empty reason")
         return [*problems, *(hint if identity else [])]
@@ -557,7 +558,9 @@ def _disposition_errors(value: JsonObject, allowed: set[str], *, context_free_re
     one, a reviewer's document names the missing context and an advisor's requires executed evidenceRefs."""
     dispositions = value.get("dispositions")
     inline = isinstance(dispositions, list) and any(
-        isinstance(item, dict) and "evidenceRefs" not in item for item in dispositions)
+        isinstance(item, dict) and "evidenceRefs" not in item
+        and not (item.get("status") == "fixed" and set(item) <= {"finding_id", "status", "reason", "mechanism"})
+        for item in dispositions)
     errors = [message for message, bad in (
         ("disposition requires only context, intakeEvidenceId, and dispositions",
          set(value) not in ({"context", "intakeEvidenceId", "dispositions"}, {"intakeEvidenceId", "dispositions"})),

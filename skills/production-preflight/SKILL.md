@@ -7,76 +7,28 @@ description: Produce the required before-edit proof for production code changes 
 
 Use this skill before making tracked edits on preflight-required code turns.
 
-## Core Doctrine
+The [repository workflow](../repo-production-workflow/SKILL.md) owns checkout
+alignment, phase order, advisor consultation and recording. Reuse the active pass
+and governing artifact; stay within its owner slice and verification scope.
+Use [diagnose](../diagnose/SKILL.md) for bugs before choosing a correction.
+Before removing or rewriting logic, ask which original behaviors retained probes
+leave unchecked. Remove each affected predicate term or branch alone from
+start-commit code; run the same affected real-Seam probes on original and
+removal-only sources. Investigate surviving removals: distinguish obsolete logic,
+unexecuted lines and effects no assertion checks. Finish this investigation only
+when every required preservation has a retained assertion that passes on original
+and fails its isolated removal. Passing on the edited tree alone is insufficient.
 
-- Prefer root-cause fixes over band-aids.
-- Follow the canonical review-comment doctrine in the repo's `AGENTS.md` (or `CLAUDE.md` if that is what the repo uses).
-- Treat review comments as evidence to verify against current code and the repo contract, not authority to obey blindly.
-- If you do not know, verify before editing.
-- For behavior bugs, require the reproduced symptom, traced root cause, and testable hypothesis before editing; if any are missing, use `/diagnose`.
-- No tracked edits before completed preflight.
-- If the preflight finds an unresolved blocker, stop and surface it (see [Unknowns](#unknowns)).
-- If a tracked governing plan or review artifact exists for the current work and includes an execution checklist, anchor the preflight to that artifact instead of freehanding a new execution path.
+Apply [Production Code's Minimum Implementation Decision](../production-code/SKILL.md#minimum-implementation-decision):
+name the affected Interface, existing Module and reuse path, adjacent consumers,
+no-change surfaces and real test surface in the contract. Invoke
+[codebase-design](../codebase-design/SKILL.md) for a new Module or public Seam,
+or a changed public Interface. Deepen the existing owner; a new Module must earn
+its Interface. Absorb touched shallow helpers or name a concrete blocker.
 
-## Governing Artifact Alignment
-
-When the current work is governed by a tracked plan or review artifact under `docs/plans/` or `docs/reviews/`:
-
-- name that artifact explicitly in the preflight
-- stay inside the owner slice defined by that artifact
-- use the artifact's PR order, scope, and verification as the starting execution boundary
-- if the requested change no longer fits the governing artifact, refresh the artifact or block before editing
-
-Do not use preflight to silently fork away from the governing execution document.
-
-## Existing PR Checkout Rule
-
-When the turn edits code on an already-open PR:
-
-- treat the live GitHub PR head as authoritative
-- verify the exact checkout path that will be edited, not some other review worktree
-- record the PR number, branch name, checkout path, live PR head SHA, local `HEAD` SHA, and whether the checkout is branch-attached or detached
-- if the checkout is stale, detached, or on the wrong SHA, fetch and realign it before the first tracked edit
-- do not treat routine realignment as a blocker; only block if the checkout cannot actually be realigned
-- do not commit from a stale detached review worktree
-
-## Affected Surface Rule
-
-Apply [Production Code’s Minimum Implementation Decision](../production-code/SKILL.md#minimum-implementation-decision) before edits. State its affected surface, adjacent consumers and no-change surfaces in the contract and its guarantees in the Behavior Map; preflight owns that initial record.
-
-## Behavior Bug Root-Cause Gate
-
-For behavior bugs, preflight proof must name:
-
-- reproduced symptom: the exact failure observed
-- traced root cause: the source trigger, not only the visible error
-- testable hypothesis: why the proposed edit fixes the source
-- source-level fix: why the edit is not merely a symptom guard
-
-If any item is missing, use `/diagnose` before editing. If the trace crosses scattered shallow helpers/modules or no clean test seam exists, use `/improve-codebase-architecture` before forcing a bad test or broad patch.
-
-## Module Shape Gate
-
-When the change proposes a new production Module, public Seam, or change to a
-public Interface, invoke `codebase-design` before completing this gate.
-
-State this gate's decision in `authoritativeContract` — the Interface the proof
-crosses, whether an existing Module deepens or a new one is justified, the reuse
-path, and the shallow split avoided; `production-code` consumes it.
-
-Prefer deepening an existing module. Apply Ousterhout's deep-module test: does this hide meaningful complexity behind a small, stable public interface, or create a shallow helper/wrapper split? A new module must earn its interface by hiding complexity, improving locality, or creating a real seam used by more than one caller, adapter, or test surface.
-
-Touched shallow helpers/modules are in-scope debt: absorb, delete, or record a concrete blocker in the preflight.
-
-Block if the public test surface cannot be named, or if a new module is proposed without a concrete reason existing modules cannot absorb the behavior.
-
-## Affected Transaction System Rule
-
-For transaction-sensitive work, load and apply the mandatory [canonical
-transaction doctrine](../production-code/references/transaction-doctrine.md).
-Preflight owns the before-edit map; any unnamed authoritative record, mutation
-boundary, interleaving, shared projection/recovery path, contract, invariant, or
-proof surface blocks recording.
+For transaction-sensitive work apply the [transaction doctrine](../production-code/references/transaction-doctrine.md).
+Name the authoritative records, mutation and recovery paths, interleavings,
+invariants and proof surface; an unnamed material part blocks recording.
 
 ## What To Produce
 
@@ -86,6 +38,8 @@ choosing the architecture; a plan may reference it but owns no copy. Keep ordina
 local work short; transaction-sensitive work names the full surrounding surface.
 
 ### `authoritativeContract`
+
+For each removed or narrowed predicate or term, trace all branches it guards in the original source and derive a decisive input for every role outside the authorized removal, reusing existing `behaviorMap` items and probes.
 
 Before choosing an implementation or writing tests, investigate each behavioral
 predicate that decides an outcome:
@@ -109,8 +63,7 @@ predicate that decides an outcome:
    dependent code.
 
 State the reachable values and decision rules concisely in this contract and the
-existing `behaviorMap`; where readings diverge, use its interpretation fields and
-concrete discriminating inputs below. Investigation is complete when each
+existing `behaviorMap` and concrete discriminating probes. Investigation is complete when each
 decision's meaning is established over its reachable values or its uncertainty
 is explicit. Unambiguous predicates need no additional fields or inventory.
 
@@ -125,78 +78,25 @@ readings of one behavior, is a pending `behaviorMap` item, not an unknown.
 
 ### `behaviorMap`
 
-When plausible readings produce different behavior, put concrete discriminating
-values in the owning item's optional, non-empty `boundaryInputs` JSON array.
-`interpretations` is an array of at least two non-empty strings; `interpretation`
-and `authority` are non-empty strings, supplied together once settled and both
-omitted while unsettled. Preserve material types in the concrete input values
-and their meaning in the existing explanation. Unambiguous items omit these fields; no case names or second
-coverage inventory are required. Unsettled readings and inputs remain visibly pending on their owning item,
-recoverable through the normal summary/evidence commands. Resolve them through existing user communication or the draft advisor loop
-before dependent implementation; recording a choice does not prove behavior.
-After preflight, use the same item's [TDD reassessment](../tdd/SKILL.md), not a new preflight.
-
-Record a non-empty JSON array. Every item has eight required fields; these examples also show the optional interpretation, finding-ownership and omission fields. Producer-owned proof and supersession fields belong to later TDD records:
+Record concrete falsifiers of the load-bearing public promises. Each item requires `id`, `basis`, `behavior`, `seam` and `expected`; `sourceRefs` is optional. IDs are stable uppercase identifiers. The basis ties the expectation to the original request or affected preservation; the Seam is the Interface of the Module that owns the affected behavior, built with its production caller's setup. An outer operation is the Seam only for behavior that outer Module owns; one owner probe printing each case replaces outer tests re-asserting those decisions.
 
 ```json
-[
-  {
-    "id": "BM_DEADLINE",
-    "kind": "contract",
-    "basis": "requested expiry behavior",
-    "behavior": "a value expires exactly at its stated deadline",
-    "seam": "public expiry operation with its real clock",
-    "expected": "now equal to expiresAt is expired",
-    "redFailure": "DEADLINE_NOT_EXPIRED",
-    "status": "pending",
-    "boundaryInputs": [{"now": 10, "expiresAt": 10}],
-    "interpretations": ["now > expiresAt", "now >= expiresAt"],
-    "interpretation": "now >= expiresAt",
-    "authority": "the requested expiry behavior contract",
-    "sourceRefs": [{"type": "design", "evidenceId": "<existing-design-evidence>", "id": "DESIGN-1"}]
-  },
-  {
-    "id": "BM_UNCHANGED",
-    "kind": "preservation",
-    "basis": "unaffected command",
-    "behavior": "the separate read command keeps its result",
-    "seam": "read command",
-    "expected": "existing result",
-    "redFailure": "READ_RESULT_CHANGED",
-    "status": "omitted",
-    "evidence": "governing scope excludes the independent read implementation"
-  }
-]
+[{"id":"BM_EXPIRY","basis":"the deadline is inclusive","behavior":"expires at the deadline","seam":"Expiry.is_expired with a real clock","expected":"now equal to expiresAt is expired"}]
 ```
 
-- IDs are stable uppercase identifiers used by RED/GREEN evidence.
-- `kind` is `contract` for the requested behavior and `preservation` for what the change must keep true. List contract items first. A map with any pending item carries at least one contract item.
-- `basis` records where the item came from.
-- `redFailure` names the product failure: a behavior-specific assertion marker or the product's own exception or diagnostic. A RED is valid only when the failure is that mapped product failure; failing earlier is evidence for no item. When the entrypoint does not exist yet, exactly one atomic initial item takes its absence as RED; the independent guarantees stay pending until it exists, so map them as separate items expecting a late RED, not as items that share the existence assertion.
-- A contract item starts `pending`. A preservation item starts `pending`, `already-satisfied`, or `omitted`; optional `evidence` explains `already-satisfied` or `omitted` and is forbidden for `pending`. An authored `already-satisfied` is a claim, not proof: the item stays unresolved (named by `summary`) until `tdd --phase red` records its executed baseline after `revalidate`; prefer `pending` and run the baseline.
-- Every item is a concrete falsifier: an adversarial attack on one load-bearing public promise through its real production Seam. Derive attacks from what the design promises, not from a universal checklist: rollback/atomicity implies success, ordinary failure, supported interruption/cancellation, nested ownership, and every caller-reachable transaction-ending path; cleanup/resource ownership implies interruption and repeated or finalized lifecycle operations; persistence implies close/reopen and a second connection or process; parsers and matchers imply malformed boundaries plus the captured production corpus; shared mutable state implies every writer and material interleaving; lifecycle state machines imply repeated, out-of-order, nested, superseded, and terminal operations the Interface admits. If the Interface deliberately excludes an implication, narrow the promise explicitly instead of contradicting it.
-- Map every category the tdd skill's [Record the Behavior Map in Preflight](../tdd/SKILL.md) section lists; read it before writing the map.
-- Only runtime behavior is mappable: delivery line accounting, budget measurement, and other non-runtime bookkeeping never become items.
-- A pending behavioral finding is owned by giving an attack item a finding entry in `sourceRefs`; the recorder refuses a map that leaves one unowned. No preservation-only item is needed when existing focused pytest/unittest regression evidence already owns the obligation — record that runner execution as the item's executed baseline. Non-runner evidence cannot baseline an item and must use its RED/GREEN route; prose `already-satisfied` closes nothing.
-- Use TDD's one-item-per-independently-failing-outcome rule, including finding-owned attacks. Parameterized forms can share an operation; separate missing guarantees stay visible. Prose cannot widen the domain the retained attacks actually prove.
-- A proof gap blocks recording; it is not an omission.
+Derive attacks from actual promises: atomicity needs supported failure and cancellation; persistence needs reopen and another connection; shared state needs material writer interleavings; parsers need decisive boundaries and captured production inputs. Use real collaborators and observe results and state effects. A missing entrypoint is not proof of its downstream guarantees.
 
-## Execution Gate
+Resolve materially different readings from authority and concrete discriminating inputs in the contract and probes. The existing advisor challenges the expectation itself against the request. No separate interpretation form or authored proof status is needed.
 
-- Preflight must happen before the first tracked edit on the governed pass.
-- Do not make tracked edits, stage files, or resolve review threads before preflight is complete.
-- Do not treat a retrospective preflight summary as valid compliance.
-- Do not pause for approval unless the user explicitly asked for it or a real blocker prevents safe editing.
-- If new facts invalidate the recorded preflight, stop and reassess the owning items through `tdd-map` before continuing; do not reopen the initial preflight loop.
+An owning probe links a finding with `sourceRefs: [{"type":"finding","evidenceId":"<intake>","id":"R-1"}]`. The runner executes it on the recorded reviewed source and current repair. Replace the complete list with `record tdd-map` when obligations change; this cannot silently discharge a finding. The runner supplies change or preservation results, freshness and completion. An empty list is appropriate only when there is no behavior claim.
 
 ## Recording
 
-Submit the exact artifact through [Codex Advisor's preflight loop](../codex-advisor/SKILL.md#preflight-advice).
+Submit the exact artifact through [Codex Advisor's preflight loop](../codex-advisor/SKILL.md#preflight-advice) before tracked edits.
 Record it once the advisor returns `approved` for that content.
 
 In the governed workflow record it with `python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" record preflight --input -`
 (shape: `record preflight --help`; `--check` validates without recording). A refusal
 names every violation at once and mutates nothing. Key order and JSON formatting
 do not change content.
-Approved unsettled items remain pending; settle them through `tdd-map`, never a
-second preflight recording. Response prose is not evidence.
+Resolve outstanding questions before dependent implementation; update the list through `tdd-map`, never a second preflight recording. Response prose is not evidence.

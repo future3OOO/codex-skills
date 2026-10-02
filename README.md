@@ -37,6 +37,9 @@ sessions, caches and workflow state. Use Bubblewrap (`bwrap`) to bind each copy 
 `~/.codex`, keep the global estate read-only, and retain normal tool access;
 `CODEX_HOME` alone misses home-relative entrypoints.
 
+Proof comparisons also require `bwrap`: each child sees the recorded source at
+the repository's original path, including imports through editable installations.
+
 Use a task-local refresh script to install worktree changes into N+1, preserving
 unrelated files and merging managed hooks. Exclude tests and `decisions.md`.
 Refresh during development; restart cached consumers within the private bindings

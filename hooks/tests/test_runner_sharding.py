@@ -99,14 +99,14 @@ class RunnerShardingTests(RunnerAttack):
         it, and must still run every case exactly once: the slow modules are
         exactly the ones a reviewer runs on their own."""
         marker = "RUNNER_DID_NOT_SHARD_A_SELECTION"
-        module = "hooks.tests.test_tdd_summary"
-        path = str(ROOT / "hooks" / "tests" / "test_tdd_summary.py")
+        module = "hooks.tests.test_runner_comparisons"
+        path = str(ROOT / "hooks" / "tests" / "test_runner_comparisons.py")
         # Class and method selectors are forms the Interface admits and a caller
         # writes, so each is attacked here rather than only through the unloadable
         # id elsewhere. Each selection is paired with the id sizing it.
-        method = module + ".TddSummaryTests.test_red_and_green_are_bound_to_one_real_seam_and_candidate"
+        method = module + ".RunnerComparisonTests.test_original_and_candidate_are_executed"
         selections = ((path, module), (module, module),
-                      (module + ".TddSummaryTests", module + ".TddSummaryTests"),
+                      (module + ".RunnerComparisonTests", module + ".RunnerComparisonTests"),
                       (method, method))
         expected = unittest.defaultTestLoader.loadTestsFromName(module).countTestCases()
         self.assertGreater(expected, 4, marker + ": the selection did not load here either")
@@ -240,7 +240,7 @@ class ProbeTreeTests(RunnerAttack):
         skipped another, so the identities themselves are compared here."""
         marker = "DEAL_LOST_OR_REPEATED_AN_ID"
         self.assertTrue(DEAL.is_file(), marker + ": the runner deals no jobs here")
-        module = "hooks.tests.test_tdd_summary"
+        module = "hooks.tests.test_runner_comparisons"
         def ids(suite: unittest.TestSuite):
             for item in suite:
                 yield from ids(item) if isinstance(item, unittest.TestSuite) else (item.id(),)

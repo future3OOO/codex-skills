@@ -154,16 +154,15 @@ class ReviewSummaryTests(ReviewSummaryHarness):
                       "--stage", "final", "--source", "codex-advisor", "--input", str(path),
                       "--design-declaration", str(design))
         update = self.tmp / "reassessment.json"
-        update.write_text(json.dumps({"reassessment": "Check the newly affected read before final assessment",
-            "items": [{"id": "BM_CURRENT", "kind": "contract", "basis": "newly requested read",
+        update.write_text(json.dumps({"items": [{"id": "BM_CURRENT", "basis": "newly requested read",
                        "behavior": "Current application value remains readable", "seam": "Python import",
-                       "expected": "value is 1", "redFailure": "CURRENT_READ_CHANGED"}]}))
+                       "expected": "value is 1"}]}))
         mapped = self.run_script(WORKFLOW, "record", "tdd-map", "--slug", "review-summary",
                                  "--workflow-id", self.wid, "--input", str(update))
         self.assertEqual(mapped.returncode, 0, mapped.stderr)
         self.assertEqual(self.run_script(WORKFLOW, *final_args).returncode, 2, "REASSESSED_MAP_ADMITTED_FINAL_RESULT")
         baseline = subprocess.run([sys.executable, str(WORKFLOW), "tdd", "--repo", str(self.repo),
-            "--slug", "review-summary", "--phase", "red", "--behavior-id", "BM_CURRENT", "--",
+            "--slug", "review-summary", "--behavior-id", "BM_CURRENT", "--",
             sys.executable, "-c", "import app; assert app.value == 1; print('current application value is 1')"],
             cwd=self.repo, env=self.env, capture_output=True, text=True)
         self.assertEqual(baseline.returncode, 0, baseline.stdout + baseline.stderr)
@@ -299,10 +298,9 @@ class ReviewSummaryTests(ReviewSummaryHarness):
         self.assertEqual(json.loads(classified.stdout)["status"], "pending", marker)
 
         update = self.tmp / "reopened-map.json"
-        update.write_text(json.dumps({"reassessment": "A separate application guarantee needs proof", "items": [{
-            "id": "BM_VALUE", "kind": "contract", "basis": "application contract",
+        update.write_text(json.dumps({"items": [{
+            "id": "BM_VALUE", "basis": "application contract",
             "behavior": "app.value is two", "seam": "import app", "expected": "value equals two",
-            "redFailure": "VALUE_NOT_TWO", "status": "pending",
         }]}), encoding="utf-8")
         mapped = self.run_script(WORKFLOW, "record", "tdd-map", "--slug", "review-summary", "--workflow-id", self.wid,
                                  "--input", str(update))
@@ -342,15 +340,13 @@ class ReviewSummaryTests(ReviewSummaryHarness):
         proof.write_text("import unittest\nimport app\nclass Value(unittest.TestCase):\n"
                          "    def test_value(self):\n        self.assertEqual(app.value, 2, 'VALUE_NOT_TWO')\n",
                          encoding="utf-8")
-        for phase in ("red", "green"):
-            if phase == "green":
-                (self.repo / "app.py").write_text("value = 2\n", encoding="utf-8")
-            result = subprocess.run(
-                [sys.executable, str(WORKFLOW), "tdd", "--repo", str(self.repo), "--slug", "review-summary",
-                 "--phase", phase, "--behavior-id", "BM_VALUE", "--", sys.executable, "-m", "unittest", "-v", "test_value"],
-                cwd=self.repo, env=self.env, text=True, capture_output=True, check=False,
-            )
-            self.assertEqual(result.returncode, 0, marker + result.stdout + result.stderr)
+        (self.repo / "app.py").write_text("value = 2\n", encoding="utf-8")
+        result = subprocess.run(
+            [sys.executable, str(WORKFLOW), "tdd", "--repo", str(self.repo), "--slug", "review-summary",
+             "--behavior-id", "BM_VALUE", "--", sys.executable, "-m", "unittest", "-v", "test_value"],
+            cwd=self.repo, env=self.env, text=True, capture_output=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, marker + result.stdout + result.stderr)
         verified = self.run_script(WORKFLOW, "verify", "--slug", "review-summary", "--kind", "quality-gate", "--base-ref", "HEAD")
         self.assertEqual(verified.returncode, 0, marker + verified.stdout + verified.stderr)
         path.write_text(json.dumps({"findings": []}), encoding="utf-8")

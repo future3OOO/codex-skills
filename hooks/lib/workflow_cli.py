@@ -48,26 +48,23 @@ from .workflow_state import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
-ITEM_SHAPE = ('{"id":"BM_X","kind":"contract|preservation","basis":"where this item came from",'
+ITEM_SHAPE = ('{"id":"BM_X","basis":"original request or preservation",'
               '"behavior":"...","seam":"...","expected":"...",'
-              '"redFailure":"MARKER","status":"pending|already-satisfied|omitted",'
               '"sourceRefs":[{"type":"finding","evidenceId":"<intake>","id":"SPEC-1"}]}')
 RECORD_SHAPES = {
     "preflight": f'{{"authoritativeContract":"text","behaviorMap":[{ITEM_SHAPE}]}}',
     "review": ('intake {"findings":[{"id":"R-1","claim":"...","material":true,"kind":"behavioral|nonbehavioral",'
                '"priorFinding":{"evidenceId":"...","id":"..."}}],"implementationContextId":"optional"} or '
-               'disposition {"intakeEvidenceId":"...","dispositions":[{"finding_id":"R-1","status":"fixed|'
-               'rejected-with-evidence|report-only|accepted-follow-up","reason":"...","evidenceRefs":["E:0"]}]}'),
+               'disposition {"intakeEvidenceId":"...","dispositions":[{"finding_id":"R-1","status":"fixed","reason":"..."}]} '
+               '(fixed resolves every owning comparison; other dispositions use measured evidenceRefs)'),
     "advisor-result": ('the advisor envelope {"schemaVersion":1,"findings":[{"id":"SPEC-1","claim":"...",'
                        '"material":true,"kind":"behavioral|nonbehavioral"}],"verdict":"approved|changes-required|completed|commit-ready|'
                        'fix-before-commit|context-mismatch"}, or --verdict unavailable --reason TEXT'),
-    "advisor-disposition": ("--finding F --fixed|--rejected|--report-only|--follow-up REF --evidence-ref E:i "
-                            "[--behavior-id BM] [--reason TEXT]; or --stage S --findings none; or --input "
+    "advisor-disposition": ("--finding F --fixed [--behavior-id BM] (binds the owning comparison); or --finding F "
+                            "--rejected|--report-only|--follow-up REF --evidence-ref E:i --reason TEXT; or --stage S --findings none; or --input "
                             '{"intakeEvidenceId":"...","context":{...},"dispositions":[...]}, each disposition:\n'
                             + DOCUMENT_SHAPE_TABLE),
-    "tdd-map": (f'{{"sourceBehaviorId":"BM_GREEN","items":[{ITEM_SHAPE}],"dispositions":['
-                '{"id":"BM_X","sourceRefs":[...]} | {"id":"BM_X","status":"omitted|superseded|withdrawn",'
-                '"supersededBy":"BM_Y"} | {"id":"BM_X","revalidate":true,"evidence":"why"}],"reassessment":"optional"}'),
+    "tdd-map": f'{{"items":[{ITEM_SHAPE}]}}',
 }
 DISPOSITION_FLAGS = {"fixed": "fixed", "rejected": "rejected-with-evidence", "report_only": "report-only"}
 # Failing checks' first five locations, then the first six active findings with three each. Each location
@@ -123,7 +120,7 @@ def parser() -> argparse.ArgumentParser:
     command.add_argument("--channel-dir", help="write the advisor evidence channels here and list them in order")
     command.add_argument("--preflight-file", help="draft artifact reviewed before its single recording")
     _repo(commands.add_parser("complete", help="complete a ready workflow"), instance=True)
-    commands.add_parser("tdd", help="run and record one real RED/GREEN candidate")
+    commands.add_parser("tdd", help="compare one probe on the recorded original, reviewed and candidate sources")
 
     command = _repo(commands.add_parser("verify", help="execute and record typed verification"), instance=True)
     command.add_argument("--kind", choices=("generic", "quality-gate"), default="generic")
@@ -154,7 +151,9 @@ def parser() -> argparse.ArgumentParser:
             command.add_argument("--expected-candidate-tree")
             command.add_argument("--preflight-file")
         elif kind == "advisor-disposition":
-            command.add_argument("--stage")
+            command.add_argument("--stage", choices=("preflight", "final"),
+                                 type=lambda value: {"preflight-advice": "preflight", "final-review": "final"}.get(value, value),
+                                 help="defaults to the referenced intake's stage; workflow phase names are accepted")
             command.add_argument("--findings", choices=("none", "addressed"))
             command.add_argument("--finding")
             status = command.add_mutually_exclusive_group()
@@ -195,7 +194,22 @@ def _passed(command: str, exit_code: object, output: str) -> bool:
     reported no count (-qq), verifies nothing. The runner is TDD's (`identify`), which
     recognises bare invocations only."""
     from .tdd_workflow import _pass_proof
-    return exit_code == 0 and _pass_proof(identify(shlex.split(command)), output, baseline=False, exit_code=0)[0] is not None
+    surface = identify(shlex.split(command))
+    return exit_code == 0 and (surface.get("runner") not in {"pytest", "unittest"} or _pass_proof(surface, output)[0] is not None)
+
+
+def _duplicate(identity: RepoIdentity, state: dict, command: list[str]) -> bool:
+    """The pass lead's unittest/pytest run once the probe list is recorded repeats or bypasses its comparisons."""
+    from .tdd_workflow import COVERED, covered
+    if identify(command).get("runner") in {"pytest", "unittest"} and covered(identity, state) and _lead(state):
+        print("error: " + COVERED, file=sys.stderr)
+        return True
+    return False
+
+
+def _lead(state: dict) -> bool:
+    """Whether this session leads the pass; reviewers' runs neither refuse nor record."""
+    return state.get("leadContextId") in {None, os.environ.get("CODEX_THREAD_ID")}
 
 
 def _observed(command: list[str]) -> int:
@@ -209,8 +223,10 @@ def _observed(command: list[str]) -> int:
             state = read_workflow(identity)
         except LedgerError as exc:  # an unreadable ledger never stops the command
             print(f"workflow receipt not recorded: {exc}", file=sys.stderr)
-    if state is None or state.get("phase") == "complete" and not state.get("revalidation"):
+    if state is None or state.get("phase") == "complete" and not state.get("revalidation") or not _lead(state):
         return subprocess.run(command, check=False).returncode
+    if _duplicate(identity, state, command):
+        return 2
     binding_error = None
     try:
         tree_before: dict[str, str] | None = tree_manifest(identity)
@@ -250,6 +266,8 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
         raise ValueError("only generic verification can replace a failed invocation")
     state = bound_state(identity, args.slug, args.workflow_id)
     slug, workflow_id = str(state["slug"]), str(state["workflowId"])
+    if args.kind == "generic" and not args.from_evidence and _duplicate(identity, state, _command(args.runner_command)):
+        return 2
     if args.from_evidence:
         if args.runner_command or args.kind != "generic":
             raise ValueError("--from-evidence binds a recorded receipt and takes no command")
@@ -369,6 +387,12 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
                                 "evidence", "--repo", str(identity.root), "--evidence-id", str(recorded["reportEvidenceId"]),
                                 "--full"]) + f" > {location}\n  jq -c {shlex.quote(REPORT_PROJECTION)} {location}\n").encode()
     _print_output(shown)
+    refreshed = True
+    if recorded["valid"] is True and args.kind == "quality-gate" and not state.get("revalidation"):
+        from .tdd_workflow import refresh_comparisons
+        # Refreshed comparisons print their own receipts; the gate's receipt comes last, from the refreshed state.
+        refreshed = refresh_comparisons(identity, state)
+        state = read_workflow(identity) or state
     _emit_json(_receipt(state, identity, **{
         "evidenceId": evidence_id,
         "exitCode": exit_code,
@@ -383,7 +407,7 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
         reason = recorded.get("bindingError") or ("verification command failed" if exit_code else "the runner reported no executed test")
         print(f"{reason}; verification stays pending until its rerun is green", file=sys.stderr)
         return 2
-    return 0
+    return 0 if refreshed else 2
 
 
 def _document(args: argparse.Namespace, label: str) -> dict[str, object]:
@@ -454,9 +478,9 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
         if args.finding is not None:
             status = next((DISPOSITION_FLAGS[name] for name in DISPOSITION_FLAGS if getattr(args, name)),
                           "accepted-follow-up" if args.follow_up else None)
-            if status is None or not args.evidence_ref or args.input is not None:
+            if status is None or not args.evidence_ref and status != "fixed" or args.input is not None:
                 raise ValueError("--finding needs one of --fixed/--rejected/--report-only/--follow-up, "
-                                 "at least one --evidence-ref, and no --input")
+                                 "--evidence-ref unless --fixed resolves its owning comparison, and no --input")
             if status != "fixed" and not (args.reason and args.reason.strip()):
                 raise ValueError(f"{status} needs --reason with the measured judgment")
             flag = {"finding": args.finding, "status": status, "evidenceRefs": args.evidence_ref,

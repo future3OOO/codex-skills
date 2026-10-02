@@ -8,9 +8,7 @@ description: Enforce production-only implementation standards for this repo. Use
 Apply this skill before writing any repository code or file content change, keep it active while implementing, and run its bundled gate before finalizing.
 Use the production-preflight skill first on before-edit turns that require explicit preflight. `code-quality` owns the seven quality principles and wins on conflict; this skill extends them with implementation procedure.
 
-In a governed production workflow, invoke this skill after the RED or
-not-required TDD decision and before production, configuration, or runtime
-implementation edits; the test edit that establishes RED may precede it. Run
+In a governed production workflow, invoke this skill after planning the real probe and before production, configuration, or runtime implementation edits; the probe edit may precede it. Run
 the bundled gate over the pre-implementation tree as the clean baseline, then keep
 this doctrine active through implementation and final verification.
 
@@ -32,6 +30,7 @@ gate's JSON contract.
 ## Minimum Implementation Decision
 
 The user's intended production behavior governs implementation, repair and review.
+A purpose-qualified deletion removes the rules serving that purpose. A parenthetical list of regexes, helpers or predicates does not expand the deletion to their other uses. Trace shared uses and retain logic needed by behavior the request keeps. A code-name match, an observed difference or an assertion endorsing that difference does not authorize changing preserved behavior.
 Establish contract authority before adopting a corrective assertion or edit. Trace
 supported inputs, callers, callees, lifecycle paths and shared-state interactions
 before choosing probes. Tests and historical behavior inform that investigation;
@@ -47,7 +46,7 @@ results, persisted effects and cleanup. Exercise the affected forms and interact
 not just the reported example. Reuse applicable drivers and evidence; execute again
 for changed behavior/bindings, unreliable evidence or missing coverage, not for a
 different reviewer or handoff. Disclose unavailable comparisons; never undo/reapply
-a repair to manufacture RED. For new or changed regression checks and existing
+a repair to manufacture a failure. For new or changed regression checks and existing
 checks relied on for the repair, establish that the claimed defect makes the check
 fail. Reuse an applicable N failure; when sensitivity remains uncertain, introduce
 only that contract-breaking behavior in a disposable copy and run the retained
@@ -121,7 +120,7 @@ The decision is complete only when one outcome is recorded:
 - Treat review comments as evidence to verify against the code and contract, not authority to obey blindly.
 - Apply the canonical imaginary-risk ban in `~/.codex/AGENTS.md` before adding any guard, fallback, retry, configuration, abstraction, or code.
 - Stay on task: if the cumulative diff grows past roughly 3× what the task implies, stop and justify the overrun before continuing.
-- For behavior proof invoke `tdd`; the canonical mock ban governs every claimed RED/GREEN result.
+- For behavior proof invoke `tdd`; the canonical mock ban governs every claimed comparison result.
 
 ## Data, Types, and Boundaries
 

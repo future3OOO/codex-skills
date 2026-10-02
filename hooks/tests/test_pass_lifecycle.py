@@ -411,11 +411,10 @@ class PassLifecycleTests(unittest.TestCase):
             ("record", "advisor-disposition", "--slug", "summary-large-map", "--workflow-id", wid, "--stage", "preflight", "--findings", "none"),
         )
         document = self.preflight_document()
-        template = next(item for item in document["behaviorMap"] if item["kind"] == "preservation")
+        template = {"basis": "summary coverage", "seam": "app module", "expected": "same value"}
         document["behaviorMap"] = document["behaviorMap"] + [
             {**template, "id": f"BM_PRESERVE_OUTCOME_SEMANTICS_{index:02d}", "behavior": f"preserved outcome {index}",
-             **({"status": "already-satisfied", "evidence": "baseline"} if index % 2 else {}),
-             "expected": f"outcome {index} unchanged", "redFailure": f"OUTCOME_{index:02d}_CHANGED"}
+             "expected": f"outcome {index} unchanged"}
             for index in range(38 - len(document["behaviorMap"]))
         ]
         recorded = self.record_preflight(wid, document)
@@ -428,10 +427,7 @@ class PassLifecycleTests(unittest.TestCase):
         groups = {group.split(": ", 1)[0]: set(group.split(": ", 1)[1].split(", "))
                   for group in summary.split(" Open map: ", 1)[1].rstrip("\n").rstrip(".").split("; ")}
         for item in document["behaviorMap"]:
-            if item["status"] == "omitted":
-                self.assertNotIn(item["id"], summary, "SUMMARY_REPEATS_SETTLED_ITEM")
-            else:
-                self.assertIn(item["id"], groups.get(item["status"], set()), "SUMMARY_OMITS_MAP")
+            self.assertIn(item["id"], groups.get("pending", set()), "SUMMARY_OMITS_MAP")
         self.assertIn("Missing state is pending, never success.", summary, "SUMMARY_OMITS_MAP")
         self.assertIn("Verified by: ", summary, "SUMMARY_OMITS_MAP")
         self.assertIn("verified-marker", summary, "SUMMARY_OMITS_MAP")
@@ -1299,7 +1295,7 @@ class PassLifecycleTests(unittest.TestCase):
         state = json.loads(self.cli("status").stdout)
         self.assertEqual(state["preflight"], "passed")
         # The persisted value is what the Stop payload and resume banner instruct.
-        self.assertEqual(state["nextAction"], "tdd", "a recorded phase was named as the next action")
+        self.assertEqual(state["nextAction"], "verification", "a recorded phase was named as the next action")
         evidence = self.evidence(json.loads(recorded.stdout)["evidenceId"])
         self.assertEqual(evidence["workflowId"], wid, "evidence is not bound to the workflow instance")
 
@@ -1495,18 +1491,10 @@ class PassLifecycleTests(unittest.TestCase):
         retained = self.verify_run(sys.executable, "-c", "print('VERIFICATION_RESULT_RETAINED')")
         self.assertEqual(retained.returncode, 0, retained.stdout + retained.stderr)
         pending = json.loads(self.cli("status").stdout)
-        self.assertEqual(pending["tdd"], "pending")
-        self.assertEqual(pending["nextAction"], "tdd")
+        self.assertEqual(pending["tdd"], "passed")
+        self.assertEqual(pending["nextAction"], "code-review")
         self.assertIn("VERIFICATION_RESULT_RETAINED", self.evidence(pending["verificationLatestEvidence"])["runs"][0]["outputTail"])
-        before_review = self.history_events()
-        review = self.json_file("premature-review.json", {"findings": []})
-        refused_review = self.cli("record", "review", "--slug", "evidence-verification", "--workflow-id", wid,
-                                  "--review-context-id", "recorder-fixture",
-                                  "--input", str(review))
-        self.assertEqual(refused_review.returncode, 2, "TDD_PENDING_REVIEW_ADMITTED: " + refused_review.stdout)
-        self.assertEqual(self.history_events(), before_review)
-        self.owner_phase("tdd", "not-required")
-
+        review = self.json_file("review.json", {"findings": []})
         before_bare = json.loads(self.cli("status").stdout)
         bare = self.cli("set-phase", "--phase", "verification", "--status", "passed")
         self.assertEqual(bare.returncode, 2, "a bare verification claim was accepted: " + bare.stdout + bare.stderr)
@@ -1661,8 +1649,8 @@ class PassLifecycleTests(unittest.TestCase):
         marker = self.tmp / "early-red-ran"
         early_red = subprocess.run(
             [sys.executable, str(WORKFLOW), "tdd", "--cwd", str(self.repo), "--slug", "fresh-evidence",
-             "--phase", "red", "--behavior", "chain proof", "--seam", "workflow CLI",
-             "--expected-failure", "AssertionError", "--", sys.executable, "-c",
+             "--behavior-id", "BM_GATE",
+              "--", sys.executable, "-c",
              f"open({str(marker)!r}, 'w').close(); raise AssertionError('AssertionError: early')"],
             cwd=ROOT, env=self.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
         )
@@ -1731,8 +1719,8 @@ class PassLifecycleTests(unittest.TestCase):
         marker = self.tmp / "bare-preflight-red-ran"
         red = subprocess.run(
             [sys.executable, str(WORKFLOW), "tdd", "--cwd", str(self.repo), "--slug", "bare-preflight-tdd",
-             "--phase", "red", "--behavior", "evidence gate", "--seam", "workflow CLI",
-             "--expected-failure", "AssertionError", "--", sys.executable, "-c",
+             "--behavior-id", "BM_GATE",
+              "--", sys.executable, "-c",
              f"open({str(marker)!r}, 'w').close(); raise AssertionError('AssertionError: bare')"],
             cwd=ROOT, env=self.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
         )
@@ -1922,7 +1910,7 @@ class PassLifecycleTests(unittest.TestCase):
 
         record_context_forge(self.repo, self.tmp)
         self.assertEqual(
-            json.loads(self.cli("status").stdout)["nextAction"], "tdd",
+            json.loads(self.cli("status").stdout)["nextAction"], "verification",
             "re-recording an earlier phase rewound nextAction instead of deriving it",
         )
 
@@ -2107,9 +2095,9 @@ class PassLifecycleTests(unittest.TestCase):
         addressed = self.dispose(slug, wid, "preflight", "addressed", str(subset))
         self.assertEqual(addressed.returncode, 0, mixed_marker + addressed.stdout + addressed.stderr)
         source_ref = [{"type": "finding", "evidenceId": intake_id, "id": "SPEC-1"}]
-        mapped = {"id": "BM_ADV_1", "kind": "contract", "basis": "advisor finding",
-            "behavior": "the owned attack closes the finding", "seam": "workflow CLI", "redFailure": marker,
-            "expected": "the explicit fixed disposition closes the finding", "status": "pending",
+        mapped = {"id": "BM_ADV_1", "basis": "advisor finding",
+            "behavior": "the owned attack closes the finding", "seam": "workflow CLI",
+            "expected": "the explicit fixed disposition closes the finding",
             "sourceRefs": source_ref}
         document = self.preflight_document()
         document["behaviorMap"] = [{**mapped, "sourceRefs": []}]
@@ -2123,17 +2111,11 @@ class PassLifecycleTests(unittest.TestCase):
         self.assertEqual(early.returncode, 2, marker + early.stdout + early.stderr)
         (self.repo / "test_preflight_proof.py").write_text("import app, unittest\nclass Proof(unittest.TestCase):\n"
             f"    def test_value(self): self.assertEqual(app.value, 2, {marker!r})\n", encoding="utf-8")
-        command = [sys.executable, str(WORKFLOW), "tdd", "--repo", str(self.repo), "--slug", slug, "--phase", "red", "--behavior-id", "BM_ADV_1", "--", sys.executable, "-m", "unittest", "test_preflight_proof"]
-        phase_index = command.index("red")
+        command = [sys.executable, str(WORKFLOW), "tdd", "--repo", str(self.repo), "--slug", slug, "--behavior-id", "BM_ADV_1", "--", sys.executable, "-m", "unittest", "test_preflight_proof"]
         for phase, value in (("red", 1), ("green", 2)):
             (self.repo / "app.py").write_text(f"value = {value}\n", encoding="utf-8")
-            command[phase_index] = phase
             result = subprocess.run(command, cwd=ROOT, env=self.env, text=True, capture_output=True, check=False)
-            self.assertEqual(result.returncode, 0, marker + result.stdout + result.stderr)
-        update = self.tmp / "preflight-proof-reassessment.json"
-        update.write_text(json.dumps({"sourceBehaviorId": "BM_ADV_1", "reassessment": "no new proof obligations", "items": [], "dispositions": []}), encoding="utf-8")
-        reassessed = self.cli("record", "tdd-map", "--slug", slug, "--workflow-id", wid, "--input", str(update))
-        self.assertEqual(reassessed.returncode, 0, marker + reassessed.stdout + reassessed.stderr)
+            self.assertEqual(result.returncode, 2 if value == 1 else 0, marker + result.stdout + result.stderr)
         fixed = self.dispose(slug, wid, "preflight", "addressed", str(self.finding_disposition_document(intake_id, "fixed")))
         self.assertEqual(fixed.returncode, 0, marker + fixed.stdout + fixed.stderr)
         closed = json.loads(self.cli("status").stdout)
@@ -2216,17 +2198,13 @@ class PassLifecycleTests(unittest.TestCase):
         recorded = self.cli("record", "review", "--slug", slug, "--workflow-id", wid, "--review-context-id", "shell-drift", "--input", str(review))
         self.assertEqual((generic.returncode, gate.returncode, recorded.returncode), (0, 0, 0), "APPEAL_SHELL_DRIFT_UNRECOVERABLE")
         self.post_edit_hook(slug)
-        reassessment = self.json_file("appeal-reassessment.json", {"reassessment": "refresh changed-candidate appeal bindings"})
-        self.run_cli(("record", "tdd-map", "--slug", slug, "--workflow-id", wid, "--input", str(reassessment)))
         self.advance_to_context_forge()
         self.assertEqual(self.verify_run(sys.executable, "-c", "pass").returncode, 0)
         self.owner_phase("code-review", "passed", findings="none")
         appeal_args = ("record", "advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final",
                        "--source", "codex-advisor", "--input", str(envelope))
-        events = len(self.history_events()); appealed = self.cli(*appeal_args); state = json.loads(self.cli("status").stdout)
-        events = len(self.history_events()); second = self.cli(*appeal_args); delta = len(self.history_events()) - events; completed = self.cli("complete")
-        self.assertEqual((appealed.returncode, state["finalAppealConsumed"], second.returncode, delta, completed.returncode),
-                         (0, True, 2, 0, 0), marker)
+        appealed = self.cli(*appeal_args); state = json.loads(self.cli("status").stdout); completed = self.cli("complete")
+        self.assertEqual((appealed.returncode, state["finalAppealConsumed"], completed.returncode), (0, True, 0), marker)
 
         slug = "appeal-concession"; wid, _ = reject(slug, ("SPEC-1", "SPEC-2"))
         appeal = self.json_file("appeal-concession.json", {"schemaVersion": 1, "findings": [
@@ -2246,11 +2224,80 @@ class PassLifecycleTests(unittest.TestCase):
             "materialConsequence": {"claim": "runtime", "command": "inspect", "result": "false"}, "evidence": "no consequence"}]})
         self.assertEqual(self.dispose(slug, wid, "final", "addressed", str(closure)).returncode, 0, marker)
         closed = json.loads(self.cli("status").stdout)
-        events = len(self.history_events()); second = self.cli("record", "advisor-result", "--slug", slug, "--workflow-id", wid,
-            "--stage", "final", "--source", "codex-advisor", "--input", str(appeal))
-        self.assertEqual((closed["nextAction"], next(x for x in closed["findingStates"] if x["findingId"] == "SPEC-NEW")["appealStatus"],
-                          self.checkpoint("final-review")["ready"], second.returncode, len(self.history_events()) - events),
-                         ("complete-workflow", "disagreement", False, 2, 0), "REJECTION_AFTER_APPEAL_DID_NOT_STAND")
+        self.assertEqual((closed["nextAction"], next(x for x in closed["findingStates"] if x["findingId"] == "SPEC-NEW")["appealStatus"]),
+                         ("complete-workflow", "disagreement"), "REJECTION_AFTER_APPEAL_DID_NOT_STAND")
+
+    def test_a_requested_final_reassessment_records_in_the_open_pass(self) -> None:
+        marker, slug = "FINAL_REASSESSMENT_REFUSED", "final-reassessment"
+        wid = self.begin_slug(slug); self.advance_to_verification(slug, wid)
+        self.owner_phase("code-review", "passed", findings="none")
+        spec = {"id": "SPEC-1", "claim": "proof is missing", "material": True, "kind": "behavioral"}
+        status = lambda: json.loads(self.cli("status").stdout)
+        frozen = lambda state: [state.get(key) for key in ("finalReview", "judgedTree", "findingStates", "nextAction")]
+
+        def final(name: str, verdict: str, *findings: dict[str, object]) -> subprocess.CompletedProcess[str]:
+            envelope = self.json_file(name, {"schemaVersion": 1, "findings": list(findings), "verdict": verdict})
+            return self.cli("record", "advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final",
+                            "--source", "codex-advisor", "--input", str(envelope))
+
+        def reject(name: str) -> None:
+            document = self.json_file(name, {"context": self.disposition_context(),
+                "intakeEvidenceId": status()["finalReview"]["intakeEvidence"], "dispositions": [{
+                "finding_id": "SPEC-1", "status": "rejected-with-evidence", "kind": "behavioral",
+                "premise": {"claim": "proof is missing", "command": "inspect", "result": "false"},
+                "occurrence": {"domain": "fixture", "count": 0, "complete": True, "command": "inspect", "result": "zero"},
+                "materialConsequence": {"claim": "material", "command": "inspect", "result": "material"},
+                "evidence": "the current tree disproves the premise"}]})
+            result = self.dispose(slug, wid, "final", "addressed", str(document))
+            self.assertEqual(result.returncode, 0, marker + result.stdout + result.stderr)
+
+        def refused(result: subprocess.CompletedProcess[str], before: dict[str, object], events: int) -> None:
+            self.assertEqual((result.returncode, len(self.history_events()) - events, frozen(status())),
+                             (2, 0, frozen(before)), "COMPLETED_PASS_REOPENED" + result.stdout + result.stderr)
+
+        def stand() -> None:
+            reject(f"reject-{len(self.history_events())}.json")
+            self.assertEqual(status()["nextAction"], "appeal-final-review", marker)
+            self.assertEqual(final(f"appeal-{len(self.history_events())}.json", "fix-before-commit", spec).returncode, 0, marker)
+            reject(f"stand-{len(self.history_events())}.json")
+            self.assertEqual(status()["nextAction"], "complete-workflow", marker)
+
+        self.assertEqual(final("first.json", "fix-before-commit", spec).returncode, 0, marker)
+        stand()
+        self.assertTrue(self.checkpoint("final-review")["ready"], marker + str(self.checkpoint("final-review")["missing"]))
+        before, events = status(), len(self.history_events())
+        (self.repo / "app.py").write_text("value = 2\n", encoding="utf-8")
+        refused(final("stale-review.json", "commit-ready"), before, events)
+        (self.repo / "app.py").write_text("value = 1\n", encoding="utf-8")
+        mismatch = final("mismatch.json", "context-mismatch")
+        self.assertEqual((mismatch.returncode, status()["nextAction"], status()["finalReview"]),
+                         (0, "re-consult-final-review", before["finalReview"]), marker + mismatch.stderr)
+        conceded = final("concede.json", "commit-ready", {**spec, "material": False})
+        state = status()
+        self.assertEqual((conceded.returncode, state["finalReview"]["status"], state["finalReview"]["findings"],
+                          state.get("finalAppealConsumed"), state["nextAction"]),
+                         (0, "commit-ready", "none", None, "complete-workflow"), marker + conceded.stdout + conceded.stderr)
+        events = len(self.history_events())
+        self.assertEqual((final("repeat.json", "commit-ready").returncode, len(self.history_events()) - events), (0, 1), marker)
+        self.assertEqual(final("re-raise.json", "fix-before-commit", spec).returncode, 0, marker)
+        self.assertEqual(status()["nextAction"], "classify-current-findings", marker)
+        before, events = status(), len(self.history_events())
+        refused(final("demotion.json", "commit-ready", {**spec, "material": False}), before, events)
+        stand()
+        before, events = status(), len(self.history_events())
+        refused(final("relabel.json", "fix-before-commit", {**spec, "kind": "nonbehavioral"}), before, events)
+        (self.repo / "app.py").write_text("value = 3\n", encoding="utf-8")
+        self.owner_phase("code-review", "passed", findings="none")
+        before, events = status(), len(self.history_events())
+        refused(final("stale-quality.json", "commit-ready"), before, events)
+        (self.repo / "app.py").write_text("value = 1\n", encoding="utf-8")
+        self.owner_phase("code-review", "passed", findings="none")
+        self.assertEqual(final("closing.json", "commit-ready").returncode, 0, marker)
+        completed = self.cli("complete")
+        self.assertEqual(completed.returncode, 0, marker + completed.stdout + completed.stderr)
+        before, events = status(), len(self.history_events())
+        self.assertIn("open-workflow", self.checkpoint("final-review")["missing"], "COMPLETED_PASS_REOPENED")
+        refused(final("terminal.json", "commit-ready"), before, events)
 
     def test_terminal_context_mismatch_allows_reconsult(self) -> None:
         marker, slug = "TERMINAL_MISMATCH_RECONSULT_REJECTED", "terminal-mismatch-reconsult"
@@ -2262,16 +2309,6 @@ class PassLifecycleTests(unittest.TestCase):
         before = len(self.history_events()); response = self.cli("record", "advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final", "--source", "codex-advisor", "--input", commit_ready_envelope(self.tmp))
         self.assertEqual((response.returncode, len(self.history_events()) - before), (0, 1), marker + response.stdout + response.stderr)
 
-    def baseline_preserved(self, slug: str, behavior_id: str, marker: str) -> None:
-        """A preservation owner is satisfied only by an executed passing observation (issue #54)."""
-        (self.repo / "test_preserve_probe.py").write_text(
-            "import app, unittest\nclass PreserveProbe(unittest.TestCase):\n"
-            f"    def test_value(self): self.assertEqual(app.value, 1, {marker!r})\n", encoding="utf-8")
-        baseline = subprocess.run(
-            [sys.executable, str(WORKFLOW), "tdd", "--repo", str(self.repo), "--slug", slug, "--phase", "red",
-             "--behavior-id", behavior_id, "--", sys.executable, "-m", "unittest", "test_preserve_probe"],
-            cwd=ROOT, env=self.env, text=True, capture_output=True, check=False)
-        self.assertEqual(baseline.returncode, 0, marker + baseline.stdout + baseline.stderr)
 
     def test_open_correction_batch_blocks_broad_gates_and_routes_tdd_reassessment(self) -> None:
         marker, appeal_marker = "OPEN_CORRECTION_BYPASSED_GATE", "MIXED_CORRECTION_APPEAL_ADMITTED"
@@ -2309,26 +2346,19 @@ class PassLifecycleTests(unittest.TestCase):
             "--stage", "final", "--source", "codex-advisor", "--input", str(appeal))
         self.assertEqual((blocked.returncode, len(self.history_events()) - events), (2, 0), appeal_marker)
         ref = [{"type": "finding", "evidenceId": intake, "id": "SPEC-1"}]
-        update = self.json_file("correction-map.json", {"reassessment": "map correction", "dispositions": [], "items": [
-            {"id": "BM_ADV_1", "kind": "contract", "basis": "finding", "behavior": "correction closes", "seam": "workflow CLI",
-             "expected": "observable", "redFailure": marker, "status": "pending", "sourceRefs": ref},
-            {"id": "BM_ADV_PRESERVE", "kind": "preservation", "basis": "finding", "behavior": "preserve advisor intake",
-             "seam": "advisor intake", "expected": "immutable", "redFailure": marker, "status": "pending",
-             "sourceRefs": ref}]})
+        update = self.json_file("correction-map.json", {"items": [
+            {"id": "BM_ADV_1", "basis": "finding", "behavior": "correction closes", "seam": "workflow CLI",
+             "expected": "app.value is 2", "sourceRefs": ref}]})
         self.run_cli(("record", "tdd-map", "--slug", slug, "--workflow-id", wid, "--input", str(update)))
-        self.baseline_preserved(slug, "BM_ADV_PRESERVE", marker)
         (self.repo / "test_correction_gate.py").write_text("import app,unittest\nclass T(unittest.TestCase):\n"
             f" def test_value(self):self.assertEqual(app.value,2,{marker!r})\n", encoding="utf-8")
-        command = [sys.executable, str(WORKFLOW), "tdd", "--repo", str(self.repo), "--slug", slug, "--phase", "red",
-                   "--behavior-id", "BM_ADV_1", "--", sys.executable, "-m", "unittest", "test_correction_gate"]
-        phase = command.index("red")
+        command = [sys.executable, str(WORKFLOW), "tdd", "--repo", str(self.repo), "--slug", slug, "--behavior-id", "BM_ADV_1", "--", sys.executable, "-m", "unittest", "test_correction_gate"]
         for name, value in (("red", 1), ("green", 2)):
-            command[phase] = name; (self.repo / "app.py").write_text(f"value = {value}\n", encoding="utf-8")
+            (self.repo / "app.py").write_text(f"value = {value}\n", encoding="utf-8")
             result = subprocess.run(command, cwd=ROOT, env=self.env, text=True, capture_output=True, check=False)
-            self.assertEqual(result.returncode, 0, marker + result.stdout + result.stderr)
-        update.write_text(json.dumps({"sourceBehaviorId": "BM_ADV_1", "reassessment": "none", "items": [], "dispositions": []}), encoding="utf-8")
-        self.run_cli(("record", "tdd-map", "--slug", slug, "--workflow-id", wid, "--input", str(update)))
+            self.assertEqual(result.returncode, 2 if value == 1 else 0, marker + result.stdout + result.stderr)
         fixed = self.dispose(slug, wid, "final", "addressed", str(self.finding_disposition_document(intake, "fixed")))
+        self.assertEqual(fixed.returncode, 0, fixed.stdout + fixed.stderr)
         self.assertEqual(json.loads(fixed.stdout)["nextAction"], "appeal-final-review", marker)
         self.assertEqual(self.verify_run(sys.executable, "-c", "pass").returncode, 0)
         self.owner_phase("code-review", "passed", findings="none")
@@ -2336,136 +2366,6 @@ class PassLifecycleTests(unittest.TestCase):
                             "--source", "codex-advisor", "--input", str(appeal))
         self.assertEqual((appealed.returncode, json.loads(self.cli("status").stdout)["nextAction"]), (0, "complete-workflow"), appeal_marker)
 
-    def test_behavioral_fixed_requires_linked_green_and_reassessment(self) -> None:
-        marker = "BEHAVIORAL_FIXED_WITHOUT_GREEN_CLOSURE"
-        completion_marker = "FIXED_RESERVATION_ORPHANED"
-        unrelated_marker = "UNRELATED_GREEN_BLOCKED_BY_FIXED_FINDING"
-        slug = "behavioral-fixed"
-        wid = self.begin_slug(slug)
-        self.advance_to_verification(slug, wid)
-        self.owner_phase("code-review", "passed", findings="none")
-        envelope = self.tmp / "fixed-envelope.json"
-        envelope.write_text(json.dumps({
-            "schemaVersion": 1,
-            "findings": [{
-                "id": "SPEC-1", "claim": "proof is missing",
-                "material": True, "kind": "behavioral",
-            }],
-            "verdict": "fix-before-commit",
-        }), encoding="utf-8")
-        recorded = self.cli(
-            "record", "advisor-result", "--slug", slug, "--workflow-id", wid,
-            "--stage", "final", "--source", "codex-advisor", "--input", str(envelope),
-        )
-        self.assertEqual(recorded.returncode, 0, marker + recorded.stdout + recorded.stderr)
-        intake_id = json.loads(self.cli("status").stdout)["finalReview"]["intakeEvidence"]
-        source_ref = [{"type": "finding", "evidenceId": intake_id, "id": "SPEC-1"}]
-        mapped = {
-            "id": "BM_ADV_1", "kind": "contract", "basis": "advisor finding",
-            "behavior": "the workflow opens the mapped proof cycle", "seam": "workflow CLI",
-            "expected": "the RED transition is observable", "redFailure": "PROOF_CYCLE_NOT_OPEN",
-            "status": "pending", "sourceRefs": source_ref,
-        }
-        preserved = {
-            "id": "BM_ADV_PRESERVE", "kind": "preservation", "basis": "advisor finding",
-            "behavior": "preserve advisor intake", "seam": "advisor intake",
-            "expected": "advisor intake remains valid", "redFailure": "PROOF_CYCLE_NOT_OPEN",
-            "status": "pending", "sourceRefs": [],
-        }
-        update = self.tmp / "fixed-reassessment.json"
-        update.write_text(json.dumps({"reassessment": "map final finding", "items": [mapped, preserved], "dispositions": []}), encoding="utf-8")
-        mapped_result = self.cli("record", "tdd-map", "--slug", slug, "--workflow-id", wid, "--input", str(update))
-        self.assertEqual(mapped_result.returncode, 0, marker + mapped_result.stdout + mapped_result.stderr)
-        self.baseline_preserved(slug, "BM_ADV_PRESERVE", marker)
-        disposition = self.finding_disposition_document(intake_id, "fixed")
-        early = self.dispose(slug, wid, "final", "addressed", str(disposition))
-        self.assertEqual(early.returncode, 2, marker + early.stdout + early.stderr)
-        probe = self.repo / "test_cycle_probe.py"
-        probe.write_text("import app, unittest\nclass CycleProbe(unittest.TestCase):\n"
-                         "    def test_value(self): self.assertEqual(app.value, 2, 'PROOF_CYCLE_NOT_OPEN')\n",
-                         encoding="utf-8")
-        command = [
-            sys.executable, str(WORKFLOW), "tdd", "--repo", str(self.repo), "--slug", slug,
-            "--phase", "red", "--behavior-id", "BM_ADV_1", "--",
-            sys.executable, "-m", "unittest", "test_cycle_probe",
-        ]
-        phase_index = command.index("red")
-        for phase, value in (("red", 1), ("green", 2)):
-            command[phase_index] = phase
-            (self.repo / "app.py").write_text(f"value = {value}\n", encoding="utf-8")
-            result = subprocess.run(command, cwd=ROOT, env=self.env, text=True, capture_output=True, check=False)
-            self.assertEqual(result.returncode, 0, marker + result.stdout + result.stderr)
-        update.write_text(json.dumps({
-            "sourceBehaviorId": "BM_ADV_1", "reassessment": "no new proof obligations",
-            "items": [], "dispositions": [],
-        }), encoding="utf-8")
-        reassessed = self.cli(
-            "record", "tdd-map", "--slug", slug, "--workflow-id", wid, "--input", str(update)
-        )
-        self.assertEqual(reassessed.returncode, 0, marker + reassessed.stdout + reassessed.stderr)
-        disposition = self.finding_disposition_document(intake_id, "fixed")
-        fixed = self.dispose(slug, wid, "final", "addressed", str(disposition))
-        self.assertEqual(fixed.returncode, 0, marker + fixed.stdout + fixed.stderr)
-        self.assertEqual(self.verify_run(sys.executable, "-c", "pass").returncode, 0, marker)
-        self.owner_phase("code-review", "passed", findings="none")
-        self.run_cli(
-            ("record", "advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final",
-             "--source", "codex-advisor", "--input", commit_ready_envelope(self.tmp)),
-            ("record", "advisor-disposition", "--slug", slug, "--workflow-id", wid,
-             "--stage", "final", "--findings", "none"),
-        )
-        update.write_text(json.dumps({
-            "reassessment": "a sharper item replaces the fixed proof", "items": [{
-                "id": "BM_ADV_2", "kind": "contract", "basis": "sharper proof",
-                "behavior": "the replacement reaches GREEN", "seam": "app module",
-                "expected": "app.value is 2", "redFailure": unrelated_marker, "status": "pending",
-                "sourceRefs": source_ref,
-            }], "dispositions": [{
-                "id": "BM_ADV_1", "status": "superseded", "supersededBy": "BM_ADV_2",
-                "evidence": "the sharper item owns the outcome",
-            }],
-        }), encoding="utf-8")
-        before_state, before_events = json.loads(self.cli("status").stdout), len(self.history_events())
-        superseded = self.cli("record", "tdd-map", "--slug", slug, "--workflow-id", wid, "--input", str(update))
-        self.assertEqual(superseded.returncode, 2, completion_marker + superseded.stdout + superseded.stderr)
-        self.assertEqual(json.loads(self.cli("status").stdout), before_state, completion_marker)
-        self.assertEqual(len(self.history_events()), before_events, completion_marker)
-        for status in ("rejected-with-evidence", "accepted-follow-up"):
-            disposition = self.finding_disposition_document(intake_id, status)
-            refused = self.dispose(slug, wid, "final", "addressed", str(disposition))
-            self.assertEqual(refused.returncode, 2, completion_marker + refused.stdout + refused.stderr)
-            self.assertIn("already has terminal disposition fixed", refused.stderr, completion_marker)
-            self.assertEqual(json.loads(self.cli("status").stdout), before_state, completion_marker)
-            self.assertEqual(len(self.history_events()), before_events, completion_marker)
-        unrelated = json.loads(update.read_text(encoding="utf-8"))
-        unrelated["dispositions"] = []
-        update.write_text(json.dumps(unrelated), encoding="utf-8")
-        self.assertEqual(self.cli("record", "tdd-map", "--slug", slug, "--workflow-id", wid, "--input", str(update)).returncode, 0, unrelated_marker)
-        probe.write_text(f"import app, unittest\nclass CycleProbe(unittest.TestCase):\n    def test_value(self): self.assertEqual(app.value, 2, {unrelated_marker!r})\n", encoding="utf-8")
-        command[command.index("--behavior-id") + 1] = "BM_ADV_2"
-        phase_index = command.index("--phase") + 1
-        for phase, value in (("red", 1), ("green", 2)):
-            (self.repo / "app.py").write_text(f"value = {value}\n", encoding="utf-8")
-            command[phase_index] = phase
-            result = subprocess.run(command, cwd=ROOT, env=self.env, text=True, capture_output=True, check=False)
-            self.assertEqual(result.returncode, 0, unrelated_marker + result.stdout + result.stderr)
-        blocked = self.cli("complete")
-        self.assertEqual(blocked.returncode, 2, unrelated_marker + blocked.stdout + blocked.stderr)
-        self.assertIn("workflow incomplete", blocked.stderr, unrelated_marker)
-        update.write_text(json.dumps({"sourceBehaviorId": "BM_ADV_2", "reassessment": "GREEN replacement preserves fixed proof", "items": [], "dispositions": [{"id": "BM_ADV_1", "status": "superseded", "supersededBy": "BM_ADV_2", "evidence": "the GREEN replacement owns the outcome"}]}), encoding="utf-8")
-        self.assertEqual(self.cli("record", "tdd-map", "--slug", slug, "--workflow-id", wid, "--input", str(update)).returncode, 0, "FIXED_GREEN_SUPERSESSION_REFUSED")
-        self.advance_to_context_forge()
-        verified = self.verify_run(sys.executable, "-c", "pass")
-        self.assertEqual(verified.returncode, 0, marker + verified.stdout + verified.stderr)
-        self.owner_phase("code-review", "passed", findings="none")
-        self.run_cli(
-            ("record", "advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final",
-             "--source", "codex-advisor", "--input", commit_ready_envelope(self.tmp)),
-            ("record", "advisor-disposition", "--slug", slug, "--workflow-id", wid,
-             "--stage", "final", "--findings", "none"),
-        )
-        completed = self.cli("complete")
-        self.assertEqual(completed.returncode, 0, completion_marker + completed.stdout + completed.stderr)
 
     def test_review_finding_owns_its_attack_through_tdd_map_and_green_closes_fixed(self) -> None:
         marker, slug = "REVIEW_FINDING_NOT_FIXED", "review-finding-proof"
@@ -2488,17 +2388,17 @@ class PassLifecycleTests(unittest.TestCase):
 
         update = self.tmp / "review-finding-map.json"
         update.write_text(json.dumps({
-            "reassessment": "own the review finding with a real attack", "dispositions": [], "items": [{
-                "id": "BM_ADV_1", "kind": "contract", "basis": "review finding",
+            "items": [{
+                "id": "BM_ADV_1", "basis": "review finding",
                 "behavior": "the reviewed value is corrected", "seam": "app module",
-                "expected": "app.value is 2", "redFailure": marker, "status": "pending",
+                "expected": "app.value is 2",
                 "sourceRefs": [{"type": "finding", "evidenceId": intake_id, "id": "SPEC-1"}]}],
         }), encoding="utf-8")
         mapped = self.cli("record", "tdd-map", "--slug", slug, "--workflow-id", wid, "--input", str(update))
         self.assertEqual(mapped.returncode, 0, marker + mapped.stdout + mapped.stderr)
         early = self.cli(*review_args, str(self.review_finding_disposition_document(intake_id, "fixed")))
         self.assertEqual(early.returncode, 2, marker + early.stdout + early.stderr)
-        self.assertIn("GREEN", early.stderr, marker)
+        self.assertIn("comparisons", early.stderr, marker)
 
         probe = self.repo / "test_review_fix.py"
         probe.write_text("import app, unittest\nclass ReviewFix(unittest.TestCase):\n"
@@ -2506,24 +2406,17 @@ class PassLifecycleTests(unittest.TestCase):
                          encoding="utf-8")
         command = [
             sys.executable, str(WORKFLOW), "tdd", "--repo", str(self.repo), "--slug", slug,
-            "--phase", "red", "--behavior-id", "BM_ADV_1", "--",
+            "--behavior-id", "BM_ADV_1", "--",
             sys.executable, "-m", "unittest", "test_review_fix",
         ]
         red = subprocess.run(command, cwd=ROOT, env=self.env, text=True, capture_output=True, check=False)
-        self.assertEqual(red.returncode, 0, marker + red.stdout + red.stderr)
+        self.assertEqual(red.returncode, 2, marker + red.stdout + red.stderr)
         (self.repo / "app.py").write_text("value = 2\n", encoding="utf-8")
-        command[command.index("red")] = "green"
         green = subprocess.run(command, cwd=ROOT, env=self.env, text=True, capture_output=True, check=False)
         self.assertEqual(green.returncode, 0, marker + green.stdout + green.stderr)
-        update.write_text(json.dumps({
-            "sourceBehaviorId": "BM_ADV_1", "reassessment": "no new proof obligations",
-            "items": [], "dispositions": [],
-        }), encoding="utf-8")
-        reassessed = self.cli("record", "tdd-map", "--slug", slug, "--workflow-id", wid, "--input", str(update))
-        self.assertEqual(reassessed.returncode, 0, marker + reassessed.stdout + reassessed.stderr)
         fixed = self.cli(*review_args, str(self.review_finding_disposition_document(intake_id, "fixed")))
         self.assertEqual(fixed.returncode, 0, marker + fixed.stdout + fixed.stderr)
-        self.assertEqual(json.loads(fixed.stdout)["status"], "pending", marker)
+        self.assertEqual(json.loads(fixed.stdout)["status"], "passed", marker)
         self.assertEqual(self.verify_run(sys.executable, "-c", "pass").returncode, 0, marker)
         review.write_text(json.dumps({"findings": [], "dispositions": []}), encoding="utf-8")
         refreshed = self.cli(*review_args, str(review))
@@ -2784,7 +2677,7 @@ def wait_at_mutation(frame, event, arg):
     return wait_at_mutation
 sys.settrace(wait_at_mutation)
 commit_tdd(resolve_repo_identity(sys.argv[1]), 'terminal-state', sys.argv[2],
-           json.loads(sys.argv[3]), None, expected_evidence_id=json.loads(sys.argv[4]))
+           json.loads(sys.argv[3]), expected_evidence_id=json.loads(sys.argv[4]))
 """
         with subprocess.Popen(
             [sys.executable, "-c", program, str(self.repo), wid, json.dumps(prepared),
@@ -2801,12 +2694,11 @@ commit_tdd(resolve_repo_identity(sys.argv[1]), 'terminal-state', sys.argv[2],
         self.assertEqual(state["verification"], "pending")
         failure = "GOVERNANCE_ANNOTATION_MUTATED_DOCUMENT: STALE_PREPARATION_BYPASSED_GOVERNANCE"
         with self.assertRaisesRegex(WorkflowError, TDD_CLOSED, msg=failure):
-            commit_tdd(identity, "terminal-state", wid, prepared, None, expected_evidence_id=state.get("tddEvidence"))
+            commit_tdd(identity, "terminal-state", wid, prepared, expected_evidence_id=state.get("tddEvidence"))
         self.assertEqual(json.loads(self.cli("status").stdout), state, failure)
         self.assertEqual(self.history_events(), history, failure)
         update = self.tmp / "governance-map.json"
-        update.write_text(json.dumps({"reassessment": "recheck frozen map", "dispositions": [
-            {"id": "BM_NO_CHANGE", "revalidate": True, "evidence": "governance freeze"}]}))
+        update.write_text(json.dumps({"items": [{"id": "BM_NEW", "basis": "frozen map", "behavior": "new obligation", "seam": "app", "expected": "2"}]}))
         rejected = self.cli("record", "tdd-map", "--slug", "terminal-state", "--workflow-id", wid,
                             "--input", str(update))
         failure = "GOVERNANCE_REVALIDATION_ACCEPTED_TDD_MAP_MUTATION"
@@ -2826,8 +2718,7 @@ commit_tdd(resolve_repo_identity(sys.argv[1]), 'terminal-state', sys.argv[2],
         raced_tdd = subprocess.run(
             [sys.executable, str(WORKFLOW), "tdd",
              "--cwd", str(self.repo), "--slug", "terminal-state",
-             "--phase", "red", "--behavior", "revalidation escape",
-             "--seam", "workflow CLI", "--expected-failure", "AssertionError",
+             "--behavior-id", "BM_ESCAPE",
              "--", sys.executable, "-c",
              f"open({str(marker)!r}, 'w').close(); raise AssertionError('AssertionError: escape')"],
             cwd=ROOT, env=self.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,

@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""PreToolUse: advise on edits; gate delegation on the lead's current proof.
+"""PreToolUse: advise on edits; gate turn-starting delegation on the lead's current proof.
 
-For edits, it names what the pass has not recorded yet and lets
-the edit through; the recorder binds every later RED to the tree it ran on,
-so order of proof is evidence the reviews weigh, not a verdict on keystrokes.
-A shell command that is exactly one pytest/unittest invocation is rewritten to
+For edits, it names what the pass has not recorded yet and lets the edit
+through; comparisons run on recorded source trees, so edit order needs no gate.
+Once the pass records its probe list, a shell line that starts a pytest/unittest
+run anywhere is denied: behavior runs through tdd comparisons. Before that, a
+shell command that is exactly one pytest/unittest invocation is rewritten to
 run through `workflow verify --observed`, which keeps its receipt in the
 checkout where it runs and returns its exit code; while it keeps a receipt,
 the command's stderr is merged into stdout.
@@ -26,14 +27,15 @@ from hooks.lib._workflow_db import LedgerError  # noqa: E402
 from hooks.lib.hook_input import advise, edited_path, emit, is_explorer_continuation, read_hook_payload, working_directory  # noqa: E402
 from hooks.lib.repo_identity import RepoIdentityError, resolve_repo_identity, try_resolve_repo_identity  # noqa: E402
 from hooks.lib.state_store import is_reviewable_path, is_test_path  # noqa: E402
-from hooks.lib.tdd_surface import identify  # noqa: E402
-from hooks.lib.tdd_workflow import edit_blockers  # noqa: E402
+from hooks.lib.tdd_surface import identify, python_entry  # noqa: E402
+from hooks.lib.tdd_workflow import COVERED, covered, edit_blockers  # noqa: E402
 from hooks.lib.workflow_state import (  # noqa: E402
     WorkflowError,
     _finding_unresolved,
     read_workflow,
     ready_for_edit,
     review_blockers,
+    same_agent,
 )
 
 
@@ -41,6 +43,59 @@ WORKFLOW = ROOT / "skills" / "repo-production-workflow" / "scripts" / "workflow.
 SHELL_SYNTAX = re.compile(r"[;&|<>`$()\n\r\\]")
 # Unquoted, these the shell would expand or drop; quoted, they reach the runner verbatim.
 SHELL_EXPANSION = re.compile(r"[*?\[\]{}~#]")
+HEREDOC = re.compile(r"(?<!<)<<(?!<)-?\s*['\"]?([A-Za-z_]\w*)")
+SHELLS = {"bash", "sh", "dash", "zsh"}
+
+
+def runs_tests(command: object, depth: int = 0) -> bool:
+    """Whether a simple command of a shell line, here-document bodies aside, starts a pytest/unittest run,
+    directly, after a prefix (env, timeout, uv run, loop keywords) or inside `sh -c`. Arguments after
+    `--` or another Python program belong to that program; a word after an option is that option's value."""
+    if not isinstance(command, str):
+        return False
+    kept, bodies = [], []
+    for line in command.split("\n"):
+        if bodies:
+            if line.strip() == bodies[0]:
+                bodies.pop(0)
+            continue
+        kept.append(line)
+        bodies += HEREDOC.findall(line)
+    lexer = shlex.shlex("\n".join(kept), posix=True, punctuation_chars=";&|()<>\n")
+    lexer.whitespace, lexer.whitespace_split = " \t\r", True
+    try:
+        tokens = [*lexer, ";"]
+    except ValueError:
+        return False
+    simple: list[str] = []
+    for token in tokens:
+        if set(token) <= set(";&|()\n"):
+            for index, word in enumerate(simple):
+                if word == "--" or (python_entry(simple[index:]) and identify(simple[index:]).get("runner") is None):
+                    break
+                if (identify(simple[index:]).get("runner") in {"pytest", "unittest"}
+                        and not (index and simple[index - 1].startswith("-") and "=" not in simple[index - 1])):
+                    return True
+                if (depth < 2 and word.rsplit("/", 1)[-1] in SHELLS and index + 2 < len(simple)
+                        and re.fullmatch(r"-[a-z]*c[a-z]*", simple[index + 1]) and runs_tests(simple[index + 2], depth + 1)):
+                    return True
+            simple = []
+        else:
+            simple.append(token)
+    return False
+
+
+def covered_pass(payload: dict[str, object]) -> bool:
+    """The lead of an open pass with a recorded probe list; reviewers keep their test runs and an
+    unreadable ledger never stops a command."""
+    try:
+        identity = try_resolve_repo_identity(working_directory(payload))
+        state = read_workflow(identity) if identity is not None else None
+        return (state is not None and not (state.get("phase") == "complete" and not state.get("revalidation"))
+                and state.get("leadContextId") in {None, payload.get("session_id")}
+                and covered(identity, state))
+    except (RepoIdentityError, WorkflowError, LedgerError, OSError, ValueError, sqlite3.Error):
+        return False
 
 
 def observed(command: object) -> str | None:
@@ -64,10 +119,14 @@ def main() -> int:
     tool_name = payload.get("tool_name")
     tool_name = tool_name.removeprefix("collaboration") if isinstance(tool_name, str) else ""
     inputs = payload.get("tool_input")
-    if tool_name == "Bash" and isinstance(inputs, dict) and (rewritten := observed(inputs.get("command"))):
-        emit("PreToolUse", permissionDecision="allow", updatedInput={**inputs, "command": rewritten})
-        return 0
-    if tool_name in {"Agent", "spawn_agent", "followup_task", "send_input", "send_message", "resume_agent"}:
+    if tool_name == "Bash" and isinstance(inputs, dict):
+        if runs_tests(inputs.get("command")) and covered_pass(payload):
+            emit("PreToolUse", permissionDecision="deny", permissionDecisionReason=COVERED)
+            return 0
+        if rewritten := observed(inputs.get("command")):
+            emit("PreToolUse", permissionDecision="allow", updatedInput={**inputs, "command": rewritten})
+            return 0
+    if tool_name in {"Agent", "spawn_agent", "followup_task", "send_input", "resume_agent"}:
         missing: list[str] = []
         try:
             identity = try_resolve_repo_identity(working_directory(payload))
@@ -90,8 +149,8 @@ def main() -> int:
                            and owner.get("implementerContextId") and owner.get("reviewerContextId")
                            and owner["implementerContextId"] != owner["reviewerContextId"]]
                 if repairs:
-                    if not (tool_name in {"followup_task", "send_input", "send_message", "resume_agent"}
-                            and any(target is not None and target == owner.get("implementerContextId")
+                    if not (tool_name in {"followup_task", "send_input", "resume_agent"}
+                            and any(same_agent(owner.get("implementerContextId"), target)
                                     and session is not None and session == owner.get("reviewerContextId") for owner in repairs)):
                         missing.append("second recurrence requires continuation of the retained reviewer for repair")
                 else:
@@ -130,7 +189,7 @@ def main() -> int:
                                   "Admitted; nothing records this edit until it is repaired."]
     advise("PreToolUse", payload.get("session_id"), {
         f"{identity.key}:intake": "workflow intake: missing before this production edit: " + ", ".join(missing)
-        + ". Admitted; a RED taken after it is recorded as late." if missing else "",
+        + ". Admitted." if missing else "",
         f"{identity.key}:obligations": "\n".join(reminders)})
     return 0
 
