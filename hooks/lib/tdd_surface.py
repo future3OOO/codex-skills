@@ -425,7 +425,7 @@ def _pytest_red(
     if counts is None:
         return None, (
             "pytest did not print its short failure summary; rerun without "
-            "summary suppression so the RED is observable"
+            "summary suppression so the failure is observable"
         )
     if counts["no_tests"] or counts["errors"] or counts["failed"] < 1:
         return None, "pytest failed during collection/setup or executed no tests"

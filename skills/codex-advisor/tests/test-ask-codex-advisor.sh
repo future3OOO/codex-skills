@@ -237,7 +237,7 @@ run_wrapper() {
 PYTHONPATH="$ROOT" python3 - "$rigtmp/preflight.json" <<'PYDRAFT'
 import json, sys
 from hooks.tests.support import build_document, pending_behavior
-contract = pending_behavior("BM_READER", red_failure="READER_NOTE_WRONG")
+contract = pending_behavior("BM_READER")
 open(sys.argv[1], "w").write(json.dumps(build_document("scoped wrapper diagnostic", behavior_map=[contract])))
 PYDRAFT
 preflight_out=$(run_wrapper --slug scoped-rig --phase preflight-advice --preflight-file "$rigtmp/preflight.json" --design-file "$rigtmp/design.md" -- 'scope question' 2>"$rigtmp/preflight.err"); status=$?

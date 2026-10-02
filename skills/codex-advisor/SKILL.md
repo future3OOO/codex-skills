@@ -102,8 +102,8 @@ Final review receives the current recorded Behavior Map. Every material finding 
 `fixSketch` with `change` and `probe`, at most 8192 UTF-8 bytes combined, separate
 from the prose word budget. Missing, malformed or oversized sketches are reported
 on the retained finding; they never discard a completed consult. The lead reads
-a sketch once, verifies its premise, drives its real-Seam probe RED, adapts the
-change, and owns GREEN. A sketch never closes a finding.
+a sketch once, verifies its premise, runs its real-Seam probe through the comparison
+runner, adapts the change, and owns the repair. A sketch never closes a finding.
 
 The wrapper stores typed findings and the response SHA-256 once, without a raw
 answer duplicate. The digest marks `sketch=yes` or `missing/invalid`, without code.

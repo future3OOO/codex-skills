@@ -46,7 +46,7 @@ results, persisted effects and cleanup. Exercise the affected forms and interact
 not just the reported example. Reuse applicable drivers and evidence; execute again
 for changed behavior/bindings, unreliable evidence or missing coverage, not for a
 different reviewer or handoff. Disclose unavailable comparisons; never undo/reapply
-a repair to manufacture RED. For new or changed regression checks and existing
+a repair to manufacture a failure. For new or changed regression checks and existing
 checks relied on for the repair, establish that the claimed defect makes the check
 fail. Reuse an applicable N failure; when sensitivity remains uncertain, introduce
 only that contract-breaking behavior in a disposable copy and run the retained
@@ -120,7 +120,7 @@ The decision is complete only when one outcome is recorded:
 - Treat review comments as evidence to verify against the code and contract, not authority to obey blindly.
 - Apply the canonical imaginary-risk ban in `~/.codex/AGENTS.md` before adding any guard, fallback, retry, configuration, abstraction, or code.
 - Stay on task: if the cumulative diff grows past roughly 3× what the task implies, stop and justify the overrun before continuing.
-- For behavior proof invoke `tdd`; the canonical mock ban governs every claimed RED/GREEN result.
+- For behavior proof invoke `tdd`; the canonical mock ban governs every claimed comparison result.
 
 ## Data, Types, and Boundaries
 

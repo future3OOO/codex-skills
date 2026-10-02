@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import concurrent.futures
 import hashlib
 import json
 import os
@@ -11,7 +10,6 @@ import shlex
 import shutil
 import subprocess
 import tempfile
-import threading
 from pathlib import Path
 
 from . import behavior_map, tdd_surface
@@ -185,8 +183,7 @@ def _reviewed_sources(identity: RepoIdentity, state: JsonObject, mapped: JsonObj
 
 
 def _execute_tree(identity: RepoIdentity, source_tree: str, candidate_tree: str, files: list[str],
-                  command: list[str], surface: JsonObject, timeout: float,
-                  cancel: threading.Event | None = None) -> JsonObject:
+                  command: list[str], surface: JsonObject, timeout: float) -> JsonObject:
     with tempfile.TemporaryDirectory(prefix="workflow-proof-") as temporary:
         root = Path(temporary) / "source"
         subprocess.run(["git", "clone", "--quiet", "--no-checkout", identity.root, str(root)],
@@ -216,8 +213,7 @@ def _execute_tree(identity: RepoIdentity, source_tree: str, candidate_tree: str,
             position = actual.index("--") if "--" in actual else len(actual)
             actual.insert(position, "--override-ini=addopts=")
         try:
-            raw, code, timed_out = _run([*binding, "--chdir", identity.root, "--", *actual], snapshot, timeout,
-                                        env=env, cancel=cancel)
+            raw, code, timed_out = _run([*binding, "--chdir", identity.root, "--", *actual], snapshot, timeout, env=env)
         except OSError as exc:
             raw, code, timed_out = str(exc).encode(), 127, False
         output = raw.decode("utf-8", errors="replace")
@@ -275,21 +271,10 @@ def _run_tdd(values: list[str]) -> int:
     cache = {(arm.get("key"), arm.get("sourceTree")): arm for run in (current or {}).get("runs", [])
              for arm in run.get("arms", []) if arm.get("outcome") in {"passed", "failed"}}
     held = {key: arm for (key, _), arm in cache.items()}
-    # Each arm owns its clone, TMPDIR and state root, so distinct production runs at once.
-    pending = {key: source for source, key in reversed(list(zip(sources, keys))) if key not in held}
-    cancel = threading.Event()
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(pending))) as pool:
-        futures = {key: pool.submit(_execute_tree, identity, source, candidate, files, command, surface,
-                                    args.timeout, cancel) for key, source in pending.items()}
-        try:
-            concurrent.futures.wait(futures.values())
-        except BaseException:
-            cancel.set()
-            raise
-        for key, future in futures.items():
-            arm = future.result()
-            arm["key"] = key
-            held[key] = arm
+    # Arms share HOME, network and host paths, so they run one at a time.
+    for source, key in zip(sources, keys):
+        if key not in held:
+            held[key] = {**_execute_tree(identity, source, candidate, files, command, surface, args.timeout), "key": key}
     arms = []
     for source, key in zip(sources, keys):
         arms.append({**(cache.get((key, source)) or held[key]), "requestedTree": source})

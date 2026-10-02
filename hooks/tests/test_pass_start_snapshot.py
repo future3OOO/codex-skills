@@ -305,7 +305,7 @@ class ExecutedSelectionsTests(unittest.TestCase):
         )
         return f"{name}.Probe.test_behavior"
 
-    def tdd(self, phase: str, behavior_id: str, *command: str, support=()) -> subprocess.CompletedProcess[str]:
+    def tdd(self, behavior_id: str, *command: str, support=()) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             [
                 sys.executable, str(WORKFLOW), "tdd", "--repo", str(self.repo),
@@ -375,10 +375,10 @@ class ExecutedSelectionsTests(unittest.TestCase):
         no reason to build.
         """
         marker = "TEST_DEPENDENCY_LOST"
-        self.record_map(pending_behavior("BM_FILTERED", red_failure="FILTERED_MARKER"))
+        self.record_map(pending_behavior("BM_FILTERED"))
         self.two_tests("test_filtered")
         recorded = self.tdd(
-            "red", "BM_FILTERED", sys.executable, "-m", "pytest", "-q",
+            "BM_FILTERED", sys.executable, "-m", "pytest", "-q",
             "test_filtered.py", "-k", "selected",
         )
         self.assertEqual(recorded.returncode, 0, marker + ": " + recorded.stdout + recorded.stderr)
@@ -450,11 +450,11 @@ class ExecutedSelectionsTests(unittest.TestCase):
         since discovery over the directory would have collected and failed it.
         """
         marker = "DISCOVERY_SUPPORT_BROKEN"
-        self.record_map(pending_behavior("BM_DISCOVERED", red_failure="DISCOVERED_MARKER"))
+        self.record_map(pending_behavior("BM_DISCOVERED"))
         self.two_tests("test_discovered")
         self.probe("test_excluded", "EXCLUDED_MARKER", passing=False)
         recorded = self.tdd(
-            "red", "BM_DISCOVERED", sys.executable, "-m", "unittest", "discover",
+            "BM_DISCOVERED", sys.executable, "-m", "unittest", "discover",
             "-s", ".", "-p", "test_discovered.py",
         )
         self.assertEqual(recorded.returncode, 0, marker + ": " + recorded.stdout + recorded.stderr)
@@ -477,15 +477,15 @@ class ExecutedSelectionsTests(unittest.TestCase):
     def test_status_exposes_red_green_and_baseline_selections(self) -> None:
         marker = "EXECUTED_SELECTIONS_ABSENT"
         self.record_map(
-            pending_behavior("BM_PROVED", red_failure="PROVED_MARKER"),
-            pending_behavior("BM_BASELINED", red_failure="BASELINE_MARKER"),
+            pending_behavior("BM_PROVED"),
+            pending_behavior("BM_BASELINED"),
         )
         failing = self.probe("test_proved", "PROVED_MARKER", passing=False)
-        self.assertEqual(self.tdd("red", "BM_PROVED", sys.executable, "-m", "unittest", failing).returncode, 2)
+        self.assertEqual(self.tdd("BM_PROVED", sys.executable, "-m", "unittest", failing).returncode, 2)
         passing = self.probe("test_proved", "PROVED_MARKER", passing=True)
-        self.assertEqual(self.tdd("green", "BM_PROVED", sys.executable, "-m", "unittest", passing).returncode, 0)
+        self.assertEqual(self.tdd("BM_PROVED", sys.executable, "-m", "unittest", passing).returncode, 0)
         baselined = self.probe("test_baselined", "BASELINE_MARKER", passing=True)
-        self.assertEqual(self.tdd("red", "BM_BASELINED", sys.executable, "-m", "unittest", baselined).returncode, 0)
+        self.assertEqual(self.tdd("BM_BASELINED", sys.executable, "-m", "unittest", baselined).returncode, 0)
 
         selections = self.selections(marker)
 
@@ -499,9 +499,9 @@ class ExecutedSelectionsTests(unittest.TestCase):
     def test_the_checkpoint_payload_carries_none_of_the_new_fields(self) -> None:
         """These are machine-only graph details; the advisor's payload never sees them."""
         marker = "ADDED_FIELDS_LEAKED_INTO_ADVISOR_OR_COMPLETION"
-        self.record_map(pending_behavior("BM_CHECKPOINT", red_failure="CHECKPOINT_MARKER"))
+        self.record_map(pending_behavior("BM_CHECKPOINT"))
         failing = self.probe("test_checkpoint", "CHECKPOINT_MARKER", passing=False)
-        self.assertEqual(self.tdd("red", "BM_CHECKPOINT", sys.executable, "-m", "unittest", failing).returncode, 2)
+        self.assertEqual(self.tdd("BM_CHECKPOINT", sys.executable, "-m", "unittest", failing).returncode, 2)
         self.assertIn("BM_CHECKPOINT", self.selections(marker), marker)
 
         result = self.workflow("checkpoint", "--phase", "preflight-advice")
@@ -514,9 +514,9 @@ class ExecutedSelectionsTests(unittest.TestCase):
     def test_status_reads_change_no_workflow_state(self) -> None:
         """The projection is derived on read; reading it must not write."""
         marker = "STATUS_MUTATED_STATE"
-        self.record_map(pending_behavior("BM_READONLY", red_failure="READONLY_MARKER"))
+        self.record_map(pending_behavior("BM_READONLY"))
         failing = self.probe("test_readonly", "READONLY_MARKER", passing=False)
-        self.assertEqual(self.tdd("red", "BM_READONLY", sys.executable, "-m", "unittest", failing).returncode, 2)
+        self.assertEqual(self.tdd("BM_READONLY", sys.executable, "-m", "unittest", failing).returncode, 2)
 
         def history() -> str:
             result = self.workflow("history")
@@ -539,8 +539,8 @@ class ExecutedSelectionsTests(unittest.TestCase):
         """
         marker = "AMBIGUITY_AND_EMPTINESS_CONFLATED"
         self.record_map(
-            pending_behavior("BM_AMBIGUOUS", red_failure="AMBIGUOUS_MARKER"),
-            pending_behavior("BM_WHOLE_SUITE", red_failure="WHOLE_SUITE_MARKER"),
+            pending_behavior("BM_AMBIGUOUS"),
+            pending_behavior("BM_WHOLE_SUITE"),
         )
         (self.repo / "conftest.py").write_text(
             "def pytest_addoption(parser):\n"
@@ -549,11 +549,11 @@ class ExecutedSelectionsTests(unittest.TestCase):
         )
         self.probe("test_ambiguous", "AMBIGUOUS_MARKER", passing=True)
         ambiguous = self.tdd(
-            "red", "BM_AMBIGUOUS", sys.executable, "-m", "pytest", "-q",
+            "BM_AMBIGUOUS", sys.executable, "-m", "pytest", "-q",
             "--probe-label", "run-one", "test_ambiguous.py", support=("test_ambiguous.py", "conftest.py"),
         )
         self.assertEqual(ambiguous.returncode, 0, ambiguous.stdout + ambiguous.stderr)
-        whole = self.tdd("red", "BM_WHOLE_SUITE", sys.executable, "-m", "pytest", "-q", support=("test_ambiguous.py", "conftest.py"))
+        whole = self.tdd("BM_WHOLE_SUITE", sys.executable, "-m", "pytest", "-q", support=("test_ambiguous.py", "conftest.py"))
         self.assertEqual(whole.returncode, 0, whole.stdout + whole.stderr)
 
         selections = self.selections(marker)

@@ -2,6 +2,7 @@
 import json
 import os
 import signal
+import socket
 import shutil
 import sqlite3
 import subprocess
@@ -182,21 +183,20 @@ class RunnerComparisonTests(unittest.TestCase):
         self.assertEqual([arm["outcome"] for arm in receipt["arms"]], ["failed", "passed"], marker)
         self.assertNotEqual(receipt["arms"][0]["tree"], receipt["arms"][1]["tree"], marker)
 
-    def test_distinct_arms_execute_concurrently(self):
-        rendezvous = self.case.tmp / "rendezvous"
-        rendezvous.mkdir()
-        body = ("import os, pathlib, time, unittest, app\nclass Value(unittest.TestCase):\n"
+    def test_a_shared_host_resource_is_preserved(self):
+        with socket.socket() as free:
+            free.bind(("127.0.0.1", 0))
+            port = free.getsockname()[1]
+        body = ("import socket, time, unittest, app\nclass Value(unittest.TestCase):\n"
                 "    def test_value(self):\n"
-                f"        here = pathlib.Path({str(rendezvous)!r})\n"
-                "        (here / str(app.value)).touch()\n"
-                "        deadline = time.monotonic() + 10\n"
-                "        while len(list(here.iterdir())) < 2 and time.monotonic() < deadline:\n"
-                "            time.sleep(0.02)\n"
-                "        self.assertEqual(len(list(here.iterdir())), 2, 'ARMS_RAN_SEQUENTIALLY')\n")
+                "        with socket.socket() as server:\n"
+                f"            server.bind(('127.0.0.1', {port}))\n"
+                "            time.sleep(1.5)\n"
+                "        self.assertIn(app.value, (1, 2))\n")
         result = self.operation(2, body=body)
         receipt = json.loads(result.stdout.splitlines()[-1])
-        self.assertEqual([arm["outcome"] for arm in receipt["arms"]], ["passed", "passed"],
-                         "ARMS_RAN_SEQUENTIALLY: " + result.stdout)
+        self.assertEqual((receipt["comparison"], [arm["outcome"] for arm in receipt["arms"]]), ("preserved", ["passed", "passed"]),
+                         "SHARED_HOST_RESOURCE_COLLIDED: " + result.stdout)
 
     def test_support_spellings_cannot_overlay_production(self):
         def support(spelling, link=False):
@@ -588,45 +588,46 @@ class RunnerComparisonTests(unittest.TestCase):
     def test_cancellation_reaps_the_executing_probe(self):
         for signum in (signal.SIGINT, signal.SIGTERM):
             with self.subTest(signal=signum):
-                self.cancel_probe(signum)
+                self.cancel_probe(signum, "tdd", "--behavior-id", "BM_VALUE", "--", sys.executable, "-m", "unittest", "test_value")
 
-    def cancel_probe(self, signum):
+    def test_refresh_cancellation_reaps_the_executing_probe(self):
+        self.cancel_probe(signal.SIGTERM, "verify", "--kind", "quality-gate", "--base-ref", "HEAD")
+
+    def cancel_probe(self, signum, *command):
         self.operation(2)
-        ready = self.case.tmp / f"probes-{signum}"
-        ready.mkdir()
+        ready = self.case.tmp / "probe.pid"
+        ready.unlink(missing_ok=True)
         (self.case.repo / "test_value.py").write_text(
-            "import json, os, pathlib, time, unittest, app\nclass Value(unittest.TestCase):\n"
+            "import json, os, pathlib, time, unittest\nclass Value(unittest.TestCase):\n"
             "    def test_value(self):\n"
             "        output = pathlib.Path(os.environ['TMPDIR']) / 'probe-output'\n"
             "        output.write_text('live output')\n"
-            f"        (pathlib.Path({str(ready)!r}) / str(app.value)).write_text(json.dumps([os.getpid(), str(output)]))\n"
+            f"        pathlib.Path({str(ready)!r}).write_text(json.dumps([os.getpid(), str(output)]))\n"
             "        time.sleep(30)\n"
         )
-        process = subprocess.Popen([sys.executable, str(harness.WORKFLOW), "tdd", "--repo", str(self.case.repo),
-                                    "--behavior-id", "BM_VALUE", "--", sys.executable, "-m", "unittest", "test_value"],
-                                   env=self.case.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        children = []
+        process = subprocess.Popen([sys.executable, str(self.case.workflow), command[0], "--repo", str(self.case.repo),
+                                    *command[1:]], cwd=self.case.repo, env=self.case.env,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        child = None
         try:
-            deadline = time.monotonic() + 10
-            while len(list(ready.iterdir())) < 2 and process.poll() is None and time.monotonic() < deadline:
+            deadline = time.monotonic() + 60
+            while not ready.exists() and process.poll() is None and time.monotonic() < deadline:
                 time.sleep(.01)
-            started = [json.loads(path.read_text()) for path in ready.iterdir()]
-            self.assertEqual(len(started), 2, "INTERRUPTED_PROOF_PUBLISHED: both arms did not start")
-            children = [child for child, _ in started]
-            for _, output in started:
-                self.assertEqual(Path(output).read_text(), "live output")
+            self.assertTrue(ready.exists(), "probe did not start")
+            time.sleep(.2)
+            child, output = json.loads(ready.read_text())
+            self.assertEqual(Path(output).read_text(), "live output")
             process.send_signal(signum)
             process.communicate(timeout=5)
-            for child, output in started:
-                with self.assertRaises(ProcessLookupError, msg="INTERRUPTED_PROOF_PUBLISHED: executing child survived cancellation"):
-                    os.kill(child, 0)
-                self.assertFalse(Path(output).exists(), "INTERRUPTED_OUTPUT_NOT_CLEANED")
+            with self.assertRaises(ProcessLookupError, msg="REFRESH_CANCEL_LEAKED: executing child survived cancellation"):
+                os.kill(child, 0)
+            self.assertFalse(Path(output).exists(), "REFRESH_CANCEL_LEAKED: interrupted output not cleaned")
         finally:
             if process.poll() is None:
                 process.kill()
                 process.communicate()
-            for child in children:
+            if child is not None:
                 try:
                     os.kill(child, signal.SIGKILL)
                 except ProcessLookupError:
-                    pass
+                    child = None

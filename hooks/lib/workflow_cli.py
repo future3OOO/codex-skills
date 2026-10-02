@@ -120,7 +120,7 @@ def parser() -> argparse.ArgumentParser:
     command.add_argument("--channel-dir", help="write the advisor evidence channels here and list them in order")
     command.add_argument("--preflight-file", help="draft artifact reviewed before its single recording")
     _repo(commands.add_parser("complete", help="complete a ready workflow"), instance=True)
-    commands.add_parser("tdd", help="run and record one real RED/GREEN candidate")
+    commands.add_parser("tdd", help="compare one probe on the recorded original, reviewed and candidate sources")
 
     command = _repo(commands.add_parser("verify", help="execute and record typed verification"), instance=True)
     command.add_argument("--kind", choices=("generic", "quality-gate"), default="generic")

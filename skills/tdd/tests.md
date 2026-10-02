@@ -4,10 +4,10 @@ A strong test is a real probe of one **independently-failable observable outcome
 
 A behavior test survives internal refactoring: if observable behavior is unchanged but the test breaks, the test is coupled to implementation. Several assertions are valid when they jointly prove one behavior; one assertion can still hide an over-broad behavior.
 
-RED/GREEN probes need not be committed. Keep uncommitted probes runnable
+Comparison probes need not be committed. Keep uncommitted probes runnable
 in a Git-ignored path in the task worktree until pass completion.
 A direct-operation probe must print or assert its outcome; exit 0 alone
-does not prove GREEN.
+proves nothing.
 
 Commit a probe only for regression coverage no existing check has, as the
 smallest case in an existing harness. Additional checks
@@ -23,7 +23,7 @@ for N/N+1 proof and conditional A/B measurements.
 | Atomic behavior | One outcome under one relevant precondition; split outcomes that different defects could break independently. |
 | Complete failure contract | Expected error or refusal, the observable state required by the contract, and the correct outward result, exit status, or propagated exception. |
 | Touched-Seam preservation | A rerouted public operation retains each material success, failure, input-form, state, and atomicity guarantee the new path can alter. |
-| Architecture falsifier | A reachable semantic bypass challenges a load-bearing mechanism or state boundary, not merely its obvious spelling. A passing probe is regression evidence, not a manufactured RED. |
+| Architecture falsifier | A reachable semantic bypass challenges a load-bearing mechanism or state boundary, not merely its obvious spelling. A passing probe is regression evidence, not a manufactured failure. |
 | Interaction slice | One behavior cannot mutate state or invalidate a guarantee owned by another through shared state, lifecycle, ordering, or a touched Seam. |
 | Differential | The same inputs decided in both evaluation systems agree, or the divergence is recorded with the system whose rules decide. One input per type class the Seam admits, never only the task's examples. |
 

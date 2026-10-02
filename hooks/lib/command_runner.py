@@ -39,13 +39,12 @@ def interruptible():
 
 def run(
     command: list[str], identity: RepoIdentity, timeout: float,
-    env: dict[str, str] | None = None, cancel: threading.Event | None = None,
+    env: dict[str, str] | None = None,
 ) -> tuple[bytes, int, bool]:
     """Run one command; a command is complete when its owned process group is.
 
     Output goes to a regular file, so the timeout cannot be extended by a
-    descendant that escaped the group while holding the inherited stdout. A set
-    `cancel` terminates the group and raises KeyboardInterrupt in this thread.
+    descendant that escaped the group while holding the inherited stdout.
     """
     deadline = time.monotonic() + timeout
     with interruptible(), tempfile.TemporaryFile() as output:
@@ -59,7 +58,7 @@ def run(
         )
         timed_out = True
         try:
-            timed_out = not _group_exits_by(process, deadline, cancel)
+            timed_out = not _group_exits_by(process, deadline)
         finally:
             if timed_out:
                 _terminate(process)
@@ -68,17 +67,12 @@ def run(
     return raw, 124 if timed_out else int(process.returncode), timed_out
 
 
-def _group_exits_by(process: subprocess.Popen[bytes], deadline: float, cancel: threading.Event | None = None) -> bool:
+def _group_exits_by(process: subprocess.Popen[bytes], deadline: float) -> bool:
     """Reap the leader, then wait for its whole group, bounded by the deadline."""
-    while process.poll() is None:
-        if cancel is not None and cancel.is_set():
-            raise KeyboardInterrupt
-        if time.monotonic() >= deadline:
-            return False
-        try:
-            process.wait(timeout=min(GROUP_POLL_SECONDS, max(0.0, deadline - time.monotonic())))
-        except subprocess.TimeoutExpired:
-            pass
+    try:
+        process.wait(timeout=max(0.0, deadline - time.monotonic()))
+    except subprocess.TimeoutExpired:
+        return False
     while os.name == "posix":
         try:
             os.killpg(process.pid, 0)

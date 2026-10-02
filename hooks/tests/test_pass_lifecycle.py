@@ -2284,6 +2284,8 @@ class PassLifecycleTests(unittest.TestCase):
         before, events = status(), len(self.history_events())
         refused(final("demotion.json", "commit-ready", {**spec, "material": False}), before, events)
         stand()
+        before, events = status(), len(self.history_events())
+        refused(final("relabel.json", "fix-before-commit", {**spec, "kind": "nonbehavioral"}), before, events)
         (self.repo / "app.py").write_text("value = 3\n", encoding="utf-8")
         self.owner_phase("code-review", "passed", findings="none")
         before, events = status(), len(self.history_events())

@@ -443,7 +443,7 @@ _ABSOLUTE_PATH = re.compile(r"(?<![\w./-])(/[^\s'\"`;|&<>()]+)")
 
 def _temp_paths(text: object, label: str) -> list[str]:
     """A measurement cited from the temp directory is a throwaway probe, not proof
-    the repository keeps; the tdd recorder refuses those targets at cycle open and
+    the repository keeps; the comparison runner refuses those targets and
     dispositions refuse them here."""
     temp = os.path.realpath(tempfile.gettempdir())
     return [f"{label} cites {token}, a temporary-directory path; measurement scripts live in the repository"

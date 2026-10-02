@@ -139,7 +139,7 @@ class MapAdvisoryTests(unittest.TestCase):
         document = self.tmp / "preflight.json"
         document.write_text(json.dumps(build_document("map advisory fixture", behavior_map=[pending_behavior(
             ITEM, behavior="compute adds two", seam="tests/test_app.py through unittest",
-            expected="compute(1) is 3", red_failure="FIXTURE_VALUE_NOT_THREE",
+            expected="compute(1) is 3",
         )])), encoding="utf-8")
         approve_preflight(self.repo, json.loads(document.read_text()))
         recorded = self.workflow(

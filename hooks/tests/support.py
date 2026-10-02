@@ -135,8 +135,6 @@ def pending_behavior(
     behavior: str = "value becomes two",
     seam: str = "public application behavior",
     expected: str = "value is two",
-    red_failure: str = "VALUE_NOT_TWO",
-    kind: str = "contract",
 ) -> dict[str, object]:
     return {
         "id": identifier,

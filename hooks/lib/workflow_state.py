@@ -1063,9 +1063,10 @@ def _register_finding_intake(
         if len(matches) > 1:
             raise WorkflowError("ambiguous finding identity; reference an existing finding with priorFinding")
         prior = latest[next(iter(matches))] if matches else None
-        if prior and _finding_unresolved(prior) and prior.get("kind") == "behavioral" and prior.get("material") is True and (
+        # A reassessment may concede a resolved finding (material false), never relabel it.
+        if prior and prior.get("kind") == "behavioral" and prior.get("material") is True and (
             item["kind"] != "behavioral" or item["material"] is not True
-        ):
+        ) and (_finding_unresolved(prior) or item["material"] is not False):
             raise WorkflowError("a material behavioral finding requires a measured disposition, not demotion")
         if prior and prior.get("status") in {"pending", "accepted-for-proof", "accepted-follow-up"}:
             reference = str(prior["intakeEvidenceId"])
@@ -1886,7 +1887,7 @@ def _finding_ledger(
 CHANNELS = (
     ("intent", "original request: the completeness oracle this pass answers to"),
     ("advisor-projection", "advisor projection (schemaVersion 1)"),
-    ("behavior-map", "preflight artifact / current Behavior Map: challenge interpretation and boundary coverage"),
+    ("behavior-map", "preflight artifact / current probe list with bound comparison outcomes: challenge expectations and coverage"),
     ("finding-ledger", "finding and attack ledger: each finding's immutable claim beside its owning attacks"),
     ("diff", "current-pass diff: passStartOid^{tree} -> activeCandidateTree; a deleted file is its header and line count"),
 )

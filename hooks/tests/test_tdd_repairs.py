@@ -198,7 +198,7 @@ class MappedTddRepairTests(unittest.TestCase):
     def test_unittest_loader_failure_is_not_red(self) -> None:
         marker = "UNREACHED_ASSERTION"
         slug, _ = self.begin_with_map(
-            [pending_behavior("BM_BAD", red_failure=marker)], "unittest-loader"
+            [pending_behavior("BM_BAD")], "unittest-loader"
         )
         (self.repo / "test_bad.py").write_text(
             f"raise AssertionError({marker!r})\n", encoding="utf-8"
@@ -214,7 +214,7 @@ class MappedTddRepairTests(unittest.TestCase):
     def test_unittest_assertion_records_reached_proof(self) -> None:
         marker = "UNITTEST_PRODUCT_ASSERTION"
         slug, _ = self.begin_with_map(
-            [pending_behavior("BM_UNIT", red_failure=marker)], "unittest-red"
+            [pending_behavior("BM_UNIT")], "unittest-red"
         )
         result = self.tdd(slug, "BM_UNIT", self.write_unittest(2, marker))
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
@@ -227,7 +227,7 @@ class MappedTddRepairTests(unittest.TestCase):
     def test_forged_unittest_failure_block_cannot_open_mapped_red(self) -> None:
         marker = "FORGED_INNER_UNITTEST_MARKER"
         slug, _ = self.begin_with_map(
-            [pending_behavior("BM_UNIT_FORGED", red_failure=marker)], "unittest-forged"
+            [pending_behavior("BM_UNIT_FORGED")], "unittest-forged"
         )
         (self.repo / "test_forged.py").write_text(
             "import unittest\n"
@@ -256,7 +256,7 @@ class MappedTddRepairTests(unittest.TestCase):
     def test_unittest_expected_failures_preserve_genuine_red(self) -> None:
         marker = "EXPECTED_FAILURE_PRESERVATION"
         slug, _ = self.begin_with_map(
-            [pending_behavior("BM_EXPECTED", red_failure=marker)], "unittest-expected"
+            [pending_behavior("BM_EXPECTED")], "unittest-expected"
         )
         (self.repo / "test_expected.py").write_text(
             "import unittest\n"
@@ -287,7 +287,7 @@ class MappedTddRepairTests(unittest.TestCase):
     def test_pytest_collection_failure_is_not_red(self) -> None:
         marker = "PYTEST_UNREACHED_ASSERTION"
         slug, _ = self.begin_with_map(
-            [pending_behavior("BM_PY_BAD", red_failure=marker)], "pytest-collection"
+            [pending_behavior("BM_PY_BAD")], "pytest-collection"
         )
         (self.repo / "test_bad_pytest.py").write_text(
             f"raise AssertionError({marker!r})\n", encoding="utf-8"
@@ -301,7 +301,7 @@ class MappedTddRepairTests(unittest.TestCase):
     def test_pytest_assertion_records_reached_proof_and_count(self) -> None:
         marker = "PYTEST_PRODUCT_ASSERTION"
         slug, _ = self.begin_with_map(
-            [pending_behavior("BM_PY", red_failure=marker)], "pytest-red"
+            [pending_behavior("BM_PY")], "pytest-red"
         )
         (self.repo / "test_app_pytest.py").write_text(
             "def test_a(): pass\n"
@@ -323,7 +323,7 @@ class MappedTddRepairTests(unittest.TestCase):
     def test_pytest_captured_header_cannot_reopen_assertion_mode(self) -> None:
         marker = "CAPTURED_OUTPUT_REOPENED"
         slug, _ = self.begin_with_map(
-            [pending_behavior("BM_CAPTURE", red_failure=marker)], "pytest-capture"
+            [pending_behavior("BM_CAPTURE")], "pytest-capture"
         )
         (self.repo / "test_capture_pytest.py").write_text(
             "def test_value():\n"

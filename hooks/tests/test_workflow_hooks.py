@@ -411,7 +411,7 @@ class WorkflowHookTests(HookHarness):
             result = self.state(*transition)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("production preflight", advice("app.py"), marker)
-        self.record_preflight_evidence("tdd-ordering", wid, behavior_map=[pending_behavior("BM_HOOK", behavior="app value must be 2", seam="app module import", expected="value equals 2", red_failure="VALUE_NOT_TWO")])
+        self.record_preflight_evidence("tdd-ordering", wid, behavior_map=[pending_behavior("BM_HOOK", behavior="app value must be 2", seam="app module import", expected="value equals 2")])
         self.assertIn("Probe", advice("app.py"), marker)
 
         test_edit = self.intake("tests/test_app.py")
@@ -1015,7 +1015,7 @@ class WrapperPromptTests(HookHarness):
         env = self.wrapper_rig()
         self.preflight_consult(env, "prompt-role")
         args = (Path(env["CAPTURE_DIR"]) / "args-1").read_text(encoding="utf-8")
-        self.assertIn("never RED/GREEN or production proof", args, marker)
+        self.assertIn("never comparison or production proof", args, marker)
         self.assertIn(BOUNDARY_SEAM, args, marker)
         self.assertIn("inside the asserted contract", args, marker)
 
@@ -1220,7 +1220,7 @@ class TollDeletionTests(HookHarness):
     action through the real gate, recorders, and Stop hook."""
 
     MAP = [pending_behavior("BM_HOOK", behavior="app value must be 2", seam="app module",
-                            expected="app.value == 2", red_failure="VALUE_NOT_TWO")]
+                            expected="app.value == 2")]
 
     def open_pass(self, slug: str, *, consult: bool = True) -> str:
         begun = self.state("begin", "--slug", slug)
@@ -1453,8 +1453,8 @@ class RedFirstTests(HookHarness):
     tree before the first production edit, and only GREEN through that RED is proof."""
 
     def two_items(self) -> list:
-        return [pending_behavior("BM_A", behavior="a is two", seam="app module", expected="app.a == 2", red_failure="A_NOT_TWO"),
-                pending_behavior("BM_B", behavior="b is two", seam="app module", expected="app.b == 2", red_failure="B_NOT_TWO")]
+        return [pending_behavior("BM_A", behavior="a is two", seam="app module", expected="app.a == 2"),
+                pending_behavior("BM_B", behavior="b is two", seam="app module", expected="app.b == 2")]
 
     def open_pass(self, slug: str, behavior_map: list | None = None, app: str = "a = 1\nb = 1\n") -> str:
         (self.repo / "app.py").write_text(app, encoding="utf-8")
@@ -1548,7 +1548,7 @@ class RedFirstTests(HookHarness):
     def test_a_nonmaterial_final_finding_does_not_steer_the_next_action(self) -> None:
         marker = "NONMATERIAL_FINDING_STEERS_NEXT_ACTION"
         slug = "nonmaterial-next"
-        wid = self.open_pass(slug, [pending_behavior("BM_A", behavior="a is two", seam="app module", expected="app.a == 2", red_failure="A_NOT_TWO")])
+        wid = self.open_pass(slug, [pending_behavior("BM_A", behavior="a is two", seam="app module", expected="app.a == 2")])
         self.assertEqual(self.tdd(slug, "red", "BM_A", "a").returncode, 2)
         (self.repo / "app.py").write_text("a = 2\nb = 1\n", encoding="utf-8")
         self.assertEqual(self.tdd(slug, "green", "BM_A", "a").returncode, 0)
@@ -1577,7 +1577,7 @@ class RedFirstTests(HookHarness):
 
     def rejected_then_re_raised(self, slug: str) -> tuple[str, str]:
         """A rejected final finding the advisor re-raises as material in its one response."""
-        wid = self.open_pass(slug, [pending_behavior("BM_A", behavior="a is two", seam="app module", expected="app.a == 2", red_failure="A_NOT_TWO")])
+        wid = self.open_pass(slug, [pending_behavior("BM_A", behavior="a is two", seam="app module", expected="app.a == 2")])
         self.assertEqual(self.tdd(slug, "red", "BM_A", "a").returncode, 2)
         (self.repo / "app.py").write_text("a = 2\nb = 1\n", encoding="utf-8")
         self.assertEqual(self.tdd(slug, "green", "BM_A", "a").returncode, 0)
@@ -1618,7 +1618,7 @@ class RedFirstTests(HookHarness):
     def test_a_measured_rejection_after_the_appeal_stands(self) -> None:
         marker = "ADJUDICATION_DEAD_END"
         slug = "rejection-stands"
-        wid = self.open_pass(slug, [pending_behavior("BM_A", behavior="a is two", seam="app module", expected="app.a == 2", red_failure="A_NOT_TWO")])
+        wid = self.open_pass(slug, [pending_behavior("BM_A", behavior="a is two", seam="app module", expected="app.a == 2")])
         self.assertEqual(self.tdd(slug, "red", "BM_A", "a").returncode, 2)
         (self.repo / "app.py").write_text("a = 2\nb = 1\n", encoding="utf-8")
         self.assertEqual(self.tdd(slug, "green", "BM_A", "a").returncode, 0)
@@ -1711,7 +1711,7 @@ class RedFirstTests(HookHarness):
     def test_an_edit_before_any_review_records_the_candidate(self) -> None:
         marker = "NOOP_INVALIDATION_RECORDED"
         slug = "no-noop"
-        self.open_pass(slug, [pending_behavior("BM_A", behavior="a is two", seam="app module", expected="app.a == 2", red_failure="A_NOT_TWO")])
+        self.open_pass(slug, [pending_behavior("BM_A", behavior="a is two", seam="app module", expected="app.a == 2")])
         self.assertEqual(self.tdd(slug, "red", "BM_A", "a").returncode, 2)
         before = self.events()
         (self.repo / "app.py").write_text("a = 2\nb = 1\n", encoding="utf-8")
@@ -1740,7 +1740,7 @@ class RedFirstTests(HookHarness):
     def test_a_nonmaterial_finding_re_raised_as_material_blocks_completion(self) -> None:
         marker = "RERAISED_MATERIAL_IGNORED"
         slug = "reraise-material"
-        wid = self.open_pass(slug, [pending_behavior("BM_A", behavior="a is two", seam="app module", expected="app.a == 2", red_failure="A_NOT_TWO")])
+        wid = self.open_pass(slug, [pending_behavior("BM_A", behavior="a is two", seam="app module", expected="app.a == 2")])
         self.assertEqual(self.tdd(slug, "red", "BM_A", "a").returncode, 2)
         (self.repo / "app.py").write_text("a = 2\nb = 1\n", encoding="utf-8")
         self.assertEqual(self.tdd(slug, "green", "BM_A", "a").returncode, 0)

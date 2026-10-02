@@ -44,7 +44,7 @@ class MappedTddDispatchTests(unittest.TestCase):
 
     def test_legacy_candidate_flags_cannot_bypass_a_recorded_map(self) -> None:
         marker = "LEGACY_FLAGS_MUST_NOT_OPEN_MAPPED_RED"
-        item = pending_behavior("BM_MAPPED", red_failure=marker)
+        item = pending_behavior("BM_MAPPED")
         slug, _ = self.harness.begin_with_map([item], "legacy-flags")
         command = self.harness.write_unittest(2, marker)
         result = self.harness.cli(

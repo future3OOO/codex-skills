@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """PreToolUse: advise on edits; gate turn-starting delegation on the lead's current proof.
 
-For edits, it names what the pass has not recorded yet and lets
-the edit through; the recorder binds every later RED to the tree it ran on,
-so order of proof is evidence the reviews weigh, not a verdict on keystrokes.
+For edits, it names what the pass has not recorded yet and lets the edit
+through; comparisons run on recorded source trees, so edit order needs no gate.
 A shell command that is exactly one pytest/unittest invocation is rewritten to
 run through `workflow verify --observed`, which keeps its receipt in the
 checkout where it runs and returns its exit code; while it keeps a receipt,
@@ -130,7 +129,7 @@ def main() -> int:
                                   "Admitted; nothing records this edit until it is repaired."]
     advise("PreToolUse", payload.get("session_id"), {
         f"{identity.key}:intake": "workflow intake: missing before this production edit: " + ", ".join(missing)
-        + ". Admitted; a RED taken after it is recorded as late." if missing else "",
+        + ". Admitted." if missing else "",
         f"{identity.key}:obligations": "\n".join(reminders)})
     return 0
 
