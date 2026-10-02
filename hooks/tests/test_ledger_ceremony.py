@@ -1072,10 +1072,13 @@ class ObservedCapture(Ceremony):
         self.assertNotEqual(self.hook(composed[0], self.repo, session="reviewer").get("permissionDecision"), "deny",
                             f"{marker}: reviewer refused")
         # final SPEC-2: a reviewer's lone run is rewritten to the observed form, which must run it too
+        # R-29: and it records nothing in the lead's ledger, failing or not
         rewritten = str(self.hook(command, self.repo, session="reviewer")["updatedInput"]["command"])
+        rows = self.rows()
         reviewer = subprocess.run(["bash", "-c", rewritten], cwd=self.repo, capture_output=True, text=True,
                                   env={**self.env, "CODEX_THREAD_ID": "reviewer"})
         self.assertIn("VALUE_NOT_TWO", reviewer.stdout + reviewer.stderr, f"{marker}: reviewer run refused")
+        self.assertEqual(self.rows(), rows, f"{marker}: reviewer run recorded in the lead's ledger")
 
 
 class ObservedDrift(Ceremony):

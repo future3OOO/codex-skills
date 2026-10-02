@@ -201,11 +201,15 @@ def _passed(command: str, exit_code: object, output: str) -> bool:
 def _duplicate(identity: RepoIdentity, state: dict, command: list[str]) -> bool:
     """The pass lead's unittest/pytest run once the probe list is recorded repeats or bypasses its comparisons."""
     from .tdd_workflow import COVERED, covered
-    if (identify(command).get("runner") in {"pytest", "unittest"} and covered(identity, state)
-            and state.get("leadContextId") in {None, os.environ.get("CODEX_THREAD_ID")}):
+    if identify(command).get("runner") in {"pytest", "unittest"} and covered(identity, state) and _lead(state):
         print("error: " + COVERED, file=sys.stderr)
         return True
     return False
+
+
+def _lead(state: dict) -> bool:
+    """Whether this session leads the pass; reviewers' runs neither refuse nor record."""
+    return state.get("leadContextId") in {None, os.environ.get("CODEX_THREAD_ID")}
 
 
 def _observed(command: list[str]) -> int:
@@ -219,7 +223,7 @@ def _observed(command: list[str]) -> int:
             state = read_workflow(identity)
         except LedgerError as exc:  # an unreadable ledger never stops the command
             print(f"workflow receipt not recorded: {exc}", file=sys.stderr)
-    if state is None or state.get("phase") == "complete" and not state.get("revalidation"):
+    if state is None or state.get("phase") == "complete" and not state.get("revalidation") or not _lead(state):
         return subprocess.run(command, check=False).returncode
     if _duplicate(identity, state, command):
         return 2

@@ -127,7 +127,8 @@ def _changed_lines(original: list[str] | None, lines: list[str] | None) -> str:
     """The cases whose printed outcome differs from the original arm's."""
     if original is None or lines is None:
         return ""
-    return "\n".join(line for line in difflib.ndiff(original, lines) if line.startswith(("- ", "+ ")))[:2000]
+    diff = difflib.unified_diff(original, lines, lineterm="", n=0)
+    return "\n".join(f"{line[0]} {line[1:]}" for line in diff if line[:1] in "+-" and line[:3] not in {"+++", "---"})[:2000]
 
 
 def unresolved(items: list[JsonObject]) -> list[str]:
