@@ -73,7 +73,8 @@ jobs:
           # Ubuntu 24.04 runners deny unprivileged user namespaces, which bwrap
           # needs to mount each comparison arm at the repository path.
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-          pip install pytest==8.4.1
+          # setuptools: the editable-install comparison builds a real package.
+          pip install pytest==8.4.1 setuptools
           bash hooks/tests/run.sh
       - name: Package gate against the pull-request delta
         if: steps.scope.outputs.lane != 'docs'

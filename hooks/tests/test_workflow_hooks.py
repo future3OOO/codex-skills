@@ -804,9 +804,10 @@ class RevalidateWithoutProducerTests(HookHarness):
     PRODUCER_ROOT = "/home/prop_/.local/share/repo-context-forge"
 
     def masked_bootstrap(self, *args: str) -> subprocess.CompletedProcess[str]:
+        # Where the producer is not installed (CI), its absence is native and needs no mask.
+        mask = ["bwrap", "--dev-bind", "/", "/", "--tmpfs", self.PRODUCER_ROOT, "--"] if Path(self.PRODUCER_ROOT).exists() else []
         return subprocess.run(
-            ["bwrap", "--dev-bind", "/", "/", "--tmpfs", self.PRODUCER_ROOT, "--",
-             sys.executable, str(RCF_BOOTSTRAP), *args],
+            [*mask, sys.executable, str(RCF_BOOTSTRAP), *args],
             cwd=ROOT, env=self.env, text=True,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
         )
