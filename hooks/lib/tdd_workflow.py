@@ -209,6 +209,12 @@ if _site:
     _codes, _tests, _hits, _current, _monitor = set(), set(), set(), [None, False], hasattr(sys, "monitoring")
     def _covered(test):
         return test in _hits or any(test.startswith(scope) for scope in _hits if scope.endswith((".", "::")))
+    def _qual(frame):
+        # A method is named by the instance's class, so inherited tests stay distinct.
+        name, holder = frame.f_code.co_qualname, frame.f_locals.get("self", frame.f_locals.get("cls"))
+        if "." not in name or holder is None:
+            return name
+        return (holder if isinstance(holder, type) else type(holder)).__qualname__ + "." + frame.f_code.co_name
     def _missed():
         return _owned and _current[0] is not None and not (_current[1] or _covered(_current[0]))
     def _relative(code):
@@ -228,17 +234,18 @@ if _site:
             return
         if relative in _probes and code.co_name.startswith("test"):
             _missed() and _stop("test " + _current[0] + " never ran")
-            _current[:2] = relative + "::" + code.co_qualname, False
+            _current[:2] = relative + "::" + _qual(frame), False
             _tests.add(_current[0])
             _monitor and sys.monitoring.restart_events()
-            return
+            return True  # every invocation of a test is a boundary
         test, scope, probe, entry, caller = "", "", None, relative, frame.f_back
         while caller is not None and not test:
-            owner, name = _relative(caller.f_code), caller.f_code.co_qualname
+            owner = _relative(caller.f_code)
             if owner in _probes:
+                name = _qual(caller)
                 probe = entry in _files if probe is None else probe
                 test = owner + "::" + name if caller.f_code.co_name.startswith("test") else ""
-                scope = owner + "::" + (name.split(".")[0] + "." if "." in name else "")
+                scope = owner + "::" + (name.rsplit(".", 1)[0] + "." if "." in name else "")
             elif owner is not None and probe is None:
                 entry = owner
             caller = caller.f_back

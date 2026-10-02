@@ -160,6 +160,11 @@ class RunnerComparisonTests(unittest.TestCase):
         result = self.case.cli("tdd", "--repo", str(self.case.repo), "--behavior-id", "BM_VALUE", "--",
                                sys.executable, "-c", "import app\nfor _ in range(app.value): print('event')")
         self.assertEqual(json.loads(result.stdout)["arms"][-1]["observation"], "+ event", "CHANGED_CASES_HIDDEN: " + result.stdout)
+        # final SPEC-5: output lines that look like diff headers are cases too
+        result = self.case.cli("tdd", "--repo", str(self.case.repo), "--behavior-id", "BM_VALUE", "--", sys.executable, "-c",
+                               "import app\nprint('-- old' if app.value == 1 else '++ new')\nprint('done')")
+        self.assertEqual(json.loads(result.stdout)["arms"][-1]["observation"], "- -- old\n+ ++ new",
+                         "CHANGED_CASES_HIDDEN: " + result.stdout)
 
     def test_only_a_probe_whose_own_process_runs_the_change_is_proof(self):
         case = self.case
@@ -258,6 +263,13 @@ class RunnerComparisonTests(unittest.TestCase):
         (case.repo / "test_once.py").write_text((case.repo / "test_once.py").read_text()
             + "class Unrelated(unittest.TestCase):\n    def test_unused(self): self.assertEqual(1, 1)\n")
         self.assertEqual(compare(*unit, "test_once"), (2, "incomplete"), "OUTSIDE_REACH_ADMITTED: unrelated class")
+        # final SPEC-4: an inherited test runs once per class; each run must call the owner
+        (case.repo / "test_inherited.py").write_text(
+            "import unittest, app\nclass Base:\n    runs = []\n"
+            "    def test_x(self):\n        Base.runs.append(1)\n"
+            "        if len(Base.runs) == 1: self.assertEqual(app.decide(1), 3, 'DECISION')\n"
+            "class First(Base, unittest.TestCase): pass\nclass Second(Base, unittest.TestCase): pass\n")
+        self.assertEqual(compare(*unit, "test_inherited"), (2, "incomplete"), "OUTSIDE_REACH_ADMITTED: repeated test")
         (case.repo / "app.py").write_text("LIMIT = 2\n\n\ndef decide(x):\n    return x + 1\n")
         (case.repo / "test_value.py").write_text(
             "import unittest, app\nclass Value(unittest.TestCase):\n"
