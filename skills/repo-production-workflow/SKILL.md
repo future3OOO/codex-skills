@@ -16,16 +16,6 @@ comparisons and delivers evidence. It does not prescribe bootstrap as the projec
 test Interface. Apply the same rule when editing the workflow itself: reuse valid
 source-bound evidence instead of repeating project verification at each stage.
 
-## Baseline and candidate execution
-
-For behavior changes, before baseline measurements or production edits, establish
-unchanged N and candidate N+1 execution with isolated mutable state. Reuse project
-environments and build/install/refresh commands to run worktree changes in N+1;
-reload cached consumers. Setup is ready when both loaded implementations are
-verified and the same real production operation can run against each. Keep candidate
-bindings current and report unavailable comparisons under
-[Production Code's verification rules](../production-code/SKILL.md#minimum-implementation-decision).
-
 ## One stable workflow
 
 Follow AGENTS.md's Production Repo Workflow section for isolation and pass reuse.
@@ -109,8 +99,10 @@ result; run further MCP checks when they widen the surface the packet fixed.
 ### 4. Draft and advisor review
 
 Invoke `production-preflight` and draft its two-field artifact before consulting.
-Read TDD's Behavior Map requirements; invoke `codebase-design` when changing a
-Module, public Interface or Seam. The draft owns the contract and planned attacks.
+Its map follows TDD's [Behavior Map](../tdd/SKILL.md#behavior-map): each item's
+`kind`, its required boundary cases and any competing readings. Invoke
+`codebase-design` when changing a Module, public Interface or Seam. The draft owns
+the contract and planned attacks.
 
 Submit the exact draft through [Codex Advisor's preflight loop](../codex-advisor/SKILL.md#preflight-advice),
 with the governing-design declaration. Continue to recording only after `approved`.
@@ -119,12 +111,12 @@ with the governing-design declaration. Continue to recording only after `approve
 
 Record the exact approved contract and probe list with `record preflight --input FILE`. Keep this workflow pass when scope changes; update changed items by identity through `record tdd-map`; untouched items and valid proof remain.
 
-### 6. Drive the real probe
+### 6. Select the probe batch
 
-Invoke `tdd` before implementing a behavior slice. Follow AGENTS.md's Real-Seam
-proof invariant: reuse existing cases, fixtures and assertions; add a probe only
-for behavior no existing case covers. Entrypoint absence does not prove independent
-guarantees.
+Before editing, select the direct batch each map item will run through, under
+AGENTS.md's Real-Seam proof invariant: reuse existing cases, fixtures and assertions;
+add a probe only for behavior no existing case covers. Entrypoint absence does not
+prove independent guarantees. The comparison itself runs after the edit (step 8).
 
 ### 7. Production code
 
@@ -133,18 +125,19 @@ Invoke `production-code` for its standards and baseline gate. Reuse the existing
 ### 8. Implement and compare
 
 Make the smallest change, then execute TDD's
-[required probe loop](../tdd/SKILL.md#required-probe-loop). The lead extends the
-existing direct batch from the actual edit, generates combinations of supported
-inputs, and compares the identical expanded batch on recorded original, reviewed
-and candidate sources:
+[required probe loop](../tdd/SKILL.md#required-probe-loop): record the edit's decisive
+contexts and boundary cases as map items, extend the existing direct batch, and compare
+the identical expanded batch on the recorded original and candidate sources:
 
 ```text
 workflow.py tdd --behavior-id BM_X -- COMMAND [ARG...]
 ```
 
-Use [TDD](../tdd/SKILL.md) to judge the bound outcomes against the original request.
+The receipt's `open` lines are the questions the comparison leaves: answer each by
+repairing the code or the probe and rerunning the same batch. Readiness is that one
+result; `summary`, `verify`, reviewer dispatch and `complete` report it identically.
 
-Source and probe edits invalidate affected proof and reopen required verification/review. There are no manual RED/GREEN/baseline phases or late-RED recovery steps.
+Source and probe edits invalidate affected proof and reopen required verification/review.
 
 ### 9. Verification
 

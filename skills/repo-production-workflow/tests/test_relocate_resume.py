@@ -16,8 +16,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 LOOP = os.environ.get("RELOC_LOOP_FILE", os.path.join(HERE, "..", "scripts", "codex-reloc-loop.bashrc"))
 RELOC = os.environ.get("RELOC_SCRIPT_FILE", os.path.join(HERE, "..", "scripts", "codex-relocate"))
 
-# Behavior-map redFailure markers — the failing assertion must name the
-# demonstrated product failure so the RED record binds to it.
+# Assertion markers: the failing assertion names the demonstrated product failure.
 NOTE_LOST = "resumed pane lands at composer with no continuation turn — agent never continues (demonstrated)"
 TRUST_BLOCK = "resume blocks on interactive trust prompt; pane waits dead for input"
 EPOCH_CRASH = "loop exits without resuming the thread, or crashes mid-loop leaving the pane dead"

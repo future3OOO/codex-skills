@@ -80,8 +80,8 @@ print(json.dumps({"schemaVersion": 1, "verdict": "changes-required", "findings":
 
 
 def item(identifier: str, refs=(), **extra) -> dict[str, object]:
-    return {"id": identifier, "basis": "fixture contract", "behavior": f"{identifier} behavior", "seam": "fixture app module",
-            "expected": "app.value is 2",
+    return {"id": identifier, "kind": "contract", "basis": "fixture contract", "behavior": f"{identifier} behavior",
+            "seam": "fixture app module", "expected": "app.value is 2",
             "sourceRefs": list(refs), **extra}
 
 
@@ -141,7 +141,7 @@ class Ceremony(unittest.TestCase):
 
     def begin(self, repo: Path | None = None, slug: str = "ceremony") -> str:
         repo = repo or self.repo
-        begun = self.cli("begin", "--slug", slug, "--intent", "issue 96 fixture intent", cwd=repo)
+        begun = self.cli("begin", "--slug", slug, "--intent", "issue 96 fixture intent.", cwd=repo)
         self.assertEqual(begun.returncode, 0, begun.stderr)
         record_context_forge(repo, self.tmp)
         return str(json.loads(begun.stdout)["workflowId"])
@@ -673,7 +673,7 @@ class EvidenceParts(Ceremony):
             item("BM_KEEP", behavior="unchanged item"), item("BM_MAP_ITEM_ONE")]}
         evidence_id = self.record_preflight(document)["evidenceId"]
         captured[evidence_id] = evidence_document(identity, evidence_id)
-        self.ok("record", "tdd-map", "--input", "-", input=json.dumps({"items": [item("BM_MAP_ITEM_TWO")]}))
+        self.ok("record", "tdd-map", "--input", "-", input=json.dumps({"items": [item("BM_MAP_ITEM_TWO", kind="preservation")]}))
         evidence_id = self.state()["tddEvidence"]
         captured[evidence_id] = evidence_document(identity, evidence_id)
         self.assertEqual(self.rows_containing("unchanged item"), 1, f"{marker}: a map item is stored per document")
@@ -867,7 +867,7 @@ class EveryViolation(Ceremony):
             item("BM_HOLD")]})
         stored = self.ok("evidence", "--full", "--evidence-id", str(self.state()["preflightEvidence"]))["document"]
         self.assertEqual(stored["document"]["behaviorMap"][0]["basis"], "fixture contract")
-        lost += self.pairs("tdd-map", {"items": [item("BM_NEW"), item("BM_KEEP")]}, {
+        lost += self.pairs("tdd-map", {"items": [item("BM_NEW", kind="preservation"), item("BM_KEEP")]}, {
             "item": (("items", 0, "behavior"), ""), "item-basis": (("items", 0, "basis"), _DROP),
             "item-id": (("items", 0, "id"), "BM_KEEP"),
             "unknown": (("items", 0, "bogus"), 1),
@@ -1333,7 +1333,8 @@ class FlagDisposition(Ceremony):
         (self.repo / "app.py").write_text("value = 2\nother = 1\n", encoding="utf-8")
         self.comparison(0, "BM_ATTACK")
         (self.repo / "app.py").write_text("value = 4\nother = 1\n", encoding="utf-8")
-        for items in ([item("BM_ATTACK", basis="fixture"), item("BM_EXTRA", basis="fixture")], [item("BM_ATTACK", basis="fixture")]):
+        for items in ([item("BM_ATTACK", basis="fixture"), item("BM_EXTRA", basis="issue 96 fixture intent.", boundaryInputs=["test_value"])],
+                      [item("BM_ATTACK", basis="issue 96 fixture intent.", boundaryInputs=["test_value"])]):
             self.ok("record", "tdd-map", "--input", "-", input=json.dumps({"items": items}))
         (self.repo / "app.py").write_text("value = 2\nother = 1\n", encoding="utf-8")
         self.ok_raw("verify", "--kind", "quality-gate", "--base-ref", "HEAD")
@@ -1352,7 +1353,7 @@ class FlagDisposition(Ceremony):
         channels = {channel["name"]: Path(channel["contentPath"]).read_text() for channel in json.loads(package.stdout)["channels"]}
         self.assertLessEqual({"behavior-map", "diff", "intent"}, set(channels), "REVIEW_PACKAGE_MISSING")
         work = json.loads(channels["behavior-map"])
-        self.assertEqual((work["authoritativeContract"], [arm["outcome"] for arm in work["items"][0]["comparison"]["arms"]]),
+        self.assertEqual((work["preflightInterpretation"], [arm["outcome"] for arm in work["items"][0]["comparison"]["arms"]]),
                          ("Create keeps its suppression", ["failed", "passed"]), "REVIEW_PACKAGE_MISSING")
 
 
@@ -1423,7 +1424,7 @@ class MinimalDocuments(Ceremony):
                 "--reason", "The measured condition has no material consequence on this task.")
         self.assertEqual(self.state()["findingStates"][-1]["status"], "report-only", marker)
 
-        self.ok("record", "tdd-map", "--input", "-", input=json.dumps({"items": [item("BM_TWO")]}))
+        self.ok("record", "tdd-map", "--input", "-", input=json.dumps({"items": [item("BM_TWO", kind="preservation")]}))
         self.assertEqual(self.state()["tdd"], "in-progress", marker)
 
 

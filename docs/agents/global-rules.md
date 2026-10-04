@@ -98,10 +98,12 @@ Repo Context Forge analysis copy. For codex-skills installation, follow
   the short plan and its checks.
 - Read changed lines first, then only the context behavior and preservation need;
   no whole-file or multi-hundred-line dumps, no `JSON.stringify` of whole tool results.
-- Invoke `$tdd` before every code change. Drive real Seams: RED/GREEN for changed
-  behavior, preservation proof for refactors. If the change creates the Seam,
-  verify its absence first, then create it and return to drive it. Absence alone
-  does not prove behavior.
+- Invoke `$tdd` before every code change. Drive real Seams through the recorded
+  original/candidate comparison: a requested change must show its difference on
+  attributable inputs, an invariant must hold on both sources, and the edit's
+  decisive contexts and boundary cases execute as named map items. If the change
+  creates the Seam, create it and return to drive it; absence alone does not prove
+  behavior.
 - Never mark work complete while required behavior or proof is missing.
 - Before handoff, inspect the delta and remove bloat, duplication, speculative
   flexibility, and unnecessary files.

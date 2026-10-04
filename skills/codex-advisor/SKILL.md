@@ -21,7 +21,7 @@ phase belongs in `--phase`, not in the slug.
 Review the drafted production preflight before it is recorded. Supply it with
 `--preflight-file <draft.json>`; the wrapper snapshots it before consultation.
 The checkpoint sends the exact artifact, including its Behavior Map. Challenge
-materially different readings with concrete discriminating probes and the original request; no interpretation fields are required.
+materially different readings with concrete discriminating probes and the original request: an item whose readings diverge records them as `interpretations` with `boundaryInputs`; unambiguous items need no extra fields.
 
 Return `approved` when the draft has no material gap, otherwise
 `changes-required`. The lead revises and uses `--reconsult` in the same session;

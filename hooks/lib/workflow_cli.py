@@ -50,8 +50,10 @@ from .workflow_state import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
-ITEM_SHAPE = ('{"id":"BM_X","basis":"original request or preservation",'
-              '"behavior":"...","seam":"...","expected":"...",'
+ITEM_SHAPE = ('{"id":"BM_X","kind":"contract|preservation","basis":"original request or preservation",'
+              '"behavior":"...","seam":"...","expected":"...","boundaryInputs":["executed case name"],'
+              '"interpretations":["reading a","reading b"],"interpretation":"...","authority":"...",'
+              '"released":{"reason":"...","case":"printed note"},'
               '"sourceRefs":[{"type":"finding","evidenceId":"<intake>","id":"SPEC-1"}]}')
 RECORD_SHAPES = {
     "preflight": f'{{"authoritativeContract":"text","behaviorMap":[{ITEM_SHAPE}]}}',

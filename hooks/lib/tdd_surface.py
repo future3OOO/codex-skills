@@ -61,6 +61,7 @@ PYTEST_SUMMARY_RECORDS = (
     "RERUN ",
 )
 PYTEST_TB_SUPPRESSED = ("--tb=no", "--tb=line")
+PRINTED_CASE = re.compile(r"(?m)^([^\s:][^:\n]*): (.*)$")
 
 
 def identify(command: Sequence[str]) -> dict[str, object]:
@@ -228,6 +229,25 @@ def proof_targets(
         if discover:
             targets.append(".")
     return targets, discover, ambiguous, unresolved
+
+
+def narrowing(surface: Mapping[str, object]) -> str | None:
+    """How a test-runner command narrows below whole modules: -k expressions and
+    individual test ids. Tests outside that selection are not compared."""
+    runner = surface.get("runner")
+    if runner not in {"unittest", "pytest"}:
+        return None
+    tokens = [token for token in surface.get("arguments") or [] if isinstance(token, str)]
+    selected: list[str] = []
+    for index, token in enumerate(tokens):
+        name, separator, inline = token.partition("=")
+        if name == "-k" or (runner == "pytest" and name[:2] == "-k" and name[1:2] != "-"):
+            value = inline if separator else token[2:] if len(name) > 2 else tokens[index + 1] if index + 1 < len(tokens) else ""
+            selected.append(f"-k {value}")
+        elif not token.startswith("-") and (
+                "::" in token or (runner == "unittest" and token.count(".") >= 2 and not token.endswith(".py"))):
+            selected.append(token)
+    return ", ".join(selected) or None
 
 
 def repository_resolution(surface: Mapping[str, object], root: object) -> str | None:
@@ -419,17 +439,21 @@ def case_results(surface: Mapping[str, object], output: str) -> dict[str, dict[s
     if surface.get("runner") == "unittest":
         for name, status in re.findall(r"(?m)^(\S+ \([^\n]+?\)) \.\.\. (ok|FAIL|ERROR|skipped[^\n]*)$", clean):
             cases[name] = {"outcome": "passed" if status == "ok" else "failed" if status == "FAIL" else "error" if status == "ERROR" else "skipped"}
-        for header, frames, assertion in _unittest_terminal_failures(clean):
+        for header, _frames, assertion in _unittest_terminal_failures(clean):
             kind, name = header.split(": ", 1)
             cases[name] = {"outcome": "failed" if kind == "FAIL" else "error", "assertion": "\n".join(assertion)}
-            if re.fullmatch(r"\S+ \([^()\n]+\)", name) and name.split()[0] in frames:
-                cases[name]["execution"] = "stopped"
     elif surface.get("runner") == "pytest":
         for name, status in re.findall(r"(?m)^(\S+::\S+) (PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS)\b", clean):
             cases[name] = {"outcome": {"PASSED": "passed", "FAILED": "failed", "ERROR": "error"}.get(status, "skipped")}
         summary = clean.rsplit("short test summary info", 1)[-1] if "short test summary info" in clean else ""
         for kind, name, assertion in re.findall(r"(?m)^(FAILED|ERROR) (\S+) - (.*)$", summary):
             cases[name] = {"outcome": kind.lower(), "assertion": assertion}
+    else:
+        # An operation probe names its cases itself: one `name: result` line each.
+        for name, result in PRINTED_CASE.findall(clean):
+            # A repeated name cannot carry two results; neither may stand as proof.
+            repeated = name.strip() in cases
+            cases[name.strip()] = {"outcome": "printed", "result": "unverified - repeated printed case name" if repeated else result.strip()}
     return cases
 
 

@@ -96,7 +96,7 @@ class AttackHarness(unittest.TestCase):
         state = self.status()
         evidence = state.get("tddEvidence") or state["preflightEvidence"]
         document = self.ok("evidence", "--full", "--evidence-id", evidence)["document"]
-        return [{k: v for k, v in item.items() if k in {"id", "basis", "behavior", "seam", "expected", "sourceRefs"}}
+        return [{k: v for k, v in item.items() if k in {"id", "kind", "basis", "behavior", "seam", "expected", "sourceRefs"}}
                 for item in document["behaviorMap"]]
 
     def json_file(self, name: str, value: object) -> Path:
@@ -122,7 +122,7 @@ class AttackHarness(unittest.TestCase):
 
     def owned_map(self, intake_id: str, *, marker: str) -> list[dict[str, object]]:
         return [{
-            "id": "BM_ATTACK", "basis": "advisor finding attack",
+            "id": "BM_ATTACK", "kind": "contract", "basis": "advisor finding attack",
             "behavior": "the reviewed value is corrected", "seam": "fixture app module",
             "expected": "app.value is 2",
             "sourceRefs": [{"type": "finding", "evidenceId": intake_id, "id": "SPEC-1"}],
@@ -160,7 +160,7 @@ class AttackHarness(unittest.TestCase):
         self.ok("record", "advisor-disposition", "--slug", slug, "--workflow-id", wid,
                 "--stage", "preflight", "--findings", "none")
         owned = self.record_preflight(slug, wid, [{
-            "id": "BM_ATTACK", "basis": "requested behavior",
+            "id": "BM_ATTACK", "kind": "contract", "basis": "requested behavior",
             "behavior": "the reviewed value is corrected", "seam": "fixture app module",
             "expected": "app.value is 2",
             "sourceRefs": [],
@@ -757,7 +757,7 @@ class UnownedFindingBlocks(AttackHarness):
         wid = self.begin("finding-ownership")
         intake_id = self.behavioral_intake("finding-ownership", wid, "the reviewed value is wrong")
         unowned = self.record_preflight("finding-ownership", wid, [{
-            "id": "BM_ATTACK", "basis": "unrelated behavior",
+            "id": "BM_ATTACK", "kind": "contract", "basis": "unrelated behavior",
             "behavior": "the reviewed value is corrected", "seam": "fixture app module",
             "expected": "app.value is 2",
             "sourceRefs": [],
@@ -843,10 +843,9 @@ class SamePassAttack(AttackHarness):
                 "--stage", "preflight", "--findings", "none")
         main_marker = "MAIN_VALUE_NOT_TWO"
         owned = self.record_preflight(slug, wid, [{
-            "id": "BM_MAIN", "basis": "requested behavior",
+            "id": "BM_MAIN", "kind": "contract", "basis": "requested behavior",
             "behavior": "the value becomes two", "seam": "fixture app module",
-            "expected": "app.value is 2", "redFailure": main_marker, "status": "pending",
-            "sourceRefs": [],
+            "expected": "app.value is 2", "sourceRefs": [],
         }])
         self.assertEqual(owned.returncode, 0, marker + ": " + owned.stdout + owned.stderr)
         self.drive_attack_green(slug, main_marker, "BM_MAIN")
@@ -872,7 +871,7 @@ class SamePassAttack(AttackHarness):
         added = self.cli("record", "tdd-map", "--slug", slug, "--workflow-id", wid, "--input",
                          str(self.json_file("late-attack.json", {
                              "items": [*self.items(), {
-                                 "id": "BM_NOTE", "basis": "review finding attack",
+                                 "id": "BM_NOTE", "kind": "contract", "basis": "review finding attack",
                                  "behavior": "the note is exposed", "seam": "fixture app module",
                                  "expected": "app.note is present",
                                  "sourceRefs": [{"type": "finding", "evidenceId": intake_id,
@@ -1219,7 +1218,7 @@ class WorkflowRecovery(AttackHarness):
 
     def add_claim(self, slug: str, wid: str, identifier: str) -> None:
         item = self.owned_map("unused", marker="SECOND_OPERATION_WRONG")[0]
-        item.update(id=identifier, sourceRefs=[])
+        item.update(id=identifier, kind="preservation", sourceRefs=[])
         document = self.json_file("add.json", {
             "items": [*self.items(), item],
         })
@@ -1251,7 +1250,7 @@ class WorkflowRecovery(AttackHarness):
         self.assertEqual(executed.returncode, 0, executed.stderr)
         self.ok("verify", "--slug", slug, "--kind", "quality-gate", "--base-ref", "HEAD")
         item = self.owned_map("unused", marker="MISSING")[0]
-        item.update(id="BM_ADDITIONAL", sourceRefs=[])
+        item.update(id="BM_ADDITIONAL", kind="preservation", sourceRefs=[])
         addition = self.json_file("add.json", {"items": [*self.items(), item]})
         commands = [
             ["record", "tdd-map", "--slug", slug, "--workflow-id", wid, "--input", str(addition)],

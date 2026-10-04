@@ -48,7 +48,7 @@ class ReviewSummaryHarness(unittest.TestCase):
         (self.repo / "app.py").write_text("value = 1\n", encoding="utf-8")
         subprocess.run(["git", "add", "app.py"], cwd=self.repo, env=self.env, check=True)
         subprocess.run(["git", "commit", "-q", "-m", "base"], cwd=self.repo, env=self.env, check=True)
-        begun = self.run_script(WORKFLOW, "begin", "--slug", "review-summary")
+        begun = self.run_script(WORKFLOW, "begin", "--slug", "review-summary", "--intent", "Make the application value two.")
         self.assertEqual(begun.returncode, 0, begun.stdout + begun.stderr)
         identity = record_context_forge(self.repo, self.tmp)
         self.wid = read_workflow(identity)["workflowId"]
@@ -148,7 +148,7 @@ class ReviewSummaryTests(ReviewSummaryHarness):
                       "--stage", "final", "--source", "codex-advisor", "--input", str(path),
                       "--design-declaration", str(design))
         update = self.tmp / "reassessment.json"
-        update.write_text(json.dumps({"items": [{"id": "BM_CURRENT", "basis": "newly requested read",
+        update.write_text(json.dumps({"items": [{"id": "BM_CURRENT", "kind": "preservation", "basis": "newly requested read",
                        "behavior": "Current application value remains readable", "seam": "Python import",
                        "expected": "value is 1"}]}))
         mapped = self.run_script(WORKFLOW, "record", "tdd-map", "--slug", "review-summary",
@@ -157,7 +157,7 @@ class ReviewSummaryTests(ReviewSummaryHarness):
         self.assertEqual(self.run_script(WORKFLOW, *final_args).returncode, 2, "REASSESSED_MAP_ADMITTED_FINAL_RESULT")
         baseline = subprocess.run([sys.executable, str(WORKFLOW), "tdd", "--repo", str(self.repo),
             "--slug", "review-summary", "--behavior-id", "BM_CURRENT", "--",
-            sys.executable, "-c", "import app; assert app.value == 1; print('current application value is 1')"],
+            sys.executable, "-c", "import app; assert app.value == 1; print('current application value:', app.value)"],
             cwd=self.repo, env=self.env, capture_output=True, text=True)
         self.assertEqual(baseline.returncode, 0, baseline.stdout + baseline.stderr)
         (self.repo / "app.py").write_text("value = 2\n")
@@ -281,7 +281,7 @@ class ReviewSummaryTests(ReviewSummaryHarness):
         self.assertEqual(self.dispose("SPEC-2").returncode, 0)
         update = self.tmp / "reopened-map.json"
         update.write_text(json.dumps({"items": [{
-            "id": "BM_VALUE", "basis": "application contract",
+            "id": "BM_VALUE", "kind": "contract", "basis": "Make the application value two.",
             "behavior": "app.value is two", "seam": "import app", "expected": "value equals two",
         }]}), encoding="utf-8")
         mapped = self.run_script(WORKFLOW, "record", "tdd-map", "--slug", "review-summary", "--workflow-id", self.wid,
@@ -424,3 +424,33 @@ class ReviewSummaryTests(ReviewSummaryHarness):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class SkillTextTests(unittest.TestCase):
+    """The skills describe the workflow that exists: every link resolves and no removed feature is named."""
+
+    def test_skill_links_resolve_and_name_only_live_features(self) -> None:
+        import re
+        marker = "SKILL_TEXT_STALE"
+        roots = [ROOT / "docs" / "agents", *(ROOT / "skills" / name for name in (
+            "tdd", "production-preflight", "production-code", "code-review", "codex-advisor",
+            "repo-production-workflow", "diagnose", "repo-context-forge"))]
+        documents = [path for root in roots for path in root.rglob("*.md")]
+        self.assertTrue(documents, marker)
+        removed = re.compile(r"RED/GREEN|redFailure|retainedEffect|hooks/lib/mcdc|Behavior Map requirements|#task-boundary-and-seams")
+        for path in documents:
+            text = path.read_text(encoding="utf-8")
+            self.assertIsNone(removed.search(text), f"{marker}: {path.relative_to(ROOT)} names a removed feature")
+            for target in re.findall(r"\[[^\]]*\]\(([^)\s]+)\)", text):
+                if target.startswith(("http://", "https://", "mailto:")):
+                    continue
+                relative, _, anchor = target.partition("#")
+                destination = (path.parent / relative).resolve() if relative else path
+                self.assertTrue(destination.exists(), f"{marker}: {path.relative_to(ROOT)} -> {target}")
+                if anchor and destination.suffix == ".md":
+                    headings = {re.sub(r"\s+", "-", re.sub(r"[^\w\s-]", "", re.sub(r"[`*_]", "", line.lstrip("#").strip().lower())).strip())
+                                for line in destination.read_text(encoding="utf-8").splitlines() if line.startswith("#")}
+                    self.assertIn(anchor, headings, f"{marker}: {path.relative_to(ROOT)} -> {target}")
+        shown = subprocess.run([sys.executable, str(WORKFLOW), "record", "tdd-map", "--help"], capture_output=True, text=True)
+        self.assertEqual(shown.returncode, 0, shown.stderr)
+        self.assertIn('"kind"', shown.stdout, marker + ": tdd-map help omits kind")

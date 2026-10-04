@@ -13,7 +13,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from . import behavior_map, mcdc, tdd_surface
+from . import behavior_map, tdd_surface
 from .command_runner import emit_json as _emit_json, interruptible, run as _run, run_entry as _run_entry
 from .repo_identity import RepoIdentity, resolve_repo_identity
 from .state_store import _active_candidate_tree, _git, is_test_path, tree_manifest, utc_timestamp
@@ -40,13 +40,16 @@ def current_map(identity: RepoIdentity, state: JsonObject) -> tuple[list[JsonObj
 
 
 def refresh_proof(identity: RepoIdentity, items: list[JsonObject], state: JsonObject) -> None:
-    candidate = _active_candidate_tree(identity)
+    """Re-judge each recorded comparison's freshness against the current tree; a map with
+    no comparison captures nothing."""
     execution_keys: dict[str, str | None] = {}
+    candidate: str | None = None
     for item in items:
         proof = item.get("comparison")
         if proof:
             command = shlex.split(proof["command"])
             try:
+                candidate = candidate or _active_candidate_tree(identity)
                 binding = json.dumps([command, proof["timeout"], proof.get("support", []), proof.get("execution")], sort_keys=True)
                 if binding not in execution_keys:
                     files = _probe_files(tdd_surface.identify(command), Path(identity.root), proof.get("support", []))
@@ -154,8 +157,14 @@ def _execution_key(identity: RepoIdentity, source: str, probe: str, files: list[
     config = json.dumps([command, timeout, execution,
                          executable_state.st_size, executable_state.st_mtime_ns], sort_keys=True).encode()
     producer = b"".join(Path(__file__).with_name(name).read_bytes()
-                       for name in ("tdd_workflow.py", "tdd_surface.py", "command_runner.py", "mcdc.py"))
+                       for name in ("tdd_workflow.py", "tdd_surface.py", "command_runner.py"))
     return hashlib.sha256(b"\0".join(production) + support + config + producer).hexdigest()
+
+
+def _probe_key(identity: RepoIdentity, probe: str, files: list[str]) -> str:
+    """The probe files' content on the candidate tree; a changed key is a revised probe."""
+    support = _git(identity, "ls-tree", "-r", "-z", probe, "--", *files) if files else b""
+    return hashlib.sha256(support).hexdigest()
 
 
 def _reviewed_sources(identity: RepoIdentity, state: JsonObject, mapped: JsonObject) -> dict[str, str]:
@@ -184,7 +193,7 @@ def _reviewed_sources(identity: RepoIdentity, state: JsonObject, mapped: JsonObj
 
 
 def _execute_tree(identity: RepoIdentity, source_tree: str, candidate_tree: str, files: list[str],
-                  command: list[str], surface: JsonObject, timeout: float, measurement=None) -> JsonObject:
+                  command: list[str], surface: JsonObject, timeout: float) -> JsonObject:
     started = time.perf_counter()
     with tempfile.TemporaryDirectory(prefix="workflow-proof-") as temporary:
         root = Path(temporary) / "source"
@@ -203,31 +212,9 @@ def _execute_tree(identity: RepoIdentity, source_tree: str, candidate_tree: str,
             _git(snapshot, "--literal-pathspecs", "restore", "--worktree", "--source=" + candidate_tree,
                  "--pathspec-from-file=-", "--pathspec-file-nul",
                  stdin=b"".join(os.fsencode(name) + b"\0" for name in files))
-        log = Path(temporary) / "mcdc.jsonl"
-        unavailable = []
-        instrument_started = time.perf_counter()
-        if measurement:
-            log.touch()
-            runtime = Path(temporary) / "instrumentation"
-            runtime.mkdir()
-            shutil.copyfile(Path(mcdc.__file__), runtime / "_workflow_mcdc_runtime.py")
-            for path in dict.fromkeys(plan["path"] for plan in measurement):
-                source = root / path
-                if any(p.is_symlink() for p in (source, *source.parents) if p.is_relative_to(root)):
-                    unavailable.append({"path": path, "reason": "instrumentation cannot rewrite a symbolic link"})
-                    continue
-                try:
-                    source.write_text(mcdc.instrument(source.read_text(), [p for p in measurement if p["path"] == path]))
-                except (ValueError, SyntaxError) as error:
-                    unavailable.append({"path": path, "reason": str(error)})
-        instrumentation_seconds = time.perf_counter() - instrument_started if measurement else 0.0
         env = _environment()
-        if measurement:
-            env["WORKFLOW_MCDC_LOG"] = str(log)
         env.update(PYTHONPATH=os.pathsep.join(filter(None, (identity.root, env.get("PYTHONPATH")))), PWD=identity.root,
                    TMPDIR=temporary, CODEX_WORKFLOW_STATE_ROOT=str(Path(temporary) / "state"))
-        if measurement:
-            env["PYTHONPATH"] = str(Path(temporary) / "instrumentation") + os.pathsep + env["PYTHONPATH"]
         actual = [_executable(identity, command[0]), *command[1:]]
         binding = ["bwrap", "--die-with-parent", "--dev-bind", "/", "/", "--bind", str(root), identity.root]
         runtime = Path(actual[0]).parent.parent
@@ -246,11 +233,7 @@ def _execute_tree(identity: RepoIdentity, source_tree: str, candidate_tree: str,
             raw, code, timed_out = str(exc).encode(), 127, False
         output = raw.decode("utf-8", errors="replace")
         timing = {"totalSeconds": time.perf_counter() - started,
-                  "executionSeconds": time.perf_counter() - process_started,
-                  "instrumentationSeconds": instrumentation_seconds}
-        if measurement:
-            return {"records": [json.loads(line) for line in log.read_text().splitlines()],
-                    "unavailable": unavailable, "timing": timing, "exitCode": code, "timedOut": timed_out, "output": output[:8000]}
+                  "executionSeconds": time.perf_counter() - process_started}
         proof, error = None, "command timed out" if timed_out else ""
         if not timed_out:
             if code == 0:
@@ -268,24 +251,12 @@ def _source_delta(identity: RepoIdentity, original: str, candidate: str) -> Json
                if name and not is_test_path(os.fsdecode(name))]
     command = ["--literal-pathspecs", "diff", "--no-ext-diff", "--no-textconv", "--unified=3", original, candidate, "--", *changed]
     patch = _git(identity, *command).decode("utf-8", errors="replace") if changed else ""
-    plans, unavailable = [], []
-    old_files = {os.fsdecode(p) for p in _git(identity, "ls-tree", "-r", "--name-only", "-z", original).split(b"\0")}
-    new_files = {os.fsdecode(p) for p in _git(identity, "ls-tree", "-r", "--name-only", "-z", candidate).split(b"\0")}
-    for path in changed:
-        before = _git(identity, "show", original + ":" + path).decode("utf-8", errors="replace") if path in old_files else ""
-        after = _git(identity, "show", candidate + ":" + path).decode("utf-8", errors="replace") if path in new_files else ""
-        touched, unsupported = mcdc.analyse(before, after, path)
-        plans.extend(touched)
-        unavailable.extend(unsupported)
     return {"patch": patch[:8000], "truncated": len(patch) > 8000,
-            "command": shlex.join(["git", "-C", identity.root, *command]) if changed else None,
-            "coverage": {"plans": plans, "unavailable": unavailable}}
-
+            "command": shlex.join(["git", "-C", identity.root, *command]) if changed else None}
 
 
 @interruptible()
 def _run_tdd(values: list[str]) -> int:
-    started = time.perf_counter()
     dash = values.index("--") if "--" in values else len(values)
     parser = argparse.ArgumentParser(prog="workflow tdd", description="Compare a probe on recorded sources; omit the command to reuse its recorded batch")
     parser.add_argument("--repo", "--cwd", dest="repo", default=".")
@@ -324,92 +295,62 @@ def _run_tdd(values: list[str]) -> int:
     original = _git(identity, "rev-parse", f"{state['passStartOid']}^{{tree}}").decode().strip()
     owner_sources = {item["id"]: _reviewed_sources(identity, state, item) for item in mapped}
     reviewed = {reference: tree for sources in owner_sources.values() for reference, tree in sources.items()}
-    analysis_started = time.perf_counter()
-    source_delta = _source_delta(identity, original, candidate)
-    coverage_sources = {key: tree for item in mapped for key, tree in (item.get("comparison") or {}).get("coverageSources", {}).items()}
-    plans = {plan["id"]: plan for plan in source_delta["coverage"].pop("plans")}
-    for plan in plans.values():
-        for context in plan["contexts"]:
-            coverage_sources.setdefault(f"{plan['id']}/{context['index']}", candidate)
-    for tree in dict.fromkeys(coverage_sources.values()):
-        if tree == candidate:
-            continue
-        for plan in _source_delta(identity, original, tree)["coverage"]["plans"]:
-            if plan["id"] in plans:
-                known = {(c["index"], tuple(c["values"].items())) for c in plans[plan["id"]]["contexts"]}
-                plans[plan["id"]]["contexts"].extend(c for c in plan["contexts"] if (c["index"], tuple(c["values"].items())) not in known)
-            else:
-                plans[plan["id"]] = plan
     previous = [item.get("comparison") for item in mapped]
-    sources = [original, *dict.fromkeys(tree for tree in [*reviewed.values(), *coverage_sources.values(),
-                                                        *(arm["requestedTree"] for proof in previous if proof for arm in proof["arms"])]
+    runs = (current or {}).get("runs", [])
+    # An earlier edited tree runs again only to show a revised probe's sensitivity: the probe
+    # files changed since it last ran and it has failed this batch before (the broken edit).
+    probe_key = _probe_key(identity, candidate, files)
+    earlier = [run["candidateTree"] for run in runs if set(run.get("probeFiles", [])) & set(files)
+               and run["arms"][-1]["outcome"] == "failed"
+               and any(proof and proof.get("probeKey") != probe_key for proof in previous)]
+    sources = [original, *dict.fromkeys(tree for tree in [*reviewed.values(), *earlier]
                                        if tree not in {original, candidate}), candidate]
-    analysis_seconds = time.perf_counter() - analysis_started
     execution = {"executable": _executable(identity, command[0]),
                  "support": args.support,
                  "environment": hashlib.sha256(json.dumps(sorted(_environment().items())).encode()).hexdigest()}
     keys = [_execution_key(identity, source, candidate, files, command, args.timeout, execution) for source in sources]
+    # An earlier tree with the original's or the current production adds no column.
+    sources, keys = map(list, zip(*[(source, key) for index, (source, key) in enumerate(zip(sources, keys))
+                                     if index in (0, len(sources) - 1) or key not in (keys[0], keys[-1])]))
     if (all(proof and proof.get("valid") and proof.get("fresh") and proof.get("candidateKey") == keys[-1] for proof in previous)
             and len({proof["runIndex"] for proof in previous}) == 1
             and not _readiness_stale(state, items)):
-        receipt = operation_receipt(state, identity, kind="tdd", **selection,
-                   summaryId=state["tddEvidence"], runIndex=previous[0]["runIndex"], valid=True, reused=True,
-                   comparison=previous[0]["comparison"], sourceDelta=previous[0].get("sourceDelta"),
-                   **{k: v for k, v in behavior_map.comparison_view(previous[0]).items()
-                      if k in {"arms", "cases", "caseAttribution"}})
+        receipt = operation_receipt(state, identity, kind="tdd", **selection, **behavior_map.comparison_view(previous[0]),
+                                    summaryId=state["tddEvidence"], reused=True)
         _emit_json(receipt, sort_keys=False)
         return 0
-    cache = {(arm.get("key"), arm.get("sourceTree")): arm for run in (current or {}).get("runs", [])
+    cache = {(arm.get("key"), arm.get("sourceTree")): arm for run in runs
              for arm in run.get("arms", []) if arm.get("outcome") in {"passed", "failed"}}
     held = {key: arm for (key, _), arm in cache.items()}
     arms: list[JsonObject] = []
-    executed_seconds = 0.0
     # Arms share host resources, so distinct production sources run one at a time.
     for source, key in zip(sources, keys):
         arm = cache.get((key, source))
         if arm is None:
             if key not in held:
-                held[key] = {**_execute_tree(identity, source, candidate, files, command, surface, args.timeout),
-                             "key": key}
-                executed_seconds += held[key]["timing"]["totalSeconds"]
+                held[key] = {**_execute_tree(identity, source, candidate, files, command, surface, args.timeout), "key": key}
             arm = held[key]
         arms.append({**arm, "requestedTree": source})
-    measured = None
-    if plans:
-        measured = _execute_tree(identity, original, candidate, files, command, surface, args.timeout, list(plans.values()))
-        source_delta["coverage"]["unavailable"].extend(measured["unavailable"])
-        source_delta["coverage"].update(measurement={k: measured[k] for k in ("exitCode", "timedOut", "output", "timing")},
-                                        decisions=mcdc.coverage(list(plans.values()), measured["records"]))
-    else:
-        source_delta["coverage"]["decisions"] = []
-    source_delta["coverage"]["editedTrees"] = list(dict.fromkeys(coverage_sources.values()))
-    source_delta["coverage"]["timing"] = {
-        "analysisSeconds": analysis_seconds,
-        "sourceArmsSeconds": executed_seconds,
-        "measurementSeconds": measured["timing"]["totalSeconds"] if measured else 0.0,
-        "comparisonOverheadSeconds": time.perf_counter() - started - analysis_seconds - executed_seconds
-                                     - (measured["timing"]["totalSeconds"] if measured else 0.0)}
     outcomes = [arm["outcome"] for arm in arms]
     valid = outcomes[-1] == "passed" and all(outcome in {"passed", "failed"} for outcome in outcomes[:-1])
     preserved = all(outcome == "passed" for outcome in outcomes)
     if preserved and surface.get("runner") not in {"pytest", "unittest"}:
         preserved = len({arm["output"].replace(arm["loadedRoot"], "<source>") for arm in arms}) == 1
     comparison = "incomplete" if not valid else "preserved" if preserved else "changed"
-    run = {"runIndex": len((current or {}).get("runs", [])), "command": shlex.join(command), "candidateTree": candidate, "originalTree": original,
-           "probeFiles": files, "support": args.support, "timeout": args.timeout, "candidateKey": keys[-1], "reviewSources": reviewed,
-           "sourceDelta": source_delta, "coverageSources": coverage_sources,
+    run = {"runIndex": len(runs), "command": shlex.join(command), "candidateTree": candidate, "originalTree": original,
+           "probeFiles": files, "support": args.support, "timeout": args.timeout, "candidateKey": keys[-1],
+           "probeKey": probe_key, "reviewSources": reviewed,
+           "sourceDelta": _source_delta(identity, original, candidate),
            "comparison": comparison, "arms": arms, "valid": valid, "execution": execution,
            "exitCode": 0 if valid else 1, "timedOut": any(arm["timedOut"] for arm in arms)}
     for item in mapped:
         item["comparison"] = {**run, "reviewSources": owner_sources[item["id"]]}
     document = {"workflowId": workflow_id, "slug": slug, "kind": "comparison", "behaviorMap": items,
-                "runs": [*(current or {}).get("runs", []), run], "updatedAt": utc_timestamp()}
+                "runs": [*runs, run], "updatedAt": utc_timestamp()}
     state, evidence = commit_tdd(identity, slug, workflow_id, document,
                                 expected_evidence_id=state.get("tddEvidence"), tree_before=before)
-    receipt = operation_receipt(state, identity, kind="tdd", **selection,
-               summaryId=evidence, runIndex=len(document["runs"])-1, valid=run["valid"],
-               comparison=comparison, sourceDelta=source_delta,
-               **{k: v for k, v in behavior_map.comparison_view(run).items() if k in {"arms", "cases", "caseAttribution"}})
+    receipt = operation_receipt(state, identity, kind="tdd", **selection, **behavior_map.comparison_view(run),
+                                summaryId=evidence)
     _emit_json(receipt, sort_keys=False)
     return 0 if run["valid"] else 2
 
@@ -446,11 +387,25 @@ def map_update(identity: RepoIdentity, state: JsonObject, value: JsonObject) -> 
         raise ValueError("tdd-map takes items to update by id; statuses and dispositions are runner-owned")
     updates = behavior_map.initial_items(value.get("items", value.get("added")))
     previous, current = current_map(identity, state)
+    recorded = {entry["id"]: entry for entry in previous or []}
     items = list({item["id"]: item for item in [*(previous or []), *updates]}.values())
-    for entry in items:
-        prior = next((item for item in previous or [] if item["id"] == entry["id"]), None)
-        if prior and "comparison" in prior and all(prior.get(k) == entry.get(k) for k in {*prior, *entry} - {"comparison", "sourceRefs"}):
+    owned = {(str(finding["intakeEvidenceId"]), str(finding["findingId"])) for finding in state.get("findingStates", [])
+             if finding.get("kind") == "behavioral" and finding.get("material") is True}
+    for entry in updates:
+        prior = recorded.get(entry["id"])
+        if prior is not None and prior.get("boundaryInputs") == [] and "boundaryInputs" not in entry:
+            entry["boundaryInputs"] = []  # unmapped recorded inputs stay until executed case names replace them
+        if (changes := behavior_map.authorization_needed(entry, prior, owned)) and not behavior_map.quoted(
+                entry["basis"], str(state.get("intent") or "")):
+            raise ValueError(f"probe {entry['id']}: {'; '.join(changes)}: the basis must quote, verbatim, the complete "
+                             "sentence of the recorded request that names this changed result")
+        if prior and "comparison" in prior and all(prior.get(k) == entry.get(k) for k in {*prior, *entry}
+                                                   - {"comparison"} - behavior_map.JUDGEMENT_FIELDS):  # kind, basis, cases, readings, release, refs re-judge
             entry["comparison"] = prior["comparison"]
+        if entry.get("released") and (problem := (behavior_map.release_binding(entry) if behavior_map.producer_proved(entry)
+                                                  else "no current valid comparison")):
+            raise ValueError(f"probe {entry['id']} release must bind to a case its current valid comparison executed "
+                             f"unchanged on both trees: {problem}")
     if items == previous:
         return operation_receipt(state, identity, summaryId=state.get("tddEvidence") or state["preflightEvidence"],
                                  pending=behavior_map.unresolved(items), reused=True)

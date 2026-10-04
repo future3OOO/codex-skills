@@ -58,7 +58,7 @@ that objective is fulfilled, including materially wrong behavior the declared
 assertions would miss. Judge correction of the original failure, affected-domain
 coverage and preservation separately. Bound every claim to exercised inputs. Inspect the runner's recorded original, reviewed and candidate outcomes, including public results and durable state effects. Matching successful checks establish preservation; equal failures, nonexecution and setup failures prove neither preservation nor a requested change.
 
-Challenge the expectation itself against the original request. Deleting implementation code does not authorize unrelated behavior changes. If an assertion expects an unrequested original-allow to candidate-block regression, reject the assertion and regression even when the comparison reports a clean failure-to-success change. Preserve original behavior where the request does not authorize a difference. Challenge omissions against changed predicates, callees, shared writers and mutation paths. Return findings through the existing workflow; no new approval or interpretation form is needed.
+Challenge the expectation itself against the original request. Deleting implementation code does not authorize unrelated behavior changes. If an assertion expects an unrequested original-allow to candidate-block regression, reject the assertion and regression even when the comparison reports a clean failure-to-success change. Preserve original behavior where the request does not authorize a difference. Challenge omissions against changed predicates, callees, shared writers and mutation paths. Return findings through the existing workflow.
 
 
 
@@ -70,7 +70,7 @@ expected/observed results under those same verification rules.
 
 ## 5. Review both axes
 
-For each removed or narrowed predicate or term, trace all branches it guards in the original source and independently derive a decisive input for every role outside the authorized removal, reusing existing `behaviorMap` items and probes. A check that finds words in the request or confirms the observed difference does not refute a finding that the difference is unauthorized. Reuse applicable proof; require no interpretation form or second coverage inventory.
+Apply TDD's [MC/DC decisive contexts](../tdd/SKILL.md#mcdc-decisive-contexts) to the diff: for every condition the edit removed, weakened or rewrote, check that each feasible decisive context has a map item whose pair executed on both sources, or a release the probe's own note supports. Judge each listed contract change (a preservation item turned contract, a dropped preservation case, a contract item added or re-worded after preflight) against the request sentence it quotes. A check that finds words in the request or confirms the observed difference does not refute a finding that the difference is unauthorized. Reuse applicable proof; the packet's `open`, `released` and `contractChanges` lines are the readiness result, not a second inventory.
 
 Run **Standards** and **Spec** independently:
 

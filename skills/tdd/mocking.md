@@ -11,7 +11,7 @@ Use the real production Interface that owns the claimed behavior:
 - **Outgoing process boundary:** for assertions about what a Module emits to an external process, capture at that Module's own boundary; that capture is the real Seam, and the ban targets substituted collaborators inside the asserted contract. The provider's own behavior still needs the live Seam.
 - **Browser/device behavior:** use the authenticated staging flow or strongest real runtime harness available.
 
-Reuse the workflow's [baseline and candidate execution setup](../repo-production-workflow/SKILL.md#baseline-and-candidate-execution).
+The workflow's [runner](recorder.md) executes the probe on the recorded original and candidate trees; do not hand-roll a second original-versus-edited harness.
 Claims about CLI routing, installed code or consumer reload require exercising
 those paths; calling an internal function cannot establish that they work.
 
@@ -23,4 +23,4 @@ The dependency's relevant semantics are part of the Seam. When correctness depen
 
 A programmed stand-in may isolate a diagnostic hypothesis. Label it diagnostic-only, delete it after use, and never count it as a comparison, regression, or production verification.
 
-Establish the real runtime and reachable preconditions needed to drive the Seam safely. For a Seam the change must create, follow [TDD’s creation-and-return rule](SKILL.md#task-boundary-and-seams). Completion requires actual execution; never manufacture green evidence or invent a second production path for tests.
+Establish the real runtime and reachable preconditions needed to drive the Seam safely. For a Seam the change must create, follow [TDD’s creation-and-return rule](SKILL.md#tdd-through-recorded-source-comparisons). Completion requires actual execution; never manufacture green evidence or invent a second production path for tests.

@@ -1896,7 +1896,7 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
         return result
     ledger = _finding_ledger(identity, state, items)
     contract = ((evidence_document(identity, state.get("preflightEvidence")) or {}).get("document") or {}).get("authoritativeContract")
-    map_content = {"preflightInterpretation": contract,
+    map_content = {"preflightInterpretation": contract, **_readiness_lines(identity, state),
                    "items": [{**{key: value for key, value in item.items() if key != "comparison"},
                               **({"comparison": behavior_map.comparison_view(item["comparison"])} if item.get("comparison") else {})}
                              for item in items]} if contract or items else None
@@ -2127,14 +2127,27 @@ def _earned_split(identity: RepoIdentity, state: JsonObject, labels: bool) -> st
 
 
 def _map_listing(identity: RepoIdentity, state: JsonObject) -> str:
-    """The unresolved map items a resumed lead still owes, by status; last in the line
-    so a cap cut takes ids, never the invariant or the verification command."""
+    """The open map a resumed lead still owes: never-compared ids grouped, then each open
+    question; last in the line so a cap cut takes ids, never the invariant or the command."""
+    lines = _readiness_lines(identity, state)
+    never = lines.get("never", [])
+    groups = [*(["pending: " + ", ".join(never)] if never else []),
+              *(line for line in lines.get("open", []) if line.split(" ", 1)[0] not in never),
+              *lines.get("released", []), *(f"contract change: {change}" for change in lines.get("contractChanges", []))]
+    return " Open map: " + "; ".join(groups) + "." if groups else ""
+
+
+def _readiness_lines(identity: RepoIdentity, state: JsonObject) -> JsonObject:
+    """The one readiness result every consumer renders: open questions, releases, contract changes."""
     try:
         items = _recorded_items(identity, state)
+        recorded = behavior_map.recorded_map(None, evidence_document(identity, state.get("preflightEvidence")))
     except (WorkflowError, LedgerError, ValueError):
-        return ""
-    pending = behavior_map.unresolved(items)
-    return " Open map: pending: " + ", ".join(pending) + "." if pending else ""
+        return {}
+    opened = behavior_map.open_obligations(items)
+    return {"open": opened, "openCount": len(opened), "never": behavior_map.never_compared(items),
+            "released": behavior_map.released_lines(items),
+            "contractChanges": behavior_map.contract_changes(items, recorded)}
 
 
 def _latest_verification_command(identity: RepoIdentity, state: JsonObject) -> str:
@@ -2154,38 +2167,28 @@ def _latest_verification_command(identity: RepoIdentity, state: JsonObject) -> s
 
 
 def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObject | None = None, *,
-                   preflight_draft: JsonObject | None = None, preflight_file: str | None = None) -> JsonObject:
+                   preflight_draft: JsonObject | None = None, preflight_file: str | None = None,
+                   obligations: bool = True) -> JsonObject:
     """Bind the selected operation once for command results and recovery."""
     scripts = Path(__file__).resolve().parents[2] / "skills"
     cli = [sys.executable, str(scripts / "repo-production-workflow/scripts/workflow.py")]
     bound = ["--repo", str(identity.root), "--slug", str(state["slug"]),
              "--workflow-id", str(state["workflowId"])]
     action = state.get("nextAction")
-    coverage_notice = ""
+    questions = ""
     if (receipt is not None and receipt.get("kind") == "tdd"
             or action in {"tdd", "run-mapped-tdd", "verification", "repo-context-forge", "code-review"}):
         comparison = receipt or {}
-        if "sourceDelta" not in comparison:
+        if "arms" not in comparison:
             runs = (evidence_document(identity, state.get("tddEvidence")) or {}).get("runs", [])
             candidate = _active_candidate_tree(identity) if runs else None
-            comparison = next((run for run in reversed(runs)
-                               if run.get("candidateTree") == candidate), {})
-        incomplete = [str(arm["error"]) for arm in comparison.get("arms", []) if arm["outcome"] == "incomplete"]
+            comparison = next((run for run in reversed(runs) if run.get("candidateTree") == candidate), {})
+        questions = "\n".join(_readiness_lines(identity, state).get("open", [])) if obligations else ""
+        incomplete = [str(arm.get("error") or "execution incomplete") for arm in comparison.get("arms", [])
+                      if arm["outcome"] == "incomplete"]
         if incomplete:
-            return {"command": None, "input": "Comparison execution incomplete: " + "; ".join(dict.fromkeys(incomplete)),
-                    "action": "tdd"}
-        from .mcdc import missing
-        coverage = (comparison.get("sourceDelta") or {}).get("coverage", {})
-        coverage_notice = missing(coverage)
-        if any(context["status"] != "evaluated" and context.get("retainedEffect")
-               for decision in coverage.get("decisions", []) for context in decision["contexts"]):
-            owners = [item["id"] for item in _recorded_items(identity, state)
-                      if (item.get("comparison") or {}).get("runIndex") == comparison.get("runIndex")]
-            command = [*cli, "tdd", *bound[:4], *[value for owner in owners for value in ("--behavior-id", owner)]]
-            return {"command": shlex.join(command), "input": "Invoke TDD's required probe loop, step 2: "
-                    + str(scripts / "tdd/SKILL.md") + "#required-probe-loop\n" + coverage_notice, "action": "tdd",
-                    "help": shlex.join([*cli, "evidence", "--repo", str(identity.root),
-                                        "--evidence-id", str(state["tddEvidence"]), "--full"])}
+            return {"command": None, "input": "Comparison execution incomplete: " + "; ".join(dict.fromkeys(incomplete))
+                    + ("\n" + questions if questions else ""), "action": "tdd"}
     if receipt is not None and receipt.get("kind") == "observed" and action not in {"tdd", "run-mapped-tdd"}:
         if receipt.get("valid") is True:
             return {"command": shlex.join([*cli, "verify", *bound, "--from-evidence",
@@ -2208,8 +2211,8 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
             return {"command": None, "input":
                     "Complete TDD's required post-edit loop: "
                     + str(scripts / "tdd/SKILL.md") + "#required-probe-loop. "
-                    "Then continue with " + shlex.join(command) + ("\n" + coverage_notice if coverage_notice else "")}
-        return {"command": shlex.join(command), **({"input": coverage_notice} if coverage_notice else {})}
+                    "Then continue with " + shlex.join(command) + ("\n" + questions if questions else "")}
+        return {"command": shlex.join(command), **({"input": questions} if questions else {})}
     elif action == "complete-workflow":
         command = [*cli, "complete", *bound]
     elif action in {"preflight", "final-review", "re-consult-final-review", "appeal-final-review"}:
@@ -2263,12 +2266,12 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
                                 }[producer[-1]]}
         if pending:
             operation["findings"] = pending
-        if coverage_notice:
-            operation["input"] += "\n" + coverage_notice
+        if questions:
+            operation["input"] += "\n" + questions
         return operation
     else:
         command = [*cli, "status", "--repo", str(identity.root)]
-    return {"command": shlex.join(command), **({"input": coverage_notice} if coverage_notice else {})}
+    return {"command": shlex.join(command), **({"input": questions} if questions else {})}
 
 
 def operation_receipt(state: JsonObject, identity: RepoIdentity, **details: object) -> JsonObject:
@@ -2278,25 +2281,7 @@ def operation_receipt(state: JsonObject, identity: RepoIdentity, **details: obje
     current = public_status(state, fields={"schemaVersion", "workflowId", "slug", "phase", "nextAction"})
     operation = next_operation(identity, {**state, **current}, details)
     if details.get("kind") == "tdd":
-        details.pop("sourceDelta", None)
-        arms = details["arms"]
-        labels = ["original", *[f"edited {i}" for i in range(1, len(arms) - 1)], "current"]
-        details["arms"] = [{"source": label, **{k: arm[k] for k in ("tree", "outcome", "testsExecuted")}}
-                           for label, arm in zip(labels, arms)]
-        cases, shown = details.pop("cases", []), []
-        for case in cases:
-            assertions = dict.fromkeys(" ".join(arm["assertion"].split()) for arm in case["arms"] if arm.get("assertion"))
-            line = case["name"] + ": " + ", ".join(
-                f"{label}={arm['outcome']}" + (" (stopped at failure)" if arm.get("execution") == "stopped" else "")
-                for label, arm in zip(labels, case["arms"]))
-            for assertion in assertions:
-                line += "; " + assertion[:240] + ("... [full assertion in evidence]" if len(assertion) > 240 else "")
-            if sum(map(len, shown)) + len(line) > 1100:
-                break
-            shown.append(line)
-        details["cases"] = shown
-        if len(shown) != len(cases):
-            details["casesOmitted"] = len(cases) - len(shown)
+        details.update(_readiness_lines(identity, state))
     return {"nextAction": operation.pop("action", current.get("nextAction")), "next": operation,
             **{key: value for key, value in current.items() if key != "nextAction"}, **details}
 
@@ -2316,7 +2301,7 @@ def summary(identity: RepoIdentity, limit: int = 3000, *, labels: bool = True) -
     records = {"advisor-preflight": f"{advisor.get('status')}/{advisor.get('findings')}",
                "code-review": f"{code_review.get('status')}/{code_review.get('findings')}",
                "final-review": f"{final_review.get('status')}/{final_review.get('findings')}"}
-    operation = next_operation(identity, state)
+    operation = next_operation(identity, state, obligations=False)  # the open map below carries them once
     action = operation.pop("action", state.get("nextAction"))
     mechanisms = ""
     shown: set[str] = set()

@@ -25,7 +25,7 @@ class RunnerComparisonTests(unittest.TestCase):
         self.addCleanup(self.case.tearDown)
 
     def item(self, value=1):
-        return pending_behavior("BM_VALUE", behavior=f"value is {value}", expected=f"value is {value}")
+        return pending_behavior("BM_VALUE", kind="preservation", behavior=f"value is {value}", expected=f"value is {value}")
 
     def details(self, result):
         receipt = json.loads(result.stdout)
@@ -71,7 +71,7 @@ class RunnerComparisonTests(unittest.TestCase):
         probe = self.case.repo / "test_value.py"
         probe.write_text(probe.read_text().replace("app.value, 1", "app.value, 2"))
         extended = json.loads(self.case.cli(*resume).stdout)
-        self.assertEqual([arm["outcome"] for arm in extended["arms"]], ["failed", "failed", "passed"],
+        self.assertEqual([arm["outcome"] for arm in extended["arms"]], ["failed", "passed"],
                          "EXTENDED_BATCH_NOT_COMPARED_ON_BOTH_SOURCES")
 
     def test_verify_executes_when_the_recorded_environment_changes(self):
@@ -166,7 +166,7 @@ class RunnerComparisonTests(unittest.TestCase):
         self.assertEqual(case.cli(*command).returncode, 2, "FAILING_COMPARISON_PASSED_VERIFICATION")
         self.assertFalse(runs()[-1]["valid"])
         (case.repo / "app.py").write_text("value: int = 2\n")
-        missing = pending_behavior("BM_MISSING", behavior="another obligation", expected="its own proof")
+        missing = pending_behavior("BM_MISSING", kind="preservation", behavior="another obligation", expected="its own proof")
         update = case.tmp / "map.json"
         update.write_text(json.dumps({"items": [missing, self.item(2)]}))
         result = case.cli("record", "tdd-map", "--repo", str(case.repo), "--input", str(update))
@@ -203,7 +203,7 @@ class RunnerComparisonTests(unittest.TestCase):
                                sys.executable, "-c", probe)
         arms = self.details(result)["arms"]
         self.assertEqual(self.details(result)["comparison"], "changed", result.stdout + result.stderr)
-        self.assertEqual(arms[-1]["observation"], "- b 1\n+ b 2", "CHANGED_CASES_HIDDEN: " + repr(arms))
+        self.assertEqual(self.details(result)["cases"], ["- b 1", "+ b 2"], "CHANGED_CASES_HIDDEN: " + result.stdout)
         delta = self.details(result).get("sourceDelta", {})
         self.assertIn("-value = 1\n+value = 2", delta.get("patch", ""), "REMOVED_DECISION_HIDDEN")
         self.assertNotIn("test_value.py", delta["patch"], "PROBE_CHANGES_OBSCURE_PRODUCTION")
@@ -216,23 +216,17 @@ class RunnerComparisonTests(unittest.TestCase):
         self.assertNotIn("authoritativeContract", packet["behavior-map"], "PLAN_PRESENTED_AS_REQUEST_AUTHORITY")
         self.assertIn("preflightInterpretation", packet["behavior-map"])
         comparison = packet["behavior-map"]["items"][0]["comparison"]
-        self.assertNotIn("patch", comparison["sourceDelta"], "COMPARISON_REPEATS_PACKAGE_DIFF")
-        self.assertEqual(comparison["sourceDelta"], {key: delta[key] for key in ("command", "coverage")})
-        self.assertEqual(delta["coverage"]["decisions"], [], "VALUE_EDIT_INVENTED_CONDITION")
+        self.assertNotIn("sourceDelta", comparison, "COMPARISON_REPEATS_PACKAGE_DIFF")
         self.assertEqual(comparison["arms"], arms)
         self.assertIn("-value = 1\n+value = 2", packet["diff"])
-        recorded = self.case.evidence()["runs"][-1]
-        del recorded["sourceDelta"]["coverage"]  # Recorded receipts before coverage was added.
-        self.assertEqual(comparison_view(recorded)["sourceDelta"], {"command": delta["command"]})
         # final SPEC-3: an extra repeated line is a changed case too
         result = self.case.cli("tdd", "--repo", str(self.case.repo), "--behavior-id", "BM_VALUE", "--",
                                sys.executable, "-c", "import app\nfor _ in range(app.value): print('event')")
-        self.assertEqual(self.details(result)["arms"][-1]["observation"], "+ event", "CHANGED_CASES_HIDDEN: " + result.stdout)
+        self.assertEqual(self.details(result)["cases"], ["+ event"], "CHANGED_CASES_HIDDEN: " + result.stdout)
         # final SPEC-5: output lines that look like diff headers are cases too
         result = self.case.cli("tdd", "--repo", str(self.case.repo), "--behavior-id", "BM_VALUE", "--", sys.executable, "-c",
                                "import app\nprint('-- old' if app.value == 1 else '++ new')\nprint('done')")
-        self.assertEqual(self.details(result)["arms"][-1]["observation"], "- -- old\n+ ++ new",
-                         "CHANGED_CASES_HIDDEN: " + result.stdout)
+        self.assertEqual(self.details(result)["cases"], ["- -- old", "+ ++ new"], "CHANGED_CASES_HIDDEN: " + result.stdout)
         (self.case.repo / "app.py").write_text("value = 2\n" + "# retained context\n" * 500 + "# END_OF_CHANGE\n")
         result = self.case.cli("tdd", "--repo", str(self.case.repo), "--behavior-id", "BM_VALUE", "--",
                                sys.executable, "-c", probe)
@@ -242,208 +236,6 @@ class RunnerComparisonTests(unittest.TestCase):
         full = subprocess.run(shlex.split(delta["command"]), check=True, capture_output=True, text=True).stdout
         self.assertIn("END_OF_CHANGE", full, "TRUNCATED_DECISION_UNRECOVERABLE")
         self.assertNotIn("test_value.py", full)
-
-    def mcdc_operation(self, original, candidate, inputs):
-        case = self.case
-        (case.repo / "app.py").write_text(original)
-        case.git("add", "app.py")
-        case.git("commit", "-qm", "original decisions")
-        case.begin_with_map([self.item()])
-        (case.repo / "app.py").write_text(candidate)
-        command = ("tdd", "--repo", str(case.repo), "--behavior-id", "BM_VALUE", "--", sys.executable, "-c")
-        probe = f"import app\nfor values in {inputs!r}: print(values, app.choose(*values))"
-        result = case.cli(*command, probe)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        receipt = self.details(result)
-        self.assertIn("coverage", receipt["sourceDelta"], "MCDC_COVERAGE_MISSING")
-        return receipt, command
-
-    def test_deleted_guard_coverage_and_retained_edited_arm(self):
-        original = "def choose(active):\n    if active:\n        return 2\n    return 1\n"
-        receipt, command = self.mcdc_operation(original, "def choose(active):\n    return 2\n", [(True,)])
-        context = receipt["sourceDelta"]["coverage"]["decisions"][0]["contexts"][0]
-        self.assertEqual((context["condition"], context["status"]), ("active", "missing"))
-        self.assertIn("active", receipt["next"]["input"])
-        # Successive edits must both remain observable after repair and probe expansion.
-        edited = receipt["arms"][-1]["tree"]
-        (self.case.repo / "app.py").write_text("def choose(active):\n    return 3\n")
-        second = self.details(self.case.cli(*command, "import app; print(app.choose(True))"))
-        latest_edit = second["arms"][-1]["tree"]
-        (self.case.repo / "app.py").write_text(original)
-        result = self.case.cli(*command, "import app; observed = [app.choose(x) for x in (False, True)]; print(observed); assert observed == [1, 2]")
-        repaired = self.details(result)
-        self.assertEqual([a["outcome"] for a in repaired["arms"]], ["passed", "failed", "failed", "passed"])
-        self.assertEqual(repaired["arms"][1]["tree"], edited)
-        self.assertEqual(repaired["arms"][2]["tree"], latest_edit, "LATEST_EDITED_TREE_LOST")
-        self.assertEqual(repaired["sourceDelta"]["coverage"]["decisions"][0]["contexts"][0]["status"], "evaluated")
-        expanded = self.details(self.case.cli(*command, "import app; observed = [app.choose(x) for x in (False, True, None)]; print(observed); assert observed == [1, 2, 1]"))
-        self.assertIn(latest_edit, [arm["tree"] for arm in expanded["arms"]], "RECORDED_EDIT_LOST_ON_LATER_EXPANSION")
-
-    def test_only_uncovered_retained_effect_keeps_probe_loop_open(self):
-        original = "def choose(allowed, known):\n    if allowed and known:\n        return 'existing'\n    elif allowed:\n        return 'new'\n    return None\n"
-        candidate = "def choose(allowed, known):\n    if known:\n        return 'existing'\n    return None\n"
-        receipt, command = self.mcdc_operation(original, candidate, [(True, True)])
-        self.assertEqual(receipt["nextAction"], "tdd")
-        self.assertIn("known=true", receipt["next"]["input"])
-        # The requested removal is unexercised, but the preserved effect has its pair.
-        expanded = self.case.cli(*command, "import app; print([app.choose(x, True) for x in (False, True)])")
-        self.assertNotEqual(json.loads(expanded.stdout)["nextAction"], "tdd", "REMOVED_EFFECT_TRAPS_PROBE_LOOP")
-        coverage = self.details(expanded)["sourceDelta"]["coverage"]["decisions"]
-        self.assertTrue(any(c["status"] == "missing" for d in coverage for c in d["contexts"]))
-        self.assertNotIn("allowed [unconditional]", json.loads(expanded.stdout)["next"].get("input", ""))
-        (self.case.repo / "app.py").write_text(candidate.replace("if known:", "if allowed and known:"))
-        self.case.cli(*command, "import app; print([app.choose(x, True) for x in (False, True)]); assert app.choose(False, True) is None")
-        gate = self.case.cli("verify", "--repo", str(self.case.repo), "--kind", "quality-gate", "--base-ref", "HEAD")
-        self.assertEqual(gate.returncode, 0, gate.stdout + gate.stderr)
-        status = json.loads(self.case.cli("status", "--repo", str(self.case.repo), "--fields", "nextAction").stdout)
-        self.assertEqual(status["nextAction"], "code-review", "REPAIRED_EFFECT_TRAPS_PROBE_LOOP")
-
-    def test_compound_condition_names_each_decisive_context(self):
-        original = "def choose(a, x, b, c):\n    if a and x and (b or c):\n        return 1\n    return 0\n"
-        receipt, command = self.mcdc_operation(original, original.replace("a and x and", "a and"),
-                                                [(True, False, False, True), (True, True, False, True)])
-        contexts = receipt["sourceDelta"]["coverage"]["decisions"][0]["contexts"]
-        self.assertEqual({(tuple(c["when"].items()), c["status"]) for c in contexts},
-                         {((("a", True), ("b", False), ("c", True)), "evaluated"), ((("a", True), ("b", True)), "missing")})
-        self.assertIn("b=true", receipt["next"]["input"])
-        self.assertIn("step 2", receipt["next"]["input"], "PROBE_EXTENSION_NOT_INVOKED")
-        self.assertIn("tdd/SKILL.md#required-probe-loop", receipt["next"]["input"])
-        resume = shlex.split(receipt["next"]["command"] or "")
-        self.assertTrue(resume, "MISSING_CONTEXT_HAS_NO_BATCH_CONTINUATION")
-        repeated = self.case.cli(*resume[2:])
-        self.assertTrue(json.loads(repeated.stdout).get("reused"), "UNCHANGED_BATCH_REEXECUTED")
-        self.assertIn("b=true", json.loads(repeated.stdout)["next"]["input"])
-        self.assertIn("b=true", self.case.cli("summary", "--repo", str(self.case.repo)).stdout)
-        gate = self.case.cli("verify", "--repo", str(self.case.repo), "--kind", "quality-gate", "--base-ref", "HEAD")
-        self.assertEqual(gate.returncode, 0, gate.stdout + gate.stderr)
-        self.assertIn("b=true", json.loads(gate.stdout.strip().splitlines()[-1])["next"].get("input", ""),
-                      "GATE_DROPPED_MISSING_CONTEXT")
-        self.assertIn("b=true", self.case.cli("summary", "--repo", str(self.case.repo)).stdout)
-        for fields in ((), ("--fields", "nextAction,verification")):
-            status = json.loads(self.case.cli("status", "--repo", str(self.case.repo), *fields).stdout)
-            self.assertEqual(status["nextAction"], "tdd", "STATUS_SKIPS_PROBE_EXTENSION")
-            self.assertEqual(status["verification"], "passed")
-        failed = json.loads(self.case.cli(*command, "import missing_production_dependency").stdout)
-        self.assertFalse(failed["valid"])
-        self.assertIn("missing_production_dependency", failed["next"]["input"], "EXECUTION_ERROR_HIDDEN_BY_COVERAGE")
-        self.assertNotIn("MC/DC contexts", failed["next"]["input"])
-        self.assertIn("missing_production_dependency", self.case.cli("summary", "--repo", str(self.case.repo)).stdout)
-        expanded = self.case.cli(*command, "import app\nfor x in (False, True):\n for b in (False, True): print(x,b,app.choose(True,x,b,True))")
-        self.assertTrue(all(c["status"] == "evaluated" for c in self.details(expanded)["sourceDelta"]["coverage"]["decisions"][0]["contexts"]))
-        status = json.loads(self.case.cli("status", "--repo", str(self.case.repo), "--fields", "nextAction").stdout)
-        self.assertEqual(status["nextAction"], "code-review", "COVERED_PAIRS_STILL_REQUESTED")
-
-    def test_comparison_response_keeps_details_in_retrievable_evidence(self):
-        original = "import re\ndef choose(active, value):\n    if active and re.search(" + repr("[a-z]" * 200) + ", value):\n        return 1\n    return 0\n"
-        _, command = self.mcdc_operation(original, original.replace("active and ", ""), [(True, "a" * 200)])
-        result = self.case.cli(*command, "import app; print(app.choose(True, 'a' * 200))")
-        receipt = json.loads(result.stdout)
-        self.assertNotIn("sourceDelta", receipt, "INTERNAL_EVIDENCE_DUMPED")
-        self.assertTrue(all(set(arm) <= {"source", "tree", "outcome", "testsExecuted"} for arm in receipt["arms"]))
-        self.assertTrue(result.stdout.startswith('{"nextAction": "tdd", "next":'))
-        self.assertLess(len(result.stdout), 2000, "COMPARISON_RESPONSE_BLOATED")
-        self.assertIn("active", receipt["next"]["input"])
-        self.assertIn("re.search", receipt["next"]["input"])
-        self.assertNotIn("[a-z]", receipt["next"]["input"])
-        evidence = self.case.cli("evidence", "--repo", str(self.case.repo), "--evidence-id", receipt["summaryId"], "--full")
-        run = json.loads(evidence.stdout)["document"]["runs"][receipt["runIndex"]]
-        self.assertIn("[a-z]" * 200, run["sourceDelta"]["patch"])
-        self.assertTrue(run["sourceDelta"]["coverage"]["decisions"])
-
-    def test_rewritten_comparison_boundary(self):
-        original = "def choose(size):\n    return size >= 1\n"
-        receipt, _ = self.mcdc_operation(original, original.replace(">=", ">"), [(0,), (1,)])
-        context = receipt["sourceDelta"]["coverage"]["decisions"][0]["contexts"][0]
-        self.assertEqual((context["condition"], context["status"]), ("size >= 1", "evaluated"))
-
-    def test_removed_or_operand(self):
-        original = "def choose(left, right):\n    if left or right:\n        return 1\n    return 0\n"
-        receipt, _ = self.mcdc_operation(original, original.replace("left or right", "right"), [(False, False), (True, False)])
-        context = receipt["sourceDelta"]["coverage"]["decisions"][0]["contexts"][0]
-        self.assertEqual((context["condition"], context["when"], context["status"]), ("left", {"right": False}, "evaluated"))
-
-    def test_unsafe_skipped_condition_is_inferred_not_covered(self):
-        original = (
-            "class Counter:\n"
-            "    def __init__(self): self.calls = 0\n"
-            "    @property\n"
-            "    def ready(self):\n"
-            "        self.calls += 1\n"
-            "        return True\n"
-            "def choose(active):\n"
-            "    state = Counter()\n"
-            "    if active and state.ready:\n"
-            "        return (True, state.calls)\n"
-            "    return (False, state.calls)\n")
-        receipt, _ = self.mcdc_operation(original, original.replace("active and state.ready", "state.ready"), [(False,), (True,)])
-        measured = receipt["sourceDelta"]["coverage"]
-        context = next(c for d in measured["decisions"] for c in d["contexts"] if c["condition"] == "active")
-        self.assertEqual(context["status"], "unverified", "INFERRED_CONTEXT_COUNTED")
-        self.assertTrue(context["inferred"])
-        self.assertIn("unverified", receipt["next"]["input"])
-        self.assertIn("(False,) (False, 0)", measured["measurement"]["output"])
-        self.assertIn("(True,) (True, 1)", measured["measurement"]["output"])
-
-    def test_changed_decision_in_callee_is_measured(self):
-        original = "def select(size):\n    return size >= 1\ndef choose(size):\n    return select(size)\n"
-        receipt, _ = self.mcdc_operation(original, original.replace(">=", ">"), [(0,), (1,)])
-        self.assertEqual(receipt["sourceDelta"]["coverage"]["decisions"][0]["contexts"][0]["status"], "evaluated")
-
-    def test_value_change_leaves_decision_coverage_empty(self):
-        original = "def choose(active):\n    if active:\n        return 1\n    return 0\n"
-        receipt, _ = self.mcdc_operation(original, original.replace("return 1", "return 2"), [(False,), (True,)])
-        self.assertEqual(receipt["sourceDelta"]["coverage"]["decisions"], [])
-        self.assertNotIn("step 2", receipt["next"]["input"])
-
-    def test_coupled_conditions_remain_a_review_question(self):
-        original = "def choose(active):\n    if active and not active:\n        return 1\n    return 0\n"
-        receipt, _ = self.mcdc_operation(original, original.replace("active and not active", "active"), [(False,), (True,)])
-        decision = receipt["sourceDelta"]["coverage"]["decisions"][0]
-        self.assertTrue(decision["coupled"])
-        self.assertEqual(decision["contexts"], [])
-        self.assertIn("coupled", receipt["next"]["input"])
-        self.assertNotIn("step 2", receipt["next"]["input"])
-        self.assertTrue(receipt["valid"], "COVERAGE_REFUSED_WORK")
-
-    def test_chained_comparison_does_not_repeat_truth_evaluation(self):
-        original = (
-            "class Flag:\n"
-            "    def __init__(self): self.calls = 0\n"
-            "    def __bool__(self):\n"
-            "        self.calls += 1\n"
-            "        return False\n"
-            "class Operand:\n"
-            "    def __init__(self, flag): self.flag = flag\n"
-            "    def __lt__(self, other): return self.flag\n"
-            "def choose():\n"
-            "    flag = Flag()\n"
-            "    if Operand(flag) < 1 < 2: return 9\n"
-            "    return flag.calls\n")
-        receipt, _ = self.mcdc_operation(original, original.replace("< 1 < 2", "< 1"), [()])
-        coverage = receipt["sourceDelta"]["coverage"]
-        self.assertEqual(coverage["decisions"], [], "CHAINED_TRUTH_EVALUATED_TWICE")
-        self.assertTrue(any("chained" in x["reason"] for x in coverage["unavailable"]))
-        for declaration, parameter in (("", ", _workflow_mcdc_atom=None"),
-                                       ("from math import sin as _workflow_mcdc_atom\n", ""),
-                                       ("def _workflow_mcdc_atom(): pass\n", "")):
-            with self.subTest(binding=declaration or parameter):
-                original = declaration + f"def choose(active{parameter}):\n    if active: return 2\n    return 1\n"
-                receipt, _ = self.mcdc_operation(original, original.replace("if active:", "if not active:"), [(False,), (True,)])
-                coverage = receipt["sourceDelta"]["coverage"]
-                self.assertTrue(any("collides" in x["reason"] for x in coverage["unavailable"]), "BINDING_COLLISION_NOT_REPORTED")
-                self.assertEqual(coverage["measurement"]["exitCode"], 0)
-
-    def test_condition_removal_reports_pairs_without_judging_intent(self):
-        original = "def choose(active):\n    if active:\n        return 2\n    return 1\n"
-        receipt, command = self.mcdc_operation(original, "def choose(active):\n    return 2\n", [(False,), (True,)])
-        self.assertEqual(receipt["comparison"], "changed")
-        self.assertEqual(receipt["sourceDelta"]["coverage"]["decisions"][0]["contexts"][0]["status"], "evaluated")
-        self.assertNotIn("MC/DC contexts", receipt["next"]["input"])
-        (self.case.repo / "other.js").write_text("export const choose = x => x > 0;\n")
-        unsupported = self.details(self.case.cli(*command, "import app; print([app.choose(x) for x in (False, True)])"))
-        self.assertEqual(unsupported["sourceDelta"]["coverage"]["unavailable"][0]["path"], "other.js")
-        self.assertTrue(unsupported["valid"], "UNSUPPORTED_ANALYSIS_REFUSED_WORK")
-        self.assertNotIn("step 2", unsupported["next"]["input"])
 
     def test_batch_failures_are_attributed_to_cases_and_subtests(self):
         case = self.case
@@ -466,28 +258,23 @@ class RunnerComparisonTests(unittest.TestCase):
             "            with self.subTest(name=name): self.assertEqual(actual, expected, name)\n")
         result = case.cli("tdd", "--repo", str(case.repo), "--behavior-id", "BM_VALUE", "--",
                           sys.executable, "-m", "unittest", "test_value")
-        receipt = self.details(result)
-        self.assertIn("cases", receipt, "CASE_ATTRIBUTION_MISSING")
-        cases = {c["name"]: c for c in receipt["cases"]}
-        requested = next(c for n, c in cases.items() if n.startswith("test_requested"))
-        preserved = next(c for n, c in cases.items() if n.startswith("test_preserved"))
-        self.assertEqual([a["outcome"] for a in requested["arms"]], ["failed", "passed"])
-        self.assertEqual([a["outcome"] for a in preserved["arms"]], ["passed", "failed"])
-        self.assertIn("PRESERVATION_CHANGE", preserved["arms"][1]["assertion"])
-        stopped = next(c for n, c in cases.items() if n.startswith("test_loop"))
-        self.assertEqual(stopped["arms"][0].get("execution"), "stopped", "EARLY_TEST_STOP_HIDDEN")
         compact = json.loads(result.stdout)
-        self.assertIn("stopped at failure", " ".join(compact["cases"]))
-        self.assertIn("not loop inputs", compact["caseAttribution"])
+        self.assertEqual(compact["cases"], [
+            "test_loop (test_value.Value.test_loop): original=failed, current=failed; AssertionError: 1 != 2; AssertionError: 2 != 1",
+            "test_partitions (test_value.Value.test_partitions): original=failed (1 subtests), current=failed (1 subtests); "
+            "AssertionError: 1 != 2 : requested; AssertionError: False != True : preserved",
+            "test_preserved (test_value.Value.test_preserved): original=passed, current=failed; AssertionError: False is not true : PRESERVATION_CHANGE",
+            "test_requested (test_value.Value.test_requested): original=failed, current=passed; AssertionError: 1 != 2 : REQUESTED_CHANGE",
+        ], "CASE_ATTRIBUTION_MISSING: " + result.stdout)
+        self.assertEqual(compact["limitations"], ["original: 1 cases unnamed (passing subtests print no name)",
+                                                  "current: 1 cases unnamed (passing subtests print no name)"], result.stdout)
         evidence = case.cli("evidence", "--repo", str(case.repo), "--evidence-id", compact["summaryId"], "--full")
         arms = json.loads(evidence.stdout)["document"]["runs"][compact["runIndex"]]["arms"]
         self.assertNotIn("loop input 1", arms[0]["output"])
         self.assertIn("loop input 1", arms[1]["output"])
-        subtests = [c for n, c in cases.items() if "name=" in n]
-        self.assertEqual(len(subtests), 2)
-        self.assertTrue(all(a.get("execution") != "stopped" for c in subtests for a in c["arms"]))
-        self.assertTrue(all(any(a["outcome"] == "unattributed" for a in c["arms"]) for c in subtests))
-        self.assertIn("behavior", receipt["caseAttribution"])
+        self.assertEqual({name for arm in arms for name in arm["cases"] if "name=" in name},
+                         {"test_partitions (test_value.Value.test_partitions) (name='requested')",
+                          "test_partitions (test_value.Value.test_partitions) (name='preserved')"})
 
     def test_python_option_forms_preserve_inline_operations(self):
         self.operation()
@@ -534,7 +321,7 @@ class RunnerComparisonTests(unittest.TestCase):
         self.assertEqual([arm["outcome"] for arm in receipt["arms"]], ["failed", "passed"], marker)
         self.assertNotEqual(receipt["arms"][0]["tree"], receipt["arms"][1]["tree"], marker)
         for failure in ("CHILD_RESULT_CHANGED", "SECOND_CASE_CHANGED"):
-            self.assertIn(failure, receipt["arms"][0]["observation"], "BATCH_FAILURE_HIDDEN")
+            self.assertIn(failure, " ".join(receipt["cases"]), "BATCH_FAILURE_HIDDEN")
 
     def test_a_shared_host_resource_is_preserved(self):
         with socket.socket() as free:
@@ -680,7 +467,7 @@ class RunnerComparisonTests(unittest.TestCase):
         self.assertEqual(before["summaryId"], after["summaryId"], marker)
         self.assertTrue(after.get("reused"), marker)
         update = self.case.tmp / "map.json"
-        update.write_text(json.dumps({"items": [self.item(), pending_behavior("BM_OTHER")]}))
+        update.write_text(json.dumps({"items": [self.item(), pending_behavior("BM_OTHER", kind="preservation")]}))
         mapped = self.case.cli("record", "tdd-map", "--repo", str(self.case.repo), "--input", str(update))
         self.assertEqual(mapped.returncode, 0, mapped.stdout + mapped.stderr)
         command = ("tdd", "--repo", str(self.case.repo), "--behavior-id", "BM_VALUE", "--behavior-id", "BM_OTHER",
@@ -754,7 +541,7 @@ class RunnerComparisonTests(unittest.TestCase):
         counts = []
         def update():
             item = {key: value for key, value in self.item().items()
-                    if key in {"id", "basis", "behavior", "seam", "expected", "sourceRefs"}}
+                    if key in {"id", "kind", "basis", "behavior", "seam", "expected", "sourceRefs"}}
             item["expected"] = "read the original value after the competing list update"
             path = self.case.tmp / "map.json"
             path.write_text(json.dumps({"items": [item]}))
@@ -804,7 +591,7 @@ class RunnerComparisonTests(unittest.TestCase):
         result = self.operation()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         item = {key: value for key, value in self.item().items()
-                if key in {"id", "basis", "behavior", "seam", "expected", "sourceRefs"}}
+                if key in {"id", "kind", "basis", "behavior", "seam", "expected", "sourceRefs"}}
         from hooks.lib.repo_identity import resolve_repo_identity
         from hooks.lib.tdd_workflow import map_update
         from hooks.lib.workflow_state import read_workflow
@@ -817,7 +604,7 @@ class RunnerComparisonTests(unittest.TestCase):
         initial = self.operation()
         self.assertEqual(initial.returncode, 0, initial.stdout + initial.stderr)
         item = self.item()
-        item = {key: f" {value} " if isinstance(value, str) else value for key, value in item.items()}
+        item = {key: f" {value} " if isinstance(value, str) and key != "kind" else value for key, value in item.items()}
         path = self.case.tmp / "spaced-map.json"
         path.write_text(json.dumps({"items": [item]}))
         changed = self.case.cli("record", "tdd-map", "--repo", str(self.case.repo), "--input", str(path))
@@ -852,8 +639,7 @@ class RunnerComparisonTests(unittest.TestCase):
         return json.loads(result.stdout)["summaryId"]
 
     def own(self, evidence):
-        item = self.item()
-        item = {key: value for key, value in item.items() if key in {"id", "basis", "behavior", "seam", "expected"}}
+        item = {key: value for key, value in self.item().items() if key != "sourceRefs"}
         item["sourceRefs"] = [{"type": "finding", "evidenceId": evidence, "id": "R1"}]
         path = self.case.tmp / "map.json"
         path.write_text(json.dumps({"items": [item]}))
@@ -935,7 +721,7 @@ class RunnerComparisonTests(unittest.TestCase):
         self.operation()
         self.own(self.review())
         path = self.case.tmp / "map.json"
-        path.write_text(json.dumps({"items": [pending_behavior("BM_NEW")]}))
+        path.write_text(json.dumps({"items": [pending_behavior("BM_NEW", kind="preservation")]}))
         result = self.case.cli("record", "tdd-map", "--repo", str(self.case.repo), "--input", str(path))
         self.assertEqual(result.returncode, 0, "FINDING_OWNER_LOST: " + result.stdout + result.stderr)
         state = json.loads(self.case.cli("status", "--repo", str(self.case.repo)).stdout)
@@ -1043,3 +829,557 @@ class RunnerComparisonTests(unittest.TestCase):
                     os.kill(child, signal.SIGKILL)
                 except ProcessLookupError:
                     child = None
+
+
+UNITTEST_PROBE = "import unittest, app\nclass Value(unittest.TestCase):\n"
+INTENT = ("Make the value two. Keep everything else the module already does, including the kept value. "
+          "Report kept as two only when the request says so.")
+
+
+class ReadinessTests(unittest.TestCase):
+    """One readiness result: kind, boundary inputs and readings are proved by execution."""
+
+    def setUp(self):
+        self.case = harness.MappedTddRepairTests()
+        self.case.setUp()
+        self.addCleanup(self.case.tearDown)
+        self.repo = self.case.repo
+        (self.repo / "app.py").write_text("value = 1\nkept = 1\n")
+        self.case.git("add", "app.py")
+        self.case.git("commit", "-qm", "kept value")
+
+    def begin(self, *items, intent=INTENT):
+        return self.case.begin_with_map(list(items), intent=intent)
+
+    def probe(self, *methods):
+        (self.repo / "test_value.py").write_text(UNITTEST_PROBE + "".join(f"    {m}\n" for m in methods))
+
+    def tdd(self, *ids, command=(sys.executable, "-m", "unittest", "test_value")):
+        result = self.case.cli("tdd", "--repo", str(self.repo),
+                               *[value for identifier in ids for value in ("--behavior-id", identifier)], "--", *command)
+        self.assertIn(result.returncode, (0, 2), result.stdout + result.stderr)
+        self.assertTrue(result.stdout.startswith("{"), "COMPARISON_NOT_RECORDED: " + result.stdout + result.stderr)
+        return json.loads(result.stdout)
+
+    def status(self):
+        return json.loads(self.case.cli("status", "--repo", str(self.repo)).stdout)
+
+    def summary(self):
+        return self.case.cli("summary", "--repo", str(self.repo)).stdout
+
+    def update(self, *items):
+        path = self.case.tmp / "map.json"
+        path.write_text(json.dumps({"items": list(items)}))
+        return self.case.cli("record", "tdd-map", "--repo", str(self.repo), "--input", str(path))
+
+    def open_lines(self, receipt):
+        return [line for line in receipt["next"].get("input", "").splitlines() if line.startswith("BM_")]
+
+    def test_contract_item_needs_an_attributable_difference(self):
+        marker = "CONTRACT_WITHOUT_CHANGE_PASSED"
+        self.begin(pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two"))
+        self.probe("def test_value(self): self.assertEqual(app.value, 1)")
+        receipt = self.tdd("BM_CHANGE")
+        self.assertEqual(receipt["comparison"], "preserved", receipt)
+        self.assertEqual(self.status()["tdd"], "in-progress", marker + ": " + json.dumps(receipt))
+        [line] = self.open_lines(receipt)
+        self.assertIn("BM_CHANGE (contract): value becomes two => value is two", line, marker)
+        self.assertIn("no attributable case differs between original and current", line, marker)
+        self.assertIn("BM_CHANGE", self.summary(), marker)
+        (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
+        self.probe("def test_value(self): self.assertEqual(app.value, 2, 'VALUE_NOT_TWO')")
+        receipt = self.tdd("BM_CHANGE")
+        self.assertEqual((receipt["comparison"], self.status()["tdd"]), ("changed", "passed"), marker + ": " + json.dumps(receipt))
+        self.assertEqual(receipt["cases"], ["test_value (test_value.Value.test_value): original=failed, current=passed; "
+                                            "AssertionError: 1 != 2 : VALUE_NOT_TWO"], marker)
+        # a shared batch needs each owner to name its cases
+        self.update(pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two"),
+                    pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one"))
+        self.probe("def test_value(self): self.assertEqual(app.value, 2, 'VALUE_NOT_TWO')",
+                   "def test_kept(self): self.assertEqual(app.kept, 1)")
+        receipt = self.tdd("BM_CHANGE", "BM_KEEP")
+        self.assertEqual(sorted(line.split(" ")[0] for line in self.open_lines(receipt)), ["BM_CHANGE", "BM_KEEP"], marker + ": " + json.dumps(receipt))
+        self.assertTrue(all("name its cases in boundaryInputs" in line for line in self.open_lines(receipt)), marker)
+        # a contract pair: one input shows the change, the other keeps its result; both execute on both trees;
+        # naming cases on a contract item after preflight is an authorization the request must give
+        unquoted = self.update(pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two",
+                                                boundaryInputs=["test_value", "test_kept"]))
+        self.assertEqual(unquoted.returncode, 2, marker + ": " + unquoted.stdout + unquoted.stderr)
+        self.assertIn("contract cases added", unquoted.stderr, marker)
+        self.update(pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two", basis="Make the value two.",
+                                     boundaryInputs=["test_value", "test_kept"]),
+                    pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one",
+                                     boundaryInputs=["test_kept"]))
+        receipt = self.tdd("BM_CHANGE", "BM_KEEP")
+        self.assertEqual(receipt["contractChanges"], ["BM_CHANGE: contract cases added: test_kept, test_value: Make the value two."], marker)
+        self.assertEqual((self.open_lines(receipt), self.status()["tdd"]), ([], "passed"), marker + ": " + json.dumps(receipt))
+        self.probe("def test_value(self): self.assertEqual(app.value, 2, 'VALUE_NOT_TWO')",
+                   "@unittest.skipIf(app.value == 1, 'original only')\n    def test_kept(self): self.assertEqual(app.kept, 1)")
+        receipt = self.tdd("BM_CHANGE", "BM_KEEP")
+        lines = self.open_lines(receipt)
+        self.assertTrue(any(line.startswith("BM_CHANGE") and "test_kept skipped on original" in line for line in lines),
+                        marker + ": " + json.dumps(receipt))
+
+    def test_preservation_item_rejects_a_rewritten_expectation(self):
+        marker = "REWRITTEN_EXPECTATION_PASSED"
+        self.begin(pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one",
+                                    boundaryInputs=["test_kept"]))
+        self.probe("def test_kept(self): self.assertEqual(app.kept, 1)")
+        receipt = self.tdd("BM_KEEP")
+        self.assertEqual((receipt["comparison"], self.status()["tdd"]), ("preserved", "passed"), json.dumps(receipt))
+        (self.repo / "app.py").write_text("value = 1\nkept = 2\n")
+        self.probe("def test_kept(self): self.assertEqual(app.kept, 2, 'KEPT_REWRITTEN')")
+        receipt = self.tdd("BM_KEEP")
+        self.assertEqual((receipt["comparison"], self.status()["tdd"]), ("changed", "in-progress"), marker + ": " + json.dumps(receipt))
+        [line] = self.open_lines(receipt)
+        self.assertIn("test_kept differs (original=failed, current=passed)", line, marker)
+        self.assertIn("authorized contract change", line, marker)
+        (self.repo / "app.py").write_text("value = 1\nkept = 1\n")
+        self.probe("def test_kept(self): self.assertEqual(app.kept, 1)")
+        self.tdd("BM_KEEP")
+        self.assertEqual(self.status()["tdd"], "passed", marker)
+        (self.repo / "app.py").write_text("value = 1\nkept = 2\n")
+        self.probe("def test_kept(self): self.assertEqual(app.kept, 2, 'KEPT_REWRITTEN')")
+        self.tdd("BM_KEEP")
+        self.assertEqual(self.status()["tdd"], "in-progress", marker)
+        converted = lambda basis: pending_behavior("BM_KEEP", behavior="kept becomes two", expected="kept is two",
+                                                   basis=basis, boundaryInputs=["test_kept"])
+        for basis in ("Keep everything else.", "Keep everything else the module already does.", "Keep.",
+                      "else the module already does, including the kept value."):
+            refused = self.update(converted(basis))
+            self.assertEqual(refused.returncode, 2, marker + ": " + basis + refused.stdout + refused.stderr)
+            self.assertIn("BM_KEEP", refused.stderr, marker)
+        # re-pointing the preservation case away from the differing one needs the same authorization,
+        # as does releasing the differing case, or attaching an unrelated finding to the conversion
+        repointed = self.update(pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one",
+                                                 boundaryInputs=["test_value"]))
+        self.assertEqual(repointed.returncode, 2, marker + ": " + repointed.stdout + repointed.stderr)
+        self.assertIn("test_kept", repointed.stderr, marker)
+        released = self.update(pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one",
+                                                boundaryInputs=["test_kept"], released={"reason": "kept=1 is unreachable now", "case": "test_kept"}))
+        self.assertEqual(released.returncode, 2, marker + ": " + released.stdout + released.stderr)
+        self.assertIn("printed note", released.stderr, marker)
+        note = self.case.tmp / "note.json"
+        note.write_text(json.dumps({"findings": [{"id": "N-1", "claim": "an unrelated note", "material": False, "kind": "nonbehavioral"}]}))
+        self.assertEqual(self.case.cli("record", "review", "--repo", str(self.repo), "--input", str(note)).returncode, 0, marker)
+        intake = json.loads(self.case.cli("status", "--repo", str(self.repo)).stdout)["findingStates"][0]["intakeEvidenceId"]
+        owned = self.update(converted("Keep everything else the module already does.")
+                            | {"sourceRefs": [{"type": "finding", "evidenceId": intake, "id": "N-1"}]})
+        self.assertEqual(owned.returncode, 2, marker + ": " + owned.stdout + owned.stderr)
+        accepted = self.update(converted("Report kept as two only when the request says so."))
+        self.assertEqual(accepted.returncode, 0, marker + ": " + accepted.stdout + accepted.stderr)
+        receipt = self.tdd("BM_KEEP")
+        self.assertEqual(self.status()["tdd"], "passed", marker + ": " + json.dumps(receipt))
+        change = "BM_KEEP: preservation -> contract: Report kept as two only when the request says so."
+        self.assertEqual(receipt["contractChanges"], [change], marker)
+        self.assertIn(change, self.summary(), marker)
+        packet = checkpoint_channels(self.repo, self.case.env, "code-review")
+        self.assertEqual(packet["behavior-map"]["contractChanges"], [change], marker)
+        # a contract item added or re-worded after preflight needs the request sentence too
+        added = self.update(pending_behavior("BM_MORE", behavior="value becomes three", expected="value is three"))
+        self.assertEqual(added.returncode, 2, marker + ": " + added.stdout + added.stderr)
+        reworded = self.update(converted("Keep everything else the module already does.") | {"expected": "kept is exactly two"})
+        self.assertEqual(reworded.returncode, 2, marker + ": " + reworded.stdout + reworded.stderr)
+        self.assertIn("contract expectation re-worded", reworded.stderr, marker)
+        reworded = self.update(converted("Report kept as two only when the request says so.") | {"expected": "kept is exactly two"})
+        self.assertEqual(reworded.returncode, 0, marker + ": " + reworded.stdout + reworded.stderr)
+        self.assertIn(change, self.summary(), marker)
+
+        # a release bound to an unrelated passing case does not waive the differing one
+        self.update(pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one", boundaryInputs=["test_kept"]))
+        self.probe("def test_kept(self): self.assertEqual(app.kept, 2, 'KEPT_REWRITTEN')", "def test_other(self): self.assertEqual(app.value, 1)")
+        self.tdd("BM_KEEP")
+        waived = self.update(pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one",
+                                              boundaryInputs=["test_kept"], released={"reason": "kept=1 unreachable", "case": "test_other"}))
+        self.assertEqual(waived.returncode, 2, marker + ": " + waived.stdout + waived.stderr)
+        self.assertIn("printed note", waived.stderr, marker)
+        self.assertEqual(self.status()["tdd"], "in-progress", marker + ": " + self.summary())
+        self.assertIn("test_kept differs", self.summary(), marker)
+        # a new attack claims the case only for a material behavioral finding, and is listed with it
+        fixture = lambda ref, basis: pending_behavior("BM_FIX", behavior="kept becomes two", expected="kept is two", basis=basis,
+                                                      boundaryInputs=["test_kept"], sourceRefs=[{"type": "finding", "evidenceId": ref, "id": "N-1"}])
+        unowned = self.update(fixture(intake, "an unrelated note"))
+        self.assertEqual(unowned.returncode, 2, marker + ": " + unowned.stdout + unowned.stderr)
+        note.write_text(json.dumps({"findings": [{"id": "N-1", "claim": "kept must become two", "material": True, "kind": "behavioral"}]}))
+        self.assertEqual(self.case.cli("record", "review", "--repo", str(self.repo), "--input", str(note)).returncode, 0, marker)
+        behavioral = json.loads(self.case.cli("status", "--repo", str(self.repo)).stdout)["findingStates"][-1]["intakeEvidenceId"]
+        self.assertEqual(self.update(fixture(behavioral, "finding N-1 attack")).returncode, 0, marker)
+        self.assertIn("BM_FIX: contract item added after preflight (finding N-1): finding N-1 attack", self.summary(), marker)
+        receipt = self.tdd("BM_KEEP", "BM_FIX")
+        self.assertTrue(all(line.startswith("BM_KEEP") for line in self.open_lines(receipt)), marker + ": " + json.dumps(receipt))
+
+    def test_unnamed_preservation_owns_its_differing_cases(self):
+        marker = "REWRITTEN_EXPECTATION_PASSED"
+        self.begin(pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one"))
+        (self.repo / "app.py").write_text("value = 1\nkept = 2\n")
+        self.probe("def test_kept(self): self.assertEqual(app.kept, 2, 'KEPT_REWRITTEN')", "def test_other(self): self.assertEqual(app.value, 1)")
+        receipt = self.tdd("BM_KEEP")
+        self.assertEqual(self.status()["tdd"], "in-progress", marker + ": " + json.dumps(receipt))
+        narrowed = self.update(pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one",
+                                                boundaryInputs=["test_other"]))
+        self.assertEqual(narrowed.returncode, 0, marker + ": " + narrowed.stdout + narrowed.stderr)
+        self.assertEqual(self.status()["tdd"], "in-progress", marker + ": " + self.summary())
+        self.assertIn("test_kept differs", self.summary(), marker)
+        # naming it on a contract item claims the change, with the request sentence
+        claimed = self.update(pending_behavior("BM_NEW", behavior="kept becomes two", expected="kept is two",
+                                               basis="Report kept as two only when the request says so.", boundaryInputs=["test_kept"]))
+        self.assertEqual(claimed.returncode, 0, marker + ": " + claimed.stdout + claimed.stderr)
+        receipt = self.tdd("BM_KEEP", "BM_NEW")
+        self.assertEqual((self.open_lines(receipt), self.status()["tdd"]), ([], "passed"), marker + ": " + json.dumps(receipt))
+
+    def test_boundary_inputs_are_proved_by_execution(self):
+        marker = "UNEXECUTED_BOUNDARY_PASSED"
+        self.begin(pending_behavior("BM_EDGE", kind="preservation", behavior="the edge holds", expected="edge is one",
+                                    boundaryInputs=["test_edge"]))
+        for body in ("def test_value(self): self.assertEqual(app.value, 1)  # test_edge",
+                     "@unittest.skip('later')\n    def test_edge(self): self.assertEqual(app.value, 1)",
+                     "def test_edge_more(self): self.assertEqual(app.value, 1)"):
+            self.probe(body)
+            receipt = self.tdd("BM_EDGE")
+            self.assertEqual(self.status()["tdd"], "in-progress", marker + ": " + body + json.dumps(receipt))
+            self.assertEqual(len(self.open_lines(receipt)), 1, marker + ": " + body + json.dumps(receipt))
+            [line] = self.open_lines(receipt)
+            self.assertIn("BM_EDGE (preservation)", line, marker)
+            self.assertIn("test_edge", line.split(";", 1)[1], marker + ": " + line)
+        self.probe("def test_edge(self): self.assertEqual(app.value, 1)")
+        receipt = self.tdd("BM_EDGE")
+        self.assertEqual((self.open_lines(receipt), self.status()["tdd"]), ([], "passed"), marker + ": " + json.dumps(receipt))
+        # an existing test outside a narrowed selection keeps its owner open
+        self.update(pending_behavior("BM_EDGE", kind="preservation", behavior="the edge holds", expected="edge is one",
+                                     boundaryInputs=["test_edge", "test_other"]))
+        self.probe("def test_edge(self): self.assertEqual(app.value, 1)", "def test_other(self): self.assertEqual(app.kept, 1)")
+        receipt = self.tdd("BM_EDGE", command=(sys.executable, "-m", "unittest", "test_value.Value.test_edge"))
+        self.assertEqual(len(self.open_lines(receipt)), 1, marker + ": " + json.dumps(receipt))
+        self.assertIn("test_other", self.open_lines(receipt)[0], marker + ": " + json.dumps(receipt))
+        receipt = self.tdd("BM_EDGE")
+        self.assertEqual(self.open_lines(receipt), [], marker + ": " + json.dumps(receipt))
+        # a pair declared on a printed-line probe needs both inputs printed
+        self.update(pending_behavior("BM_PAIR", kind="preservation", behavior="X decides OUT in P=T,K=T",
+                                     expected="a: OUT, b: none", boundaryInputs=["X | P=T,K=T | a", "X | P=T,K=T | b"]))
+        receipt = self.tdd("BM_PAIR", command=(sys.executable, "-c", "import app\nprint('X | P=T,K=T | a:', app.value)"))
+        [line] = self.open_lines(receipt)
+        self.assertIn("X | P=T,K=T | b", line, marker + ": " + json.dumps(receipt))
+        receipt = self.tdd("BM_PAIR", command=(sys.executable, "-c",
+                                               "import app\nprint('X | P=T,K=T | a:', app.value)\nprint('X | P=T,K=T | b: none')"))
+        self.assertEqual(self.open_lines(receipt), [], marker + ": " + json.dumps(receipt))
+
+    def test_narrowed_selection_is_a_limitation(self):
+        marker = "NARROWING_UNREPORTED"
+        self.begin(pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one",
+                                    boundaryInputs=["test_kept"]))
+        self.probe("def test_kept(self): self.assertEqual(app.kept, 1)", "def test_other(self): self.assertEqual(app.value, 1)")
+        receipt = self.tdd("BM_KEEP", command=(sys.executable, "-m", "unittest", "test_value.Value.test_kept"))
+        self.assertEqual(receipt.get("limitations"), ["narrowed selection: test_value.Value.test_kept; tests outside it are not compared"],
+                         marker + ": " + json.dumps(receipt))
+        receipt = self.tdd("BM_KEEP", command=(sys.executable, "-m", "unittest", "-k", "kept", "test_value"))
+        self.assertEqual(receipt.get("limitations"), ["narrowed selection: -k kept; tests outside it are not compared"],
+                         marker + ": " + json.dumps(receipt))
+        receipt = self.tdd("BM_KEEP")
+        self.assertEqual(receipt.get("limitations"), [], marker + ": " + json.dumps(receipt))
+
+    def test_unsettled_reading_keeps_tdd_incomplete(self):
+        marker = "UNSETTLED_READING_PASSED"
+        readings = ["kept compares by value", "kept compares by identity"]
+        self.begin(pending_behavior("BM_READ", kind="preservation", behavior="kept stays one", expected="kept is one",
+                                    interpretations=readings))
+        self.probe("def test_kept(self): self.assertEqual(app.kept, 1)")
+        receipt = self.tdd("BM_READ")
+        self.assertEqual((receipt["comparison"], self.status()["tdd"]), ("preserved", "in-progress"), marker + ": " + json.dumps(receipt))
+        [line] = self.open_lines(receipt)
+        self.assertIn("readings unsettled: kept compares by value | kept compares by identity", line, marker)
+        self.assertIn("readings unsettled", self.summary(), marker)
+        settled = pending_behavior("BM_READ", kind="preservation", behavior="kept stays one", expected="kept is one",
+                                   interpretations=readings, interpretation=readings[0], authority="the recorded request")
+        half = self.update({key: value for key, value in settled.items() if key != "authority"})
+        self.assertEqual(half.returncode, 2, marker + ": " + half.stdout + half.stderr)
+        full = self.update(settled)
+        self.assertEqual(full.returncode, 0, marker + ": " + full.stdout + full.stderr)
+        self.assertEqual(self.status()["tdd"], "passed", marker + ": " + self.summary())
+
+    def test_release_is_bound_to_an_executed_probe_note(self):
+        marker = "RELEASE_INVISIBLE"
+        self.begin(pending_behavior("BM_CTX", kind="preservation", behavior="X decides OUT when P=T,K=T,Q=T",
+                                    expected="a: OUT, b: none", boundaryInputs=["X | P=T,K=T,Q=T | a", "X | P=T,K=T,Q=T | b"]),
+                   pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two"))
+        note = "X | P=T,K=T,Q=T: unreachable - Q requires K false in parse()"
+        command = (sys.executable, "-c", f"import app\nprint({note!r})")
+        receipt = self.tdd("BM_CTX", command=command)
+        self.assertEqual(self.status()["tdd"], "in-progress", json.dumps(receipt))
+        release = lambda **fields: pending_behavior("BM_CTX", kind="preservation", behavior="X decides OUT when P=T,K=T,Q=T",
+                                                    expected="a: OUT, b: none",
+                                                    boundaryInputs=["X | P=T,K=T,Q=T | a", "X | P=T,K=T,Q=T | b"], **fields)
+        (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
+        differing = self.tdd("BM_CTX", command=(sys.executable, "-c", "import app\nprint('X | P=T,K=T,Q=T:', app.value)"))
+        self.assertEqual(differing["comparison"], "changed", json.dumps(differing))
+        for fields in ({"released": {"reason": "cannot construct", "case": "X | nowhere"}},
+                       {"released": {"reason": "value changed, so unreachable", "case": "X | P=T,K=T,Q=T"}},
+                       {"released": {"reason": "", "case": "X | P=T,K=T,Q=T"}},
+                       {"released": {"reason": "Q with K is rejected", "case": "X | P=T,K=T,Q=T"},
+                        "interpretations": ["Q is parsed", "Q is ignored"]}):
+            refused = self.update(release(**fields))
+            self.assertEqual(refused.returncode, 2, marker + ": " + json.dumps(fields) + refused.stdout + refused.stderr)
+        contract = self.update(pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two",
+                                                released={"reason": "not needed", "case": "X | P=T,K=T,Q=T"}))
+        self.assertEqual(contract.returncode, 2, marker + ": " + contract.stdout + contract.stderr)
+        (self.repo / "app.py").write_text("value = 1\nkept = 1\n")
+        receipt = self.tdd("BM_CTX", command=command)
+        accepted = self.update(release(released={"reason": "Q requires K false in parse()", "case": "X | P=T,K=T,Q=T"}))
+        self.assertEqual(accepted.returncode, 0, marker + ": " + accepted.stdout + accepted.stderr)
+        released = "released: BM_CTX: Q requires K false in parse() (X | P=T,K=T,Q=T)"
+        self.assertIn(released, self.summary(), marker)
+        self.assertNotIn("BM_CTX", json.loads(self.case.cli("status", "--repo", str(self.repo)).stdout).get("open", ""), marker)
+        receipt = self.tdd("BM_CTX", command=command)
+        self.assertEqual(receipt["released"], [released], marker + ": " + json.dumps(receipt))
+        self.assertFalse(any(line.startswith("BM_CTX") for line in self.open_lines(receipt)), marker + ": " + json.dumps(receipt))
+        packet = checkpoint_channels(self.repo, self.case.env, "code-review")
+        self.assertEqual(packet["behavior-map"]["released"], [released], marker)
+        # the lead's own unverified note neither proves the case nor releases it
+        unverified = "X | P=T,K=F,Q=T | a: unverified - fixture cannot set Q"
+        self.update(pending_behavior("BM_UNV", kind="preservation", behavior="X decides OUT when P=T,K=F,Q=T",
+                                     expected="a: OUT, b: none", boundaryInputs=["X | P=T,K=F,Q=T | a"]))
+        receipt = self.tdd("BM_UNV", command=(sys.executable, "-c", f"print({unverified!r})"))
+        self.assertEqual(receipt["comparison"], "preserved", json.dumps(receipt))
+        [line] = [line for line in self.open_lines(receipt) if line.startswith("BM_UNV")]
+        self.assertIn("X | P=T,K=F,Q=T | a unverified", line, marker + ": " + json.dumps(receipt))
+        refused = self.update(pending_behavior("BM_UNV", kind="preservation", behavior="X decides OUT when P=T,K=F,Q=T",
+                                               expected="a: OUT, b: none", boundaryInputs=["X | P=T,K=F,Q=T | a"],
+                                               released={"reason": "measurement unavailable", "case": "X | P=T,K=F,Q=T | a"}))
+        self.assertEqual(refused.returncode, 2, marker + ": " + refused.stdout + refused.stderr)
+        self.assertIn("unverified", refused.stderr, marker)
+        # a release settles only while its comparison is current and still prints the note unchanged
+        (self.repo / "app.py").write_text("value = 3\nkept = 1\n")
+        self.assertTrue(any(line.startswith("BM_CTX") and "stale" in line for line in self.open_lines(self.tdd("BM_UNV", command=(sys.executable, "-c", f"print({unverified!r})")))), marker)
+        receipt = self.tdd("BM_CTX", command=(sys.executable, "-c", "import app\nprint('X | P=T,K=T,Q=T: unverified - lost')"))
+        [line] = [line for line in self.open_lines(receipt) if line.startswith("BM_CTX")]
+        self.assertIn("release unbound", line, marker + ": " + json.dumps(receipt))
+        receipt = self.tdd("BM_CTX", command=(sys.executable, "-c", "import app\nprint('nothing')"))
+        self.assertTrue(any(line.startswith("BM_CTX") and "was not executed" in line for line in self.open_lines(receipt)), marker + ": " + json.dumps(receipt))
+        receipt = self.tdd("BM_CTX", command=(sys.executable, "-c", f"import app\nprint({note!r} if app.value == 3 else 'nothing')"))
+        self.assertTrue(any(line.startswith("BM_CTX") and "not printed on both trees" in line for line in self.open_lines(receipt)), marker + ": " + json.dumps(receipt))
+
+    def test_readiness_is_one_result_across_consumers(self):
+        marker = "READINESS_NOT_SHARED"
+        self.begin(pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two"))
+        self.probe("def test_value(self): self.assertEqual(app.value, 1)")
+        receipt = self.tdd("BM_CHANGE")
+        self.assertEqual(len(self.open_lines(receipt)), 1, marker + ": " + json.dumps(receipt))
+        [line] = self.open_lines(receipt)
+        verify = self.case.cli("verify", "--repo", str(self.repo), "--", sys.executable, "-c", "print('checked')")
+        self.assertEqual(verify.returncode, 0, verify.stdout + verify.stderr)
+        self.assertIn(line, json.loads(verify.stdout.splitlines()[-1])["next"]["input"], marker + ": " + verify.stdout)
+        self.assertIn(line, self.summary(), marker)
+        complete = self.case.cli("complete", "--repo", str(self.repo))
+        self.assertNotEqual(complete.returncode, 0, marker)
+        self.assertIn("BM_CHANGE", complete.stdout + complete.stderr, marker)
+        hook = subprocess.run([sys.executable, str(harness.ROOT / "hooks" / "rcf-intake-gate.py")], cwd=self.repo, env=self.case.env,
+                              text=True, capture_output=True, input=json.dumps({"cwd": str(self.repo), "tool_name": "spawn_agent",
+                                                                               "tool_input": {"agent_type": "default"}}))
+        self.assertIn('"deny"', hook.stdout, marker + ": " + hook.stdout + hook.stderr)
+        self.assertIn("tdd", hook.stdout, marker)
+        (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
+        self.probe("def test_value(self): self.assertEqual(app.value, 2)")
+        self.tdd("BM_CHANGE")
+        self.assertEqual(self.status()["tdd"], "passed", marker)
+        reopened = self.update(pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two",
+                                                basis="Make the value two.", boundaryInputs=["test_value", "test_missing"]))
+        self.assertEqual(reopened.returncode, 0, reopened.stdout + reopened.stderr)
+        self.assertEqual(self.status()["tdd"], "in-progress", marker + ": " + self.summary())
+        self.assertIn("test_missing", self.summary(), marker)
+        verify = json.loads(self.case.cli("verify", "--repo", str(self.repo), "--", sys.executable, "-c", "print('checked')").stdout.splitlines()[-1])
+        self.assertIn("test_missing", verify["next"]["input"], marker + ": " + json.dumps(verify))
+
+    def test_subtests_attribute_to_their_method(self):
+        marker = "SUBTEST_PARENT_UNATTRIBUTED"
+        self.begin(pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two", boundaryInputs=["test_loop"]))
+        (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
+        self.probe("def test_loop(self):\n        for i in (1, 2, 3):\n            with self.subTest(i=i): self.assertEqual(app.value, 2, 'LOOP_NOT_TWO')",
+                   "def test_kept(self): self.assertEqual(app.kept, 1)")
+        receipt = self.tdd("BM_CHANGE")
+        self.assertEqual(self.status()["tdd"], "passed", marker + ": " + json.dumps(receipt))
+        self.assertEqual(receipt["cases"], ["test_loop (test_value.Value.test_loop): original=failed (3 subtests), current=passed; "
+                                            "AssertionError: 1 != 2 : LOOP_NOT_TWO"], marker)
+        self.assertEqual([(arm["source"], arm["unnamed"]) for arm in receipt["arms"]], [("original", 0), ("current", 3)], marker)
+        self.assertIn("current: 3 cases unnamed (passing subtests print no name)", receipt["limitations"], marker)
+
+    def test_printed_lines_are_named_cases(self):
+        marker = "PRINTED_CASE_UNATTRIBUTED"
+        (self.repo / "app.sh").write_text("value=1\nkept=1\n")
+        self.case.git("add", "app.sh")
+        self.case.git("commit", "-qm", "shell app")
+        self.begin(pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two", boundaryInputs=["value"]),
+                   pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one", boundaryInputs=["kept"]))
+        (self.repo / "probe.test.sh").write_text('. ./app.sh\necho "value: $value"\necho "kept: $kept"\n')
+        (self.repo / "app.sh").write_text("value=2\nkept=1\n")
+        receipt = self.tdd("BM_CHANGE", "BM_KEEP", command=("bash", "probe.test.sh"))
+        self.assertEqual((receipt["comparison"], self.status()["tdd"]), ("changed", "passed"), marker + ": " + json.dumps(receipt))
+        self.assertEqual(receipt["cases"], ["value: original=1, current=2"], marker)
+        (self.repo / "app.sh").write_text("value=2\nkept=2\n")
+        receipt = self.tdd("BM_CHANGE", "BM_KEEP", command=("bash", "probe.test.sh"))
+        self.assertEqual(len(self.open_lines(receipt)), 1, marker + ": " + json.dumps(receipt))
+        [line] = self.open_lines(receipt)
+        self.assertIn("BM_KEEP (preservation)", line, marker + ": " + json.dumps(receipt))
+        self.assertIn("kept differs (original=1, current=2)", line, marker)
+
+    def test_unattributed_output_is_not_proof(self):
+        marker = "UNEXECUTED_BOUNDARY_PASSED"
+        self.begin(pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one"))
+        receipt = self.tdd("BM_KEEP", command=(sys.executable, "-c", "import app\nprint(app.kept)"))
+        self.assertEqual((receipt["comparison"], self.status()["tdd"]), ("preserved", "in-progress"), marker + ": " + json.dumps(receipt))
+        self.assertIn("no attributable case executed", self.open_lines(receipt)[0], marker)
+        receipt = self.tdd("BM_KEEP", command=(sys.executable, "-c", "import app\nprint('kept: unverified - unavailable')\nprint('kept:', app.kept)"))
+        [line] = self.open_lines(receipt)
+        self.assertIn("kept unverified", line, marker + ": " + json.dumps(receipt))
+        receipt = self.tdd("BM_KEEP", command=(sys.executable, "-c", "import app\nprint('kept:', app.kept)"))
+        self.assertEqual((self.open_lines(receipt), self.status()["tdd"]), ([], "passed"), marker + ": " + json.dumps(receipt))
+        (self.repo / "app.py").write_text("value = 1\nkept = 2\n")
+        receipt = self.tdd("BM_KEEP", command=(sys.executable, "-c", "import app\nprint('done: ok')\nprint('kept is', app.kept)"))
+        [line] = self.open_lines(receipt)
+        self.assertIn("unnamed output differs", line, marker + ": " + json.dumps(receipt))
+
+    def test_nameless_contract_on_several_cases_must_name_them(self):
+        marker = "CONTRACT_WITHOUT_CHANGE_PASSED"
+        self.begin(pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two"))
+        (self.repo / "app.py").write_text("value = 2\nkept = 2\n")
+        self.probe("def test_value(self): self.assertEqual(app.value, 2, 'VALUE_NOT_TWO')",
+                   "def test_kept(self):\n        for i in (20, 2):\n            with self.subTest(i=i): self.assertEqual(19 * app.kept - 18 if i == 20 else app.kept, i)")
+        receipt = self.tdd("BM_CHANGE")
+        self.assertEqual(self.status()["tdd"], "in-progress", marker + ": " + json.dumps(receipt))
+        self.assertIn("several cases executed: name the requested ones", self.open_lines(receipt)[0], marker)
+        self.assertEqual(receipt["cases"], [
+            "test_kept (test_value.Value.test_kept): original=failed (2 subtests), current=passed; "
+            "AssertionError: 1 != 20; AssertionError: 1 != 2",
+            "test_value (test_value.Value.test_value): original=failed, current=passed; AssertionError: 1 != 2 : VALUE_NOT_TWO",
+        ], "VIEW_NOT_COMPACT: " + json.dumps(receipt))
+        # a subtest message contained in an earlier one is a distinct assertion (the runner's stored
+        # shape keeps a trailing newline; the folding rule must not compare by substring)
+        from hooks.lib import behavior_map
+        folded, _ = behavior_map.folded_cases({"arms": [{"requestedTree": "a", "outcome": "failed", "cases": {
+            "test_kept (m.T.test_kept) (i=20)": {"outcome": "failed", "assertion": "AssertionError: 1 != 20"},
+            "test_kept (m.T.test_kept) (i=2)": {"outcome": "failed", "assertion": "AssertionError: 1 != 2"}}},
+            {"requestedTree": "b", "outcome": "passed", "cases": {"test_kept (m.T.test_kept)": {"outcome": "passed"}}}]})
+        self.assertEqual(folded["test_kept (m.T.test_kept)"]["original"]["assertion"],
+                         "AssertionError: 1 != 20\nAssertionError: 1 != 2", "VIEW_NOT_COMPACT: " + json.dumps(folded))
+
+    def test_contract_batch_cannot_ignore_an_unowned_regression(self):
+        marker = "REWRITTEN_EXPECTATION_PASSED"
+        self.begin(pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two", boundaryInputs=["test_value"]),
+                   pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one", boundaryInputs=["test_other"]))
+        (self.repo / "app.py").write_text("value = 2\nkept = 2\n")
+        self.probe("def test_value(self): self.assertEqual(app.value, 2, 'VALUE_NOT_TWO')",
+                   "def test_kept(self): self.assertEqual(app.kept, 2, 'KEPT_REWRITTEN')",
+                   "def test_other(self): self.assertIsInstance(app.kept, int)")
+        self.tdd("BM_KEEP", command=(sys.executable, "-m", "unittest", "test_value.Value.test_other"))
+        receipt = self.tdd("BM_CHANGE")
+        self.assertEqual(self.status()["tdd"], "in-progress", marker + ": " + json.dumps(receipt))
+        [line] = self.open_lines(receipt)
+        self.assertIn("BM_CHANGE (contract)", line, marker)
+        self.assertIn("test_kept differs and no item names it", line, marker)
+        self.assertIn("test_kept differs and no item names it", self.summary(), "READINESS_NOT_SHARED")
+
+    def test_view_keeps_every_distinct_assertion_and_summary_keeps_the_question(self):
+        marker = "VIEW_NOT_COMPACT"
+        self.begin(pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one", boundaryInputs=["test_kept"]))
+        (self.repo / "app.py").write_text("value = 1\nkept = 3\n")
+        self.probe("def test_kept(self): self.assertEqual(app.kept, 2, 'KEPT_WRONG')")
+        receipt = self.tdd("BM_KEEP")
+        self.assertEqual(receipt["cases"], ["test_kept (test_value.Value.test_kept): original=failed, current=failed; "
+                                            "AssertionError: 1 != 2 : KEPT_WRONG; AssertionError: 3 != 2 : KEPT_WRONG"], marker + ": " + json.dumps(receipt))
+        self.assertIn("BM_KEEP (preservation): kept stays one => kept is one; no current valid comparison; test_kept failed on original, failed on current",
+                      self.summary(), "READINESS_NOT_SHARED: " + self.summary())
+
+    def test_legacy_items_without_kind_ask_for_one(self):
+        marker = "LEGACY_ITEM_AUTO_PROVED"
+        from hooks.lib import behavior_map
+        passed = {"test_value (test_value.Value.test_value)": {"outcome": "passed"}}
+        legacy = {"id": "BM_OLD", "basis": "recorded before kind", "behavior": "value stays", "seam": "app", "expected": "1",
+                  "comparison": {"valid": True, "fresh": True, "runIndex": 0, "comparison": "preserved", "command": "x",
+                                 "arms": [{"requestedTree": "a", "outcome": "passed", "error": "", "cases": passed},
+                                          {"requestedTree": "b", "outcome": "passed", "error": "", "cases": passed}]}}
+        [item] = behavior_map.runtime_items([legacy])
+        self.assertEqual(behavior_map.unresolved([item]), ["BM_OLD"], marker)
+        self.assertIn("declare kind", behavior_map.open_obligations([item])[0], marker)
+        self.assertEqual(comparison_view(item["comparison"])["comparison"], "preserved", marker)
+        # an earlier recorder's fields and typed inputs load as absent, never refuse a recorded map
+        recorded = {**legacy, "kind": "preservation", "redFailure": "X", "status": "green", "proofBinding": {},
+                    "boundaryInputs": [{"now": 1}], "interpretations": ["one"], "interpretation": "one"}
+        [item] = behavior_map.runtime_items([recorded])
+        self.assertEqual({key for key in item if key in {"redFailure", "status", "proofBinding", "interpretations", "interpretation"}}, set(), marker)
+        self.assertEqual(item["boundaryInputs"], [], marker)
+        self.assertIn("recorded boundary inputs are not executed case names", behavior_map.open_obligations([item])[0], marker)
+        del recorded["boundaryInputs"]
+        self.assertEqual(behavior_map.unresolved(behavior_map.runtime_items([recorded])), [], marker)
+        with self.assertRaises(ValueError, msg=marker):
+            behavior_map.initial_items([recorded])
+        # through the real CLI: a recorded map whose typed inputs loaded as the sentinel stays open until
+        # executed case names replace them; an update that omits boundaryInputs cannot erase the sentinel
+        from hooks.lib._workflow_db import evidence_write, mutation
+        from hooks.lib.repo_identity import resolve_repo_identity
+        old = lambda **fields: pending_behavior("BM_OLD", kind="preservation", behavior="value stays", expected="value is one", **fields)
+        self.begin(old())
+        with mutation(resolve_repo_identity(self.repo)) as transaction:
+            state = dict(transaction.state)
+            preflight = json.loads(json.dumps(transaction.evidence(state["preflightEvidence"])))
+            preflight["document"]["behaviorMap"][0]["boundaryInputs"] = [{"now": 1}]
+            write = evidence_write(str(state["workflowId"]), "preflight", preflight)
+            transaction.write([write])
+            transaction.append({**state, "preflightEvidence": write.evidence_id, "preflightLatestEvidence": write.evidence_id},
+                               "legacy-fixture")
+        self.probe("def test_value(self): self.assertEqual(app.value, 1)")
+        receipt = self.tdd("BM_OLD")
+        self.assertEqual(self.status()["tdd"], "in-progress", marker + ": " + json.dumps(receipt))
+        self.assertIn("recorded boundary inputs are not executed case names", "".join(self.open_lines(receipt)), marker)
+        unmapped = self.update(old())
+        self.assertEqual(unmapped.returncode, 0, marker + ": " + unmapped.stdout + unmapped.stderr)
+        self.assertEqual(self.status()["tdd"], "in-progress", marker + ": an update without boundaryInputs erased the unmapped inputs")
+        self.assertIn("recorded boundary inputs are not executed case names", self.summary(), marker)
+        mapped = self.update(old(boundaryInputs=["test_value"]))
+        self.assertEqual(mapped.returncode, 0, marker + ": " + mapped.stdout + mapped.stderr)
+        self.assertEqual(self.status()["tdd"], "passed", marker)
+
+    def test_receipt_and_packet_share_one_compact_view(self):
+        marker = "VIEW_NOT_COMPACT"
+        self.begin(pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two", boundaryInputs=["test_value"]),
+                   pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one",
+                                    boundaryInputs=["test_kept", "test_other"]))
+        (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
+        self.probe("def test_value(self): self.assertEqual(app.value, 2, 'VALUE_NOT_TWO')",
+                   "def test_kept(self): self.assertEqual(app.kept, 1)",
+                   "def test_other(self): self.assertEqual(app.kept, 1)",
+                   "def test_same_text(self): self.assertEqual(app.value, 2, 'VALUE_NOT_TWO')",
+                   "def test_broken(self): self.assertEqual(app.kept, 3, 'ALWAYS_BROKEN')",
+                   "def test_loop(self):\n        for i in (1, 2):\n            with self.subTest(i=i): self.assertEqual(app.kept, 1)")
+        receipt = self.tdd("BM_CHANGE", "BM_KEEP")
+        self.assertEqual(receipt["comparison"], "incomplete", json.dumps(receipt))
+        self.assertTrue({"runIndex", "comparison", "arms", "cases", "limitations"} <= set(receipt), marker + ": " + json.dumps(receipt))
+        view = {key: receipt[key] for key in ("runIndex", "comparison", "arms", "cases", "limitations")}
+        packet = checkpoint_channels(self.repo, self.case.env, "code-review")
+        [compared] = [item["comparison"] for item in packet["behavior-map"]["items"] if "cases" in item.get("comparison", {})]
+        self.assertEqual({key: compared[key] for key in view}, view, marker + ": " + json.dumps(compared))
+        for key in ("sourceDelta", "coverage", "output", "observation"):
+            self.assertNotIn(key, json.dumps(compared), marker + ": " + key)
+        self.assertEqual(receipt["cases"], [
+            "test_broken (test_value.Value.test_broken): original=failed, current=failed; AssertionError: 1 != 3 : ALWAYS_BROKEN",
+            "2 cases: test_same_text (test_value.Value.test_same_text), test_value (test_value.Value.test_value): "
+            "original=failed, current=passed; AssertionError: 1 != 2 : VALUE_NOT_TWO",
+        ], marker)
+        self.assertNotIn("test_kept", json.dumps(receipt["cases"]), marker)
+        self.assertEqual([(arm["source"], arm["outcome"], arm["testsExecuted"], arm["unnamed"]) for arm in receipt["arms"]],
+                         [("original", "failed", 6, 0), ("current", "failed", 6, 0)], marker + ": " + json.dumps(receipt["arms"]))
+        self.assertEqual(packet["behavior-map"]["open"], self.open_lines(receipt), marker)
+        self.assertEqual(packet["behavior-map"]["openCount"], 2, marker)
+        self.assertIsInstance(receipt["summaryId"], str, marker)
+
+    def test_open_obligations_are_questions(self):
+        marker = "OBLIGATION_QUESTION_MISSING"
+        self.begin(pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two"),
+                   pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one",
+                                    boundaryInputs=["test_kept"]))
+        self.probe("def test_value(self): self.assertEqual(app.value, 1)")
+        receipt = self.tdd("BM_CHANGE", "BM_KEEP")
+        lines = self.open_lines(receipt)
+        self.assertEqual([line.split(" ")[0] for line in lines], ["BM_CHANGE", "BM_KEEP"], marker + ": " + json.dumps(receipt))
+        self.assertTrue(all(" => " in line and ";" in line for line in lines), marker + ": " + json.dumps(lines))
+        self.assertIn("test_kept missing on original, current", lines[1], marker)
+        self.assertNotIn("MC/DC contexts", json.dumps(receipt), marker)
+        status = json.loads(self.case.cli("status", "--repo", str(self.repo), "--fields", "nextAction,tdd").stdout)
+        self.assertEqual(status, {"nextAction": "tdd", "tdd": "in-progress"}, marker)

@@ -131,8 +131,6 @@ DESIGN_FILE_SHAPE = (
     '{"schemaVersion":1,"status":"present","sha256":"<64 hex>"} or '
     '{"schemaVersion":1,"status":"absent","reason":"..."}'
 )
-DOCUMENT_SHAPES = {"governed-design": DESIGN_FILE_SHAPE}
-DOCUMENT_SHAPE_TABLE = "\n".join(["| Surface | Expected shape |", "|---|---|", *(f"| `{name}` | {shape} |" for name, shape in DOCUMENT_SHAPES.items())])
 
 
 def validate_design_declaration(value: object) -> JsonObject:

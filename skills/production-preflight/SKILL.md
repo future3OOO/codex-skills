@@ -56,7 +56,8 @@ predicate that decides an outcome:
    dependent code.
 
 State the reachable values and decision rules concisely in this contract and the
-existing `behaviorMap` and concrete discriminating probes. Investigation is complete when each
+existing `behaviorMap`: competing readings go in the owning item's `interpretations`,
+and the discriminating inputs in its `boundaryInputs`. Investigation is complete when each
 decision's meaning is established over its reachable values or its uncertainty
 is explicit. Unambiguous predicates need no additional fields or inventory.
 
@@ -71,17 +72,17 @@ readings of one behavior, is a pending `behaviorMap` item, not an unknown.
 
 ### `behaviorMap`
 
-Record concrete falsifiers of the load-bearing public promises. Each item requires `id`, `basis`, `behavior`, `seam` and `expected`; `sourceRefs` is optional. IDs are stable uppercase identifiers. The basis ties the expectation to the original request or affected preservation; select the `seam` under AGENTS.md's Real-Seam proof invariant, naming the responsible production Interface and its real setup for the assertion being proved.
+Record concrete falsifiers of the load-bearing public promises. Each item requires `id`, `kind`, `basis`, `behavior`, `seam` and `expected`; `boundaryInputs`, `interpretations` (with `interpretation` and `authority` once settled) and `sourceRefs` are optional and defined in TDD's [Behavior Map](../tdd/SKILL.md#behavior-map), which is what readiness enforces by execution. IDs are stable uppercase identifiers. `kind` is `contract` for a requested change and `preservation` for an invariant the change must keep. The basis ties the expectation to the original request or affected preservation; select the `seam` under AGENTS.md's Real-Seam proof invariant, naming the responsible production Interface and its real setup for the assertion being proved.
 
 ```json
-[{"id":"BM_EXPIRY","basis":"the deadline is inclusive","behavior":"expires at the deadline","seam":"Expiry.is_expired with a real clock","expected":"now equal to expiresAt is expired"}]
+[{"id":"BM_EXPIRY","kind":"contract","basis":"the deadline is inclusive","behavior":"expires at the deadline","seam":"Expiry.is_expired with a real clock","expected":"now equal to expiresAt is expired","boundaryInputs":["test_expires_at_deadline","test_not_expired_before_deadline"],"interpretations":["now > expiresAt","now >= expiresAt"],"interpretation":"now >= expiresAt","authority":"the request's 'at the deadline'"}]
 ```
 
-Derive attacks from actual promises: atomicity needs supported failure and cancellation; persistence needs reopen and another connection; shared state needs material writer interleavings; parsers need decisive boundaries and captured production inputs. Use real collaborators and observe results and state effects. A missing entrypoint is not proof of its downstream guarantees.
+Derive attacks from actual promises: atomicity needs supported failure and cancellation; persistence needs reopen and another connection; shared state needs material writer interleavings; parsers need decisive boundaries and captured production inputs, named in `boundaryInputs`. Use real collaborators and observe results and state effects. A missing entrypoint is not proof of its downstream guarantees.
 
-Resolve materially different readings from authority and concrete discriminating inputs in the contract and probes. The existing advisor challenges the expectation itself against the request. No separate interpretation form or authored proof status is needed.
+Record materially different readings as the owning item's `interpretations` with concrete discriminating `boundaryInputs`; settle them from authority before dependent code, or leave them visibly unsettled, which keeps TDD incomplete. The existing advisor challenges the expectation itself against the request. No authored proof status exists; the runner derives it.
 
-An owning probe links a finding with `sourceRefs: [{"type":"finding","evidenceId":"<intake>","id":"R-1"}]`. The runner executes it on the recorded reviewed source and current repair. Replace the complete list with `record tdd-map` when obligations change; this cannot silently discharge a finding. The runner supplies change or preservation results, freshness and completion. An empty list is appropriate only when there is no behavior claim.
+An owning probe links a finding with `sourceRefs: [{"type":"finding","evidenceId":"<intake>","id":"R-1"}]`. The runner executes it on the recorded reviewed source and current repair. Update changed items by id with `record tdd-map` when obligations change; this cannot silently discharge a finding. The runner supplies change or preservation results, freshness and completion. An empty list is appropriate only when there is no behavior claim.
 
 ## Recording
 
@@ -92,4 +93,4 @@ In the governed workflow record it with `python3 "$HOME/.codex/skills/repo-produ
 (shape: `record preflight --help`; `--check` validates without recording). A refusal
 names every violation at once and mutates nothing. Key order and JSON formatting
 do not change content.
-Resolve outstanding questions before dependent implementation; update the list through `tdd-map`, never a second preflight recording. Response prose is not evidence.
+Resolve outstanding questions before dependent implementation; settle readings and update items through `tdd-map`, never a second preflight recording. Response prose is not evidence.

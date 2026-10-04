@@ -335,7 +335,7 @@ class PassLifecycleTests(unittest.TestCase):
             ("record", "advisor-disposition", "--slug", "summary-large-map", "--workflow-id", wid, "--stage", "preflight", "--findings", "none"),
         )
         document = self.preflight_document()
-        template = {"basis": "summary coverage", "seam": "app module", "expected": "same value"}
+        template = {"kind": "contract", "basis": "summary coverage", "seam": "app module", "expected": "same value"}
         document["behaviorMap"] = document["behaviorMap"] + [
             {**template, "id": f"BM_PRESERVE_OUTCOME_SEMANTICS_{index:02d}", "behavior": f"preserved outcome {index}",
              "expected": f"outcome {index} unchanged"}
@@ -1373,6 +1373,7 @@ class PassLifecycleTests(unittest.TestCase):
         )
 
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertTrue(result.stdout.strip().endswith("}"), "GATE_CAPTURE_FAILURE_UNRECORDED: " + result.stdout + result.stderr)
         run = self.evidence(json.loads(result.stdout.splitlines()[-1])["evidenceId"])["runs"][-1]
         self.assertFalse(run["valid"])
         self.assertIsNotNone(
@@ -1949,7 +1950,7 @@ class PassLifecycleTests(unittest.TestCase):
                              "--reason", "Documentation observation has no material runtime consequence.")
         self.assertEqual(addressed.returncode, 0, mixed_marker + addressed.stdout + addressed.stderr)
         source_ref = [{"type": "finding", "evidenceId": intake_id, "id": "SPEC-1"}]
-        mapped = {"id": "BM_ADV_1", "basis": "advisor finding",
+        mapped = {"id": "BM_ADV_1", "kind": "contract", "basis": "advisor finding",
             "behavior": "the owned attack closes the finding", "seam": "workflow CLI",
             "expected": "the explicit fixed disposition closes the finding",
             "sourceRefs": source_ref}
@@ -2177,7 +2178,7 @@ class PassLifecycleTests(unittest.TestCase):
         self.assertEqual((blocked.returncode, len(self.history_events()) - events), (2, 0), appeal_marker)
         ref = [{"type": "finding", "evidenceId": intake, "id": "SPEC-1"}]
         update = self.json_file("correction-map.json", {"items": [
-            {"id": "BM_ADV_1", "basis": "finding", "behavior": "correction closes", "seam": "workflow CLI",
+            {"id": "BM_ADV_1", "kind": "contract", "basis": "finding", "behavior": "correction closes", "seam": "workflow CLI",
              "expected": "app.value is 2", "sourceRefs": ref}]})
         self.run_cli(("record", "tdd-map", "--slug", slug, "--workflow-id", wid, "--input", str(update)))
         (self.repo / "test_correction_gate.py").write_text("import app,unittest\nclass T(unittest.TestCase):\n"
@@ -2219,7 +2220,7 @@ class PassLifecycleTests(unittest.TestCase):
         update = self.tmp / "review-finding-map.json"
         update.write_text(json.dumps({
             "items": [{
-                "id": "BM_ADV_1", "basis": "review finding",
+                "id": "BM_ADV_1", "kind": "contract", "basis": "review finding",
                 "behavior": "the reviewed value is corrected", "seam": "app module",
                 "expected": "app.value is 2",
                 "sourceRefs": [{"type": "finding", "evidenceId": intake_id, "id": "SPEC-1"}]}],
@@ -2451,7 +2452,7 @@ commit_tdd(resolve_repo_identity(sys.argv[1]), 'terminal-state', sys.argv[2],
         self.assertEqual(json.loads(self.cli("status").stdout), state, failure)
         self.assertEqual(self.history_events(), history, failure)
         update = self.tmp / "governance-map.json"
-        update.write_text(json.dumps({"items": [{"id": "BM_NEW", "basis": "frozen map", "behavior": "new obligation", "seam": "app", "expected": "2"}]}))
+        update.write_text(json.dumps({"items": [{"id": "BM_NEW", "kind": "preservation", "basis": "frozen map", "behavior": "new obligation", "seam": "app", "expected": "2"}]}))
         rejected = self.cli("record", "tdd-map", "--slug", "terminal-state", "--workflow-id", wid,
                             "--input", str(update))
         failure = "GOVERNANCE_REVALIDATION_ACCEPTED_TDD_MAP_MUTATION"

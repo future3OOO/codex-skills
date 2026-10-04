@@ -384,9 +384,7 @@ class AdvisorSecurityBoundaryTest(unittest.TestCase):
                     "behavior": "the final-review evidence contract is observable",
                     "seam": "ask-codex-advisor.sh final-review CLI Interface",
                     "expected": "the final provider receives one projection and one diff",
-                    "redFailure": "FINAL_PROBE_UNAVAILABLE",
-                    "status": "already-satisfied",
-                    "evidence": "the setup changes no production behavior",
+                    "basis": "the setup changes no production behavior",
                     "sourceRefs": [],
                 }
             ]
