@@ -50,7 +50,10 @@ Repo Context Forge analysis copy. For codex-skills installation, follow
   primary proof. Mocks, stubs, fakes, fixture-substituted collaborators, invented
   gateways, and test-only adapters never prove behavior. Capturing a Module's
   own outgoing process boundary proves only what it emits. `$production-code`
-  owns the comparison procedure.
+  owns the comparison procedure. For the code being changed, reuse the project's
+  relevant cases, fixtures and assertions through the responsible production
+  Module's Interface. Use an enclosing operation only when the assertion concerns
+  that operation's behavior or integration.
 - **Attack probes first.** Unit tests must themselves probe real production
   behavior. Maximize attack coverage across affected inputs, failures,
   interactions, and preservation. Run affected-surface checks; a full suite

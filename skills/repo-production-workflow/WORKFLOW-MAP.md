@@ -13,22 +13,17 @@ flowchart LR
     PD --> A1[advisor preflight]
     A1 -->|changes-required| PD
     A1 -->|approved| P[record the approved preflight once]
-    P --> M{map has a pending item?}
-    M -->|yes| TR[mapped contract RED, preservation items settled first]
-    M -->|no: every item already-satisfied or omitted| NR[tdd --not-required]
-    TR --> I[implementation]
-    NR --> I
-    I -->|every contract RED| TG[mapped GREEN]
-    I -->|not-required map| V
-    TG --> TM[map update when a proof exposes a new obligation]
-    TM -->|new obligation| TR
-    TM -->|map resolved| V[verification]
+    P --> I[write decisive probes and implement]
+    I --> TG[runner compares recorded source versions]
+    TG --> TM[update probe list when scope changes]
+    TM -->|unresolved| I
+    TM -->|current proof| V[verification]
     V --> CR[code-review delegate review when non-trivial]
     CR --> A2[final Codex Advisor review]
     A2 --> C{context matched and effective findings terminal?}
     C -->|context mismatch| A2
     C -->|behavioral correction| TM2[tdd-map adds the item]
-    TM2 --> TR
+    TM2 --> I
     C -->|non-behavioral correction| I
     C -->|evidence-backed rejection| AP[one appeal on the same session]
     AP --> C
@@ -51,9 +46,10 @@ workflow history               # ordered accepted receipts and logical reference
 workflow evidence [--full]     # one evidence record's metadata, or its document
 workflow set-phase             # trivial code review only
 workflow record <kind> [--check] [--input -|path]
-                               # preflight|review|advisor-result|advisor-disposition|tdd-map;
+                               # preflight|review|advisor-result|tdd-map;
                                # `record <kind> --help` prints the accepted shape
-workflow tdd                   # mapped RED/GREEN or records not-required
+workflow record advisor-disposition --finding ID --fixed|--rejected|--report-only|--follow-up REFERENCE --reason TEXT
+workflow tdd                   # compare probes on original, reviewed and candidate sources
 workflow verify                # generic commands, typed quality gate, --observed, --from-evidence
 workflow pause|checkpoint|complete|prune
 ```
@@ -81,26 +77,25 @@ never includes a database path, SQLite table or column name, journal detail, or
 other storage mechanism. With no authoritative workflow it prints no JSON,
 returns exit 2, names `no active workflow`, and creates no state.
 
-Repo Context Forge, preflight, TDD, verification, review, and
-addressed advisor dispositions record only with their native validated documents
-as logical evidence, inserted in the same SQLite transaction as the accepted event; a
-findings-none advisor disposition intentionally carries no document, and a
-refusal names the missing evidence and mutates nothing. The preflight document
+Repo Context Forge, preflight, TDD, verification and review record their native
+documents as logical evidence in the same SQLite transaction as the accepted event.
+Finding dispositions take the identifier, decision and substantive reason; the
+workflow supplies recorded intake, stage, source binding and linked comparison
+results. A judgment without runnable checks needs no execution reference. A
+findings-none disposition carries no document. The preflight document
 owns the initial Behavior Map; mapped TDD evidence carries its stable IDs,
-RED/GREEN runs and current dispositions. A plan may show
+source comparisons and finding references. A plan may show
 the map but is not an evidence owner.
 
 Exit 2 alone does not prove a refusal: verification and TDD can commit first
 and return 2 after — a command that failed after being recorded or an invalid
-TDD run recorded as `reopen` or `in-progress`.
+incomplete comparison.
 Repo Context Forge, preflight, and verification keep their
 accepted reference only while producer-recorded as passed — every other transition drops
 it, so a bare replay can never resurrect prior evidence. TDD and code review
 instead keep a current producer reference across their own non-passed states —
-TDD while in-progress and when not-required, code review while pending — so a
-later run can validate or supersede it. Only TDD's in-progress reference serves
-GREEN's validation of the RED it follows. TDD entry demands recorded preflight
-evidence and, for new governed passes, a mapped behavior ID. Each producer stamps
+incomplete comparisons and pending reviews — so later operations can reuse
+applicable results. TDD entry requires recorded preflight evidence and a probe ID. Each producer stamps
 the workflow instance into its evidence and the ledger keeps its logical
 identity, so a passed Repo Context Forge, preflight, or
 verification phase without one — legacy state, or a bare library claim — reads
@@ -110,22 +105,11 @@ the transcript audit.
 
 The database and its containing directory are private and agent-writable. Committed transactions provide continuity across process restart and compaction; it is not tamper-proof and does not authorize Git. A normal
 commit or HEAD change does not invalidate it. The edit hook advises, never
-refuses (hook table below). Every RED-phase run records the production paths
-changed since the pass began, so a late RED or baseline is labelled in
-`summary` and shown to the final review; nothing refuses on it. A `tdd-map`
-update is needed only when a GREEN exposes a new obligation. A normally
+refuses (hook table below). The runner compares original, reviewed and candidate sources and retains bound results. Update the list only when obligations change. A normally
 completed workflow is terminal: every mutation except `begin` is rejected.
 
-After a successful production edit in an active pass, the PostToolUse edit
-hook runs one GitNexus `detect-changes` against the pass-start index and names
-in its `additionalContext` the impacted tests the current map's recorded
-selections do not own, or a short gap when that cannot be decided against this
-pass's index. Complete ownership is silent, an identical result repeats neither
-notice nor write, a completed or revalidating pass gets no scan, and the
-advisory never changes the edit's outcome or the workflow state; a mapped GREEN
-issues no second scan. It is advisory and incomplete by nature, and full-map
-reconciliation stays the completeness authority. The installed
-automatic advisory replaces the manual pre-commit detect-changes step.
+The edit hook runs no impacted-test scan: a file-level list sent agents into
+whole test modules without naming the tests a change breaks.
 
 A governance-document edit after completion is the sole controlled revalidation exception: it opens a window in
 which only verification, code review, the final advisor review, and completion
@@ -153,10 +137,10 @@ Invalidation occurs before quality feedback, so a failing quality check cannot
 leave stale readiness behind. Ordinary documentation and scratch edits are
 exempt; governance docs reset verification, code review, and final review, and
 resume at the first unsatisfied phase in the same ordered workflow. A
-governance-first pass therefore returns to TDD, while a completed
-implementation returns to verification.
+pass with an empty approved probe list resumes verification; an unresolved
+comparison resumes TDD.
 
-Behavioral findings from the `code-review` delegate or final Codex Advisor and pushed-head reviewers within the active task return to mapped TDD under the same `workflowId`: add the Behavior Map item, drive its behavior-specific RED, then fix it. Only genuinely non-behavioral corrections return directly to implementation, with the reason recorded. The behavioral/non-behavioral classification is a lead-owned obligation, not a machine-validated edge: the recorder validates the reassessment's structure and blocks completion until one is recorded, but it cannot judge the classification itself - a behavioral defect routed through a why-only reassessment is a doctrine violation the reviews are expected to catch, not a state the hooks can refuse. Separate work outside the active task starts a new workflow with `begin`.
+Behavioral findings return to the same workflow: attach the finding reference to its owning probe, implement the repair and execute the comparison against the recorded reviewed source. The runner supplies current proof; existing review judges the requirement and finding closure. List edits cannot discharge material findings. Separate work starts a new pass.
 
 A finding envelope is one correction batch. A pending behavioral finding rides
 the pass as a map-owned attack obligation; dispositions may cover any subset,
@@ -212,9 +196,9 @@ session and defers the rest here.
 
 | Hook | Role |
 |---|---|
-| `PreToolUse(Edit\|Write\|apply_patch)` | Advise, never refuse: name what the pass has not recorded and admit the edit; docs, scratch, and non-repository paths are silent; test-like paths skip only the RED advice |
+| `PreToolUse(Edit\|Write\|apply_patch)` | Advise, never refuse: name what the pass has not recorded and admit the edit; docs, scratch, and non-repository paths are silent; test-like paths skip only the comparison advice |
 | `PreToolUse(Bash)` | Rewrite a lone pytest/unittest command to `workflow.py verify --observed -- <command>`: the same exit code, plus a receipt in the checkout of the command's own working directory; while it records, the command's stderr is merged into stdout |
-| `PostToolUse(Edit\|Write\|apply_patch\|Bash)` | Observe explicit edit paths and actual Git changes, invalidate downstream readiness, then return batched lint and the map advisory |
+| `PostToolUse(Edit\|Write\|apply_patch\|Bash)` | Observe explicit edit paths and actual Git changes, invalidate downstream readiness, then return batched lint |
 | `PostCompact` | Forget which advisories this session has heard, so each returns once after compaction |
 | `SessionStart(compact)` | Restore the discipline line and the pass's open work from committed SQLite state |
 

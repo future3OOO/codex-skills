@@ -6,7 +6,6 @@ import json
 import os
 import re
 import sys
-import tempfile
 import uuid
 from pathlib import Path
 from .behavior_map import initial_items, map_errors
@@ -17,16 +16,6 @@ REVIEWER_RESOLVED = {"fixed", "rejected-with-evidence", "report-only"}
 REVIEWER_DISPOSITIONS = REVIEWER_RESOLVED | {"accepted-follow-up"}
 ADVISOR_RESOLVED = {"fixed", "rejected-with-evidence", "report-only"}
 ADVISOR_DISPOSITIONS = ADVISOR_RESOLVED | {"accepted-follow-up"}
-MEASUREMENT_SHAPE = '{"claim":non-empty text,"command":non-empty text,"result":non-empty text}'
-COUNTED_OCCURRENCE_SHAPE = '{"domain":non-empty text,"count":int>=0,"complete":bool,"command":non-empty text,"result":non-empty text}'
-SEAM_OCCURRENCE_SHAPE = '{"seam":non-empty text,"reproduction":{"command":non-empty text,"result":non-empty text}}'
-DISPOSITION_REQUIREMENTS = {
-    "fixed": f"premise={MEASUREMENT_SHAPE}; occurrence={COUNTED_OCCURRENCE_SHAPE} or {SEAM_OCCURRENCE_SHAPE}; materialConsequence={MEASUREMENT_SHAPE}; evidence=non-empty text; premise.result strips and lowercases to false or counted occurrence has count=0 and complete=true; behavioral fixed always requires the counted occurrence with count=0 and complete=true over the finding's recorded domain",
-    "rejected-with-evidence": f"premise={MEASUREMENT_SHAPE}; occurrence={COUNTED_OCCURRENCE_SHAPE} or {SEAM_OCCURRENCE_SHAPE}; materialConsequence={MEASUREMENT_SHAPE}; evidence=non-empty text; premise.result strips and lowercases to false or counted occurrence has count=0 and complete=true",
-    "report-only": f"premise={MEASUREMENT_SHAPE}; occurrence={COUNTED_OCCURRENCE_SHAPE} or {SEAM_OCCURRENCE_SHAPE}; materialConsequence={MEASUREMENT_SHAPE}; evidence=non-empty text; materialConsequence.result strips and lowercases to false",
-    "accepted-follow-up": f"premise={MEASUREMENT_SHAPE}; occurrence={COUNTED_OCCURRENCE_SHAPE} or {SEAM_OCCURRENCE_SHAPE}; materialConsequence={MEASUREMENT_SHAPE}; reference=non-empty text",
-}
-DISPOSITION_SHAPES = {status: f'{{"finding_id":non-empty text,"status":"{status}","kind":"behavioral" or "nonbehavioral"}} plus {requirements}' for status, requirements in DISPOSITION_REQUIREMENTS.items()}
 
 
 def load_json(path: str, *, label: str) -> JsonObject:
@@ -142,7 +131,7 @@ DESIGN_FILE_SHAPE = (
     '{"schemaVersion":1,"status":"present","sha256":"<64 hex>"} or '
     '{"schemaVersion":1,"status":"absent","reason":"..."}'
 )
-DOCUMENT_SHAPES = {**DISPOSITION_SHAPES, "governed-design": DESIGN_FILE_SHAPE}
+DOCUMENT_SHAPES = {"governed-design": DESIGN_FILE_SHAPE}
 DOCUMENT_SHAPE_TABLE = "\n".join(["| Surface | Expected shape |", "|---|---|", *(f"| `{name}` | {shape} |" for name, shape in DOCUMENT_SHAPES.items())])
 
 
@@ -438,42 +427,6 @@ def graph_evidence_document(
     return document
 
 
-_ABSOLUTE_PATH = re.compile(r"(?<![\w./-])(/[^\s'\"`;|&<>()]+)")
-
-
-def _temp_paths(text: object, label: str) -> list[str]:
-    """A measurement cited from the temp directory is a throwaway probe, not proof
-    the repository keeps; the tdd recorder refuses those targets at cycle open and
-    dispositions refuse them here."""
-    temp = os.path.realpath(tempfile.gettempdir())
-    return [f"{label} cites {token}, a temporary-directory path; measurement scripts live in the repository"
-            for token in _ABSOLUTE_PATH.findall(text if isinstance(text, str) else "")
-            if (resolved := os.path.realpath(token)) == temp or resolved.startswith(temp + os.sep)]
-
-
-def _measurement(value: object, label: str) -> list[str]:
-    fields = value if isinstance(value, dict) else {}  # a wrong key set never hides a present field's violation
-    return [message for message, bad in (
-        (f"{label} requires only claim, command, and result", set(fields) != {"claim", "command", "result"}),
-        (f"{label} requires claim, command, and result", not all(_text(fields[key]) for key in fields.keys() & {"claim", "command", "result"})),
-    ) if bad] + _temp_paths(fields.get("command"), f"{label} command")
-
-
-def _occurrence(value: object) -> list[str]:
-    if not isinstance(value, dict):
-        return ["occurrence must be an object"]
-    steps = value["reproduction"] if isinstance(value.get("reproduction"), dict) else {}
-    seam = set(value) == {"seam", "reproduction"} and _text(value["seam"]) and set(steps) == {"command", "result"}
-    return [message for message, bad in (
-        ("occurrence requires a counted domain or real-Seam reproduction", set(value) != {
-            "domain", "count", "complete", "command", "result"} and not (seam and all(map(_text, steps.values())))),
-        ("counted occurrence requires domain, command, and result", not all(_text(value[key]) for key in value.keys() & {"domain", "command", "result"})),
-        ("counted occurrence requires a non-negative count and complete boolean", "count" in value and (
-            type(value["count"]) is not int or value["count"] < 0) or "complete" in value and not isinstance(value["complete"], bool)),
-    ) if bad] + _temp_paths(value.get("command"), "occurrence command") + _temp_paths(
-        steps.get("command"), "occurrence reproduction command")
-
-
 def _disposition_context(value: object) -> list[str]:
     fields = value if isinstance(value, dict) else {}
     return [message for message, bad in (
@@ -483,94 +436,6 @@ def _disposition_context(value: object) -> list[str]:
          and not _text(fields["workflowId"]) or "candidateTree" in fields and not _git_oid(fields["candidateTree"])),
         ("disposition context prHead must be a canonical Git OID", "prHead" in fields and not _git_oid(fields["prHead"])),
     ) if bad]
-
-
-def _finding_dispositions(value: object, allowed: set[str]) -> list[str]:
-    """Every disposition's violations, in order."""
-    if not isinstance(value, list) or not value:
-        return ["disposition requires a non-empty dispositions array"]
-    seen: set[str] = set()
-    return [problem for item in value for problem in _finding_disposition(item, allowed, seen)]
-
-
-def _finding_disposition(item: object, allowed: set[str], seen: set[str]) -> list[str]:
-    common = {"finding_id", "status", "kind", "premise", "occurrence", "materialConsequence"}
-    if not isinstance(item, dict):
-        return ["each disposition must be an object"]
-    identifier, status, kind = item.get("finding_id"), item.get("status"), item.get("kind")
-    known, mechanism = isinstance(status, str) and status in allowed, item.get("mechanism")
-    # Every violation is collected; identity violations keep the expected-shape hint they always carried.
-    identity = [problem for problem, bad in (
-        ("each disposition must reference a finding", not _text(identifier)),
-        (f"finding {identifier} has an invalid or duplicate disposition", not known),
-        (f"finding {identifier} has a duplicate disposition", _text(identifier) and identifier in seen),
-    ) if bad]
-    if _text(identifier):
-        seen.add(str(identifier))
-    hint = [f"{status} expected shape: {DISPOSITION_SHAPES[status]}"] if known else []
-    problems = [*identity, *(["mechanism requires repair prose or an evidenceId/id reference"] if mechanism is not None
-                             and not (_text(mechanism) or isinstance(mechanism, dict) and set(mechanism) == {
-                                 "evidenceId", "id"} and all(_text(v) for v in mechanism.values())) else [])]
-    mechanism_fields = {"mechanism"} if "mechanism" in item else set()
-    if "evidenceRefs" in item:
-        refs = item["evidenceRefs"]
-        extra = {"reference"} if status == "accepted-follow-up" else set()
-        # Identity keys are judged above; the status-dependent shape only under a known status.
-        if (known and (set(item) - {"reason", "finding_id", "status"} != {"evidenceRefs"} | extra | mechanism_fields
-                       or extra and not _text(item.get("reference")))
-                or known and status != "fixed" and not _text(item.get("reason"))
-                or "reason" in item and not _text(item.get("reason")) or not isinstance(refs, list) or not refs
-                or not all(_text(ref) for ref in refs)):
-            problems.append("receipt disposition requires finding_id, status and non-empty evidenceRefs; non-fixed status requires a non-empty reason")
-        return [*problems, *(hint if identity else [])]
-    premise = _measurement(item.get("premise"), f"finding {identifier} premise")
-    occurrence = [f"finding {identifier} {problem}" for problem in _occurrence(item.get("occurrence"))]
-    consequence = _measurement(item.get("materialConsequence"), f"finding {identifier} materialConsequence")
-    problems += [*([] if kind in ("behavioral", "nonbehavioral") else [f"finding {identifier} kind must be behavioral or nonbehavioral"]),
-                 *premise, *occurrence, *consequence]
-    field = "reference" if status == "accepted-follow-up" else "evidence"
-    if known and not _text(item.get(field)):  # the status decides which field and field set apply
-        problems.append(f"finding {identifier} {status} requires {field}")
-    elif field == "evidence":
-        problems += _temp_paths(item.get("evidence"), f"finding {identifier} evidence")
-    if known and set(item) - common - {field} - mechanism_fields:  # a missing field is named by its own check
-        problems.append(f"finding {identifier} {status} has unknown or missing fields")
-    # Each rule reads a measurement only when its own check passed. Require the whole-domain claim's fields,
-    # not a certificate that the measurements cover it. Closure checks owning proof; review reconciles
-    # the immutable claim/domain with the operations actually executed.
-    zero = not occurrence and item["occurrence"].get("count") == 0 and item["occurrence"].get("complete") is True
-    problems += [problem for problem, bad in (
-        (f"finding {identifier} {status} requires a false premise or zero occurrence on a complete domain",
-         status in ("fixed", "rejected-with-evidence") and not premise and not occurrence
-         and not (item["premise"]["result"].strip().lower() == "false" or zero)),
-        (f"finding {identifier} behavioral fixed requires zero occurrence on a complete domain covering the "
-         "finding's recorded caller-reachable surface", status == "fixed" and kind == "behavioral"
-         and not occurrence and not zero),
-        (f"finding {identifier} report-only requires no material consequence", status == "report-only"
-         and not consequence and item["materialConsequence"]["result"].strip().lower() != "false"),
-    ) if bad]
-    return [*problems, *hint] if problems else []
-
-
-def _disposition_errors(value: JsonObject, allowed: set[str], *, context_free_receipts: bool) -> list[str]:
-    """One disposition document's violations. An inline disposition is judged against its context: without
-    one, a reviewer's document names the missing context and an advisor's requires executed evidenceRefs."""
-    dispositions = value.get("dispositions")
-    inline = isinstance(dispositions, list) and any(
-        isinstance(item, dict) and "evidenceRefs" not in item for item in dispositions)
-    errors = [message for message, bad in (
-        ("disposition requires only context, intakeEvidenceId, and dispositions",
-         set(value) not in ({"context", "intakeEvidenceId", "dispositions"}, {"intakeEvidenceId", "dispositions"})),
-        ("disposition requires an intakeEvidenceId", not _text(value.get("intakeEvidenceId"))),
-    ) if bad] + _finding_dispositions(dispositions, allowed)
-    if "context" in value or inline and not context_free_receipts:
-        return errors + _disposition_context(value.get("context"))
-    return errors + (["context-free disposition requires executed evidenceRefs for every finding"] if inline else [])
-
-
-def _disposition_fields(value: JsonObject) -> JsonObject:
-    return {"context": dict(value["context"]) if "context" in value else None,
-            "intakeEvidenceId": str(value["intakeEvidenceId"]), "dispositions": [dict(item) for item in value["dispositions"]]}
 
 
 def _repair_succession(succession: object) -> list[str]:
@@ -605,10 +470,7 @@ def review_summary(
     if value == {"findings": [], "dispositions": []}:
         value = {"findings": []}
     if "findings" not in value:
-        errors = _disposition_errors(value, REVIEWER_DISPOSITIONS, context_free_receipts=False)
-        if errors:
-            raise ValueError("; ".join(errors))
-        return {**common, "kind": "disposition", "status": "pending", **_disposition_fields(value)}, "pending", "pending"
+        raise ValueError("review intake requires the reviewer's findings")
     unknown = sorted(set(value) - {"findings", "implementationContextId", "repairSuccession"})
     findings = value["findings"]
     errors = [message for message, bad in (
@@ -631,7 +493,6 @@ def review_summary(
             ("id must be non-empty and unique", not _text(identifier) or identifier in seen),
             ("requires a non-empty claim", not _text(item.get("claim"))),
             ("requires a material boolean", not isinstance(item.get("material"), bool)),
-            ("kind must be behavioral or nonbehavioral", item.get("kind") not in ("behavioral", "nonbehavioral")),
         ) if bad]
         if _text(identifier):
             seen.add(str(identifier))
@@ -642,17 +503,6 @@ def review_summary(
         errors += [f"{label}: " + ", ".join(problems)] if problems else []
     if errors:
         raise ValueError("; ".join(errors))
-    # Reviewers may add context fields; only the ones a check reads are kept.
-    typed = [{key: item[key] for key in ("id", "claim", "material", "kind", "location", "priorFinding") if key in item} for item in findings]
     common.update({key: value[key] for key in ("implementationContextId", "repairSuccession") if key in value})
-    status = "pending" if typed else "passed"
-    return {**common, "kind": "intake", "status": status, "findings": typed}, status, "pending" if typed else "none"
-
-
-def advisor_disposition_document(value: JsonObject, *, slug: str, workflow_id: str, stage: str) -> JsonObject:
-    errors = (["advisor dispositions reference the recorded intake by intakeEvidenceId; the inline findings form is retired"]
-              if "findings" in value else _disposition_errors(value, ADVISOR_DISPOSITIONS, context_free_receipts=True))
-    if errors:
-        raise ValueError("; ".join(errors))
-    return {"schemaVersion": 1, "slug": slug, "workflowId": workflow_id, "stage": stage, "recordedAt": utc_timestamp(),
-            **_disposition_fields(value)}
+    status = "pending" if findings else "passed"
+    return {**common, "kind": "intake", "status": status, "findings": findings}, status, "pending" if findings else "none"

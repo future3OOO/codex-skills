@@ -7,7 +7,9 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
+from contextlib import contextmanager
 
 from .repo_identity import RepoIdentity
 from .state_store import utc_timestamp
@@ -16,6 +18,23 @@ MAX_CAPTURE = 16000
 TERM_GRACE_SECONDS = 0.2
 KILL_GRACE_SECONDS = 0.2
 GROUP_POLL_SECONDS = 0.05
+
+
+def _interrupt(signum, frame):
+    raise KeyboardInterrupt
+
+
+@contextmanager
+def interruptible():
+    """Let normal unwinding clean owned processes and snapshots on termination."""
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    previous = signal.signal(signal.SIGTERM, _interrupt)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGTERM, previous)
 
 
 def run(
@@ -28,7 +47,7 @@ def run(
     descendant that escaped the group while holding the inherited stdout.
     """
     deadline = time.monotonic() + timeout
-    with tempfile.TemporaryFile() as output:
+    with interruptible(), tempfile.TemporaryFile() as output:
         process = subprocess.Popen(
             command,
             cwd=str(identity.root),
@@ -37,9 +56,12 @@ def run(
             start_new_session=os.name == "posix",
             env=env,
         )
-        timed_out = not _group_exits_by(process, deadline)
-        if timed_out:
-            _terminate(process)
+        timed_out = True
+        try:
+            timed_out = not _group_exits_by(process, deadline)
+        finally:
+            if timed_out:
+                _terminate(process)
         output.seek(0)
         raw = output.read()
     return raw, 124 if timed_out else int(process.returncode), timed_out
@@ -108,9 +130,9 @@ def run_entry(raw: bytes, exit_code: int, timed_out: bool, **fields: object) -> 
     }
 
 
-def emit_json(value: object) -> None:
+def emit_json(value: object, *, sort_keys: bool = True) -> None:
     try:
-        print(json.dumps(value, sort_keys=True), flush=True)
+        print(json.dumps(value, sort_keys=sort_keys), flush=True)
     except OSError:
         mute_stdout()
 
