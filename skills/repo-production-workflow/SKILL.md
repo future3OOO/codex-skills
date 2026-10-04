@@ -10,6 +10,12 @@ runtime, deploy, generated source, or production behavior. `AGENTS.md` owns the 
 invariants and GitNexus doctrine; [INVARIANT-OWNERSHIP.md](INVARIANT-OWNERSHIP.md)
 maps the remaining owners.
 
+Workflow governance and project verification have different responsibilities.
+Repo Production Workflow establishes context, coordinates work, runs source
+comparisons and delivers evidence. It does not prescribe bootstrap as the project's
+test Interface. Apply the same rule when editing the workflow itself: reuse valid
+source-bound evidence instead of repeating project verification at each stage.
+
 ## Baseline and candidate execution
 
 For behavior changes, before baseline measurements or production edits, establish
@@ -63,7 +69,7 @@ Follow the operation result's `next.command`; `next.input` names any judgment or
 document still needed. Consult `next.help` for an unfamiliar input and retain
 the supported invocation and returned evidence IDs. On resume or after edits,
 use `workflow.py summary --repo <checkout>` for current recovery guidance;
-`status --fields <comma-separated-fields>` supplies missing facts. Resume the same pass.
+`status --fields <fields>` supplies missing facts. Resume the same pass.
 See [State Interface](WORKFLOW-MAP.md#state-interface) for receipt and status fields.
 
 ## Mandatory order
@@ -111,11 +117,14 @@ with the governing-design declaration. Continue to recording only after `approve
 
 ### 5. Record approved preflight once
 
-Record the exact approved contract and probe list with `record preflight --input FILE`. Keep this workflow pass when scope changes; update the complete list through `record tdd-map`.
+Record the exact approved contract and probe list with `record preflight --input FILE`. Keep this workflow pass when scope changes; update changed items by identity through `record tdd-map`; untouched items and valid proof remain.
 
 ### 6. Drive the real probe
 
-Invoke `tdd` before implementing a behavior slice. Write the decisive real-Seam probe from the original request and affected preservation. Use real collaborators; entrypoint absence does not prove independent guarantees.
+Invoke `tdd` before implementing a behavior slice. Follow AGENTS.md's Real-Seam
+proof invariant: reuse existing cases, fixtures and assertions; add a probe only
+for behavior no existing case covers. Entrypoint absence does not prove independent
+guarantees.
 
 ### 7. Production code
 
@@ -123,7 +132,11 @@ Invoke `production-code` for its standards and baseline gate. Reuse the existing
 
 ### 8. Implement and compare
 
-Make the smallest change, then let the existing runner execute the same probe on recorded original, reviewed and candidate sources:
+Make the smallest change, then execute TDD's
+[required probe loop](../tdd/SKILL.md#required-probe-loop). The lead extends the
+existing direct batch from the actual edit, generates combinations of supported
+inputs, and compares the identical expanded batch on recorded original, reviewed
+and candidate sources:
 
 ```text
 workflow.py tdd --behavior-id BM_X -- COMMAND [ARG...]
@@ -138,9 +151,11 @@ Source and probe edits invalidate affected proof and reopen required verificatio
 After coherent repair and cleanup, assess the intended outcome against the
 verification derived in step 2. Run the typed quality gate; after it passes it
 refreshes stale comparisons through their retained commands, so recorded probes are
-already verified on the current candidate; once the probe list is recorded,
-unittest/pytest runs outside `tdd` are refused. Use generic verification for
-required lint/typecheck/build, with graph reanalysis when required. Follow AGENTS.md's attack-probe and verification rules.
+already verified on the current candidate. Before another test command, identify the
+assertion those comparisons cannot establish. Extend the existing targeted batch
+for that gap and keep enclosing-operation checks only for their own assertions.
+Reuse current comparisons; use generic verification for required lint/typecheck/build,
+with graph reanalysis when required. Follow AGENTS.md's attack-probe and verification rules.
 CI's `contracts` job owns the full runner here and step 12 waits for it.
 Verification records only through the unified CLI runner, which executes the command it records and derives status
 per-command-latest for explicit verification. Failed explicit checks need a passing rerun
@@ -148,7 +163,7 @@ or valid `--replaces` correction. Overlapping runs record in completion order; a
 reviewable tree drifts stays invalid and names the changed paths:
 
 ```bash
-python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" verify --kind quality-gate --base-ref "<base>"
+python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" verify --kind quality-gate
 python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" verify -- <verification command>
 ```
 

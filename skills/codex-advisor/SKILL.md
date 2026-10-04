@@ -32,10 +32,10 @@ retry carries the full artifact. Draft findings stay in their consult intake;
 approval gates the single `record preflight`, without runtime finding dispositions.
 After recording, initial preflight consultation is closed.
 
-Every phased consult carries a governing-design declaration: `--design-file`
-with the durable design artifact, or `--design-absent` with the specific
-reason none exists. The wrapper refuses a phased consult without exactly one
-of them, before any workflow lookup or provider cost. Do not manufacture a
+Preflight records the governing-design declaration: `--design-file` with the
+durable design artifact, or `--design-absent` with the specific reason none exists.
+Final review uses that recorded declaration and resumes the existing consult;
+there is no need to repeat the declaration or supply `--reconsult`. Do not manufacture a
 design document for a trivial pass — declare its absence; the declaration
 travels verbatim to the delegate (reasons over 2000 bytes are refused, never
 truncated), and for work proposing a new Module, public
@@ -87,11 +87,10 @@ concretely reachable failure is not material, and a re-raise of a finding whose
 recorded rejection falsifies its empirical premise needs a new contradicting measurement. Merely quoting code names from the request or measuring a divergence does not falsify a scope finding: judge whether the request authorizes that observed outcome. A purpose-qualified deletion does not remove shared logic required by behavior the request keeps. It returns only this strict envelope:
 
 ```json
-{"schemaVersion":1,"findings":[{"id":"SPEC-1","claim":"...","material":true,"kind":"behavioral","fixSketch":{"change":"smallest snippet or diff","probe":"check failing on this candidate"}}],"verdict":"fix-before-commit"}
+{"schemaVersion":1,"findings":[{"id":"SPEC-1","claim":"...","material":true,"fixSketch":{"change":"smallest snippet or diff","probe":"check failing on this candidate"}}],"verdict":"fix-before-commit"}
 ```
 
-Findings carry `id`, `claim`, `material`, and `kind` (`behavioral` or
-`nonbehavioral`), with optional `priorFinding` as defined by the linked recurring
+Findings carry `id`, `claim` and `material`, with optional `priorFinding` as defined by the linked recurring
 repair contract. Final verdict is `commit-ready`, `fix-before-commit`, or
 `context-mismatch`; use `fix-before-commit` only with a material finding, and
 `commit-ready` only when context matches and none is material.
@@ -209,5 +208,5 @@ If transport is genuinely unavailable, record the preflight result as
 review. No nonce, skip file, stamp, attestation, or audited exception authorizes
 completion.
 
-Close a repaired final finding with `workflow.py record advisor-disposition --finding <ID> --fixed --behavior-id <BM_ID>`; the recorder binds that owning comparison's current run.
+Close a repaired final finding with `workflow.py record advisor-disposition --finding <ID> --fixed --behavior-id <BM_ID>`; the recorder derives the finding kind, context, stage and owning comparison results. Successful original/reviewed/candidate results can establish preservation; the reviewer and advisor judge whether the exercised cases address the claim.
 See `record advisor-disposition --help` for other dispositions.

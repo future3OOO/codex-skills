@@ -95,8 +95,7 @@ class RepoForgeWorkflowTests(unittest.TestCase):
             "--map-build", map_build, "--gitnexus-mode", gitnexus_mode, "--top", "5",
         ]
         command += ["--base", base] if base else []
-        # An empty intent is passed as no intent at all, which is what leaves a clean
-        # local checkout with no target surface for the producer to block on.
+        # Omission lets the governed adapter recover the recorded task intent.
         command += ["--intent", described] if described else []
         return command + (["--out", str(out)] if out is not None else [])
 
@@ -234,7 +233,7 @@ class RepoForgeWorkflowTests(unittest.TestCase):
 
     @unittest.skipUnless(GITNEXUS, "the real GitNexus CLI is unavailable")
     def test_real_bootstrap_advances_workflow_without_extra_persisted_records(self) -> None:
-        direct = self.graph_bootstrap()
+        direct = self.graph_bootstrap(intent="")
         self.assertEqual(direct.returncode, 0, direct.stdout + direct.stderr)
         self.assertIn("REPO_CONTEXT_FORGE_REQUIRED_INTAKE", direct.stdout)
         state = self.status()
@@ -348,6 +347,8 @@ class RepoForgeWorkflowTests(unittest.TestCase):
 
     def test_a_blocked_packet_never_reaches_workflow_state(self) -> None:
         """The producer's own blocker exits non-zero, so nothing is recorded from it."""
+        empty = self.pass_state("begin", "--slug", self.slug, "--intent", "")
+        self.assertEqual(empty.returncode, 0, empty.stderr)
         before = self.status()
         ledger = self.ledger_bytes(before)
 

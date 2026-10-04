@@ -503,6 +503,8 @@ def main(argv: list[str]) -> int:
         state = read_workflow(identity)
         if state is None or state.get("slug") != slug:
             raise WorkflowError("Repo Context Forge slug does not match the active workflow")
+        if _extract_option(args, "--intent") is None:
+            args += ["--intent", str(state.get("intent", ""))]
         captured_workflow_id = instance_id(state)
         if captured_workflow_id is None:
             raise WorkflowError(NO_INSTANCE_ID)

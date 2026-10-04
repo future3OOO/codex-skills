@@ -39,6 +39,10 @@ sessions, caches and workflow state. Use Bubblewrap (`bwrap`) to bind each copy 
 
 Proof comparisons also require `bwrap`: each child sees the recorded source at
 the repository's original path, including imports through editable installations.
+On Ubuntu with AppArmor's unprivileged user-namespace restriction, `bwrap` also
+needs a profile allowing user namespaces (CI installs one in its preflight).
+An error such as `bwrap: setting up uid map: Permission denied` means that host
+prerequisite is missing; the comparison is incomplete, not a failing probe.
 
 Use a task-local refresh script to install worktree changes into N+1, preserving
 unrelated files and merging managed hooks. Exclude tests and `decisions.md`.

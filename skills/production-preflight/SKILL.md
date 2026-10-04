@@ -11,13 +11,6 @@ The [repository workflow](../repo-production-workflow/SKILL.md) owns checkout
 alignment, phase order, advisor consultation and recording. Reuse the active pass
 and governing artifact; stay within its owner slice and verification scope.
 Use [diagnose](../diagnose/SKILL.md) for bugs before choosing a correction.
-Before removing or rewriting logic, ask which original behaviors retained probes
-leave unchecked. Remove each affected predicate term or branch alone from
-start-commit code; run the same affected real-Seam probes on original and
-removal-only sources. Investigate surviving removals: distinguish obsolete logic,
-unexecuted lines and effects no assertion checks. Finish this investigation only
-when every required preservation has a retained assertion that passes on original
-and fails its isolated removal. Passing on the edited tree alone is insufficient.
 
 Apply [Production Code's Minimum Implementation Decision](../production-code/SKILL.md#minimum-implementation-decision):
 name the affected Interface, existing Module and reuse path, adjacent consumers,
@@ -39,7 +32,7 @@ local work short; transaction-sensitive work names the full surrounding surface.
 
 ### `authoritativeContract`
 
-For each removed or narrowed predicate or term, trace all branches it guards in the original source and derive a decisive input for every role outside the authorized removal, reusing existing `behaviorMap` items and probes.
+Before editing, trace the shared responsibilities visible in the original code and derive distinguishing inputs for affected preservation, reusing existing items and probes. TDD's [required probe loop](../tdd/SKILL.md#required-probe-loop) revisits them against the actual diff.
 
 Before choosing an implementation or writing tests, investigate each behavioral
 predicate that decides an outcome:
@@ -78,7 +71,7 @@ readings of one behavior, is a pending `behaviorMap` item, not an unknown.
 
 ### `behaviorMap`
 
-Record concrete falsifiers of the load-bearing public promises. Each item requires `id`, `basis`, `behavior`, `seam` and `expected`; `sourceRefs` is optional. IDs are stable uppercase identifiers. The basis ties the expectation to the original request or affected preservation; the Seam is the Interface of the Module that owns the affected behavior, built with its production caller's setup. An outer operation is the Seam only for behavior that outer Module owns; one owner probe printing each case replaces outer tests re-asserting those decisions.
+Record concrete falsifiers of the load-bearing public promises. Each item requires `id`, `basis`, `behavior`, `seam` and `expected`; `sourceRefs` is optional. IDs are stable uppercase identifiers. The basis ties the expectation to the original request or affected preservation; select the `seam` under AGENTS.md's Real-Seam proof invariant, naming the responsible production Interface and its real setup for the assertion being proved.
 
 ```json
 [{"id":"BM_EXPIRY","basis":"the deadline is inclusive","behavior":"expires at the deadline","seam":"Expiry.is_expired with a real clock","expected":"now equal to expiresAt is expired"}]

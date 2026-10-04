@@ -5,6 +5,8 @@ import argparse
 import json
 import os
 import shlex
+import sqlite3
+from contextlib import closing
 import subprocess
 import sys
 import tempfile
@@ -17,7 +19,6 @@ from .state_prune import prune
 from .state_store import _active_candidate_tree, analysis_unchanged, repo_state_dir, state_root, tree_manifest, utc_timestamp
 from .tdd_surface import identify
 from .workflow_documents import (
-    DOCUMENT_SHAPE_TABLE,
     advisor_envelope,
     design_declaration,
     load_json,
@@ -27,6 +28,7 @@ from .workflow_documents import (
 )
 from .workflow_state import (
     WorkflowError,
+    _require_instance,
     advisor_disposition,
     begin,
     bound_state,
@@ -53,17 +55,12 @@ ITEM_SHAPE = ('{"id":"BM_X","basis":"original request or preservation",'
               '"sourceRefs":[{"type":"finding","evidenceId":"<intake>","id":"SPEC-1"}]}')
 RECORD_SHAPES = {
     "preflight": f'{{"authoritativeContract":"text","behaviorMap":[{ITEM_SHAPE}]}}',
-    "review": ('intake {"findings":[{"id":"R-1","claim":"...","material":true,"kind":"behavioral|nonbehavioral",'
-               '"priorFinding":{"evidenceId":"...","id":"..."}}],"implementationContextId":"optional"} or '
-               'disposition {"intakeEvidenceId":"...","dispositions":[{"finding_id":"R-1","status":"fixed","reason":"..."}]} '
-               '(fixed resolves every owning comparison; other dispositions use measured evidenceRefs)'),
+    "review": '{"findings":[{"id":"R-1","claim":"...","material":true}]}',
     "advisor-result": ('the advisor envelope {"schemaVersion":1,"findings":[{"id":"SPEC-1","claim":"...",'
-                       '"material":true,"kind":"behavioral|nonbehavioral"}],"verdict":"approved|changes-required|completed|commit-ready|'
+                       '"material":true}],"verdict":"approved|changes-required|completed|commit-ready|'
                        'fix-before-commit|context-mismatch"}, or --verdict unavailable --reason TEXT'),
-    "advisor-disposition": ("--finding F --fixed [--behavior-id BM] (binds the owning comparison); or --finding F "
-                            "--rejected|--report-only|--follow-up REF --evidence-ref E:i --reason TEXT; or --stage S --findings none; or --input "
-                            '{"intakeEvidenceId":"...","context":{...},"dispositions":[...]}, each disposition:\n'
-                            + DOCUMENT_SHAPE_TABLE),
+    "advisor-disposition": ("--finding F --fixed [--behavior-id BM]; or --finding F "
+                            "--rejected|--report-only|--follow-up REF --reason TEXT; or --findings none"),
     "tdd-map": f'{{"items":[{ITEM_SHAPE}]}}',
 }
 DISPOSITION_FLAGS = {"fixed": "fixed", "rejected": "rejected-with-evidence", "report_only": "report-only"}
@@ -96,8 +93,8 @@ def parser() -> argparse.ArgumentParser:
     source.add_argument("--intent", default="")
     source.add_argument("--intent-file")
 
-    command = _repo(commands.add_parser("status"))
-    command.add_argument("--fields", help="comma-separated fields; default is full status")
+    command = _repo(commands.add_parser("status"), instance=True)
+    command.add_argument("--fields", nargs="+", help="comma- or space-separated fields; default is full status")
     _repo(commands.add_parser("summary"))
     command = _repo(commands.add_parser("paths", help="print the resolved workflow-state paths; "
                                         "with --workflow-id also the governing-design path"))
@@ -120,7 +117,7 @@ def parser() -> argparse.ArgumentParser:
     command.add_argument("--channel-dir", help="write the advisor evidence channels here and list them in order")
     command.add_argument("--preflight-file", help="draft artifact reviewed before its single recording")
     _repo(commands.add_parser("complete", help="complete a ready workflow"), instance=True)
-    commands.add_parser("tdd", help="compare one probe on the recorded original, reviewed and candidate sources")
+    commands.add_parser("tdd", help="compare a probe on recorded sources, reusing its recorded batch when no command is given")
 
     command = _repo(commands.add_parser("verify", help="execute and record typed verification"), instance=True)
     command.add_argument("--kind", choices=("generic", "quality-gate"), default="generic")
@@ -138,8 +135,9 @@ def parser() -> argparse.ArgumentParser:
         command = _repo(kinds.add_parser(kind, epilog=f"accepted shape: {shape}",
                                          formatter_class=argparse.RawDescriptionHelpFormatter), instance=True)
         command.add_argument("--check", action="store_true", help="validate against the ledger without recording")
-        command.add_argument("--input", help="document path, or - for stdin" + (
-            "; defaults to the retained approved draft" if kind == "preflight" else ""))
+        if kind != "advisor-disposition":
+            command.add_argument("--input", help="document path, or - for stdin" + (
+                "; defaults to the retained approved draft" if kind == "preflight" else ""))
         if kind == "review":
             command.add_argument("--review-context-id")
         elif kind == "advisor-result":
@@ -160,7 +158,6 @@ def parser() -> argparse.ArgumentParser:
             for flag in DISPOSITION_FLAGS:
                 status.add_argument(f"--{flag.replace('_', '-')}", action="store_true")
             status.add_argument("--follow-up", metavar="REFERENCE")
-            command.add_argument("--evidence-ref", action="append", default=[])
             command.add_argument("--behavior-id")
             command.add_argument("--reason")
 
@@ -198,18 +195,21 @@ def _passed(command: str, exit_code: object, output: str) -> bool:
     return exit_code == 0 and (surface.get("runner") not in {"pytest", "unittest"} or _pass_proof(surface, output)[0] is not None)
 
 
-def _duplicate(identity: RepoIdentity, state: dict, command: list[str]) -> bool:
-    """The pass lead's unittest/pytest run once the probe list is recorded repeats or bypasses its comparisons."""
-    from .tdd_workflow import COVERED, covered
-    if identify(command).get("runner") in {"pytest", "unittest"} and covered(identity, state) and _lead(state):
-        print("error: " + COVERED, file=sys.stderr)
-        return True
-    return False
-
-
 def _lead(state: dict) -> bool:
     """Whether this session leads the pass; reviewers' runs neither refuse nor record."""
-    return state.get("leadContextId") in {None, os.environ.get("CODEX_THREAD_ID")}
+    current = os.environ.get("CODEX_THREAD_ID")
+    if state.get("leadContextId") in {None, current}:
+        return True
+    database = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "state_5.sqlite"
+    if not database.is_file():
+        return False
+    try:
+        with closing(sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True, timeout=0)) as connection:
+            row = connection.execute("SELECT source FROM threads WHERE id = ?", (current,)).fetchone()
+    except sqlite3.Error as exc:
+        print(f"workflow receipt not recorded: identity lookup unavailable: {exc}", file=sys.stderr)
+        return False
+    return row is not None and row[0] in {"cli", "exec", "vscode"}
 
 
 def _observed(command: list[str]) -> int:
@@ -225,8 +225,6 @@ def _observed(command: list[str]) -> int:
             print(f"workflow receipt not recorded: {exc}", file=sys.stderr)
     if state is None or state.get("phase") == "complete" and not state.get("revalidation") or not _lead(state):
         return subprocess.run(command, check=False).returncode
-    if _duplicate(identity, state, command):
-        return 2
     binding_error = None
     try:
         tree_before: dict[str, str] | None = tree_manifest(identity)
@@ -252,7 +250,7 @@ def _observed(command: list[str]) -> int:
         print(f"workflow observed receipt {evidence_id}:{recorded['runIndex']}; verification={state['verification']}", file=sys.stderr)
         if receipt["next"]["command"]:
             print("Next invocation: " + receipt["next"]["command"], file=sys.stderr)
-        else:
+        if receipt["next"].get("input"):
             print(receipt["next"]["input"], file=sys.stderr)
     except (LedgerError, ValueError, OSError) as exc:
         print(f"workflow receipt not recorded: {exc}", file=sys.stderr)
@@ -266,15 +264,14 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
         raise ValueError("only generic verification can replace a failed invocation")
     state = bound_state(identity, args.slug, args.workflow_id)
     slug, workflow_id = str(state["slug"]), str(state["workflowId"])
-    if args.kind == "generic" and not args.from_evidence and _duplicate(identity, state, _command(args.runner_command)):
-        return 2
     if args.from_evidence:
         if args.runner_command or args.kind != "generic":
             raise ValueError("--from-evidence binds a recorded receipt and takes no command")
         receipt, manifest = execution_receipt(identity, state, args.from_evidence)
         run = {key: receipt[key] for key in ("command", "exitCode", "timedOut", "outputBytes") if key in receipt}
         run.update(kind="generic", sourceReference=args.from_evidence,
-                   valid=_passed(str(receipt.get("command", "")), receipt.get("exitCode"), str(receipt.get("outputTail", ""))),
+                   valid=(receipt.get("valid") is True if receipt.get("arms") else
+                          _passed(str(receipt.get("command", "")), receipt.get("exitCode"), str(receipt.get("outputTail", "")))) ,
                    at=utc_timestamp(), **({"replaces": args.replaces, "replacementReason": args.reason.strip()}
                                           if args.replaces else {}))
         state, evidence_id, recorded = commit_verification(identity, slug, workflow_id, run, tree_before=manifest)
@@ -294,8 +291,9 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
         binding_error = str(exc)
 
     if args.kind == "quality-gate":
+        args.base_ref = args.base_ref or state.get("baseOid")
         if not args.base_ref:
-            raise ValueError("quality-gate verification requires --base-ref")
+            raise ValueError("quality-gate verification needs the recorded base or --base-ref")
         if args.runner_command:
             raise ValueError("quality-gate verification runs the bundled gate and accepts no command")
         command = [sys.executable, str(ROOT / "skills" / "production-code" / "scripts" / "code_quality_gate.py"),
@@ -388,21 +386,24 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
                                 "--full"]) + f" > {location}\n  jq -c {shlex.quote(REPORT_PROJECTION)} {location}\n").encode()
     _print_output(shown)
     refreshed = True
-    if recorded["valid"] is True and args.kind == "quality-gate" and not state.get("revalidation"):
-        from .tdd_workflow import refresh_comparisons
-        # Refreshed comparisons print their own receipts; the gate's receipt comes last, from the refreshed state.
-        refreshed = refresh_comparisons(identity, state)
+    try:
+        if recorded["valid"] is True and args.kind == "quality-gate" and not state.get("revalidation"):
+            from .tdd_workflow import refresh_comparisons
+            # Refreshed comparisons print their own receipts; the gate's receipt comes last, from the refreshed state.
+            refreshed = refresh_comparisons(identity, state)
+            state = read_workflow(identity) or state
+    finally:
         state = read_workflow(identity) or state
-    _emit_json(_receipt(state, identity, **{
-        "evidenceId": evidence_id,
-        "exitCode": exit_code,
-        "kind": args.kind,
-        "verification": state["verification"],
-        "valid": recorded["valid"],
-        "runIndex": recorded["runIndex"],
-        "workflowId": workflow_id,
-        "treeManifestId": recorded.get("treeManifestId"),
-    }))
+        _emit_json(_receipt(state, identity, **{
+            "evidenceId": evidence_id,
+            "exitCode": exit_code,
+            "kind": args.kind,
+            "verification": state["verification"],
+            "valid": recorded["valid"],
+            "runIndex": recorded["runIndex"],
+            "workflowId": workflow_id,
+            "treeManifestId": recorded.get("treeManifestId"),
+        }))
     if recorded["valid"] is not True:
         reason = recorded.get("bindingError") or ("verification command failed" if exit_code else "the runner reported no executed test")
         print(f"{reason}; verification stays pending until its rerun is green", file=sys.stderr)
@@ -478,20 +479,18 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
         if args.finding is not None:
             status = next((DISPOSITION_FLAGS[name] for name in DISPOSITION_FLAGS if getattr(args, name)),
                           "accepted-follow-up" if args.follow_up else None)
-            if status is None or not args.evidence_ref and status != "fixed" or args.input is not None:
-                raise ValueError("--finding needs one of --fixed/--rejected/--report-only/--follow-up, "
-                                 "--evidence-ref unless --fixed resolves its owning comparison, and no --input")
+            if status is None:
+                raise ValueError("--finding needs one of --fixed/--rejected/--report-only/--follow-up")
             if status != "fixed" and not (args.reason and args.reason.strip()):
                 raise ValueError(f"{status} needs --reason with the measured judgment")
-            flag = {"finding": args.finding, "status": status, "evidenceRefs": args.evidence_ref,
+            flag = {"finding": args.finding, "status": status,
                     "reason": (args.reason or "").strip() or None, "reference": args.follow_up,
                     "behaviorId": args.behavior_id}
-        elif args.behavior_id or args.evidence_ref:
-            raise ValueError("--behavior-id and --evidence-ref belong to --finding")
-        document = None if flag is not None or args.input is None else load_json(args.input, label="disposition")
-        findings = args.findings or ("none" if flag is None and document is None else "addressed")
+        elif args.behavior_id:
+            raise ValueError("--behavior-id belongs to --finding")
+        findings = args.findings or ("none" if flag is None else "addressed")
         state = advisor_disposition(identity, slug, workflow_id, args.stage, findings,
-                                    document=document, flag=flag, expected_candidate_tree=candidate)
+                                    flag=flag, expected_candidate_tree=candidate)
     emit(_receipt(state, identity))
     return 0
 
@@ -514,7 +513,12 @@ def _dispatch(args: argparse.Namespace) -> int:
         state = read_workflow(identity)
         if state is None:
             raise WorkflowError("no active workflow")
-        _emit_json(public_status(state, identity, fields=set(args.fields.split(",")) if args.fields else None))
+        _require_instance(state, args.slug, args.workflow_id)
+        fields = set(" ".join(args.fields).replace(",", " ").split()) if args.fields else None
+        result = public_status(state, identity, fields=fields)
+        if "nextAction" in result:
+            result["nextAction"] = next_operation(identity, state).get("action", result["nextAction"])
+        _emit_json(result)
     elif args.command == "paths":
         directory = repo_state_dir(identity)
         out: dict[str, object] = {"stateRoot": str(state_root()), "repoKey": identity.key, "repoStateDir": str(directory)}

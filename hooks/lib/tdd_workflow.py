@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import inspect
 import json
 import os
 import re
@@ -11,9 +10,10 @@ import shlex
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
-from . import behavior_map, tdd_surface
+from . import behavior_map, mcdc, tdd_surface
 from .command_runner import emit_json as _emit_json, interruptible, run as _run, run_entry as _run_entry
 from .repo_identity import RepoIdentity, resolve_repo_identity
 from .state_store import _active_candidate_tree, _git, is_test_path, tree_manifest, utc_timestamp
@@ -130,8 +130,7 @@ def _probe_files(surface: JsonObject, root: Path, support: list[str]) -> list[st
 
 def _environment() -> dict[str, str]:
     owned = {"SHLVL", "_", "PWD", "OLDPWD", "PYTHONHOME", "TMPDIR",
-             "CODEX_WORKFLOW_STATE_ROOT", "PYTHONDONTWRITEBYTECODE", "PYTEST_ADDOPTS",
-             "WORKFLOW_REACH", "WORKFLOW_REACH_ROOT", "WORKFLOW_REACH_CHILD"}
+             "CODEX_WORKFLOW_STATE_ROOT", "PYTHONDONTWRITEBYTECODE", "PYTEST_ADDOPTS"}
     return {**{key: value for key, value in os.environ.items() if key not in owned},
             "SHLVL": "0", "PYTHONDONTWRITEBYTECODE": "1", "PYTEST_ADDOPTS": ""}
 
@@ -155,7 +154,7 @@ def _execution_key(identity: RepoIdentity, source: str, probe: str, files: list[
     config = json.dumps([command, timeout, execution,
                          executable_state.st_size, executable_state.st_mtime_ns], sort_keys=True).encode()
     producer = b"".join(Path(__file__).with_name(name).read_bytes()
-                       for name in ("tdd_workflow.py", "tdd_surface.py", "command_runner.py"))
+                       for name in ("tdd_workflow.py", "tdd_surface.py", "command_runner.py", "mcdc.py"))
     return hashlib.sha256(b"\0".join(production) + support + config + producer).hexdigest()
 
 
@@ -184,135 +183,9 @@ def _reviewed_sources(identity: RepoIdentity, state: JsonObject, mapped: JsonObj
     return trees
 
 
-# Imported first by the probe's first Python process only (it removes the variable its
-# children would inherit): which code objects under the source root that process ran,
-# each with the test function that ran it, and every test function started.
-# Every Python process the probe starts records the source-tree code it ran. In the first,
-# a call is credited when probe code (a test file or inline -c/stdin code) called into a
-# changed file to reach it, and is attributed to the enclosing test function; reaching the
-# change through an unchanged outer Module earns no credit. Later processes are children.
-# Setup credit (setUpClass, setUp, fixtures, import-time calls) covers the tests of the class or
-# module whose code made the call. A probe that cannot be proof stops at once, killing its process
-# group: when a child runs the changed code, or a finished test is neither a hit nor covered.
-_REACH_SITE = """import os, sys
-_site, _root = os.environ.get("WORKFLOW_REACH"), os.environ.get("WORKFLOW_REACH_ROOT", "")
-if _site:
-    import atexit, json, threading
-    _child = bool(os.environ.get("WORKFLOW_REACH_CHILD"))
-    os.environ["WORKFLOW_REACH_CHILD"] = "1"
-    _out = os.path.join(_site, "child-%d.json" % os.getpid() if _child else "reach.json")
-    import signal
-    with open(os.path.join(_site, "probes.json")) as _stream:
-        _plan = json.load(_stream)
-    _probes, _owned = set(_plan["probes"]), {tuple(span) for span in _plan["owned"]}
-    _files = {span[0] for span in _owned}
-    _codes, _tests, _hits, _current, _monitor = set(), set(), set(), [None, False], hasattr(sys, "monitoring")
-    def _qual(frame):
-        # A method is named by the instance's class, so inherited tests stay distinct.
-        name, holder = frame.f_code.co_qualname, frame.f_locals.get("self", frame.f_locals.get("cls"))
-        if "." not in name or holder is None:
-            return name
-        return (holder if isinstance(holder, type) else type(holder)).__qualname__ + "." + frame.f_code.co_name
-    def _missed():
-        # Covered by this invocation's own call or by setup credit for its class or module, never by an earlier run.
-        return _owned and _current[0] is not None and not (
-            _current[1] or any(_current[0].startswith(scope) for scope in _hits if scope.endswith((".", "::"))))
-    def _relative(code):
-        if code.co_filename.startswith("<"):  # frozen or generated code, inline probe code aside
-            return code.co_filename if code.co_filename in _probes else None
-        name = code.co_filename if os.path.isabs(code.co_filename) else os.path.abspath(code.co_filename)
-        return name[len(_root):] if name.startswith(_root) else None
-    def _seen(code, frame):
-        relative = _relative(code)
-        if relative is None:
-            return
-        span = (relative, code.co_firstlineno, max((l for _, _, l in code.co_lines() if l), default=code.co_firstlineno),
-                code.co_name)
-        if _child:
-            _codes.add(span)
-            span in _owned and _stop("a process the probe started ran")
-            return
-        if relative in _probes and code.co_name.startswith("test"):
-            _missed() and _stop("test " + _current[0] + " never ran")
-            _current[:2] = relative + "::" + _qual(frame), False
-            _tests.add(_current[0])
-            _monitor and sys.monitoring.restart_events()
-            return True  # every invocation of a test is a boundary
-        test, scope, probe, entry, caller = "", "", None, relative, frame.f_back
-        while caller is not None and not test:
-            owner = _relative(caller.f_code)
-            if owner in _probes:
-                name = _qual(caller)
-                probe = entry in _files if probe is None else probe
-                test = owner + "::" + name if caller.f_code.co_name.startswith("test") else ""
-                scope = owner + "::" + (name.rsplit(".", 1)[0] + "." if "." in name else "")
-            elif owner is not None and probe is None:
-                entry = owner
-            caller = caller.f_back
-        _codes.add((*span, test or scope, bool(probe)))
-        if probe and span in _owned:
-            _hits.add(test or scope)
-            _current[1] = _current[1] or test == _current[0]
-        # A call of changed code through an unchanged Module keeps watching for the probe's own call.
-        return span in _owned and not probe
-    if _monitor:
-        sys.monitoring.use_tool_id(3, "workflow-reach")
-        sys.monitoring.register_callback(3, sys.monitoring.events.PY_START,
-                                         lambda code, _: None if _seen(code, sys._getframe(1)) else sys.monitoring.DISABLE)
-        sys.monitoring.set_events(3, sys.monitoring.events.PY_START)
-    else:
-        _profile = lambda frame, event, _: event == "call" and _seen(frame.f_code, frame)
-        sys.setprofile(_profile); threading.setprofile(_profile)
-    def _write(stopped=""):
-        with open(_out + ".part", "w") as stream:
-            stream.write(json.dumps({"reach": sorted(_codes), "tests": sorted(_tests), "stopped": stopped}))
-        os.replace(_out + ".part", _out)
-    def _stop(reason):
-        _write(reason)
-        os.killpg(0, signal.SIGKILL)
-    atexit.register(lambda: _write("test " + _current[0] + " never ran" if _missed() else ""))
-"""
-
-
-def _changed_code(identity: RepoIdentity, original: str, candidate: str) -> tuple[set, set]:
-    """Per side, the innermost code objects each changed production Python hunk touches. Import-time
-    code (module or class body) is owned through the functions of its file, when it has any."""
-    hunks: tuple[dict, dict] = ({}, {})
-    names: list[str | None] = [None, None]
-    diff = _git(identity, "diff", "-U0", "--no-color", "--no-ext-diff", "--no-renames", "--src-prefix=a/", "--dst-prefix=b/",
-                original, candidate, "--", "*.py")
-    for line in diff.decode("utf-8", errors="replace").splitlines():
-        if line.startswith(("--- ", "+++ ")):
-            names[line.startswith("+++")] = None if line.endswith("/dev/null") else line[6:]
-        elif match := re.match(r"@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", line):
-            for side, name, start, count in ((0, names[0], match[1], match[2]), (1, names[1], match[3], match[4])):
-                if name and not is_test_path(name):
-                    start, count = int(start), 1 if count is None else int(count)
-                    # A pure insertion falls between two lines; only code spanning both contains it.
-                    hunks[side].setdefault(name, []).append((start, start + count - 1) if count else (start + 0.5,) * 2)
-    owners: tuple[set, set] = (set(), set())
-    for side, tree in ((0, original), (1, candidate)):
-        for name, ranges in hunks[side].items():
-            try:
-                pending, spans = [compile(_git(identity, "show", f"{tree}:{name}"), name, "exec")], []
-            except (SyntaxError, ValueError):
-                continue
-            while pending:
-                code = pending.pop()
-                pending.extend(const for const in code.co_consts if hasattr(const, "co_lines"))
-                spans.append((code.co_firstlineno, max((l for _, _, l in code.co_lines() if l), default=code.co_firstlineno),
-                              code.co_name, bool(code.co_flags & inspect.CO_OPTIMIZED)))
-            functions = [span for span in spans if span[3]]
-            for low, high in ranges:
-                hit = [span for span in spans if span[0] <= high and span[1] >= low]
-                for span in hit:
-                    if not any(other != span and span[0] <= other[0] and other[1] <= span[1] for other in hit):
-                        owners[side].update((name, *owner[:3]) for owner in ([span] if span[3] else functions or [span]))
-    return owners
-
-
 def _execute_tree(identity: RepoIdentity, source_tree: str, candidate_tree: str, files: list[str],
-                  command: list[str], surface: JsonObject, timeout: float, owned: set) -> JsonObject:
+                  command: list[str], surface: JsonObject, timeout: float, measurement=None) -> JsonObject:
+    started = time.perf_counter()
     with tempfile.TemporaryDirectory(prefix="workflow-proof-") as temporary:
         root = Path(temporary) / "source"
         subprocess.run(["git", "clone", "--quiet", "--no-checkout", identity.root, str(root)],
@@ -330,16 +203,31 @@ def _execute_tree(identity: RepoIdentity, source_tree: str, candidate_tree: str,
             _git(snapshot, "--literal-pathspecs", "restore", "--worktree", "--source=" + candidate_tree,
                  "--pathspec-from-file=-", "--pathspec-file-nul",
                  stdin=b"".join(os.fsencode(name) + b"\0" for name in files))
-        site = Path(temporary) / "reach"
-        site.mkdir()
-        (site / "sitecustomize.py").write_text(_REACH_SITE, encoding="utf-8")
-        production = set(production)
-        (site / "probes.json").write_text(json.dumps({"owned": sorted(owned),
-            "probes": [name for name in files if os.fsencode(name) not in production] + ["<string>", "<stdin>"]}))
+        log = Path(temporary) / "mcdc.jsonl"
+        unavailable = []
+        instrument_started = time.perf_counter()
+        if measurement:
+            log.touch()
+            runtime = Path(temporary) / "instrumentation"
+            runtime.mkdir()
+            shutil.copyfile(Path(mcdc.__file__), runtime / "_workflow_mcdc_runtime.py")
+            for path in dict.fromkeys(plan["path"] for plan in measurement):
+                source = root / path
+                if any(p.is_symlink() for p in (source, *source.parents) if p.is_relative_to(root)):
+                    unavailable.append({"path": path, "reason": "instrumentation cannot rewrite a symbolic link"})
+                    continue
+                try:
+                    source.write_text(mcdc.instrument(source.read_text(), [p for p in measurement if p["path"] == path]))
+                except (ValueError, SyntaxError) as error:
+                    unavailable.append({"path": path, "reason": str(error)})
+        instrumentation_seconds = time.perf_counter() - instrument_started if measurement else 0.0
         env = _environment()
-        env.update(PYTHONPATH=os.pathsep.join(filter(None, (str(site), identity.root, env.get("PYTHONPATH")))), PWD=identity.root,
-                   TMPDIR=temporary, CODEX_WORKFLOW_STATE_ROOT=str(Path(temporary) / "state"),
-                   WORKFLOW_REACH=str(site), WORKFLOW_REACH_ROOT=identity.root + os.sep)
+        if measurement:
+            env["WORKFLOW_MCDC_LOG"] = str(log)
+        env.update(PYTHONPATH=os.pathsep.join(filter(None, (identity.root, env.get("PYTHONPATH")))), PWD=identity.root,
+                   TMPDIR=temporary, CODEX_WORKFLOW_STATE_ROOT=str(Path(temporary) / "state"))
+        if measurement:
+            env["PYTHONPATH"] = str(Path(temporary) / "instrumentation") + os.pathsep + env["PYTHONPATH"]
         actual = [_executable(identity, command[0]), *command[1:]]
         binding = ["bwrap", "--die-with-parent", "--dev-bind", "/", "/", "--bind", str(root), identity.root]
         runtime = Path(actual[0]).parent.parent
@@ -348,11 +236,21 @@ def _execute_tree(identity: RepoIdentity, source_tree: str, candidate_tree: str,
         if surface.get("runner") == "pytest":
             position = actual.index("--") if "--" in actual else len(actual)
             actual.insert(position, "--override-ini=addopts=")
+        if surface.get("runner") in {"pytest", "unittest"}:
+            position = actual.index("--") if "--" in actual else len(actual)
+            actual.insert(position, "-vv" if surface["runner"] == "pytest" else "-v")
+        process_started = time.perf_counter()
         try:
             raw, code, timed_out = _run([*binding, "--chdir", identity.root, "--", *actual], snapshot, timeout, env=env)
         except OSError as exc:
             raw, code, timed_out = str(exc).encode(), 127, False
         output = raw.decode("utf-8", errors="replace")
+        timing = {"totalSeconds": time.perf_counter() - started,
+                  "executionSeconds": time.perf_counter() - process_started,
+                  "instrumentationSeconds": instrumentation_seconds}
+        if measurement:
+            return {"records": [json.loads(line) for line in log.read_text().splitlines()],
+                    "unavailable": unavailable, "timing": timing, "exitCode": code, "timedOut": timed_out, "output": output[:8000]}
         proof, error = None, "command timed out" if timed_out else ""
         if not timed_out:
             if code == 0:
@@ -360,34 +258,62 @@ def _execute_tree(identity: RepoIdentity, source_tree: str, candidate_tree: str,
             else:
                 proof, error = tdd_surface.evaluate_red(surface, output)
         outcome = ("passed" if code == 0 else "failed") if proof else "incomplete"
-        reach = json.loads((site / "reach.json").read_text()) if (site / "reach.json").is_file() else {}
-        children = sorted({tuple(span) for path in site.glob("child-*.json")
-                           for span in json.loads(path.read_text())["reach"] if not is_test_path(span[0])})
         return _run_entry(raw, code, timed_out, sourceTree=source_tree, outcome=outcome, proof=proof, error=error,
-                          output=output, loadedRoot=identity.root, childReach=children, stopped=reach.get("stopped", ""),
-                          reach=[span for span in reach.get("reach", []) if not is_test_path(span[0])],
-                          tests=[test for test in reach.get("tests", []) if is_test_path(test.split("::")[0])])
+                          output=output, loadedRoot=identity.root, cases=tdd_surface.case_results(surface, output),
+                          executedCommand=actual, timing=timing)
+
+
+def _source_delta(identity: RepoIdentity, original: str, candidate: str) -> JsonObject:
+    changed = [os.fsdecode(name) for name in _git(identity, "diff", "--name-only", "-z", original, candidate).split(b"\0")
+               if name and not is_test_path(os.fsdecode(name))]
+    command = ["--literal-pathspecs", "diff", "--no-ext-diff", "--no-textconv", "--unified=3", original, candidate, "--", *changed]
+    patch = _git(identity, *command).decode("utf-8", errors="replace") if changed else ""
+    plans, unavailable = [], []
+    old_files = {os.fsdecode(p) for p in _git(identity, "ls-tree", "-r", "--name-only", "-z", original).split(b"\0")}
+    new_files = {os.fsdecode(p) for p in _git(identity, "ls-tree", "-r", "--name-only", "-z", candidate).split(b"\0")}
+    for path in changed:
+        before = _git(identity, "show", original + ":" + path).decode("utf-8", errors="replace") if path in old_files else ""
+        after = _git(identity, "show", candidate + ":" + path).decode("utf-8", errors="replace") if path in new_files else ""
+        touched, unsupported = mcdc.analyse(before, after, path)
+        plans.extend(touched)
+        unavailable.extend(unsupported)
+    return {"patch": patch[:8000], "truncated": len(patch) > 8000,
+            "command": shlex.join(["git", "-C", identity.root, *command]) if changed else None,
+            "coverage": {"plans": plans, "unavailable": unavailable}}
+
 
 
 @interruptible()
 def _run_tdd(values: list[str]) -> int:
+    started = time.perf_counter()
     dash = values.index("--") if "--" in values else len(values)
-    parser = argparse.ArgumentParser(prog="workflow tdd", description="Compare one probe on recorded original and candidate sources")
+    parser = argparse.ArgumentParser(prog="workflow tdd", description="Compare a probe on recorded sources; omit the command to reuse its recorded batch")
     parser.add_argument("--repo", "--cwd", dest="repo", default=".")
     parser.add_argument("--slug")
     parser.add_argument("--behavior-id", required=True, action="append")
-    parser.add_argument("--support", action="append", default=[])
-    parser.add_argument("--timeout", type=float, default=900.0)
+    parser.add_argument("--support", action="append")
+    parser.add_argument("--timeout", type=float)
     args = parser.parse_args(values[:dash])
     command = values[dash + 1:]
-    if not command or args.timeout <= 0:
-        raise ValueError("a probe command after -- and a positive timeout are required")
     identity = resolve_repo_identity(args.repo)
     state, slug, workflow_id = _active_candidate(identity, args.slug)
     items, current = current_map(identity, state)
     if items is None:
         raise WorkflowError("tdd requires a recorded probe list")
     mapped = [behavior_map.item(items, identifier) for identifier in dict.fromkeys(args.behavior_id)]
+    if not command:
+        recorded = [item.get("comparison") or {} for item in mapped]
+        batches = {(run.get("command"), tuple(run.get("support", [])), run.get("timeout")) for run in recorded}
+        if len(batches) == 1 and recorded[0].get("command"):
+            command = shlex.split(recorded[0]["command"])
+            if args.support is None:
+                args.support = recorded[0]["support"]
+            if args.timeout is None:
+                args.timeout = recorded[0]["timeout"]
+    args.support = args.support or []
+    args.timeout = 900.0 if args.timeout is None else args.timeout
+    if not command or args.timeout <= 0:
+        raise ValueError("supply a probe command after -- or select one recorded batch; timeout must be positive")
     selection = {"behaviorId": mapped[0]["id"]} if len(mapped) == 1 else {"behaviorIds": [item["id"] for item in mapped]}
     surface = tdd_surface.identify(command)
     if refusal := tdd_surface.repository_resolution(surface, identity.root):
@@ -398,60 +324,80 @@ def _run_tdd(values: list[str]) -> int:
     original = _git(identity, "rev-parse", f"{state['passStartOid']}^{{tree}}").decode().strip()
     owner_sources = {item["id"]: _reviewed_sources(identity, state, item) for item in mapped}
     reviewed = {reference: tree for sources in owner_sources.values() for reference, tree in sources.items()}
-    sources = [original, *dict.fromkeys(reviewed.values()), candidate]
+    analysis_started = time.perf_counter()
+    source_delta = _source_delta(identity, original, candidate)
+    coverage_sources = {key: tree for item in mapped for key, tree in (item.get("comparison") or {}).get("coverageSources", {}).items()}
+    plans = {plan["id"]: plan for plan in source_delta["coverage"].pop("plans")}
+    for plan in plans.values():
+        for context in plan["contexts"]:
+            coverage_sources.setdefault(f"{plan['id']}/{context['index']}", candidate)
+    for tree in dict.fromkeys(coverage_sources.values()):
+        if tree == candidate:
+            continue
+        for plan in _source_delta(identity, original, tree)["coverage"]["plans"]:
+            if plan["id"] in plans:
+                known = {(c["index"], tuple(c["values"].items())) for c in plans[plan["id"]]["contexts"]}
+                plans[plan["id"]]["contexts"].extend(c for c in plan["contexts"] if (c["index"], tuple(c["values"].items())) not in known)
+            else:
+                plans[plan["id"]] = plan
+    previous = [item.get("comparison") for item in mapped]
+    sources = [original, *dict.fromkeys(tree for tree in [*reviewed.values(), *coverage_sources.values(),
+                                                        *(arm["requestedTree"] for proof in previous if proof for arm in proof["arms"])]
+                                       if tree not in {original, candidate}), candidate]
+    analysis_seconds = time.perf_counter() - analysis_started
     execution = {"executable": _executable(identity, command[0]),
                  "support": args.support,
                  "environment": hashlib.sha256(json.dumps(sorted(_environment().items())).encode()).hexdigest()}
     keys = [_execution_key(identity, source, candidate, files, command, args.timeout, execution) for source in sources]
-    previous = [item.get("comparison") for item in mapped]
     if (all(proof and proof.get("valid") and proof.get("fresh") and proof.get("candidateKey") == keys[-1] for proof in previous)
             and len({proof["runIndex"] for proof in previous}) == 1
             and not _readiness_stale(state, items)):
-        _emit_json(operation_receipt(state, identity, kind="tdd", **selection,
+        receipt = operation_receipt(state, identity, kind="tdd", **selection,
                    summaryId=state["tddEvidence"], runIndex=previous[0]["runIndex"], valid=True, reused=True,
-                   comparison=previous[0]["comparison"], arms=behavior_map.comparison_view(previous[0])["arms"]))
+                   comparison=previous[0]["comparison"], sourceDelta=previous[0].get("sourceDelta"),
+                   **{k: v for k, v in behavior_map.comparison_view(previous[0]).items()
+                      if k in {"arms", "cases", "caseAttribution"}})
+        _emit_json(receipt, sort_keys=False)
         return 0
     cache = {(arm.get("key"), arm.get("sourceTree")): arm for run in (current or {}).get("runs", [])
              for arm in run.get("arms", []) if arm.get("outcome") in {"passed", "failed"}}
     held = {key: arm for (key, _), arm in cache.items()}
-    sides = dict(zip((len(sources) - 1, 0), reversed(_changed_code(identity, original, candidate))))
-    arms: list[JsonObject] = [{"requestedTree": source, "sourceTree": source, "key": key, "outcome": "incomplete",
-                               "error": "not run: an earlier arm never ran the changed code", "output": "",
-                               "timedOut": False, "unreached": ""} for source, key in zip(sources, keys)]
-    # Arms share HOME, network and host paths, so they run one at a time, the candidate first.
-    # Proof calls the code it judges: on both sides probe code must call the changed code in its
-    # own process, from every selected test, and no process it starts may run it; a miss stops the run.
-    for index in (len(sources) - 1, *range(len(sources) - 1)):
-        source, key, owned = sources[index], keys[index], sides.get(index) or set()
-        # Reach credit depends on the changed code it was recorded against.
-        want = [list(span) for span in sorted(owned)]
+    arms: list[JsonObject] = []
+    executed_seconds = 0.0
+    # Arms share host resources, so distinct production sources run one at a time.
+    for source, key in zip(sources, keys):
         arm = cache.get((key, source))
-        if arm is None or arm.get("owned") != want:
-            if held.get(key, {}).get("owned") != want:
-                held[key] = {**_execute_tree(identity, source, candidate, files, command, surface, args.timeout, owned),
-                             "key": key, "owned": want}
+        if arm is None:
+            if key not in held:
+                held[key] = {**_execute_tree(identity, source, candidate, files, command, surface, args.timeout),
+                             "key": key}
+                executed_seconds += held[key]["timing"]["totalSeconds"]
             arm = held[key]
-        arm = arms[index] = {**arm, "requestedTree": source, "unreached": ""}
-        reached = [span for span in arm.get("reach", []) if tuple(span[:4]) in owned and span[5:6] == [True]]
-        hit = {span[4] for span in reached if span[4]}
-        missed = sorted(test for test in arm.get("tests", []) if test not in hit
-                        and not any(test.startswith(scope) for scope in hit if scope.endswith((".", "::"))))
-        child = any(tuple(span[:4]) in owned for span in arm.get("childReach", []))
-        if owned and (not reached or missed or child or arm.get("stopped")):
-            arm["unreached"] = (("a process the probe started ran" if child else arm.get("stopped") or
-                                 (f"tests {', '.join(missed)} never ran" if missed else "the probe's own code never ran"))[:300]
-                                + " the changed code (" + ", ".join(sorted(f"{name}:{low}" for name, low, *_ in owned))[:200]
-                                + "); call its owning Interface in-process from the probe instead")
-            break
+        arms.append({**arm, "requestedTree": source})
+    measured = None
+    if plans:
+        measured = _execute_tree(identity, original, candidate, files, command, surface, args.timeout, list(plans.values()))
+        source_delta["coverage"]["unavailable"].extend(measured["unavailable"])
+        source_delta["coverage"].update(measurement={k: measured[k] for k in ("exitCode", "timedOut", "output", "timing")},
+                                        decisions=mcdc.coverage(list(plans.values()), measured["records"]))
+    else:
+        source_delta["coverage"]["decisions"] = []
+    source_delta["coverage"]["editedTrees"] = list(dict.fromkeys(coverage_sources.values()))
+    source_delta["coverage"]["timing"] = {
+        "analysisSeconds": analysis_seconds,
+        "sourceArmsSeconds": executed_seconds,
+        "measurementSeconds": measured["timing"]["totalSeconds"] if measured else 0.0,
+        "comparisonOverheadSeconds": time.perf_counter() - started - analysis_seconds - executed_seconds
+                                     - (measured["timing"]["totalSeconds"] if measured else 0.0)}
     outcomes = [arm["outcome"] for arm in arms]
-    valid = (outcomes[-1] == "passed" and all(outcome in {"passed", "failed"} for outcome in outcomes[:-1])
-             and not any(arm["unreached"] for arm in arms))
+    valid = outcomes[-1] == "passed" and all(outcome in {"passed", "failed"} for outcome in outcomes[:-1])
     preserved = all(outcome == "passed" for outcome in outcomes)
     if preserved and surface.get("runner") not in {"pytest", "unittest"}:
         preserved = len({arm["output"].replace(arm["loadedRoot"], "<source>") for arm in arms}) == 1
     comparison = "incomplete" if not valid else "preserved" if preserved else "changed"
     run = {"runIndex": len((current or {}).get("runs", [])), "command": shlex.join(command), "candidateTree": candidate, "originalTree": original,
            "probeFiles": files, "support": args.support, "timeout": args.timeout, "candidateKey": keys[-1], "reviewSources": reviewed,
+           "sourceDelta": source_delta, "coverageSources": coverage_sources,
            "comparison": comparison, "arms": arms, "valid": valid, "execution": execution,
            "exitCode": 0 if valid else 1, "timedOut": any(arm["timedOut"] for arm in arms)}
     for item in mapped:
@@ -460,20 +406,12 @@ def _run_tdd(values: list[str]) -> int:
                 "runs": [*(current or {}).get("runs", []), run], "updatedAt": utc_timestamp()}
     state, evidence = commit_tdd(identity, slug, workflow_id, document,
                                 expected_evidence_id=state.get("tddEvidence"), tree_before=before)
-    _emit_json(operation_receipt(state, identity, kind="tdd", **selection,
+    receipt = operation_receipt(state, identity, kind="tdd", **selection,
                summaryId=evidence, runIndex=len(document["runs"])-1, valid=run["valid"],
-               comparison=comparison, arms=behavior_map.comparison_view(run)["arms"]))
+               comparison=comparison, sourceDelta=source_delta,
+               **{k: v for k, v in behavior_map.comparison_view(run).items() if k in {"arms", "cases", "caseAttribution"}})
+    _emit_json(receipt, sort_keys=False)
     return 0 if run["valid"] else 2
-
-
-COVERED = ("the probe list is recorded: behavior runs through tdd comparisons, which the quality gate refreshes, "
-           "and the suite belongs to CI. Add uncovered affected behavior to the list and compare it with tdd")
-
-
-def covered(identity: RepoIdentity, state: JsonObject) -> bool:
-    """A recorded probe list owns behavior execution, so a test-runner run duplicates or bypasses it."""
-    items, _ = current_map(identity, state)
-    return bool(items)
 
 
 def refresh_comparisons(identity: RepoIdentity, state: JsonObject) -> bool:
@@ -504,10 +442,11 @@ def _readiness_stale(state: JsonObject, items: list[JsonObject]) -> bool:
 
 
 def map_update(identity: RepoIdentity, state: JsonObject, value: JsonObject) -> JsonObject:
-    if set(value) != {"items"}:
-        raise ValueError("tdd-map takes the complete items list; statuses and dispositions are runner-owned")
-    items = behavior_map.initial_items(value["items"])
+    if set(value) not in ({"items"}, {"added"}):
+        raise ValueError("tdd-map takes items to update by id; statuses and dispositions are runner-owned")
+    updates = behavior_map.initial_items(value.get("items", value.get("added")))
     previous, current = current_map(identity, state)
+    items = list({item["id"]: item for item in [*(previous or []), *updates]}.values())
     for entry in items:
         prior = next((item for item in previous or [] if item["id"] == entry["id"]), None)
         if prior and "comparison" in prior and all(prior.get(k) == entry.get(k) for k in {*prior, *entry} - {"comparison", "sourceRefs"}):

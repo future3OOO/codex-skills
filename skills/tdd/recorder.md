@@ -1,16 +1,23 @@
 # Recorded source comparisons
 
-Preflight records the initial probe list. One invocation owns source selection, isolated execution, attribution, comparison, freshness and transactional evidence publication:
+Preflight records the initial probe list. Execute TDD's [required probe loop](SKILL.md#required-probe-loop)
+to extend that batch from the actual edit before this comparison. One invocation owns source selection, isolated execution, attribution, comparison, freshness and transactional evidence publication:
 
 ```text
 workflow.py tdd --behavior-id BM_X --timeout 900 -- COMMAND [ARG...]
 ```
 
-Drive the retained attack probe through its real production Interface and collaborators. A comparison counts only when probe code calls the changed code in its own Python process on the original and candidate trees, from each selected test, and no process the probe starts (a CLI or bootstrap subprocess) runs it; otherwise the comparison stops at that arm, incomplete. Repeat `--behavior-id` to share its command across behaviors. The runner binds the complete probe environment on each recorded production tree. Removed probes stay removed; production files cannot be overlaid as support. Isolate mutable resources outside the runner's private checkout and workflow state.
+To extend an existing batch, edit its retained probes and use the returned
+continuation (`tdd --behavior-id BM_X`, with no command). It reuses the recorded
+exact command selection, support files and timeout, comparing the current probes
+on the recorded sources. Supply a replacement command when adding a new probe
+entrypoint or selecting a different batch.
 
-The compact receipt names each compared tree with its outcome; trees with identical production share one execution; distinct ones run one at a time in isolated checkouts. Full output stays in the existing evidence ledger. Repeating an unchanged comparison reuses its evidence. After coherent edits, quality verification checks the gate first, then refreshes stale recorded comparisons automatically, and once the probe list is recorded, unittest/pytest runs outside `tdd` are refused. Missing commands and incomplete execution remain unresolved.
+Drive the retained attack probe through its real production Interface and collaborators. Repeat `--behavior-id` to share its command across behaviors. The runner binds the complete probe environment on each recorded production tree. Removed probes stay removed; production files cannot be overlaid as support. Isolate mutable resources outside the runner's private checkout and workflow state.
 
-For changed obligations, submit the complete list through `record tdd-map --input FILE`:
+The compact receipt names each compared tree with its outcome and distinguishes named case failures from batch status; missing case or behavior attribution stays explicit. Coverage reports production evaluations, safe additional evaluations and unverified inference separately. Recorded edited trees remain comparison arms when probes expand after repair; trees with identical production share one execution; distinct ones run one at a time in isolated checkouts. Full output stays in the existing evidence ledger. Repeating an unchanged comparison reuses its evidence. After coherent edits, quality verification checks the gate first, then refreshes stale recorded comparisons automatically. Reuse valid source-bound results instead of repeating covered verification. Missing commands and incomplete execution remain unresolved.
+
+For changed obligations, submit only the changed or new items through `record tdd-map --input FILE`:
 
 ```json
 {"items":[{"id":"BM_X","basis":"original request","behavior":"requested observable behavior","seam":"owning Module's Interface","expected":"observable result","sourceRefs":[{"type":"finding","evidenceId":"INTAKE","id":"R-1"}]}]}

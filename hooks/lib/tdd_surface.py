@@ -45,7 +45,7 @@ UNITTEST_FIXTURES = frozenset({
     "setUp", "asyncSetUp", "tearDown", "asyncTearDown",
     "setUpClass", "tearDownClass", "setUpModule", "tearDownModule",
 })
-PYTEST_FAILURE_HEADER = re.compile(r"^_{3,}.+_{3,}$")
+PYTEST_FAILURE_HEADER = re.compile(r"^_+ .+ _+$")
 PYTEST_CAPTURED_HEADER = re.compile(r"^-+ Captured .+ -+$")
 # pytest closes each traceback frame with `path:line:` (the exception class only
 # on the last); unittest frames are `File "..."` lines. Object reprs carry the
@@ -355,7 +355,7 @@ def _unittest_red(output: str) -> tuple[dict[str, object] | None, str]:
     unreached = next((reason for reason in (_unittest_unreached(*block[:2]) for block in failures) if reason), None)
     if unreached is not None:
         return None, "the operation failed before reaching the production Interface: " + unreached
-    rendering = next((block[2] for block in failures if block[2]), [])
+    rendering = [line for _, _, block in failures for line in block]
     if not rendering:
         return None, "unittest reported no terminal failure"
     observed = rendering[0]
@@ -412,6 +412,27 @@ def _unittest_terminal_failures(output: str) -> list[tuple[str, list[str], list[
     return failures
 
 
+def case_results(surface: Mapping[str, object], output: str) -> dict[str, dict[str, str]]:
+    """Attribute native terminal results; missing names are never inferred as passes."""
+    cases = {}
+    clean = ANSI_ESCAPE.sub("", output)
+    if surface.get("runner") == "unittest":
+        for name, status in re.findall(r"(?m)^(\S+ \([^\n]+?\)) \.\.\. (ok|FAIL|ERROR|skipped[^\n]*)$", clean):
+            cases[name] = {"outcome": "passed" if status == "ok" else "failed" if status == "FAIL" else "error" if status == "ERROR" else "skipped"}
+        for header, frames, assertion in _unittest_terminal_failures(clean):
+            kind, name = header.split(": ", 1)
+            cases[name] = {"outcome": "failed" if kind == "FAIL" else "error", "assertion": "\n".join(assertion)}
+            if re.fullmatch(r"\S+ \([^()\n]+\)", name) and name.split()[0] in frames:
+                cases[name]["execution"] = "stopped"
+    elif surface.get("runner") == "pytest":
+        for name, status in re.findall(r"(?m)^(\S+::\S+) (PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS)\b", clean):
+            cases[name] = {"outcome": {"PASSED": "passed", "FAILED": "failed", "ERROR": "error"}.get(status, "skipped")}
+        summary = clean.rsplit("short test summary info", 1)[-1] if "short test summary info" in clean else ""
+        for kind, name, assertion in re.findall(r"(?m)^(FAILED|ERROR) (\S+) - (.*)$", summary):
+            cases[name] = {"outcome": kind.lower(), "assertion": assertion}
+    return cases
+
+
 def _pytest_red(
     output: str, arguments: Sequence[object] = ()
 ) -> tuple[dict[str, object] | None, str]:
@@ -446,7 +467,7 @@ def _pytest_red(
             f"holds {headers} header-shaped lines; printed header-shaped text "
             "cannot be attributed to a test - remove it or narrow the command"
         )
-    rendering = next((block for block in _pytest_terminal_renderings(failures) if block), [])
+    rendering = [line for block in _pytest_terminal_renderings(failures) for line in block]
     if not rendering:
         return None, "pytest reported no terminal failure"
     observed = rendering[0]

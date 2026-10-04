@@ -107,9 +107,23 @@ def producer_proved(entry: JsonObject) -> bool:
 def comparison_view(run: JsonObject) -> JsonObject:
     """Bound reviewer context; complete process evidence remains in the ledger."""
     original = _operation_lines(run["arms"][0])
+    names = sorted({name for arm in run["arms"] for name in arm.get("cases", {})})
+    cases = [{"name": name, "arms": [
+        {"tree": arm["requestedTree"], **arm.get("cases", {}).get(name, {"outcome": "unattributed"})}
+        for arm in run["arms"]]} for name in names]
+    # All case results remain on their source arms. Always expose failures and
+    # missing counterparts separately, even when both batches failed overall.
+    cases = [case for case in cases if any(a["outcome"] != "passed" for a in case["arms"])]
     return {**{key: run[key] for key in ("comparison", "valid", "fresh", "runIndex", "command") if key in run},
+            "cases": cases,
+            "caseAttribution": (("Test counts are method invocations, not loop inputs. A method-stopping failure leaves subsequent loop inputs unexecuted. "
+                                 if any(arm.get("execution") == "stopped" for case in cases for arm in case["arms"]) else "")
+                                + ("Case-to-behavior attribution unavailable; unprinted inputs remain unattributed."
+                                   if names else "Case attribution unavailable: no named terminal results; batch output is not proof for individual behavior IDs.")),
+            **({"sourceDelta": {key: value for key, value in run["sourceDelta"].items() if key in {"command", "question", "coverage"}}}
+               if run.get("sourceDelta") else {}),
             "arms": [{"tree": arm["requestedTree"],
-                      "outcome": arm["outcome"], "error": (arm.get("unreached") or arm["error"])[:500],
+                      "outcome": arm["outcome"], "error": arm["error"][:500],
                       "observation": _changed_lines(original, _operation_lines(arm))
                       or "\n".join((arm.get("proof") or {}).get("observation", []))[:1000],
                       "testsExecuted": (arm.get("proof") or {}).get("testsExecuted")}

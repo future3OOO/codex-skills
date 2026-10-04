@@ -46,8 +46,9 @@ workflow history               # ordered accepted receipts and logical reference
 workflow evidence [--full]     # one evidence record's metadata, or its document
 workflow set-phase             # trivial code review only
 workflow record <kind> [--check] [--input -|path]
-                               # preflight|review|advisor-result|advisor-disposition|tdd-map;
+                               # preflight|review|advisor-result|tdd-map;
                                # `record <kind> --help` prints the accepted shape
+workflow record advisor-disposition --finding ID --fixed|--rejected|--report-only|--follow-up REFERENCE --reason TEXT
 workflow tdd                   # compare probes on original, reviewed and candidate sources
 workflow verify                # generic commands, typed quality gate, --observed, --from-evidence
 workflow pause|checkpoint|complete|prune
@@ -76,11 +77,12 @@ never includes a database path, SQLite table or column name, journal detail, or
 other storage mechanism. With no authoritative workflow it prints no JSON,
 returns exit 2, names `no active workflow`, and creates no state.
 
-Repo Context Forge, preflight, TDD, verification, review, and
-addressed advisor dispositions record only with their native validated documents
-as logical evidence, inserted in the same SQLite transaction as the accepted event; a
-findings-none advisor disposition intentionally carries no document, and a
-refusal names the missing evidence and mutates nothing. The preflight document
+Repo Context Forge, preflight, TDD, verification and review record their native
+documents as logical evidence in the same SQLite transaction as the accepted event.
+Finding dispositions take the identifier, decision and substantive reason; the
+workflow supplies recorded intake, stage, source binding and linked comparison
+results. A judgment without runnable checks needs no execution reference. A
+findings-none disposition carries no document. The preflight document
 owns the initial Behavior Map; mapped TDD evidence carries its stable IDs,
 source comparisons and finding references. A plan may show
 the map but is not an evidence owner.

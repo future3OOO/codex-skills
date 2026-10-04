@@ -130,9 +130,9 @@ def run_entry(raw: bytes, exit_code: int, timed_out: bool, **fields: object) -> 
     }
 
 
-def emit_json(value: object) -> None:
+def emit_json(value: object, *, sort_keys: bool = True) -> None:
     try:
-        print(json.dumps(value, sort_keys=True), flush=True)
+        print(json.dumps(value, sort_keys=sort_keys), flush=True)
     except OSError:
         mute_stdout()
 

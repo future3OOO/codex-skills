@@ -304,19 +304,24 @@ class MappedTddRepairTests(unittest.TestCase):
             [pending_behavior("BM_PY")], "pytest-red"
         )
         (self.repo / "test_app_pytest.py").write_text(
-            "def test_a(): pass\n"
+            "import app\ndef test_a(): pass\n"
             "def test_b(): pass\n"
             "def test_c(): pass\n"
-            f"def test_fail():\n    assert False, {marker!r}\n",
+            f"def test_failure_with_a_name_long_enough_to_leave_only_one_underscore_in_its_heading():\n    assert app.value == 2, {marker!r}\n"
+            "def test_other():\n    assert app.value == 3, 'SECOND_CASE_CHANGED'\n",
             encoding="utf-8",
         )
         result = self.tdd(
             slug, "BM_PY", ("pytest", "-q", "test_app_pytest.py")
         )
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-        proof = self.evidence()["runs"][-1]["arms"][-1]["proof"]
+        arm = self.evidence()["runs"][-1]["arms"][-1]
+        self.assertIsNotNone(arm["proof"], "REAL_PYTEST_FAILURE_UNATTRIBUTED: " + arm["error"])
+        proof = arm["proof"]
         self.assertEqual(proof["quality"], "assertion-reached")
-        self.assertEqual(proof["testsExecuted"], 4)
+        self.assertEqual(proof["testsExecuted"], 5)
+        for failure in (marker, "SECOND_CASE_CHANGED"):
+            self.assertIn(failure, "\n".join(proof["observation"]), "BATCH_FAILURE_HIDDEN")
 
 
     @unittest.skipUnless(PYTEST_AVAILABLE, "pytest is not installed")

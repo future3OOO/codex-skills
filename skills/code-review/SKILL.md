@@ -95,7 +95,7 @@ original identities as corrected, still present or awaiting evidence, and intake
 only new findings. An empty return cannot close an earlier unresolved finding:
 
 ```json
-{"findings":[{"id":"SPEC-1","axis":"Spec","severity":"high","material":true,"kind":"behavioral","location":"path:line","claim":"...","evidence":"...","consequence":"...","smallest_action":"..."}]}
+{"findings":[{"id":"SPEC-1","axis":"Spec","severity":"high","material":true,"location":"path:line","claim":"...","evidence":"...","consequence":"...","smallest_action":"..."}]}
 ```
 
 Material missing acceptance evidence is a Spec finding here, never prose

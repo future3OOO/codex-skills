@@ -27,7 +27,7 @@ Spend disproportionate effort here. **Be aggressive. Be creative. Refuse to give
 
 ### Ways to construct one — try them in roughly this order
 
-1. **Call the deciding function or class.** Use its production caller's setup: real collaborators, source and state. Assert the result and keep the probe for source comparisons. Use an outer entry point only for affected behavior that this call cannot expose.
+1. **Call the deciding function or class.** Use its production caller's setup: real collaborators, source and state. Assert the result and keep the probe for source comparisons. Follow AGENTS.md's Real-Seam proof invariant. Use an enclosing operation only when the assertion concerns that operation's behavior or integration.
 2. **Curl / HTTP script** against a running dev server.
 3. **CLI invocation** with a fixture input, diffing stdout against a known-good snapshot.
 4. **Headless browser script** (Playwright / Puppeteer) — drives the UI, asserts on DOM/console/network.

@@ -2,6 +2,7 @@
 import json
 import os
 import signal
+import shlex
 import socket
 import shutil
 import sqlite3
@@ -11,8 +12,9 @@ import time
 import unittest
 from pathlib import Path
 
+from hooks.lib.behavior_map import comparison_view
 from hooks.tests import test_tdd_repairs as harness
-from hooks.tests.support import pending_behavior
+from hooks.tests.support import checkpoint_channels, pending_behavior
 
 
 class RunnerComparisonTests(unittest.TestCase):
@@ -24,6 +26,12 @@ class RunnerComparisonTests(unittest.TestCase):
 
     def item(self, value=1):
         return pending_behavior("BM_VALUE", behavior=f"value is {value}", expected=f"value is {value}")
+
+    def details(self, result):
+        receipt = json.loads(result.stdout)
+        evidence = self.case.cli("evidence", "--repo", str(self.case.repo), "--evidence-id", receipt["summaryId"], "--full")
+        run = json.loads(evidence.stdout)["document"]["runs"][receipt["runIndex"]]
+        return {**receipt, **comparison_view(run), "sourceDelta": run.get("sourceDelta", {})}
 
     def operation(self, value=1, body=None, extra=()):
         case = self.case
@@ -48,6 +56,37 @@ class RunnerComparisonTests(unittest.TestCase):
         reader = subprocess.run([sys.executable, str(self.case.workflow), "summary", "--repo", str(self.case.repo)],
                                 env={**self.case.env, "UNRELATED_READER_VARIABLE": "1"}, text=True, capture_output=True)
         self.assertIn("Probes compared=1/1", reader.stdout, "READER_ENVIRONMENT_STALED_PROOF: " + reader.stdout)
+        self.assertIn('"comparison": "preserved"', result.stdout)
+        self.assertIn("post-edit loop", json.loads(result.stdout)["next"].get("input", ""))
+        self.assertIsNone(json.loads(result.stdout)["next"]["command"], "COMPARISON_SKIPS_LEAD_INVESTIGATION")
+        receipt = json.loads(result.stdout)
+        verified = self.case.cli("verify", "--repo", str(self.case.repo), "--from-evidence",
+                                 f"{receipt['summaryId']}:{receipt['runIndex']}")
+        self.assertEqual(verified.returncode, 0, "EXISTING_TEST_REFUSED: " + verified.stdout + verified.stderr)
+        resume = ("tdd", "--repo", str(self.case.repo), "--behavior-id", "BM_VALUE")
+        retained = self.case.cli(*resume)
+        self.assertEqual(retained.returncode, 0, "RECORDED_BATCH_UNAVAILABLE: " + retained.stdout + retained.stderr)
+        self.assertTrue(json.loads(retained.stdout).get("reused"), "UNCHANGED_BATCH_REEXECUTED")
+        (self.case.repo / "app.py").write_text("value = 2\n")
+        probe = self.case.repo / "test_value.py"
+        probe.write_text(probe.read_text().replace("app.value, 1", "app.value, 2"))
+        extended = json.loads(self.case.cli(*resume).stdout)
+        self.assertEqual([arm["outcome"] for arm in extended["arms"]], ["failed", "failed", "passed"],
+                         "EXTENDED_BATCH_NOT_COMPARED_ON_BOTH_SOURCES")
+
+    def test_verify_executes_when_the_recorded_environment_changes(self):
+        self.case.begin_with_map([self.item()])
+        for first in ("tdd", "verify"):
+            with self.subTest(receipt=first):
+                command = [sys.executable, "-c", f"import os; print({first!r}, os.environ['RESULT_MODE']); assert os.environ['RESULT_MODE'] == 'old'"]
+                self.case.env["RESULT_MODE"] = "old"
+                initial = self.case.cli(first, "--repo", str(self.case.repo),
+                                        *(["--behavior-id", "BM_VALUE"] if first == "tdd" else []), "--", *command)
+                self.assertEqual(initial.returncode, 0, initial.stdout + initial.stderr)
+                self.case.env["RESULT_MODE"] = "new"
+                changed = self.case.cli("verify", "--repo", str(self.case.repo), "--", *command)
+                self.assertNotEqual(changed.returncode, 0, "CHANGED_ENVIRONMENT_REUSED_A_PASS")
+                self.assertIn("AssertionError", changed.stdout + changed.stderr)
 
     def test_current_test_environment_is_retained_and_bound(self):
         case = self.case
@@ -72,11 +111,13 @@ class RunnerComparisonTests(unittest.TestCase):
             "        self.assertFalse(Path('test_removed.py').exists())\n"
             "        self.assertEqual(app.value, expected)\n")
         command = ("tdd", "--repo", str(case.repo), "--slug", slug, "--behavior-id", "BM_VALUE",
+                   "--support", "tests/support.py", "--timeout", "7",
                    "--", sys.executable, "-m", "unittest", "test_value.Value.test_value")
         first = case.cli(*command)
         self.assertEqual(first.returncode, 0, "TEST_ENVIRONMENT_MISSING: " + first.stdout + first.stderr)
         self.assertEqual([a["outcome"] for a in json.loads(first.stdout)["arms"]], ["failed", "passed"])
         expected_calls = ["1", "2"]
+        command = ("tdd", "--repo", str(case.repo), "--behavior-id", "BM_VALUE")
         for path, body in ((case.repo / "test_unrelated.py", "UNUSED = 1\n"),
                            (test, test.read_text() + "    def test_creation(self): self.assertEqual(app.value, 99)\n")):
             path.write_text(body)
@@ -88,7 +129,7 @@ class RunnerComparisonTests(unittest.TestCase):
         helper.write_text("expected = 3\n")
         changed = case.cli(*command)
         self.assertEqual(changed.returncode, 2, "HELPER_CHANGE_REUSED_SUCCESS: " + changed.stdout)
-        self.assertEqual([a["outcome"] for a in json.loads(changed.stdout)["arms"]], ["failed", "failed"])
+        self.assertEqual({a["outcome"] for a in json.loads(changed.stdout)["arms"]}, {"failed"})
         self.assertEqual(sorted(calls.read_text().splitlines()), sorted(expected_calls + ["1", "2"]))
 
     def test_quality_gate_refreshes_comparisons_only_after_success(self):
@@ -100,9 +141,14 @@ class RunnerComparisonTests(unittest.TestCase):
             return json.loads(case.cli("evidence", "--repo", str(case.repo), "--evidence-id",
                                       state["tddEvidence"], "--full").stdout)["document"]["runs"]
 
+        from hooks.lib.repo_identity import resolve_repo_identity
+        from hooks.lib.workflow_state import record_base_oid
+        state = json.loads(case.cli("status", "--repo", str(case.repo)).stdout)
+        base = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=case.repo, text=True).strip()
+        record_base_oid(resolve_repo_identity(case.repo), state["slug"], state["workflowId"], base)
         initial = len(runs())
         (case.repo / "app.py").write_text("from typing import Any\nvalue: Any = 2\n")
-        command = ("verify", "--repo", str(case.repo), "--kind", "quality-gate", "--base-ref", "HEAD")
+        command = ("verify", "--repo", str(case.repo), "--kind", "quality-gate")
         failed = case.cli(*command)
         self.assertEqual(failed.returncode, 2, failed.stdout + failed.stderr)
         self.assertEqual(len(runs()), initial, "FAILED_GATE_RAN_COMPARISONS")
@@ -155,139 +201,293 @@ class RunnerComparisonTests(unittest.TestCase):
         probe = "import app\nfor case in ('a', 'b', 'c'): print(case, app.value if case == 'b' else 0)\nprint('done')"
         result = self.case.cli("tdd", "--repo", str(self.case.repo), "--behavior-id", "BM_VALUE", "--",
                                sys.executable, "-c", probe)
-        arms = json.loads(result.stdout)["arms"]
-        self.assertEqual(json.loads(result.stdout)["comparison"], "changed", result.stdout + result.stderr)
+        arms = self.details(result)["arms"]
+        self.assertEqual(self.details(result)["comparison"], "changed", result.stdout + result.stderr)
         self.assertEqual(arms[-1]["observation"], "- b 1\n+ b 2", "CHANGED_CASES_HIDDEN: " + repr(arms))
+        delta = self.details(result).get("sourceDelta", {})
+        self.assertIn("-value = 1\n+value = 2", delta.get("patch", ""), "REMOVED_DECISION_HIDDEN")
+        self.assertNotIn("test_value.py", delta["patch"], "PROBE_CHANGES_OBSCURE_PRODUCTION")
+        self.assertFalse(delta["truncated"])
+        reused = self.case.cli("tdd", "--repo", str(self.case.repo), "--behavior-id", "BM_VALUE", "--",
+                               sys.executable, "-c", probe)
+        self.assertTrue(self.details(reused)["reused"])
+        self.assertEqual(self.details(reused)["sourceDelta"], delta)
+        packet = checkpoint_channels(self.case.repo, self.case.env, "code-review")
+        self.assertNotIn("authoritativeContract", packet["behavior-map"], "PLAN_PRESENTED_AS_REQUEST_AUTHORITY")
+        self.assertIn("preflightInterpretation", packet["behavior-map"])
+        comparison = packet["behavior-map"]["items"][0]["comparison"]
+        self.assertNotIn("patch", comparison["sourceDelta"], "COMPARISON_REPEATS_PACKAGE_DIFF")
+        self.assertEqual(comparison["sourceDelta"], {key: delta[key] for key in ("command", "coverage")})
+        self.assertEqual(delta["coverage"]["decisions"], [], "VALUE_EDIT_INVENTED_CONDITION")
+        self.assertEqual(comparison["arms"], arms)
+        self.assertIn("-value = 1\n+value = 2", packet["diff"])
+        recorded = self.case.evidence()["runs"][-1]
+        del recorded["sourceDelta"]["coverage"]  # Recorded receipts before coverage was added.
+        self.assertEqual(comparison_view(recorded)["sourceDelta"], {"command": delta["command"]})
         # final SPEC-3: an extra repeated line is a changed case too
         result = self.case.cli("tdd", "--repo", str(self.case.repo), "--behavior-id", "BM_VALUE", "--",
                                sys.executable, "-c", "import app\nfor _ in range(app.value): print('event')")
-        self.assertEqual(json.loads(result.stdout)["arms"][-1]["observation"], "+ event", "CHANGED_CASES_HIDDEN: " + result.stdout)
+        self.assertEqual(self.details(result)["arms"][-1]["observation"], "+ event", "CHANGED_CASES_HIDDEN: " + result.stdout)
         # final SPEC-5: output lines that look like diff headers are cases too
         result = self.case.cli("tdd", "--repo", str(self.case.repo), "--behavior-id", "BM_VALUE", "--", sys.executable, "-c",
                                "import app\nprint('-- old' if app.value == 1 else '++ new')\nprint('done')")
-        self.assertEqual(json.loads(result.stdout)["arms"][-1]["observation"], "- -- old\n+ ++ new",
+        self.assertEqual(self.details(result)["arms"][-1]["observation"], "- -- old\n+ ++ new",
                          "CHANGED_CASES_HIDDEN: " + result.stdout)
+        (self.case.repo / "app.py").write_text("value = 2\n" + "# retained context\n" * 500 + "# END_OF_CHANGE\n")
+        result = self.case.cli("tdd", "--repo", str(self.case.repo), "--behavior-id", "BM_VALUE", "--",
+                               sys.executable, "-c", probe)
+        delta = self.details(result)["sourceDelta"]
+        self.assertTrue(delta["truncated"])
+        self.assertEqual(len(delta["patch"]), 8000)
+        full = subprocess.run(shlex.split(delta["command"]), check=True, capture_output=True, text=True).stdout
+        self.assertIn("END_OF_CHANGE", full, "TRUNCATED_DECISION_UNRECOVERABLE")
+        self.assertNotIn("test_value.py", full)
 
-    def test_only_a_probe_whose_own_process_runs_the_change_is_proof(self):
+    def mcdc_operation(self, original, candidate, inputs):
         case = self.case
-        runs = case.repo.parent / "outer-runs"
-        (case.repo / "app.py").write_text("def decide(x):\n    return x + 1\n")
-        case.git("commit", "-qam", "decision owner")
-        slug, _ = case.begin_with_map([self.item(2)])
-        (case.repo / "app.py").write_text("def decide(x):\n    return x + 2\n")
-        (case.repo / "test_value.py").write_text(
-            "import subprocess, sys, unittest, app\nclass Value(unittest.TestCase):\n"
-            "    def test_outer(self):\n"
-            f"        open({str(runs)!r}, 'a').write('x')\n"
-            "        child = subprocess.run([sys.executable, '-c', 'import app; print(app.decide(1))'], capture_output=True, text=True)\n"
-            "        self.assertEqual(child.stdout.strip(), '3', 'DECISION')\n"
-            "    def test_owner(self):\n"
-            "        self.assertEqual(app.decide(1), 3, 'DECISION')\n")
-        def compare(*tests):
-            raw = case.cli("tdd", "--repo", str(case.repo), "--slug", slug, "--behavior-id", "BM_VALUE", "--",
-                           sys.executable, "-m", "unittest", *(f"test_value.Value.{test}" for test in tests))
-            return raw.returncode, json.loads(raw.stdout)["comparison"]
-        self.assertEqual(compare("test_outer"), (2, "incomplete"), "OUTER_PROBE_ADMITTED")
-        self.assertEqual(runs.read_text(), "x", "REFUSED_PROBE_RAN_EVERY_ARM")
-        self.assertEqual(compare("test_owner"), (0, "changed"), "OWNER_PROBE_REFUSED")
+        (case.repo / "app.py").write_text(original)
+        case.git("add", "app.py")
+        case.git("commit", "-qm", "original decisions")
+        case.begin_with_map([self.item()])
+        (case.repo / "app.py").write_text(candidate)
+        command = ("tdd", "--repo", str(case.repo), "--behavior-id", "BM_VALUE", "--", sys.executable, "-c")
+        probe = f"import app\nfor values in {inputs!r}: print(values, app.choose(*values))"
+        result = case.cli(*command, probe)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        receipt = self.details(result)
+        self.assertIn("coverage", receipt["sourceDelta"], "MCDC_COVERAGE_MISSING")
+        return receipt, command
 
-    def test_verify_refuses_test_runs_the_comparisons_cover(self):
-        self.operation(2)
-        before = self.ledger_counts()
-        for form in ((), ("--observed",)):
-            refused = self.case.cli("verify", "--repo", str(self.case.repo), *form, "--",
-                                    sys.executable, "-m", "unittest", "test_value")
-            self.assertEqual(refused.returncode, 2, "DUPLICATE_TEST_RUN_ADMITTED: " + refused.stdout + refused.stderr)
-        self.assertEqual(self.ledger_counts(), before, "DUPLICATE_TEST_RUN_ADMITTED")
-        self.assertEqual(self.case.cli("verify", "--repo", str(self.case.repo), "--", "git", "diff", "--check").returncode, 0)
+    def test_deleted_guard_coverage_and_retained_edited_arm(self):
+        original = "def choose(active):\n    if active:\n        return 2\n    return 1\n"
+        receipt, command = self.mcdc_operation(original, "def choose(active):\n    return 2\n", [(True,)])
+        context = receipt["sourceDelta"]["coverage"]["decisions"][0]["contexts"][0]
+        self.assertEqual((context["condition"], context["status"]), ("active", "missing"))
+        self.assertIn("active", receipt["next"]["input"])
+        # Successive edits must both remain observable after repair and probe expansion.
+        edited = receipt["arms"][-1]["tree"]
+        (self.case.repo / "app.py").write_text("def choose(active):\n    return 3\n")
+        second = self.details(self.case.cli(*command, "import app; print(app.choose(True))"))
+        latest_edit = second["arms"][-1]["tree"]
+        (self.case.repo / "app.py").write_text(original)
+        result = self.case.cli(*command, "import app; observed = [app.choose(x) for x in (False, True)]; print(observed); assert observed == [1, 2]")
+        repaired = self.details(result)
+        self.assertEqual([a["outcome"] for a in repaired["arms"]], ["passed", "failed", "failed", "passed"])
+        self.assertEqual(repaired["arms"][1]["tree"], edited)
+        self.assertEqual(repaired["arms"][2]["tree"], latest_edit, "LATEST_EDITED_TREE_LOST")
+        self.assertEqual(repaired["sourceDelta"]["coverage"]["decisions"][0]["contexts"][0]["status"], "evaluated")
+        expanded = self.details(self.case.cli(*command, "import app; observed = [app.choose(x) for x in (False, True, None)]; print(observed); assert observed == [1, 2, 1]"))
+        self.assertIn(latest_edit, [arm["tree"] for arm in expanded["arms"]], "RECORDED_EDIT_LOST_ON_LATER_EXPANSION")
 
-    def test_a_child_process_test_batched_with_an_owner_test_is_not_proof(self):
+    def test_only_uncovered_retained_effect_keeps_probe_loop_open(self):
+        original = "def choose(allowed, known):\n    if allowed and known:\n        return 'existing'\n    elif allowed:\n        return 'new'\n    return None\n"
+        candidate = "def choose(allowed, known):\n    if known:\n        return 'existing'\n    return None\n"
+        receipt, command = self.mcdc_operation(original, candidate, [(True, True)])
+        self.assertEqual(receipt["nextAction"], "tdd")
+        self.assertIn("known=true", receipt["next"]["input"])
+        # The requested removal is unexercised, but the preserved effect has its pair.
+        expanded = self.case.cli(*command, "import app; print([app.choose(x, True) for x in (False, True)])")
+        self.assertNotEqual(json.loads(expanded.stdout)["nextAction"], "tdd", "REMOVED_EFFECT_TRAPS_PROBE_LOOP")
+        coverage = self.details(expanded)["sourceDelta"]["coverage"]["decisions"]
+        self.assertTrue(any(c["status"] == "missing" for d in coverage for c in d["contexts"]))
+        self.assertNotIn("allowed [unconditional]", json.loads(expanded.stdout)["next"].get("input", ""))
+        (self.case.repo / "app.py").write_text(candidate.replace("if known:", "if allowed and known:"))
+        self.case.cli(*command, "import app; print([app.choose(x, True) for x in (False, True)]); assert app.choose(False, True) is None")
+        gate = self.case.cli("verify", "--repo", str(self.case.repo), "--kind", "quality-gate", "--base-ref", "HEAD")
+        self.assertEqual(gate.returncode, 0, gate.stdout + gate.stderr)
+        status = json.loads(self.case.cli("status", "--repo", str(self.case.repo), "--fields", "nextAction").stdout)
+        self.assertEqual(status["nextAction"], "code-review", "REPAIRED_EFFECT_TRAPS_PROBE_LOOP")
+
+    def test_compound_condition_names_each_decisive_context(self):
+        original = "def choose(a, x, b, c):\n    if a and x and (b or c):\n        return 1\n    return 0\n"
+        receipt, command = self.mcdc_operation(original, original.replace("a and x and", "a and"),
+                                                [(True, False, False, True), (True, True, False, True)])
+        contexts = receipt["sourceDelta"]["coverage"]["decisions"][0]["contexts"]
+        self.assertEqual({(tuple(c["when"].items()), c["status"]) for c in contexts},
+                         {((("a", True), ("b", False), ("c", True)), "evaluated"), ((("a", True), ("b", True)), "missing")})
+        self.assertIn("b=true", receipt["next"]["input"])
+        self.assertIn("step 2", receipt["next"]["input"], "PROBE_EXTENSION_NOT_INVOKED")
+        self.assertIn("tdd/SKILL.md#required-probe-loop", receipt["next"]["input"])
+        resume = shlex.split(receipt["next"]["command"] or "")
+        self.assertTrue(resume, "MISSING_CONTEXT_HAS_NO_BATCH_CONTINUATION")
+        repeated = self.case.cli(*resume[2:])
+        self.assertTrue(json.loads(repeated.stdout).get("reused"), "UNCHANGED_BATCH_REEXECUTED")
+        self.assertIn("b=true", json.loads(repeated.stdout)["next"]["input"])
+        self.assertIn("b=true", self.case.cli("summary", "--repo", str(self.case.repo)).stdout)
+        gate = self.case.cli("verify", "--repo", str(self.case.repo), "--kind", "quality-gate", "--base-ref", "HEAD")
+        self.assertEqual(gate.returncode, 0, gate.stdout + gate.stderr)
+        self.assertIn("b=true", json.loads(gate.stdout.strip().splitlines()[-1])["next"].get("input", ""),
+                      "GATE_DROPPED_MISSING_CONTEXT")
+        self.assertIn("b=true", self.case.cli("summary", "--repo", str(self.case.repo)).stdout)
+        for fields in ((), ("--fields", "nextAction,verification")):
+            status = json.loads(self.case.cli("status", "--repo", str(self.case.repo), *fields).stdout)
+            self.assertEqual(status["nextAction"], "tdd", "STATUS_SKIPS_PROBE_EXTENSION")
+            self.assertEqual(status["verification"], "passed")
+        failed = json.loads(self.case.cli(*command, "import missing_production_dependency").stdout)
+        self.assertFalse(failed["valid"])
+        self.assertIn("missing_production_dependency", failed["next"]["input"], "EXECUTION_ERROR_HIDDEN_BY_COVERAGE")
+        self.assertNotIn("MC/DC contexts", failed["next"]["input"])
+        self.assertIn("missing_production_dependency", self.case.cli("summary", "--repo", str(self.case.repo)).stdout)
+        expanded = self.case.cli(*command, "import app\nfor x in (False, True):\n for b in (False, True): print(x,b,app.choose(True,x,b,True))")
+        self.assertTrue(all(c["status"] == "evaluated" for c in self.details(expanded)["sourceDelta"]["coverage"]["decisions"][0]["contexts"]))
+        status = json.loads(self.case.cli("status", "--repo", str(self.case.repo), "--fields", "nextAction").stdout)
+        self.assertEqual(status["nextAction"], "code-review", "COVERED_PAIRS_STILL_REQUESTED")
+
+    def test_comparison_response_keeps_details_in_retrievable_evidence(self):
+        original = "import re\ndef choose(active, value):\n    if active and re.search(" + repr("[a-z]" * 200) + ", value):\n        return 1\n    return 0\n"
+        _, command = self.mcdc_operation(original, original.replace("active and ", ""), [(True, "a" * 200)])
+        result = self.case.cli(*command, "import app; print(app.choose(True, 'a' * 200))")
+        receipt = json.loads(result.stdout)
+        self.assertNotIn("sourceDelta", receipt, "INTERNAL_EVIDENCE_DUMPED")
+        self.assertTrue(all(set(arm) <= {"source", "tree", "outcome", "testsExecuted"} for arm in receipt["arms"]))
+        self.assertTrue(result.stdout.startswith('{"nextAction": "tdd", "next":'))
+        self.assertLess(len(result.stdout), 2000, "COMPARISON_RESPONSE_BLOATED")
+        self.assertIn("active", receipt["next"]["input"])
+        self.assertIn("re.search", receipt["next"]["input"])
+        self.assertNotIn("[a-z]", receipt["next"]["input"])
+        evidence = self.case.cli("evidence", "--repo", str(self.case.repo), "--evidence-id", receipt["summaryId"], "--full")
+        run = json.loads(evidence.stdout)["document"]["runs"][receipt["runIndex"]]
+        self.assertIn("[a-z]" * 200, run["sourceDelta"]["patch"])
+        self.assertTrue(run["sourceDelta"]["coverage"]["decisions"])
+
+    def test_rewritten_comparison_boundary(self):
+        original = "def choose(size):\n    return size >= 1\n"
+        receipt, _ = self.mcdc_operation(original, original.replace(">=", ">"), [(0,), (1,)])
+        context = receipt["sourceDelta"]["coverage"]["decisions"][0]["contexts"][0]
+        self.assertEqual((context["condition"], context["status"]), ("size >= 1", "evaluated"))
+
+    def test_removed_or_operand(self):
+        original = "def choose(left, right):\n    if left or right:\n        return 1\n    return 0\n"
+        receipt, _ = self.mcdc_operation(original, original.replace("left or right", "right"), [(False, False), (True, False)])
+        context = receipt["sourceDelta"]["coverage"]["decisions"][0]["contexts"][0]
+        self.assertEqual((context["condition"], context["when"], context["status"]), ("left", {"right": False}, "evaluated"))
+
+    def test_unsafe_skipped_condition_is_inferred_not_covered(self):
+        original = (
+            "class Counter:\n"
+            "    def __init__(self): self.calls = 0\n"
+            "    @property\n"
+            "    def ready(self):\n"
+            "        self.calls += 1\n"
+            "        return True\n"
+            "def choose(active):\n"
+            "    state = Counter()\n"
+            "    if active and state.ready:\n"
+            "        return (True, state.calls)\n"
+            "    return (False, state.calls)\n")
+        receipt, _ = self.mcdc_operation(original, original.replace("active and state.ready", "state.ready"), [(False,), (True,)])
+        measured = receipt["sourceDelta"]["coverage"]
+        context = next(c for d in measured["decisions"] for c in d["contexts"] if c["condition"] == "active")
+        self.assertEqual(context["status"], "unverified", "INFERRED_CONTEXT_COUNTED")
+        self.assertTrue(context["inferred"])
+        self.assertIn("unverified", receipt["next"]["input"])
+        self.assertIn("(False,) (False, 0)", measured["measurement"]["output"])
+        self.assertIn("(True,) (True, 1)", measured["measurement"]["output"])
+
+    def test_changed_decision_in_callee_is_measured(self):
+        original = "def select(size):\n    return size >= 1\ndef choose(size):\n    return select(size)\n"
+        receipt, _ = self.mcdc_operation(original, original.replace(">=", ">"), [(0,), (1,)])
+        self.assertEqual(receipt["sourceDelta"]["coverage"]["decisions"][0]["contexts"][0]["status"], "evaluated")
+
+    def test_value_change_leaves_decision_coverage_empty(self):
+        original = "def choose(active):\n    if active:\n        return 1\n    return 0\n"
+        receipt, _ = self.mcdc_operation(original, original.replace("return 1", "return 2"), [(False,), (True,)])
+        self.assertEqual(receipt["sourceDelta"]["coverage"]["decisions"], [])
+        self.assertNotIn("step 2", receipt["next"]["input"])
+
+    def test_coupled_conditions_remain_a_review_question(self):
+        original = "def choose(active):\n    if active and not active:\n        return 1\n    return 0\n"
+        receipt, _ = self.mcdc_operation(original, original.replace("active and not active", "active"), [(False,), (True,)])
+        decision = receipt["sourceDelta"]["coverage"]["decisions"][0]
+        self.assertTrue(decision["coupled"])
+        self.assertEqual(decision["contexts"], [])
+        self.assertIn("coupled", receipt["next"]["input"])
+        self.assertNotIn("step 2", receipt["next"]["input"])
+        self.assertTrue(receipt["valid"], "COVERAGE_REFUSED_WORK")
+
+    def test_chained_comparison_does_not_repeat_truth_evaluation(self):
+        original = (
+            "class Flag:\n"
+            "    def __init__(self): self.calls = 0\n"
+            "    def __bool__(self):\n"
+            "        self.calls += 1\n"
+            "        return False\n"
+            "class Operand:\n"
+            "    def __init__(self, flag): self.flag = flag\n"
+            "    def __lt__(self, other): return self.flag\n"
+            "def choose():\n"
+            "    flag = Flag()\n"
+            "    if Operand(flag) < 1 < 2: return 9\n"
+            "    return flag.calls\n")
+        receipt, _ = self.mcdc_operation(original, original.replace("< 1 < 2", "< 1"), [()])
+        coverage = receipt["sourceDelta"]["coverage"]
+        self.assertEqual(coverage["decisions"], [], "CHAINED_TRUTH_EVALUATED_TWICE")
+        self.assertTrue(any("chained" in x["reason"] for x in coverage["unavailable"]))
+        for declaration, parameter in (("", ", _workflow_mcdc_atom=None"),
+                                       ("from math import sin as _workflow_mcdc_atom\n", ""),
+                                       ("def _workflow_mcdc_atom(): pass\n", "")):
+            with self.subTest(binding=declaration or parameter):
+                original = declaration + f"def choose(active{parameter}):\n    if active: return 2\n    return 1\n"
+                receipt, _ = self.mcdc_operation(original, original.replace("if active:", "if not active:"), [(False,), (True,)])
+                coverage = receipt["sourceDelta"]["coverage"]
+                self.assertTrue(any("collides" in x["reason"] for x in coverage["unavailable"]), "BINDING_COLLISION_NOT_REPORTED")
+                self.assertEqual(coverage["measurement"]["exitCode"], 0)
+
+    def test_condition_removal_reports_pairs_without_judging_intent(self):
+        original = "def choose(active):\n    if active:\n        return 2\n    return 1\n"
+        receipt, command = self.mcdc_operation(original, "def choose(active):\n    return 2\n", [(False,), (True,)])
+        self.assertEqual(receipt["comparison"], "changed")
+        self.assertEqual(receipt["sourceDelta"]["coverage"]["decisions"][0]["contexts"][0]["status"], "evaluated")
+        self.assertNotIn("MC/DC contexts", receipt["next"]["input"])
+        (self.case.repo / "other.js").write_text("export const choose = x => x > 0;\n")
+        unsupported = self.details(self.case.cli(*command, "import app; print([app.choose(x) for x in (False, True)])"))
+        self.assertEqual(unsupported["sourceDelta"]["coverage"]["unavailable"][0]["path"], "other.js")
+        self.assertTrue(unsupported["valid"], "UNSUPPORTED_ANALYSIS_REFUSED_WORK")
+        self.assertNotIn("step 2", unsupported["next"]["input"])
+
+    def test_batch_failures_are_attributed_to_cases_and_subtests(self):
         case = self.case
-        (case.repo / "app.py").write_text("def decide(x):\n    return x + 1\n")
-        case.git("commit", "-qam", "decision owner")
-        slug, _ = case.begin_with_map([self.item(2)])
-        (case.repo / "app.py").write_text("def decide(x):\n    return x + 2\n")
+        (case.repo / "app.py").write_text("value = 1\nkept = True\n")
+        case.git("add", ".")
+        case.git("commit", "-qm", "two independent outcomes")
+        case.begin_with_map([self.item()])
+        (case.repo / "app.py").write_text("value = 2\nkept = False\n")
         (case.repo / "test_value.py").write_text(
-            "import subprocess, sys, unittest, app\nclass Value(unittest.TestCase):\n"
-            "    def test_owner(self): self.assertEqual(app.decide(1), 3, 'DECISION')\n"
-            "    def test_outer(self):\n"
-            "        child = subprocess.run([sys.executable, '-c', 'import app; print(app.decide(1))'], capture_output=True, text=True)\n"
-            "        self.assertEqual(child.stdout.strip(), '3', 'DECISION')\n")
-        raw = case.cli("tdd", "--repo", str(case.repo), "--slug", slug, "--behavior-id", "BM_VALUE", "--",
-                       sys.executable, "-m", "unittest", "test_value.Value.test_owner", "test_value.Value.test_outer")
-        self.assertEqual((raw.returncode, json.loads(raw.stdout)["comparison"]), (2, "incomplete"),
-                         "BATCHED_OUTER_TEST_ADMITTED: " + raw.stdout[-600:])
-
-    def test_changed_code_run_outside_the_probe_test_is_not_proof(self):
-        # R-11: obs3 admitted a test that called the resolver and then ran bootstrap subprocesses
-        case = self.case
-        (case.repo / "app.py").write_text("LIMIT = 1\n\n\ndef decide(x):\n    return x + 1\n")
-        case.git("config", "diff.noprefix", "true")  # CodeRabbit: a user's diff prefixes must not break attribution
-        (case.repo / "cli.py").write_text("import app\nassert app.decide(1) == 3, 'DECISION'\n")
-        (case.repo / "outer.py").write_text("import app\n\n\ndef packet(x):\n    return {'decision': app.decide(x)}\n")
-        case.git("add", "cli.py", "outer.py")
-        case.git("commit", "-qam", "decision owner")
-        slug, _ = case.begin_with_map([self.item(2)])
-        (case.repo / "app.py").write_text("LIMIT = 2\n\n\ndef decide(x):\n    return x + 2\n")
-        (case.repo / "test_value.py").write_text(
-            "import subprocess, sys, unittest, app, outer\nclass Value(unittest.TestCase):\n"
-            "    def test_through_outer(self): self.assertEqual(outer.packet(1)['decision'], 3, 'DECISION')\n"
-            "    def test_outer_then_owner(self): outer.packet(1); self.assertEqual(app.decide(1), 3, 'DECISION')\n"
-            "    def test_mixed(self):\n"
-            f"        open({str(case.repo.parent / 'ran')!r}, 'a').write('m')\n"
-            "        self.assertEqual(app.decide(1), 3, 'DECISION')\n"
-            "        child = subprocess.run([sys.executable, '-c', 'import app; print(app.decide(1))'], capture_output=True, text=True)\n"
-            "        self.assertEqual(child.stdout.strip(), '3', 'DECISION')\n"
-            f"    def test_import_only(self): open({str(case.repo.parent / 'ran')!r}, 'a').write('i'); self.assertEqual(app.LIMIT, 2, 'DECISION')\n"
-            f"    def test_owner(self): open({str(case.repo.parent / 'ran')!r}, 'a').write('o'); self.assertEqual(app.decide(1) + app.LIMIT, 5, 'DECISION')\n")
-        def compare(*command):
-            raw = case.cli("tdd", "--repo", str(case.repo), "--slug", slug, "--behavior-id", "BM_VALUE", "--", *command)
-            self.assertTrue(raw.stdout.strip(), "DIFF_PREFIX_CRASHED: " + raw.stderr[-300:])
-            return raw.returncode, json.loads(raw.stdout)["comparison"]
-        unit = (sys.executable, "-m", "unittest")
-        # R-18: obs4 compared the unchanged make_packet and bootstrap entry around the changed resolver
-        for test in ("test_mixed", "test_import_only", "test_through_outer"):
-            self.assertEqual(compare(*unit, f"test_value.Value.{test}"), (2, "incomplete"), f"OUTSIDE_REACH_ADMITTED: {test}")
-        self.assertEqual(compare("bash", "-c", f"{sys.executable} cli.py"), (2, "incomplete"), "OUTSIDE_REACH_ADMITTED: production CLI")
-        (case.repo.parent / "ran").unlink()
-        self.assertEqual(compare(*unit, "test_value"), (2, "incomplete"), "OUTSIDE_REACH_ADMITTED: module")
-        self.assertEqual((case.repo.parent / "ran").read_text(), "i", "REFUSED_PROBE_RAN_ON")
-        self.assertEqual(compare("bash", "-c", " ".join([*unit, "test_value.Value.test_owner"])), (0, "changed"),
-                         "WRAPPED_OWNER_PROBE_REFUSED")
-        for test in ("test_owner", "test_outer_then_owner"):
-            self.assertEqual(compare(*unit, f"test_value.Value.{test}"), (0, "changed"), f"OWNER_PROBE_REFUSED: {test}")
-        # R-23: results computed once in class setup stay proof
-        (case.repo / "test_once.py").write_text(
-            "import unittest, app\nclass Once(unittest.TestCase):\n"
-            "    @classmethod\n    def setUpClass(cls): cls.value = app.decide(1)\n"
-            "    def test_a(self): self.assertEqual(self.value, 3, 'DECISION')\n"
-            "    def test_b(self): self.assertGreater(self.value, 1, 'DECISION')\n")
-        self.assertEqual(compare(*unit, "test_once"), (0, "changed"), "OWNER_PROBE_REFUSED: setUpClass")
-        # final SPEC-4: setup credit covers its own class only; an unrelated batched test is waste
-        (case.repo / "test_once.py").write_text((case.repo / "test_once.py").read_text()
-            + "class Unrelated(unittest.TestCase):\n    def test_unused(self): self.assertEqual(1, 1)\n")
-        self.assertEqual(compare(*unit, "test_once"), (2, "incomplete"), "OUTSIDE_REACH_ADMITTED: unrelated class")
-        # final SPEC-4: an inherited test runs once per class; each run must call the owner
-        (case.repo / "test_inherited.py").write_text(
-            "import unittest, app\nclass Base:\n    runs = []\n"
-            "    def test_x(self):\n        Base.runs.append(1)\n"
-            "        if len(Base.runs) == 1: self.assertEqual(app.decide(1), 3, 'DECISION')\n"
-            "class First(Base, unittest.TestCase): pass\nclass Second(Base, unittest.TestCase): pass\n")
-        self.assertEqual(compare(*unit, "test_inherited"), (2, "incomplete"), "OUTSIDE_REACH_ADMITTED: repeated test")
-        self.assertEqual(compare(*unit, "test_inherited.First.test_x", "test_inherited.First.test_x"), (2, "incomplete"),
-                         "OUTSIDE_REACH_ADMITTED: same test twice")
-        (case.repo / "app.py").write_text("LIMIT = 2\n\n\ndef decide(x):\n    return x + 1\n")
-        (case.repo / "test_value.py").write_text(
-            "import unittest, app\nclass Value(unittest.TestCase):\n"
-            "    def test_owner(self): self.assertEqual(app.decide(1) + app.LIMIT, 4, 'DECISION')\n")
-        self.assertEqual(compare(*unit, "test_value.Value.test_owner"), (0, "changed"), "MODULE_ONLY_OWNER_REFUSED")
-
-    def test_verify_refuses_test_runs_once_the_probe_list_is_recorded(self):
-        self.case.begin_with_map([self.item(2)])
-        (self.case.repo / "test_value.py").write_text("import unittest\nclass Value(unittest.TestCase):\n    def test_value(self): pass\n")
-        before = self.ledger_counts()
-        refused = self.case.cli("verify", "--repo", str(self.case.repo), "--", sys.executable, "-m", "unittest", "test_value")
-        self.assertEqual((refused.returncode, self.ledger_counts()), (2, before), "TEST_RUN_BEFORE_COMPARISON_ADMITTED")
+            "import unittest, app\n"
+            "class Value(unittest.TestCase):\n"
+            "    def test_requested(self): self.assertEqual(app.value, 2, 'REQUESTED_CHANGE')\n"
+            "    def test_preserved(self): self.assertTrue(app.kept, 'PRESERVATION_CHANGE')\n"
+            "    def test_loop(self):\n"
+            "        for index, expected in enumerate((2, 1)):\n"
+            "            print('loop input', index, flush=True)\n"
+            "            self.assertEqual(app.value, expected)\n"
+            "    def test_partitions(self):\n"
+            "        for name, actual, expected in [('requested',app.value,2),('preserved',app.kept,True)]:\n"
+            "            with self.subTest(name=name): self.assertEqual(actual, expected, name)\n")
+        result = case.cli("tdd", "--repo", str(case.repo), "--behavior-id", "BM_VALUE", "--",
+                          sys.executable, "-m", "unittest", "test_value")
+        receipt = self.details(result)
+        self.assertIn("cases", receipt, "CASE_ATTRIBUTION_MISSING")
+        cases = {c["name"]: c for c in receipt["cases"]}
+        requested = next(c for n, c in cases.items() if n.startswith("test_requested"))
+        preserved = next(c for n, c in cases.items() if n.startswith("test_preserved"))
+        self.assertEqual([a["outcome"] for a in requested["arms"]], ["failed", "passed"])
+        self.assertEqual([a["outcome"] for a in preserved["arms"]], ["passed", "failed"])
+        self.assertIn("PRESERVATION_CHANGE", preserved["arms"][1]["assertion"])
+        stopped = next(c for n, c in cases.items() if n.startswith("test_loop"))
+        self.assertEqual(stopped["arms"][0].get("execution"), "stopped", "EARLY_TEST_STOP_HIDDEN")
+        compact = json.loads(result.stdout)
+        self.assertIn("stopped at failure", " ".join(compact["cases"]))
+        self.assertIn("not loop inputs", compact["caseAttribution"])
+        evidence = case.cli("evidence", "--repo", str(case.repo), "--evidence-id", compact["summaryId"], "--full")
+        arms = json.loads(evidence.stdout)["document"]["runs"][compact["runIndex"]]["arms"]
+        self.assertNotIn("loop input 1", arms[0]["output"])
+        self.assertIn("loop input 1", arms[1]["output"])
+        subtests = [c for n, c in cases.items() if "name=" in n]
+        self.assertEqual(len(subtests), 2)
+        self.assertTrue(all(a.get("execution") != "stopped" for c in subtests for a in c["arms"]))
+        self.assertTrue(all(any(a["outcome"] == "unattributed" for a in c["arms"]) for c in subtests))
+        self.assertIn("behavior", receipt["caseAttribution"])
 
     def test_python_option_forms_preserve_inline_operations(self):
         self.operation()
@@ -317,13 +517,24 @@ class RunnerComparisonTests(unittest.TestCase):
                 self.assertEqual(allowed.returncode, 0, allowed.stdout + allowed.stderr)
 
     def test_original_and_candidate_are_executed(self):
-        result = self.operation(2)
+        result = self.operation(2, body=(
+            "import subprocess, sys, unittest\n"
+            "class Value(unittest.TestCase):\n"
+            "    def test_value(self):\n"
+            "        value = subprocess.check_output([sys.executable, '-c', 'import app; print(app.value)'], text=True)\n"
+            "        self.assertEqual(value.strip(), '2', 'CHILD_RESULT_CHANGED')\n"
+            "    def test_other_case(self):\n"
+            "        import app\n"
+            "        self.assertEqual(app.value, 2, 'SECOND_CASE_CHANGED')\n"
+        ))
         marker = "RECORDED_SOURCE_COMPARISON_MISSING: " + result.stdout + result.stderr
         self.assertEqual(result.returncode, 0, marker)
-        receipt = json.loads(result.stdout.splitlines()[-1])
+        receipt = self.details(result)
         self.assertEqual(receipt.get("comparison"), "changed", marker)
         self.assertEqual([arm["outcome"] for arm in receipt["arms"]], ["failed", "passed"], marker)
         self.assertNotEqual(receipt["arms"][0]["tree"], receipt["arms"][1]["tree"], marker)
+        for failure in ("CHILD_RESULT_CHANGED", "SECOND_CASE_CHANGED"):
+            self.assertIn(failure, receipt["arms"][0]["observation"], "BATCH_FAILURE_HIDDEN")
 
     def test_a_shared_host_resource_is_preserved(self):
         with socket.socket() as free:
@@ -480,6 +691,9 @@ class RunnerComparisonTests(unittest.TestCase):
         evidence = self.case.cli("evidence", "--repo", str(self.case.repo), "--evidence-id", receipt["summaryId"], "--full")
         owners = json.loads(evidence.stdout)["document"]["behaviorMap"]
         self.assertEqual({item["comparison"]["runIndex"] for item in owners}, {receipt["runIndex"]})
+        packet = checkpoint_channels(self.case.repo, self.case.env, "code-review")["behavior-map"]["items"]
+        self.assertIn("arms", packet[0]["comparison"])
+        self.assertEqual(packet[1]["comparison"], {key: packet[0]["comparison"][key] for key in ("runIndex", "valid", "fresh")}, "SHARED_BATCH_REPEATED_IN_PACKET")
         repeated = self.case.cli(*command)
         self.assertEqual(repeated.returncode, 0, repeated.stdout + repeated.stderr)
         self.assertEqual(json.loads(repeated.stdout)["summaryId"], receipt["summaryId"])
@@ -667,45 +881,42 @@ class RunnerComparisonTests(unittest.TestCase):
         receipt = json.loads(result.stdout)
         return evidence, receipt
 
-    def fix(self, evidence, receipt=None):
-        path = self.case.tmp / "fixed.json"
-        path.write_text(json.dumps({"intakeEvidenceId": evidence, "dispositions": [{
-            "finding_id": "R1", "status": "fixed",
-            **({"evidenceRefs": [f"{receipt['summaryId']}:{receipt['runIndex']}"]} if receipt else {}),
-            "reason": "The owning comparison executes the real value read on the defective reviewed tree and repaired candidate."}]}))
-        return self.case.cli("record", "review", "--repo", str(self.case.repo), "--input", str(path))
+    def fix(self):
+        return self.case.cli("record", "advisor-disposition", "--repo", str(self.case.repo),
+                             "--finding", "R1", "--fixed", "--reason",
+                             "The owning comparison records the exercised original, reviewed and candidate results.")
 
     def test_old_repair_cannot_close_a_later_occurrence(self):
-        evidence, receipt = self.repair()
-        first = self.fix(evidence, receipt)
+        self.repair()
+        first = self.fix()
         self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
         repaired = (self.case.repo / "app.py").read_text()
         (self.case.repo / "app.py").write_text("value = 3\n")
-        latest = self.review()
+        self.review()
         (self.case.repo / "app.py").write_text(repaired)
-        result = self.fix(latest, receipt)
+        result = self.fix()
         self.assertEqual(result.returncode, 2, "EARLIER_REPAIR_CLOSED_RECURRENCE: " + result.stdout + result.stderr)
         current = self.case.cli("tdd", "--repo", str(self.case.repo), "--behavior-id", "BM_VALUE",
                                "--", sys.executable, "-m", "unittest", "test_review")
         marker = "EARLIER_REPAIR_CLOSED_RECURRENCE: " + current.stdout + current.stderr
         self.assertEqual(current.returncode, 0, marker)
         fresh = json.loads(current.stdout)
-        self.assertIn("3 != 1", str(fresh["arms"]), marker)
-        closed = self.fix(latest, fresh)
+        self.assertIn("3 != 1", str(fresh["cases"]), marker)
+        closed = self.fix()
         self.assertEqual(closed.returncode, 0, "EARLIER_REPAIR_CLOSED_RECURRENCE: " + closed.stdout + closed.stderr)
 
     def test_comparison_receipt_closes_finding(self):
-        evidence, _ = self.repair()
+        self.repair()
         test = self.case.repo / "test_review.py"
         test.write_text(test.read_text() + "\n# changed support before closure\n")
-        stale = self.fix(evidence)
+        stale = self.fix()
         self.assertEqual(stale.returncode, 2, "STALE_SUPPORT_CLOSED_FINDING: " + stale.stdout + stale.stderr)
         current = self.case.cli("tdd", "--repo", str(self.case.repo), "--behavior-id", "BM_VALUE",
                                 "--", sys.executable, "-m", "unittest", "test_review")
         self.assertEqual(current.returncode, 0, current.stdout + current.stderr)
         self.assertEqual([arm["outcome"] for arm in json.loads(current.stdout)["arms"]], ["passed", "failed", "passed"],
                          "STALE_SUPPORT_CLOSED_FINDING: " + current.stdout)
-        result = self.fix(evidence)
+        result = self.fix()
         self.assertEqual(result.returncode, 0, "COMPARISON_RECEIPT_UNUSABLE: " + result.stdout + result.stderr)
         test.write_text(test.read_text() + "\n# changed support after closure\n")
         command = ("tdd", "--repo", str(self.case.repo), "--behavior-id", "BM_VALUE",
@@ -720,13 +931,29 @@ class RunnerComparisonTests(unittest.TestCase):
         self.assertTrue(json.loads(repeated.stdout).get("reused"))
         self.assertEqual(json.loads(repeated.stdout)["runIndex"], receipt["runIndex"])
 
-    def test_deleting_only_owner_cannot_discharge_finding(self):
+    def test_map_delta_preserves_untouched_owners(self):
         self.operation()
         self.own(self.review())
         path = self.case.tmp / "map.json"
-        path.write_text(json.dumps({"items": []}))
+        path.write_text(json.dumps({"items": [pending_behavior("BM_NEW")]}))
         result = self.case.cli("record", "tdd-map", "--repo", str(self.case.repo), "--input", str(path))
-        self.assertEqual(result.returncode, 2, "FINDING_OWNER_LOST: " + result.stdout + result.stderr)
+        self.assertEqual(result.returncode, 0, "FINDING_OWNER_LOST: " + result.stdout + result.stderr)
+        state = json.loads(self.case.cli("status", "--repo", str(self.case.repo)).stdout)
+        document = json.loads(self.case.cli("evidence", "--repo", str(self.case.repo), "--evidence-id",
+                             state["tddEvidence"], "--full").stdout)["document"]
+        self.assertEqual([i["id"] for i in document["behaviorMap"]], ["BM_VALUE", "BM_NEW"])
+        self.assertEqual(document["behaviorMap"][0]["sourceRefs"][0]["id"], "R1")
+
+    def test_preservation_comparison_closes_a_finding(self):
+        self.operation()
+        evidence = self.review()
+        self.own(evidence)
+        result = self.case.cli("tdd", "--repo", str(self.case.repo), "--behavior-id", "BM_VALUE",
+                               "--", sys.executable, "-m", "unittest", "test_value")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(all(a["outcome"] == "passed" for a in json.loads(result.stdout)["arms"]))
+        closed = self.fix()
+        self.assertEqual(closed.returncode, 0, closed.stdout + closed.stderr)
 
     def test_cancellation_reaps_the_executing_probe(self):
         for signum in (signal.SIGINT, signal.SIGTERM):
@@ -735,6 +962,22 @@ class RunnerComparisonTests(unittest.TestCase):
 
     def test_refresh_cancellation_reaps_the_executing_probe(self):
         self.cancel_probe(signal.SIGTERM, "verify", "--kind", "quality-gate", "--base-ref", "HEAD")
+
+    def test_refresh_missing_executable_retains_the_committed_gate_receipt(self):
+        self.assertEqual(self.operation().returncode, 0)
+        executable = self.case.tmp / "python3"
+        executable.symlink_to(sys.executable)
+        result = self.case.cli("tdd", "--repo", str(self.case.repo), "--behavior-id", "BM_VALUE",
+                               "--", str(executable), "-m", "unittest", "test_value")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        executable.unlink()
+        result = self.case.cli("verify", "--repo", str(self.case.repo), "--kind", "quality-gate", "--base-ref", "HEAD")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(str(executable), result.stderr)
+        receipt = json.loads(result.stdout.strip().splitlines()[-1])
+        self.assertEqual(receipt["kind"], "quality-gate", "COMMITTED_GATE_RECEIPT_LOST")
+        state = json.loads(self.case.cli("status", "--repo", str(self.case.repo)).stdout)
+        self.assertEqual(receipt["evidenceId"], state["verificationLatestEvidence"])
 
     def test_refresh_cancellation_during_arm_setup_removes_the_snapshot(self):
         case = self.case
@@ -783,7 +1026,11 @@ class RunnerComparisonTests(unittest.TestCase):
             child, output = json.loads(ready.read_text())
             self.assertEqual(Path(output).read_text(), "live output")
             process.send_signal(signum)
-            process.communicate(timeout=5)
+            stdout, stderr = process.communicate(timeout=5)
+            if command[0] == "verify":
+                self.assertNotEqual(process.returncode, 0)
+                self.assertEqual(json.loads(stdout.decode().strip().splitlines()[-1])["kind"], "quality-gate",
+                                 "COMMITTED_GATE_RECEIPT_LOST: " + stderr.decode())
             with self.assertRaises(ProcessLookupError, msg="REFRESH_CANCEL_LEAKED: executing child survived cancellation"):
                 os.kill(child, 0)
             self.assertFalse(Path(output).exists(), "REFRESH_CANCEL_LEAKED: interrupted output not cleaned")

@@ -15,7 +15,7 @@ this doctrine active through implementation and final verification.
 Before editing, use the standards below to choose the smallest production-safe implementation path. In a governed pass, run the bundled gate before finalizing:
 
 ```bash
-python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" verify --kind quality-gate --base-ref "<base>"
+python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" verify --kind quality-gate
 ```
 
 It prints a bounded summary, a command that saves the complete report (kept
@@ -26,6 +26,43 @@ recorded snapshot-bound Repo Context Forge evidence, which
 incomplete. Load
 [references/gate-policy.md](references/gate-policy.md) when interpreting the
 gate's JSON contract.
+
+## Execution Checklist
+
+- Complete the Minimum Implementation Decision before writing code in any file or worktree, including scratch and generated source.
+- After a coherent edit, execute TDD's [required probe loop](../tdd/SKILL.md#required-probe-loop)
+  before verification or review. TDD owns constructing, extending and comparing the
+  batched direct probe; these standards govern which observed changes are authorized.
+  Exercise cross-owner recovery through its real owner and independently observe the durable
+  continuation when that responsibility is affected. Reuse valid source-bound results;
+  the batch replaces corresponding indirect executions and duplicate verification.
+- Inspect the delta and remove unnecessary additions.
+- Scan for common quality escapes such as `TODO`, `FIXME`, `eslint-disable`, `@ts-ignore`, and broad catch/pass patterns.
+- Run the bundled production code quality gate.
+- If the gate reports errors or actionable warnings, go back to the code, remove the bloat or quality escape, and rerun the gate.
+- If the gate reports a `QG54-OWNER-COMPETITION-PRODUCTION` warning, it has named both competing owners with their evidence class. Deepen, replace, or consolidate same-responsibility owners until one owner remains and delete the competing surface; a `candidate` or `confirmed-unresolved` state left behind is unfinished work, not a passing verdict. `resolved` telemetry requires a parent-bound disposition record and complete scope; same-responsibility repairs additionally require the one-owner predicate.
+- If the gate reports a `QG54-DUPLICATE-*` warning, it has named every region carrying that exact implementation. Keep one owner and delete the copies, or call the survivor. These rules are warning-only; a copy left behind is unfinished work, not a passing verdict.
+- For owner-competition warnings, inspect the named regions' callers/callees with GitNexus MCP or local search before deciding; distinct authorities, real adapters, and genuinely different lifecycles are the legitimate negative cases the disposition contract records.
+- Treat touched shallow modules as in-scope debt: absorb, delete, or record the blocker before finalizing.
+- Do not finish the turn while duplicate added code, reimplemented existing helpers, unnecessary growth, fake-green suppressions, broad catch/pass, temp artifacts, or cleanup failures remain in the changed production surface.
+- Treat the gate as changed-scope evidence, not as a substitute for the repo's own lint, typecheck, tests, build, and domain-specific quality gates.
+- If a tracked governing plan or review artifact exists for the current work and includes an execution checklist, update it when execution state materially changes.
+- Material changes include:
+  - checklist progress
+  - active branch or PR state
+  - superseded or dropped items
+  - changed execution order
+  - remaining blockers or follow-ups
+- Do not create busywork edits for every tiny code change, but do not leave the governing artifact stale after a meaningful implementation pass either.
+- Follow `repo-production-workflow` through code review and the final advisor’s readiness decision before pushing/opening the PR; resolve threads as fixed only after the fix is pushed.
+- Reconcile closure through the Minimum Implementation Decision. Compare the final diff against the preflight module shape; delete or inline shallow wrappers/helpers and verify tests cross the public interface.
+- Run applicable required checks for touched areas; the workflow owns delivery and installation order.
+- Keep changed code paths at or above the repo coverage gate.
+- Add explicit tests for critical control loops even if coverage already passes.
+- For bugs and regressions, compare the implementation to the canonical root-cause-first gate and the `/diagnose` trace.
+- Do not mark work done while blockers, follow-ups, dead-letter gaps, retry gaps, or state-regression risks remain.
+- Do not present PR remediation as complete while the fix exists only locally or while review threads were resolved ahead of the pushed fix.
+- Closure notes must include: summary, commands run, key outcomes, test classes exercised, and blockers or follow-ups.
 
 ## Minimum Implementation Decision
 
@@ -66,13 +103,9 @@ capabilities; they do not establish that agents use them to achieve the objectiv
 
 Simplify the responsible decision rather than adding symptom guards. Separate
 intentional contract changes from regressions and reconcile recorded obligations
-with observed outcomes; keep unrelated behavior outside the repair. After the
-coherent edit, derive attacks from what the implementation chose, not only from
-the original map: conversions, callees, shared writers, hooks, mutation paths and
-public escape paths; probe semantic divergence against an oracle independent of the
-suspect logic, verify prevention rather than later detection, and where cross-owner
-recovery proof is missing drive the failure through another affected public owner
-followed by a normal continuation whose durable effect is read independently.
+with observed outcomes; keep unrelated behavior outside the repair. The
+[implementation loop](#execution-checklist) tests the responsibilities exposed by
+the actual edit before independent review.
 
 Use the request/map already in context; load missing evidence once at implementation entry and refresh only on material change. An edit-hook reminder cannot supply reasoning for already-generated edit arguments.
 
@@ -158,37 +191,6 @@ Load [references/transaction-doctrine.md](references/transaction-doctrine.md) fo
 - Keep startup, pre-task, and post-task cleanup deterministic.
 - Treat a new dependency as a separate justified decision, never as reuse; do not add one when an existing capability satisfies the requirement cleanly.
 - Do not introduce a second package manager or second lockfile.
-
-## Execution Checklist
-
-- Complete the Minimum Implementation Decision before writing code in any file or worktree, including scratch and generated source.
-- Inspect the delta and remove unnecessary additions.
-- Scan for common quality escapes such as `TODO`, `FIXME`, `eslint-disable`, `@ts-ignore`, and broad catch/pass patterns.
-- Run the bundled production code quality gate.
-- If the gate reports errors or actionable warnings, go back to the code, remove the bloat or quality escape, and rerun the gate.
-- If the gate reports a `QG54-OWNER-COMPETITION-PRODUCTION` warning, it has named both competing owners with their evidence class. Deepen, replace, or consolidate same-responsibility owners until one owner remains and delete the competing surface; a `candidate` or `confirmed-unresolved` state left behind is unfinished work, not a passing verdict. `resolved` telemetry requires a parent-bound disposition record and complete scope; same-responsibility repairs additionally require the one-owner predicate.
-- If the gate reports a `QG54-DUPLICATE-*` warning, it has named every region carrying that exact implementation. Keep one owner and delete the copies, or call the survivor. These rules are warning-only; a copy left behind is unfinished work, not a passing verdict.
-- For owner-competition warnings, inspect the named regions' callers/callees with GitNexus MCP or local search before deciding; distinct authorities, real adapters, and genuinely different lifecycles are the legitimate negative cases the disposition contract records.
-- Treat touched shallow modules as in-scope debt: absorb, delete, or record the blocker before finalizing.
-- Do not finish the turn while duplicate added code, reimplemented existing helpers, unnecessary growth, fake-green suppressions, broad catch/pass, temp artifacts, or cleanup failures remain in the changed production surface.
-- Treat the gate as changed-scope evidence, not as a substitute for the repo's own lint, typecheck, tests, build, and domain-specific quality gates.
-- If a tracked governing plan or review artifact exists for the current work and includes an execution checklist, update it when execution state materially changes.
-- Material changes include:
-  - checklist progress
-  - active branch or PR state
-  - superseded or dropped items
-  - changed execution order
-  - remaining blockers or follow-ups
-- Do not create busywork edits for every tiny code change, but do not leave the governing artifact stale after a meaningful implementation pass either.
-- Follow `repo-production-workflow` through code review and the final advisor’s readiness decision before pushing/opening the PR; resolve threads as fixed only after the fix is pushed.
-- Reconcile closure through the Minimum Implementation Decision. Compare the final diff against the preflight module shape; delete or inline shallow wrappers/helpers and verify tests cross the public interface.
-- Run applicable required checks for touched areas; the workflow owns delivery and installation order.
-- Keep changed code paths at or above the repo coverage gate.
-- Add explicit tests for critical control loops even if coverage already passes.
-- For bugs and regressions, compare the implementation to the canonical root-cause-first gate and the `/diagnose` trace.
-- Do not mark work done while blockers, follow-ups, dead-letter gaps, retry gaps, or state-regression risks remain.
-- Do not present PR remediation as complete while the fix exists only locally or while review threads were resolved ahead of the pushed fix.
-- Closure notes must include: summary, commands run, key outcomes, test classes exercised, and blockers or follow-ups.
 
 ## Bundled Gate Policy
 

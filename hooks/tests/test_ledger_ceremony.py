@@ -8,6 +8,7 @@ those cases assert only what the wrapper itself emits and records.
 from __future__ import annotations
 
 import copy
+from contextlib import closing
 import io
 import itertools
 import json
@@ -334,7 +335,8 @@ class PreflightContinuation(Ceremony):
         for action in ("final-review", "re-consult-final-review", "appeal-final-review"):
             command = next_operation(identity, {**state, "nextAction": action})["command"]
             self.assertIn("--phase final-review", command, marker)
-            self.assertIn("--design-absent 'single owner repair'", command, marker)
+            self.assertNotIn("--design-absent", command, marker)
+            self.assertNotIn("--reconsult", command, marker)
         self.assertIsNone(next_operation(identity, {**state, "phase": "complete"})["command"], marker)
         observed = {"kind": "observed", "valid": True, "evidenceId": "observed-proof", "runIndex": 0}
         self.assertIn("--from-evidence observed-proof:0", next_operation(identity, state, observed)["command"], marker)
@@ -415,8 +417,8 @@ class AdvisorDiffBounded(Ceremony):
                 "behaviorMap": []})
         set_phase(identity, "tdd", "not-required")
         self.assertIn("JUDGED = 1", final("fix-before-commit", "# FIRST\n"), f"{marker}: a preflight advanced the judged tree")
-        self.ok("record", "advisor-disposition", "--stage", "final", "--finding", "F-1", "--fixed",
-                "--evidence-ref", f"{self.state()['verificationLatestEvidence']}:0")
+        self.ok("record", "advisor-disposition", "--finding", "F-1", "--report-only",
+                "--reason", "The finding has no runnable behavior claim.")
         mismatch = final("context-mismatch", "# SECOND\n")
         self.assertNotIn("JUDGED = 1", mismatch, f"REJUDGED_WHOLE_PASS: {mismatch[:600]}")
         self.assertIn("diff> 1\t0\tapp.py\n", mismatch, f"RESUMED_PASS_UNLISTED: {mismatch[:600]}")
@@ -429,8 +431,7 @@ class AdvisorDiffBounded(Ceremony):
         self.assertNotIn("JUDGED = 1", fresh, f"APPROVAL_NOT_FROM_LEDGER: {fresh[:600]}")
         self.assertIn("+# THIRD", fresh, "APPROVAL_NOT_FROM_LEDGER")
         self.assertIn("+# FLAGGED", final("fix-before-commit", "# FLAGGED\n"), marker)
-        self.ok("record", "advisor-disposition", "--stage", "final", "--finding", "F-1", "--rejected", "--reason", "r",
-                "--evidence-ref", f"{self.state()['verificationLatestEvidence']}:0")
+        self.ok("record", "advisor-disposition", "--finding", "F-1", "--rejected", "--reason", "r")
         appeal = self.wrapper("commit-ready", phase="final-review")[1]
         self.assertIn("diff> +# FLAGGED", appeal, f"APPEAL_WITHOUT_DISPUTED_CODE: {appeal[-600:]}")
 
@@ -795,6 +796,7 @@ class RecordSeam(Ceremony):
         self.ok("record", "advisor-result", "--stage", "preflight", "--source", "codex-advisor", "--input", "-",
                 input=json.dumps(envelope))
         self.assertEqual(self.state()["advisorPreflight"]["status"], "completed", marker)
+        self.ok("record", "advisor-disposition", "--findings", "none")
 
 
 class EveryViolation(Ceremony):
@@ -857,35 +859,9 @@ class EveryViolation(Ceremony):
             "succession-refs": (("repairSuccession", "findings", 0, "id"), ""),
             "succession-tree": (("repairSuccession", "context", "candidateTree"), "bad"),
             "succession-context-extra": (("repairSuccession", "context", "extra"), 1),
-            "claim": (("findings", 0, "claim"), ""), "kind": (("findings", 0, "kind"), []),
+            "claim": (("findings", 0, "claim"), ""),
             "material": (("findings", 0, "material"), "yes"), "prior": (("findings", 0, "priorFinding"), 5),
             "duplicate": (("findings", 1, "id"), "R-1"), "second": (("findings", 1, "claim"), 7)})
-        measured = {"claim": "c", "command": "inspect", "result": "false"}
-        full = {"finding_id": "R-1", "status": "report-only", "kind": "nonbehavioral", "premise": dict(measured),
-                "occurrence": {"domain": "d", "count": 0, "complete": True, "command": "inspect", "result": "0"},
-                "materialConsequence": dict(measured), "evidence": "e"}
-        receipt = {"finding_id": "R-2", "status": "fixed", "evidenceRefs": ["e:0"], "reason": "r"}
-        disposition_faults = {
-            "intake": (("intakeEvidenceId",), ""), "extra": (("extra",), 1),
-            "context": (("context",), {"workflowId": ""}), "no-context": (("context",), _DROP),
-            "context-tree": (("context", "candidateTree"), "bad"), "context-extra": (("context", "extra"), 1),
-            "count": (("dispositions", 0, "occurrence", "count"), -1),
-            "occurrence-extra": (("dispositions", 0, "occurrence", "extra"), 1),
-            "premise-claim": (("dispositions", 0, "premise", "claim"), ""),
-            "premise-extra": (("dispositions", 0, "premise", "extra"), 1),
-            "full-id": (("dispositions", 0, "finding_id"), ""), "full-kind": (("dispositions", 0, "kind"), []),
-            "premise": (("dispositions", 0, "premise"), {}), "evidence": (("dispositions", 0, "evidence"), _DROP),
-            "consequence": (("dispositions", 0, "materialConsequence", "result"), "true"),
-            "mechanism": (("dispositions", 0, "mechanism"), 5),
-            "receipt-status": (("dispositions", 1, "status"), "bogus"),
-            "receipt-refs": (("dispositions", 1, "evidenceRefs"), []),
-            "receipt-reason": (("dispositions", 1, "reason"), "")}
-        document = {"intakeEvidenceId": "I", "context": context, "dispositions": [full, receipt]}
-        lost += self.pairs("review", document, disposition_faults)
-        lost += self.pairs("advisor-disposition", document, disposition_faults, "--stage", "preflight", "--findings", "addressed")
-        receipt["status"] = "report-only"
-        receipt.pop("reason")
-        self.assertIn("non-empty reason", self.refusal("review", document))
         self.record_preflight({"authoritativeContract": "c", "behaviorMap": [
             item("BM_ONE"), item("BM_KEEP"),
             item("BM_HOLD")]})
@@ -1018,7 +994,7 @@ class ObservedCapture(Ceremony):
         self.begin(session_root, slug="session")
         session_rows = self.rows(session_root)
         self.begin()
-        self.record_preflight({"authoritativeContract": "c", "behaviorMap": []})  # no probe list owns test runs
+        self.record_preflight({"authoritativeContract": "c", "behaviorMap": [item("BM_ONE")]})
         spec = self.hook(command, session_root)
         self.assertEqual(spec.get("permissionDecision"), "allow", f"{marker}: {spec}")
         rewritten = str(spec["updatedInput"]["command"])
@@ -1027,16 +1003,44 @@ class ObservedCapture(Ceremony):
         direct = subprocess.run(["bash", "-c", command], cwd=self.repo, env=self.env, capture_output=True, text=True)
         self.assertEqual(observed.returncode, direct.returncode, marker)
         self.assertIn("VALUE_NOT_TWO", observed.stdout + observed.stderr, marker)
+        self.assertIn("workflow.py tdd --repo", observed.stderr, "OBSERVATION_BYPASSES_TDD")
+        self.assertIn("--behavior-id and real command after --", observed.stderr, "COMPARISON_INPUTS_HIDDEN")
         state = self.state()
         self.assertEqual(state["verification"], verification, f"{marker}: observation changed verification")
         runs = evidence_document(resolve_repo_identity(self.repo), str(state["verificationLatestEvidence"]))["runs"]
         self.assertEqual((runs[-1]["kind"], runs[-1]["command"]), ("observed", command), marker)
         self.assertTrue(runs[-1].get("treeManifestId"), marker)
         self.assertEqual(self.rows(session_root), session_rows, f"{marker}: receipt landed in the session root")
+        codex_home = self.tmp / "codex"
+        codex_home.mkdir()
+        with sqlite3.connect(codex_home / "state_5.sqlite") as connection:
+            connection.execute("CREATE TABLE threads (id TEXT PRIMARY KEY, source TEXT)")
+            connection.executemany("INSERT INTO threads VALUES (?, ?)", [
+                ("resumed-lead", "cli"), ("reviewer", '{"subagent":"review"}')])
+        self.env["CODEX_HOME"] = str(codex_home)
+        resumed = subprocess.run(["bash", "-c", rewritten], cwd=self.repo, capture_output=True, text=True,
+                                 env={**self.env, "CODEX_THREAD_ID": "resumed-lead"})
+        self.assertIn("VALUE_NOT_TWO", resumed.stdout + resumed.stderr, marker)
+        self.assertIn("workflow observed receipt", resumed.stderr, "RESUMED_LEAD_RECEIPT_LOST")
+        rows = self.rows()
+        reviewer = subprocess.run(["bash", "-c", rewritten], cwd=self.repo, capture_output=True, text=True,
+                                  env={**self.env, "CODEX_THREAD_ID": "reviewer"})
+        self.assertIn("VALUE_NOT_TWO", reviewer.stdout + reviewer.stderr, f"{marker}: reviewer run refused")
+        self.assertEqual(self.rows(), rows, f"{marker}: reviewer run recorded in the lead's ledger")
+        with closing(sqlite3.connect(codex_home / "state_5.sqlite")) as connection:
+            connection.execute("BEGIN EXCLUSIVE")
+            locked = subprocess.run(["bash", "-c", rewritten], cwd=self.repo, capture_output=True, text=True,
+                                    env={**self.env, "CODEX_THREAD_ID": "resumed-lead"})
+            self.assertEqual(locked.returncode, direct.returncode)
+            self.assertIn("VALUE_NOT_TWO", locked.stdout + locked.stderr, "IDENTITY_LOOKUP_BLOCKED_COMMAND")
+            self.assertEqual(self.rows(), rows, "UNAVAILABLE_IDENTITY_RECORDED_A_RECEIPT")
+        self.assertNotIn("permissionDecision", self.hook(f"git status; {command}", self.repo),
+                         f"{marker}: composed test command refused")
         reference = f"{state['verificationLatestEvidence']}:{runs[-1]['runIndex']}"
         (self.repo / "app.py").write_text("value = 2\nother = 1\n", encoding="utf-8")
         passing = subprocess.run(["bash", "-c", rewritten], cwd=self.repo, env=self.env, capture_output=True, text=True)
         self.assertEqual(passing.returncode, 0, passing.stdout + passing.stderr)
+        self.assertIn("workflow.py tdd --repo", passing.stderr, "OBSERVATION_BYPASSES_TDD")
         state = self.state()
         latest = evidence_document(resolve_repo_identity(self.repo), str(state["verificationLatestEvidence"]))["runs"][-1]
         self.ok("verify", "--from-evidence", f"{state['verificationLatestEvidence']}:{latest['runIndex']}")
@@ -1050,36 +1054,6 @@ class ObservedCapture(Ceremony):
     def test_a_carriage_return_stays_with_the_shell(self) -> None:
         # bash passes `-q\rtests` to pytest as one argument; split, it would select tests
         self.assertNotIn("updatedInput", self.hook("pytest -q\rtests", self.repo), "CARRIAGE_RETURN_REWRITTEN")
-
-    def test_a_composed_test_run_is_refused_once_the_probe_list_is_recorded(self) -> None:
-        # obs1/obs2 ran `$(rg ...)` selections and `rg ...; python3 -m unittest ...` past the lone-command refusal
-        marker = "COMPOSED_TEST_RUN_ADMITTED"
-        command = f"{sys.executable} -m unittest -v test_app"
-        composed = (f"git status; {command} 2>&1 | tail -3", f"cd {self.repo} && \\\n  {command}",
-                    f"{sys.executable} -m unittest -v $(ls test_*.py)", "pytest -q\rtest_app.py",
-                    # R-13: wrapped runs from captured history
-                    f"timeout 600 {command}", f"FOO=1 env BAR=2 {command}", "uv run pytest -q", f"time {command}",
-                    f"for t in a b; do {command}; done", "nohup pytest -q &", f"bash -lc 'cd x && {command}'")
-        self.begin()
-        self.assertIsNone(self.hook(composed[0], self.repo).get("permissionDecision"), f"{marker}: exploration refused")
-        self.record_preflight({"authoritativeContract": "c", "behaviorMap": [item("BM_ONE")]})
-        for refused in composed:
-            self.assertEqual(self.hook(refused, self.repo).get("permissionDecision"), "deny", f"{marker}: {refused!r}")
-        for other in (f"git diff | head; {sys.executable} {WORKFLOW} tdd --behavior-id BM_ONE -- {command}",
-                      "git diff --check | head -5", "pgrep -f pytest; ls -la .venv/bin/pytest; command -v pytest"):
-            self.assertEqual(self.hook(other, self.repo), {}, f"{marker}: refused {other!r}")
-        # R-12: only the pass's lead is refused; a reviewer in the same checkout keeps its test runs
-        self.assertNotEqual(self.hook(composed[0], self.repo, session="reviewer").get("permissionDecision"), "deny",
-                            f"{marker}: reviewer refused")
-        # final SPEC-2: a reviewer's lone run is rewritten to the observed form, which must run it too
-        # R-29: and it records nothing in the lead's ledger, failing or not
-        rewritten = str(self.hook(command, self.repo, session="reviewer")["updatedInput"]["command"])
-        rows = self.rows()
-        reviewer = subprocess.run(["bash", "-c", rewritten], cwd=self.repo, capture_output=True, text=True,
-                                  env={**self.env, "CODEX_THREAD_ID": "reviewer"})
-        self.assertIn("VALUE_NOT_TWO", reviewer.stdout + reviewer.stderr, f"{marker}: reviewer run refused")
-        self.assertEqual(self.rows(), rows, f"{marker}: reviewer run recorded in the lead's ledger")
-
 
 class ObservedDrift(Ceremony):
     def test_a_run_spanning_an_edit_binds_nothing(self) -> None:
@@ -1318,8 +1292,8 @@ class FlagDisposition(Ceremony):
         self.intake(identity, wid, "SPEC-2")
         self.comparison(2, "BM_ATTACK")
         (self.repo / "app.py").write_text("value = 2\nother = 1\n", encoding="utf-8")
-        green = self.comparison(0, "BM_ATTACK")
-        fixed = self.cli("record", "advisor-disposition", "--finding", "SPEC-1", "--fixed", "--evidence-ref", green)
+        self.comparison(0, "BM_ATTACK")
+        fixed = self.cli("record", "advisor-disposition", "--finding", "SPEC-1", "--fixed")
         self.assertEqual(fixed.returncode, 0, f"{marker}: {fixed.stderr[-400:]}")
         self.comparison(2, "BM_LATER", "test_other")
         (self.repo / "app.py").write_text("value = 2\nother = 2\n", encoding="utf-8")
@@ -1353,7 +1327,7 @@ class FlagDisposition(Ceremony):
         fixed = self.cli("record", "advisor-disposition", "--finding", "SPEC-1", "--fixed", "--reason", "relinked owner")
         self.assertEqual(fixed.returncode, 0, "RELINK_DROPPED_PROOF: " + fixed.stderr[-400:])
 
-    def test_gate_republishes_readiness_left_stale_by_a_transient_edit(self) -> None:
+    def test_map_delta_keeps_new_obligations_pending_until_compared(self) -> None:
         self.begin()
         self.record_preflight({"authoritativeContract": "fixture", "behaviorMap": [item("BM_ATTACK", basis="fixture")]})
         (self.repo / "app.py").write_text("value = 2\nother = 1\n", encoding="utf-8")
@@ -1363,7 +1337,9 @@ class FlagDisposition(Ceremony):
             self.ok("record", "tdd-map", "--input", "-", input=json.dumps({"items": items}))
         (self.repo / "app.py").write_text("value = 2\nother = 1\n", encoding="utf-8")
         self.ok_raw("verify", "--kind", "quality-gate", "--base-ref", "HEAD")
-        self.assertEqual(self.state()["tdd"], "passed", "GATE_LEFT_STALE_READINESS")
+        self.assertEqual(self.state()["tdd"], "in-progress", "DELTA_DROPPED_PENDING_OBLIGATION")
+        self.comparison(0, "BM_EXTRA")
+        self.assertEqual(self.state()["tdd"], "passed", "COMPARED_OBLIGATION_LEFT_PENDING")
 
     def test_reviewer_package_carries_the_contract_and_comparison_outcomes(self) -> None:
         self.begin()
@@ -1390,9 +1366,7 @@ class FlagRefusal(Ceremony):
                 "authoritativeContract": "fixture", "behaviorMap": [
                     item("BM_ATTACK", refs=[{"type": "finding", "evidenceId": intake, "id": "SPEC-1"}],
                          basis="fixture")]})
-        red = FlagDisposition.comparison(self, 2, "BM_ATTACK")
-        passed = self.ok("verify", "--", sys.executable, "-c", "pass")
-        success = f"{passed['evidenceId']}:{passed['runIndex']}"
+        FlagDisposition.comparison(self, 2, "BM_ATTACK")
         def refuse(*cases):
             before = self.rows()
             for reason, extra in cases:
@@ -1401,14 +1375,12 @@ class FlagRefusal(Ceremony):
                 self.assertIn(reason, refused.stderr, f"{marker}: refused for another reason: {refused.stderr[-300:]}")
                 self.assertEqual(self.rows(), before, f"{marker}: {extra} mutated the ledger")
             self.assertEqual(self.state()["findingStates"][0]["status"], "pending", marker)
-        refuse(("SPEC-9", ("--finding", "SPEC-9", "--fixed", "--evidence-ref", red)),
-               ("BM_NOPE", ("--finding", "SPEC-1", "--fixed", "--evidence-ref", red, "--behavior-id", "BM_NOPE")),
-               *(("BM_ATTACK has no successful comparison", ("--finding", "SPEC-1", "--fixed", *ref))
-                 for ref in ((), ("--evidence-ref", red), ("--evidence-ref", success))))
+        refuse(("SPEC-9", ("--finding", "SPEC-9", "--fixed")),
+               ("BM_NOPE", ("--finding", "SPEC-1", "--fixed", "--behavior-id", "BM_NOPE")))
         (self.repo / "app.py").write_text("value = 2\nother = 1\n", encoding="utf-8")
+        refuse(("no current comparison", ("--finding", "SPEC-1", "--fixed")))
         FlagDisposition.comparison(self, 0, "BM_ATTACK")
-        refuse(("execution reference", ("--finding", "SPEC-1", "--fixed", "--evidence-ref", "evidence-missing:0")),
-               ("stale, unbound", ("--finding", "SPEC-1", "--fixed", "--evidence-ref", success)))
+        self.ok("record", "advisor-disposition", "--finding", "SPEC-1", "--fixed")
 
 
 class RemovedSurfaces(Ceremony):
@@ -1440,10 +1412,17 @@ class MinimalDocuments(Ceremony):
         self.assertNotIn("intent", recorded.stdout, f"{marker}: the preflight receipt echoes the intent")
         self.ok("verify", "--", sys.executable, "-c", "pass")
         self.ok("verify", "--kind", "quality-gate", "--base-ref", "HEAD")
-        review = {"findings": [{"id": "R-1", "claim": "a real claim", "material": True, "kind": "nonbehavioral",
+        review = {"findings": [{"id": "R-1", "claim": "a real claim", "material": True,
                                 "axis": "Spec", "location": "extra context is dropped"}]}
-        self.ok("record", "review", "--input", "-", input=json.dumps(review))
+        intake = self.ok("record", "review", "--input", "-", input=json.dumps(review))
+        self.assertIn("record advisor-disposition", intake["next"]["command"], marker)
+        self.assertNotIn("--input", intake["next"]["command"], marker)
+        self.assertIn("--finding R-1", intake["next"]["command"], marker)
         self.assertEqual(self.state()["codeReview"]["findings"], "pending", marker)
+        self.ok("record", "advisor-disposition", "--finding", "R-1", "--report-only",
+                "--reason", "The measured condition has no material consequence on this task.")
+        self.assertEqual(self.state()["findingStates"][-1]["status"], "report-only", marker)
+
         self.ok("record", "tdd-map", "--input", "-", input=json.dumps({"items": [item("BM_TWO")]}))
         self.assertEqual(self.state()["tdd"], "in-progress", marker)
 
@@ -1452,6 +1431,10 @@ class DerivedIdentity(Ceremony):
     def test_the_active_workflow_supplies_identity(self) -> None:
         marker = "IDENTITY_NOT_DERIVED"
         self.begin()
+        for fields in (("slug,workflowId",), ("slug workflowId",), ("slug", "workflowId")):
+            result = self.cli("status", "--slug", "ceremony", "--fields", *fields)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(result.stdout), {k: self.state()[k] for k in ("slug", "workflowId")})
         paused = self.cli("pause", "--reason", "waiting")
         self.assertEqual(paused.returncode, 0, f"{marker}: {paused.stderr[-300:]}")
         self.assertEqual(self.cli("pause", "--slug", "another", "--reason", "x").returncode, 2, marker)
@@ -1459,6 +1442,7 @@ class DerivedIdentity(Ceremony):
         self.ok("record", "advisor-result", "--stage", "preflight", "--source", "codex-advisor", "--input", "-",
                 input=json.dumps({"schemaVersion": 1, "verdict": "completed", "findings": []}))
         self.assertEqual(self.state()["advisorPreflight"]["status"], "completed", marker)
+        self.ok("record", "advisor-disposition", "--findings", "none")
 
 
 if __name__ == "__main__":
