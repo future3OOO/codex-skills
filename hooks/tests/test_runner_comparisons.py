@@ -1063,6 +1063,20 @@ class ReadinessTests(unittest.TestCase):
                                                "import app\nprint('X | P=T,K=T | a:', app.value)\nprint('X | P=T,K=T | b: none')"))
         self.assertEqual(self.open_lines(receipt), [], marker + ": " + json.dumps(receipt))
 
+    def test_parametrized_cases_keep_their_parameter_in_the_question(self):
+        marker = "UNEXECUTED_BOUNDARY_PASSED"
+        self.begin(pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one"))
+        (self.repo / "test_params.py").write_text("import app, pytest\n@pytest.mark.parametrize('n', [1, 2])\n"
+                                                  "def test_kept(n):\n    assert app.kept * n == 2 * n\n")
+        (self.repo / "app.py").write_text("value = 1\nkept = 2\n")
+        for touch in range(3):  # separate processes: the label must not depend on set order
+            receipt = self.tdd("BM_KEEP", command=(sys.executable, "-m", "pytest", "-q", "test_params.py"))
+            self.assertEqual(receipt["comparison"], "changed", marker + ": " + json.dumps(receipt))
+            [line] = self.open_lines(receipt)
+            self.assertIn("test_kept[1] differs", line, marker + ": " + line)
+            self.assertIn("test_kept[2] differs", line, marker + ": " + line)
+            (self.repo / "app.py").write_text("value = 1\nkept = 2\n" + "# touch\n" * (touch + 1))
+
     def test_narrowed_selection_is_a_limitation(self):
         marker = "NARROWING_UNREPORTED"
         self.begin(pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one",
@@ -1133,6 +1147,24 @@ class ReadinessTests(unittest.TestCase):
         self.assertFalse(any(line.startswith("BM_CTX") for line in self.open_lines(receipt)), marker + ": " + json.dumps(receipt))
         packet = checkpoint_channels(self.repo, self.case.env, "code-review")
         self.assertEqual(packet["behavior-map"]["released"], [released], marker)
+        # a release answers only its own context's inputs; another context's absent input stays open
+        other = self.update(pending_behavior("BM_CTX", kind="preservation", behavior="X decides OUT when P=T,K=T,Q=T", expected="a: OUT, b: none",
+                                             boundaryInputs=["X | P=T,K=T,Q=T | a", "X | P=T,K=T,Q=T | b", "Y | P=F | a"],
+                                             released={"reason": "Q requires K false in parse()", "case": "X | P=T,K=T,Q=T"}))
+        self.assertEqual(other.returncode, 0, marker + ": " + other.stdout + other.stderr)
+        [line] = [line for line in self.open_lines(self.tdd("BM_CTX", command=command)) if line.startswith("BM_CTX")]
+        self.assertIn("Y | P=F | a missing on original, current", line, marker + ": " + line)
+        self.assertNotIn("X | P=T,K=T,Q=T | a", line, marker)
+        self.update(release(released={"reason": "Q requires K false in parse()", "case": "X | P=T,K=T,Q=T"}))
+        # a test whose assertion text contains the word is not the lead's note
+        added = self.update(pending_behavior("BM_WORD", behavior="status becomes verified", expected="verified",
+                                             basis=INTENT.split(". ")[0] + ".", boundaryInputs=["test_word"]))
+        self.assertEqual(added.returncode, 0, marker + ": " + added.stdout + added.stderr)
+        self.probe("def test_word(self): self.assertEqual('verified' if app.value == 2 else 'unverified', 'verified')")
+        (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
+        receipt = self.tdd("BM_WORD")
+        self.assertFalse(any(line.startswith("BM_WORD") for line in self.open_lines(receipt)), marker + ": " + json.dumps(receipt))
+        (self.repo / "app.py").write_text("value = 1\nkept = 1\n")
         # the lead's own unverified note neither proves the case nor releases it
         unverified = "X | P=T,K=F,Q=T | a: unverified - fixture cannot set Q"
         self.update(pending_behavior("BM_UNV", kind="preservation", behavior="X decides OUT when P=T,K=F,Q=T",

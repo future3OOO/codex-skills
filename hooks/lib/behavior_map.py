@@ -195,11 +195,16 @@ def quoted(basis: str, intent: str) -> bool:
 
 
 def unverified(entry: JsonObject | None) -> bool:
-    """The lead's own note that a case's measurement is unavailable; it never proves or releases."""
-    return entry is not None and "unverified" in (str(entry.get("result", "")) + str(entry.get("assertion", ""))).lower()
+    """The lead's own printed note that a case's measurement is unavailable; it never proves or releases."""
+    return entry is not None and entry.get("outcome") == "printed" and "unverified" in str(entry.get("result", "")).lower()
 
 
 # --- executed cases -------------------------------------------------------------
+
+def case_label(name: str) -> str:
+    """The stable short id a question names a case by: the runner's own id with its parameter."""
+    return max(short_ids(name) - {name}, key=len, default=name)
+
 
 def short_ids(name: str) -> set[str]:
     """The identities a boundary input may name: the full case name, the runner's short id,
@@ -302,7 +307,7 @@ def _judge(entry: JsonObject, owners: list[JsonObject]) -> list[str]:
                 reasons.append(f"{name} missing on original, current")
             attributable.update(dict.fromkeys(matched, name))
         claimed = {name for owner in [entry, *owners] for name in owner.get("boundaryInputs") or []}
-        unclaimed = {case: next(iter(short_ids(case) - {case}), case) for case, by_tree in cases.items()
+        unclaimed = {case: case_label(case) for case, by_tree in cases.items()
                      if case not in attributable and not short_ids(case) & claimed
                      and _differs(by_tree.get("original"), by_tree.get("current"))}
         if contract:
@@ -315,7 +320,7 @@ def _judge(entry: JsonObject, owners: list[JsonObject]) -> list[str]:
     elif contract and len(cases) > 1:
         return ["several cases executed: name the requested ones in boundaryInputs"]
     else:
-        attributable = {name: next(iter(short_ids(name) - {name}), name) for name in cases}
+        attributable = {name: case_label(name) for name in cases}
         if not contract and _runner(run) not in {"pytest", "unittest"} and _changed_lines(run["arms"][0], run["arms"][-1]):
             reasons.append("unnamed output differs between original and current: name the cases (`name: result` lines)")
     if not attributable and not reasons:
@@ -393,9 +398,11 @@ def open_obligations(items: list[JsonObject]) -> list[str]:
                       and (other.get("comparison") or {}).get("runIndex") == entry["comparison"].get("runIndex")]
             reasons = _judge(entry, owners)
             if entry.get("released"):
-                # A bound release answers only the unreachable context's absent inputs; a differing
-                # or unverified case it named stays its question.
-                reasons = [reason for reason in reasons if not reason.endswith(" missing on original, current")]
+                # A bound release answers only its own context's absent inputs (`<context> | a`);
+                # other contexts' inputs, and a differing or unverified case, stay its question.
+                context, suffix = entry["released"]["case"], " missing on original, current"
+                reasons = [reason for reason in reasons if not (reason.endswith(suffix)
+                           and reason[:-len(suffix)].split(" | ")[:-1] == context.split(" | "))]
                 if problem := release_binding(entry):
                     reasons.append(f"release unbound: {problem} - rerun, repair, or withdraw the release")
             if reasons:
