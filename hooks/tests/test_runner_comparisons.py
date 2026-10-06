@@ -1659,6 +1659,20 @@ class ReadinessTests(unittest.TestCase):
                     receipt = self.tdd("BM_C", command=sibling)
                 self.assertEqual(self.status()["tdd"], "in-progress", f"{marker}: {order}: " + json.dumps(receipt))
 
+    def test_renaming_a_requested_case_owes_nothing(self):
+        marker = "RENAMED_REQUESTED_CHANGE_OWED"
+        change = pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two", boundaryInputs=["test_value"])
+        self.begin(change, pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one",
+                                            boundaryInputs=["test_kept"]))
+        (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
+        kept = "def test_kept(self): self.assertEqual(app.kept, 1)"
+        self.probe("def test_value(self): self.assertEqual(app.value, 2)", kept)
+        self.tdd("BM_CHANGE", "BM_KEEP")
+        self.probe("def test_value_is_two(self): self.assertEqual(app.value, 2)", kept)
+        self.assertEqual(self.update(change | {"boundaryInputs": ["test_value_is_two"]}).returncode, 0, marker)
+        receipt = self.tdd("BM_CHANGE", "BM_KEEP")
+        self.assertEqual((self.open_lines(receipt), self.status()["tdd"]), ([], "passed"), marker + ": " + json.dumps(receipt))
+
     def test_receipt_omits_contract_history_review_keeps_it(self):
         marker = "CONTRACT_NOISE_IN_RECEIPT"
         change = pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two",

@@ -342,15 +342,16 @@ def _run_tdd(values: list[str]) -> int:
            "sourceDelta": _source_delta(identity, original, candidate),
            "comparison": comparison, "arms": arms, "valid": valid, "execution": execution,
            "exitCode": 0 if valid else 1, "timedOut": any(arm["timedOut"] for arm in arms)}
-    # Each comparison carries the regressions earlier ones exposed until executed evidence resolves them,
-    # and whether its item is the preflight contract with an unchanged obligation.
+    # Each comparison carries the regressions earlier comparisons recorded when they ran, never a
+    # re-judgment of old evidence against an edited map, and whether its item is the preflight
+    # contract with an unchanged obligation.
     approved = behavior_map.approved_contracts(items, behavior_map.recorded_map(
         None, evidence_document(identity, state.get("preflightEvidence"))))
-    priors = [behavior_map.judgement(item, items) or {"owed": {}, "exposed": False} for item in mapped]
-    for item, prior in zip(mapped, priors):
+    for item in mapped:
+        prior = item.get("comparison") or {}
         item["comparison"] = {**run, "reviewSources": owner_sources[item["id"]], "approved": item["id"] in approved,
                               "obligation": behavior_map.obligation(item),
-                              "regressions": prior["owed"], "exposed": prior["exposed"]}
+                              "regressions": prior.get("regressions") or {}, "exposed": bool(prior.get("exposed"))}
     for item in mapped:
         if judged := behavior_map.judgement(item, items):
             item["comparison"].update(regressions=judged["owed"], exposed=judged["exposed"], deferred=sorted(judged["deferred"]))
