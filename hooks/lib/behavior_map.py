@@ -5,6 +5,7 @@ import copy
 import difflib
 import re
 import shlex
+from typing import Callable
 
 from . import tdd_surface
 
@@ -14,9 +15,11 @@ KINDS = frozenset({"contract", "preservation"})
 READING_FIELDS = frozenset({"interpretations", "interpretation", "authority"})
 # Judgement fields: a map update may change them without invalidating the executed
 # comparison, which is re-judged; a changed obligation text requires a new comparison.
-JUDGEMENT_FIELDS = READING_FIELDS | {"kind", "basis", "boundaryInputs", "released", "sourceRefs"}
+JUDGEMENT_FIELDS = READING_FIELDS | {"kind", "basis", "boundaryInputs", "sourceRefs"}
 IDENTIFIER = re.compile(r"^[A-Z][A-Z0-9_-]{1,63}$")
 UNITTEST_CASE = re.compile(r"^(\S+ \([^()\n]+\))((?: \[.*?\])?(?: \(.*\))?)$")
+STOPPED_NOTE = ("stopped: a test method that failed in its body skipped its remaining statements on that tree, "
+                "so inputs after the failure did not execute there")
 
 
 def _text(value: object) -> str | None:
@@ -68,16 +71,6 @@ def _field_errors(raw: JsonObject, identifier: str) -> list[str]:
     if settled and ("interpretations" not in raw or settled != {"interpretation", "authority"}
                     or not all(_text(raw[key]) for key in settled)):
         errors.append(f"probe {identifier} settles its readings with both interpretation and authority")
-    if "released" in raw:
-        released = raw["released"]
-        if not isinstance(released, dict) or set(released) != {"reason", "case"} or not all(map(_text, released.values())):
-            errors.append(f"probe {identifier} released requires a non-empty reason and the executed case it is bound to")
-        elif raw.get("kind") != "preservation":
-            errors.append(f"probe {identifier} only a preservation item can be released")
-        elif settled != {"interpretation", "authority"} and "interpretations" in raw:
-            errors.append(f"probe {identifier} cannot be released while its readings are unsettled")
-        elif any(ref.get("type") == "finding" for ref in raw.get("sourceRefs") or [] if isinstance(ref, dict)):
-            errors.append(f"probe {identifier} owns a finding and cannot be released")
     return errors
 
 
@@ -94,9 +87,6 @@ def _recorded_fields(raw: JsonObject) -> JsonObject:
         fields["boundaryInputs"] = []  # recorded in another shape: visible, unmapped, never silently dropped
     if "interpretations" in fields and _text(raw.get("interpretation")) and _text(raw.get("authority")):
         fields.update(interpretation=raw["interpretation"].strip(), authority=raw["authority"].strip())
-    released = raw.get("released")
-    if isinstance(released, dict) and set(released) == {"reason", "case"} and all(map(_text, released.values())):
-        fields["released"] = {key: released[key].strip() for key in ("reason", "case")}
     return fields
 
 
@@ -169,34 +159,10 @@ def readings_unsettled(entry: JsonObject) -> bool:
     return bool(entry.get("interpretations")) and not (entry.get("interpretation") and entry.get("authority"))
 
 
-MARKDOWN_MARKER = re.compile(r"^\s*(?:#+|[-*+]|\d+[.)]|\|)\s*")
-
-
-def _segments(intent: str) -> str:
-    """The request as sentence segments: wrapped prose joins into one line, while a heading,
-    list item, table row or blank line starts a new segment, so a bullet is quotable as written."""
-    segments: list[str] = []
-    for block in re.split(r"\n\s*\n", intent):
-        for line in block.splitlines():
-            stripped = MARKDOWN_MARKER.sub("", line)
-            if segments and stripped == line.strip() and block.splitlines()[0] != line:
-                segments[-1] += " " + stripped
-            else:
-                segments.append(stripped)
-    return "\n".join(" ".join(segment.split()) for segment in segments if segment.strip())
-
-
-def quoted(basis: str, intent: str) -> bool:
-    """A contract basis recorded after preflight is one or more complete, consecutive sentences
-    of the request, verbatim (whitespace-normalized): it starts where a sentence starts."""
-    sentence = " ".join(basis.split())
-    return bool(sentence and sentence[-1] in ".!?"
-                and re.search(r"(?:^|[.!?] |\n)" + re.escape(sentence) + r"(?=[ \n]|$)", _segments(intent)))
-
-
 def unverified(entry: JsonObject | None) -> bool:
-    """The lead's own printed note that a case's measurement is unavailable; it never proves or releases."""
-    return entry is not None and entry.get("outcome") == "printed" and "unverified" in str(entry.get("result", "")).lower()
+    """The lead's printed `<case>: unverified - <why>` note that a case's measurement is unavailable;
+    it never proves. An ordinary printed value is a result, even the word `unverified`."""
+    return entry is not None and entry.get("outcome") == "printed" and str(entry.get("result", "")).startswith("unverified - ")
 
 
 # --- executed cases -------------------------------------------------------------
@@ -290,92 +256,204 @@ def _differs(original: JsonObject | None, current: JsonObject | None) -> bool:
 
 # --- readiness ------------------------------------------------------------------
 
-def _judge(entry: JsonObject, owners: list[JsonObject]) -> list[str]:
-    """Why the item's current comparison does not yet prove it; empty when proved. `owners` are
-    the other items sharing the batch; a differing case none of them names stays this
-    preservation item's to answer."""
+def _matched(name: str, cases: dict[str, dict[str, JsonObject]]) -> tuple[list[str], str | None]:
+    """The executed cases a boundary name selects: the exact case, else one test's short id with
+    its parameters; a short id that several tests share selects none of them."""
+    if name in cases:
+        return [name], None
+    aliases = [case for case in cases if name in short_ids(case)]
+    if len({case.split("[")[0] for case in aliases}) > 1:
+        return [], f"{name} matches several tests ({', '.join(sorted(aliases))}): name the full case id"
+    return aliases, None
+
+
+OUTPUT_LINE = "unnamed output line: "
+
+
+def _judge(entry: JsonObject, items: list[JsonObject], cases: dict[str, dict[str, JsonObject]]) -> JsonObject:
+    """The item's verdict on one comparison: `reasons` it is not proved (none when proved), whether
+    an executed outcome rather than missing evidence leaves it open (`found`), and the observations
+    `exposing` it, each with the original tree's result: an attributable case that does not pass
+    unchanged (for a contract item, a named case that passed on the original and fails on current), a
+    differing case no item names, and each differing unnamed output line. A case another item names is
+    that item's to judge; a differing case no item names stays this preservation item's."""
     run = entry["comparison"]
-    cases, _ = folded_cases(run)
     original_outcome, current_outcome = run["arms"][0]["outcome"], run["arms"][-1]["outcome"]
     reasons: list[str] = []
+    found: list[str] = []
+    exposing: dict[str, object] = {}
     attributable: dict[str, str] = {}
     contract = entry.get("kind") == "contract"
+    claimed = _claimed(entry, items, cases)
+    # a sibling that has not run defers the cases its names select here: owed, not this item's failure
+    deferred = {case for other in items if other is not entry and not (other.get("comparison") or {}).get("arms")
+                for name in other.get("boundaryInputs") or [] for case in _matched(name, cases)[0]} - claimed
+
+    def expose(case: str) -> None:
+        exposing[case] = _result(cases[case].get("original"), original_outcome)
+
     if inputs := entry.get("boundaryInputs"):
         for name in inputs:
-            matched = [case for case in cases if name in short_ids(case)]
-            if not matched:
-                reasons.append(f"{name} missing on original, current")
+            matched, ambiguity = _matched(name, cases)
+            if ambiguity or not matched:
+                reasons.append(ambiguity or f"{name} missing on original, current")
             attributable.update(dict.fromkeys(matched, name))
-        claimed = {name for owner in [entry, *owners] for name in owner.get("boundaryInputs") or []}
         unclaimed = {case: case_label(case) for case, by_tree in cases.items()
-                     if case not in attributable and not short_ids(case) & claimed
+                     if case not in attributable and case not in claimed | deferred and not short_ids(case) & set(inputs)
                      and _differs(by_tree.get("original"), by_tree.get("current"))}
         if contract:
-            reasons.extend(f"{label} differs and no item names it: name it in a contract item quoting the request, or repair"
-                           for label in unclaimed.values())
+            found.extend(f"{label} differs and no item names it" for label in unclaimed.values())
+            for case in unclaimed:
+                expose(case)
         else:
             attributable.update(unclaimed)
-    elif owners:
-        return [f"shares its batch with {', '.join(owner['id'] for owner in owners)}: name its cases in boundaryInputs"]
+    elif owners := _owners(entry, items):
+        return _verdict([f"shares its batch with {', '.join(owner['id'] for owner in owners)}: name its cases in boundaryInputs"])
     elif contract and len(cases) > 1:
-        return ["several cases executed: name the requested ones in boundaryInputs"]
+        return _verdict(["several cases executed: name the requested ones in boundaryInputs"])
     else:
-        attributable = {name: case_label(name) for name in cases}
-        if not contract and _runner(run) not in {"pytest", "unittest"} and _changed_lines(run["arms"][0], run["arms"][-1]):
-            reasons.append("unnamed output differs between original and current: name the cases (`name: result` lines)")
-    if not attributable and not reasons:
-        return ["no attributable case executed: name the cases (test ids or printed `name: result` lines)"]
+        requested = _claimed(entry, items, cases, lambda other: other.get("kind") == "contract")
+        attributable = {name: case_label(name) for name in cases if name not in requested | deferred}
+    for case in deferred - set(attributable):
+        if _differs(cases[case].get("original"), cases[case].get("current")):
+            expose(case)
+    if not contract and (changed := _unnamed_changes(run)):
+        found.append("unnamed output differs between original and current: name the cases "
+                     "(printed `name: result` lines, in a command apart from any test runner's report)")
+        before = _unnamed_lines(run["arms"][0], report=_reports(run)) or []
+        exposing.update({OUTPUT_LINE + line[2:]: before.count(line[2:]) for line in changed})
+    if not attributable and not reasons and not found:
+        return _verdict(["no attributable case executed: name the cases (test ids or printed `name: result` lines)"])
     differing = []
     for case, label in attributable.items():
         original, current = cases[case].get("original"), cases[case].get("current")
         if unverified(original) or unverified(current):
-            reasons.append(f"{label} unverified: measurement unavailable is neither proof nor a release")
+            reasons.append(f"{label} unverified: measurement unavailable is not proof")
         elif contract:
             if not _passed(current, current_outcome):
-                reasons.append(f"{label} {_state(current)} on current")
+                found.append(f"{label} {_state(current)} on current")
+                if _passed(original, original_outcome):
+                    expose(case)
             if original is None or original.get("outcome") == "skipped":
                 reasons.append(f"{label} {_state(original)} on original")
             elif _passed(current, current_outcome) and _differs(original, current):
                 differing.append(label)
         elif not (_passed(original, original_outcome) and _passed(current, current_outcome)) or _differs(original, current):
-            reasons.append(f"{label} differs (original={_state(original)}, current={_state(current)}): a preservation case "
-                           "must pass on both trees - repair, or record an authorized contract change "
-                           "(tdd-map kind contract quoting the request)")
-    if contract and not differing and not reasons:
-        reasons.append("no attributable case differs between original and current")
-    return reasons
+            found.append(f"{label} differs (original={_state(original)}, current={_state(current)})")
+            if _differs(original, current) or _passed(original, original_outcome):
+                expose(case)  # an equal failure or skip on both trees proves nothing and regresses nothing
+    if contract and not differing and not reasons and not found:
+        found.append("no attributable case differs between original and current")
+    if found:
+        found.append(("name every differing case in its owning item and show the requested change on it" if contract
+                      else "preservation cases must pass unchanged on both trees")
+                     + ": repair the code or the probe")
+    return {**_verdict(reasons + found, bool(found), exposing), "deferred": deferred}
 
 
-def release_binding(entry: JsonObject) -> str | None:
-    """Why the item's release is not bound to its current comparison; None when it is. The bound
-    case is the probe's printed note, present unchanged on both trees and not marked unverified."""
-    released = entry.get("released")
-    run = entry.get("comparison") or {}
-    if not released or not run.get("arms"):
-        return "no current comparison"
-    cases, _ = folded_cases(run)
-    bound = [name for name in cases if released["case"] in short_ids(name)]
-    if not bound:
-        return f"{released['case']} was not executed by the current comparison"
-    original_outcome, current_outcome = run["arms"][0]["outcome"], run["arms"][-1]["outcome"]
-    for name in bound:
-        original, current = cases[name].get("original"), cases[name].get("current")
-        if original is None or current is None:
-            return f"{released['case']} was not printed on both trees"
-        if original.get("outcome") != "printed" or current.get("outcome") != "printed":
-            return f"{released['case']} is a test result, not the probe's printed note stating why the context is unreachable"
-        if unverified(original) or unverified(current):
-            return f"{released['case']} is unverified: unavailable measurement is not evidence of unreachability"
-        if not (_passed(original, original_outcome) and _passed(current, current_outcome)) or _differs(original, current):
-            return f"{released['case']} differs between original and current: a measured change is not unreachable"
-    return None
+def _verdict(reasons: list[str], found: bool = False, exposing: dict[str, object] | None = None) -> JsonObject:
+    return {"reasons": reasons, "found": found, "exposing": exposing or {}, "deferred": set()}
+
+
+def _owners(entry: JsonObject, items: list[JsonObject]) -> list[JsonObject]:
+    index = (entry.get("comparison") or {}).get("runIndex")
+    return [other for other in items if other is not entry and (other.get("comparison") or {}).get("runIndex") == index]
+
+
+def _claimed(entry: JsonObject, items: list[JsonObject], cases: dict[str, dict[str, JsonObject]],
+             keep: Callable[[JsonObject], bool] = lambda other: True) -> set[str]:
+    """The exact cases other items' names select, each in that item's own executed comparison; an item
+    that has not run claims nothing, and a short id shared by another test claims nothing here."""
+    return {case for other in items if other is not entry and keep(other) and (other.get("comparison") or {}).get("arms")
+            for name in other.get("boundaryInputs") or [] for case in _matched(name, folded_cases(other["comparison"])[0])[0]}
+
+
+def _result(entry: JsonObject | None, arm_outcome: str) -> str | None:
+    """A case's result on one tree: None when absent, its outcome, or its printed value on a run that passed."""
+    if entry is None:
+        return None
+    return _state(entry) if entry.get("outcome") != "printed" or arm_outcome == "passed" else "failed"
+
+
+def _owed(entry: JsonObject, items: list[JsonObject], cases: dict[str, dict[str, JsonObject]],
+          exposing: dict[str, object]) -> dict[str, dict[str, object]]:
+    """The one rule that clears a regression. Per command, an item owes every observation that exposed
+    it, kept from its first exposure with the original tree's result. The debt is paid only when that
+    command runs again and restores it: the case runs and passes unchanged on both trees, a case only
+    the edited source produced is gone from a passing run, each lost output line is printed by a passing
+    run as often as the original printed it; a contract item's own requested case passes verified. An
+    observation that differs in this comparison is owed by it. A missing, skipped, unverified or
+    renamed case, another command, another item or a passing remainder pays nothing; another contract
+    naming the case only excuses it (`judgement`)."""
+    run = entry["comparison"]
+    command, before, after = run.get("command"), run["arms"][0]["outcome"], run["arms"][-1]["outcome"]
+    own = {case for name in entry.get("boundaryInputs") or [] for case in _matched(name, cases)[0]} if entry.get("kind") == "contract" else set()
+    printed = _unnamed_lines(run["arms"][-1], report=_reports(run))
+
+    def paid(observation: str, result: object) -> bool:
+        if observation.startswith(OUTPUT_LINE):
+            return after == "passed" and printed is not None and printed.count(observation[len(OUTPUT_LINE):]) == result
+        original, current = cases.get(observation, {}).get("original"), cases.get(observation, {}).get("current")
+        if result is None:
+            return current is None and after == "passed"
+        return _passed(current, after) and not unverified(current) and (
+            observation in own or _passed(original, before) and not _differs(original, current))
+
+    stored = run.get("regressions") or {}
+    pending = {**exposing, **stored.get(command, {})}
+    owed = {**stored, command: {observation: result for observation, result in pending.items()
+                                if observation in exposing or not paid(observation, result)}}
+    return {key: results for key, results in owed.items() if results}
+
+
+def judgement(entry: JsonObject, items: list[JsonObject], cases: dict[str, dict[str, JsonObject]] | None = None) -> JsonObject | None:
+    """The item's verdict on its latest comparison, fresh or stale, with what its regressions still
+    owe (`owed`, the runner stores it; `retained`, those open that this comparison does not already
+    report), and whether the item is `exposed`: open on an executed outcome, now or since an earlier
+    comparison, until one proves it; an owed regression keeps it exposed. An owed case is excused, not
+    paid, while the preflight contract names it: the exact case its name selects in that contract's own
+    comparison, which then must prove it. A case a sibling that has not run names is deferred, owed but
+    not this item's failure; a debt deferred only by a later map edit stays open."""
+    comparison = entry.get("comparison") or {}
+    if not comparison.get("arms") or entry.get("kind") not in KINDS:
+        return None
+    cases = folded_cases(comparison)[0] if cases is None else cases
+    verdict = _judge(entry, items, cases)
+    owed = _owed(entry, items, cases, verdict["exposing"])
+    requested = _claimed(entry, items, cases, lambda other: other.get("kind") == "contract"
+                         and bool((other.get("comparison") or {}).get("approved")))
+    open_ = {command: [key for key in results if key not in requested] for command, results in owed.items()}
+    deferred = verdict["deferred"] - set(comparison.get("deferred", verdict["deferred"]))
+    retained = {command: rest for command, results in open_.items() if (rest := [
+        key for key in results if command != comparison.get("command") or key not in verdict["exposing"] or key in deferred])}
+    exposed = bool(verdict["reasons"] or owed) and bool(verdict["found"] or owed or comparison.get("exposed"))
+    return {**verdict, "owed": owed, "retained": retained, "exposed": exposed}
+
+
+def approved_contracts(items: list[JsonObject], recorded: list[JsonObject] | None) -> frozenset[str]:
+    """The contract items recorded at preflight whose obligation is unchanged: the requested changes."""
+    before = {entry["id"]: entry for entry in recorded or []}
+    return frozenset(entry["id"] for entry in items if entry.get("kind") == "contract" and entry["id"] in before
+                     and all(before[entry["id"]].get(key) == entry.get(key) for key in ("kind", "behavior", "seam", "expected")))
+
+
+def _retained_line(command: str, observations: list[str]) -> str:
+    what = ", ".join(dict.fromkeys("its differing output" if key.startswith(OUTPUT_LINE) else case_label(key) for key in observations))
+    return (f"{what} exposed this item under `{command}` and has not come back since: repair the code and rerun "
+            "that command; a passing remainder is not a repair")
 
 
 def open_obligations(items: list[JsonObject]) -> list[str]:
-    """The single readiness result: one question per item whose required proof is missing."""
-    lines = []
+    """The single readiness result: one question per item whose required proof is missing.
+    Items sharing one comparison fold its cases once."""
+    lines: list[str] = []
+    folded: dict[object, dict[str, dict[str, JsonObject]]] = {}
     for entry in items:
         head = f"{entry['id']} ({entry.get('kind') or 'kind?'}): {entry['behavior']} => {entry['expected']}; "
+        comparison = entry.get("comparison") or {}
+        if comparison.get("arms") and comparison.get("runIndex") not in folded:
+            folded[comparison.get("runIndex")] = folded_cases(comparison)[0]
+        cases = folded.get(comparison.get("runIndex"), {}) if comparison.get("arms") else {}
         if entry.get("kind") not in KINDS:
             lines.append(head + "declare kind (contract or preservation) through record tdd-map")
         elif entry.get("boundaryInputs") == []:
@@ -383,36 +461,32 @@ def open_obligations(items: list[JsonObject]) -> list[str]:
         elif readings_unsettled(entry):
             lines.append(head + "readings unsettled: " + " | ".join(entry["interpretations"]) + " - record interpretation and authority")
         elif not producer_proved(entry):
-            comparison = entry.get("comparison") or {}
-            reason = ("comparison stale (production or probe changed): rerun it" if comparison.get("valid")
+            reason = ("comparison stale (production, probe or obligation changed): rerun it" if comparison.get("valid")
                       else "no current valid comparison")
-            if comparison.get("arms") and entry.get("boundaryInputs"):
-                cases, _ = folded_cases(comparison)
+            if cases and entry.get("boundaryInputs"):
                 reason += "; " + "; ".join(
                     f"{name} " + ", ".join(f"{_state(cases.get(case, {}).get(label))} on {label}" for label in ("original", "current"))
                     for name in entry["boundaryInputs"]
-                    for case in [next((case for case in cases if name in short_ids(case)), None)])
+                    for case in [next(iter(_matched(name, cases)[0]), None)])
+            if judged := judgement(entry, items, cases):
+                reason += "".join(f"; {_retained_line(key, seen)}" for key, seen in judged["retained"].items())
             lines.append(head + reason)
         else:
-            owners = [other for other in items if other is not entry
-                      and (other.get("comparison") or {}).get("runIndex") == entry["comparison"].get("runIndex")]
-            reasons = _judge(entry, owners)
-            if entry.get("released"):
-                # A bound release answers only its own context's absent inputs (`<context> | a`);
-                # other contexts' inputs, and a differing or unverified case, stay its question.
-                context, suffix = entry["released"]["case"], " missing on original, current"
-                reasons = [reason for reason in reasons if not (reason.endswith(suffix)
-                           and reason[:-len(suffix)].split(" | ")[:-1] == context.split(" | "))]
-                if problem := release_binding(entry):
-                    reasons.append(f"release unbound: {problem} - rerun, repair, or withdraw the release")
+            judged = judgement(entry, items, cases)
+            reasons = judged["reasons"] + [_retained_line(key, seen) for key, seen in judged["retained"].items()]
             if reasons:
                 lines.append(head + "; ".join(reasons))
     return lines
 
 
+def obligation(entry: JsonObject) -> list[object]:
+    return [entry.get(key) for key in ("kind", "behavior", "seam", "expected")]
+
+
 def producer_proved(entry: JsonObject) -> bool:
     comparison = entry.get("comparison")
-    return isinstance(comparison, dict) and comparison.get("valid") is True and comparison.get("fresh", True) is True
+    return (isinstance(comparison, dict) and comparison.get("valid") is True and comparison.get("fresh", True) is True
+            and comparison.get("obligation", obligation(entry)) == obligation(entry))
 
 
 def unresolved(items: list[JsonObject]) -> list[str]:
@@ -423,52 +497,54 @@ def never_compared(items: list[JsonObject]) -> list[str]:
     return [str(entry["id"]) for entry in items if not (entry.get("comparison") or {}).get("arms")]
 
 
-def released_lines(items: list[JsonObject]) -> list[str]:
-    return [f"released: {entry['id']}: {entry['released']['reason']} ({entry['released']['case']})"
-            for entry in items if entry.get("released")]
-
-
 def contract_changes(items: list[JsonObject], recorded: list[JsonObject] | None) -> list[str]:
-    """What moved since the recorded preflight that only the request, or a reviewer's finding, can
-    authorize, each with the basis it carries: a preservation item turned contract, a dropped
-    preservation case, a contract item or case added or re-worded after preflight."""
+    """What moved since the recorded preflight, each with the basis or finding it carries, for the
+    reviewer and final advisor to judge against the request or that finding: a changed kind, a
+    contract item added or re-worded, contract cases added and any case dropped. Listing authorizes
+    nothing and never clears an open item."""
     before = {entry["id"]: entry for entry in recorded or []}
     lines = []
     for entry in items:
-        prior = before.get(entry["id"])
-        for change in authorization_needed(entry, prior):
-            lines.append(f"{entry['id']}: {change}: {entry['basis']}")
-    return lines
-
-
-def authorization_needed(entry: JsonObject, prior: JsonObject | None, owned: set[tuple[str, str]] = frozenset()) -> list[str]:
-    """The changes to `entry` since `prior` that the request must authorize. An attack added for a
-    finding in `owned` (the pass's material behavioral findings) carries that finding instead, and
-    is still listed with it."""
-    findings = [str(ref["id"]) for ref in entry.get("sourceRefs", []) if ref.get("type") == "finding"]
-    changes = []
-    if entry.get("kind") == "contract":
+        prior, kind = before.get(entry["id"]), entry.get("kind")
+        findings = [str(ref["id"]) for ref in entry.get("sourceRefs", []) if ref.get("type") == "finding"]
+        changes = []
         if prior is None:
-            changes.append("contract item added after preflight" + (f" (finding {', '.join(findings)})" if findings else ""))
+            if kind == "contract":
+                changes.append("contract item added after preflight" + (f" (finding {', '.join(findings)})" if findings else ""))
         else:
-            if prior.get("kind") != "contract":
-                changes.append(f"{prior.get('kind')} -> contract")
-            elif any(prior.get(key) != entry.get(key) for key in ("behavior", "expected")):
+            inputs, earlier = set(entry.get("boundaryInputs") or []), set(prior.get("boundaryInputs") or [])
+            if prior.get("kind") != kind:
+                changes.append(f"{prior.get('kind')} -> {kind}")
+            elif kind == "contract" and any(prior.get(key) != entry.get(key) for key in ("behavior", "expected")):
                 changes.append("contract expectation re-worded")
-            if added := set(entry.get("boundaryInputs") or []) - set(prior.get("boundaryInputs") or []):
-                changes.append("contract cases added: " + ", ".join(sorted(added)))
-    elif prior is not None and (dropped := set(prior.get("boundaryInputs") or []) - set(entry.get("boundaryInputs") or [])):
-        changes.append("preservation cases dropped: " + ", ".join(sorted(dropped)))
-    if prior is None and any((str(ref["evidenceId"]), str(ref["id"])) in owned for ref in entry.get("sourceRefs", [])
-                             if ref.get("type") == "finding"):
-        return []  # the finding authorizes the attack; contract_changes still lists it
-    return changes
+            if kind == "contract" and inputs - earlier:
+                changes.append("contract cases added: " + ", ".join(sorted(inputs - earlier)))
+            if earlier - inputs:
+                changes.append(f"{prior.get('kind')} cases dropped: " + ", ".join(sorted(earlier - inputs)))
+        lines.extend(f"{entry['id']}: {change}: {entry['basis']}" for change in changes)
+    return lines
 
 
 # --- the compact comparison view -------------------------------------------------
 
 def _runner(run: JsonObject) -> str | None:
-    return tdd_surface.identify(shlex.split(run["command"])).get("runner") if run.get("command") else None
+    """The runner whose report the arms carry, including one a wrapping command printed."""
+    surface = tdd_surface.identify(shlex.split(run["command"])) if run.get("command") else {}
+    return next(filter(None, (tdd_surface.native_runner(surface, str(arm.get("output", ""))) for arm in run.get("arms", []))), None)
+
+
+def _unnamed_changes(run: JsonObject) -> list[str]:
+    """Output lines no named case accounts for that differ between original and current. A test
+    runner's own command names everything; beside a printed runner report, every line outside that
+    report is judged, whatever the report's cases show."""
+    if tdd_surface.identify(shlex.split(run.get("command") or "")).get("runner") in tdd_surface.NATIVE_RUNNERS:
+        return []
+    return _changed_lines(run["arms"][0], run["arms"][-1], report=_reports(run))
+
+
+def _reports(run: JsonObject) -> bool:
+    """Whether the command prints a test runner's report beside its own output."""
+    return _runner(run) in tdd_surface.NATIVE_RUNNERS
 
 
 def comparison_view(run: JsonObject) -> JsonObject:
@@ -476,7 +552,7 @@ def comparison_view(run: JsonObject) -> JsonObject:
     labels = _arm_labels(run)
     cases, unnamed = folded_cases(run)
     surface = tdd_surface.identify(shlex.split(run["command"])) if run.get("command") else {}
-    runner = surface.get("runner")
+    runner = _runner(run)
     outcomes = dict(zip(labels, (arm["outcome"] for arm in run["arms"])))
     groups: dict[tuple[str, str], list[str]] = {}
     for name, by_tree in sorted(cases.items()):
@@ -484,26 +560,35 @@ def comparison_view(run: JsonObject) -> JsonObject:
         if _passed(current, outcomes["current"]) and all(not _differs(original, by_tree.get(label)) for label in labels):
             continue
         pattern = ", ".join(f"{label}={_state(by_tree.get(label))}"
+                            + (" (stopped)" if by_tree.get(label, {}).get("execution") == "stopped" else "")
                             + (f" ({by_tree[label]['subtests']} subtests)" if by_tree.get(label, {}).get("subtests") else "")
                             for label in labels)
         assertions = tuple(dict.fromkeys(" ".join(part.split()) for label in labels
                                          for part in str(by_tree.get(label, {}).get("assertion") or "").split("\n") if part.strip()))
         groups.setdefault((pattern, assertions), []).append(name)
-    lines = []
+    lines: list[str] = []
+    shown: set[str] = set()
     for (pattern, assertions), names in groups.items():
-        shown = ", ".join(names[:8]) + (f" +{len(names) - 8} more in evidence" if len(names) > 8 else "")
-        line = (f"{len(names)} cases: " if len(names) > 1 else "") + f"{shown}: {pattern}"
-        for assertion in assertions:
+        listed = ", ".join(names[:8]) + (f" +{len(names) - 8} more in evidence" if len(names) > 8 else "")
+        line = (f"{len(names)} cases: " if len(names) > 1 else "") + f"{listed}: {pattern}"
+        for assertion in (fresh := [assertion for assertion in assertions if assertion not in shown]):
             line += "; " + assertion[:240] + ("... [full assertion in evidence]" if len(assertion) > 240 else "")
-        lines.append(line)
-    if runner not in {"pytest", "unittest"}:
-        lines.extend(_changed_lines(run["arms"][0], run["arms"][-1]))
+        shown.update(fresh)
+        lines.append(line + ("; assertion as above" if len(fresh) < len(assertions) else ""))
+    lines.extend(_unnamed_changes(run)[:40])
     limitations = [f"{label}: {count} cases unnamed" + (" (passing subtests print no name)" if runner == "unittest" else "")
                    for label, count in unnamed.items() if count]
-    if narrowed := tdd_surface.narrowing(surface):
+    if (surface.get("runner") not in tdd_surface.NATIVE_RUNNERS and runner in tdd_surface.NATIVE_RUNNERS
+            and any(not arm.get("cases") for arm in run["arms"] if arm["outcome"] in {"passed", "failed"})):
+        limitations.append(f"the wrapped {runner} report names no case: pass `python3 -m {runner} ...` itself as the command; "
+                           "the runner already runs it from the checkout root with the repository on PYTHONPATH, "
+                           "this environment and verbose output")
+    if narrowed := tdd_surface.narrowing(surface, run["arms"][0].get("loadedRoot") or "."):
         if len(narrowed) > 200:
             narrowed = f"{len(narrowed.split(', '))} selectors"
         limitations.append(f"narrowed selection: {narrowed}; tests outside it are not compared")
+    if any(entry.get("execution") == "stopped" for by_tree in cases.values() for entry in by_tree.values()):
+        limitations.append(STOPPED_NOTE)
     limitations.extend(f"sensitivity lost on {arm['requestedTree'][:12]}: a tree that failed before passes the revised probe"
                        for label, arm in zip(labels, run["arms"]) if label.startswith("earlier") and arm["outcome"] == "passed")
     return {**{key: run[key] for key in ("comparison", "valid", "fresh", "runIndex", "command") if key in run},
@@ -514,18 +599,25 @@ def comparison_view(run: JsonObject) -> JsonObject:
             "cases": lines, "limitations": limitations}
 
 
-def _changed_lines(original: JsonObject, current: JsonObject) -> list[str]:
+def _unnamed_lines(arm: JsonObject, report: bool = False) -> list[str] | None:
+    """An arm's unnamed printed lines. Beside a wrapped runner's `report`, every line outside that
+    report counts, also on an arm whose runner failed: the report's outcome says nothing about the
+    command's own output."""
+    if arm.get("outcome") not in ({"passed", "failed"} if report else {"passed"}):
+        return None
+    text = str(arm.get("output", "")).replace(str(arm.get("loadedRoot")), "<source>")
+    if report:
+        return tdd_surface.outside_report(text)
+    return [line for line in text.splitlines() if not tdd_surface.PRINTED_CASE.match(line)]
+
+
+def _changed_lines(original: JsonObject, current: JsonObject, report: bool = False) -> list[str]:
     """An operation probe's unnamed printed lines that differ between the original and current arms."""
-    def lines(arm: JsonObject) -> list[str] | None:
-        if arm.get("outcome") != "passed":
-            return None
-        return [line for line in str(arm.get("output", "")).replace(str(arm.get("loadedRoot")), "<source>").splitlines()
-                if not tdd_surface.PRINTED_CASE.match(line)]
-    before, after = lines(original), lines(current)
+    before, after = _unnamed_lines(original, report), _unnamed_lines(current, report)
     if before is None or after is None:
         return []
     hunks = list(difflib.unified_diff(before, after, lineterm="", n=0))[2:]  # the two file headers
-    return [f"{line[0]} {line[1:]}" for line in hunks if line[:1] in "+-"][:40]
+    return [f"{line[0]} {line[1:]}" for line in hunks if line[:1] in "+-"]
 
 
 def executed_commands(entry: JsonObject) -> dict[str, str]:

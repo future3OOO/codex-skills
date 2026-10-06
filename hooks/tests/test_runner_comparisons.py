@@ -132,8 +132,8 @@ class RunnerComparisonTests(unittest.TestCase):
         self.assertEqual({a["outcome"] for a in json.loads(changed.stdout)["arms"]}, {"failed"})
         self.assertEqual(sorted(calls.read_text().splitlines()), sorted(expected_calls + ["1", "2"]))
 
-    def test_quality_gate_refreshes_comparisons_only_after_success(self):
-        self.assertEqual(self.operation(2).returncode, 0)
+    def test_quality_gate_leaves_stale_proof_to_tdd(self):
+        self.assertEqual(self.operation().returncode, 0)
         case = self.case
 
         def runs():
@@ -147,34 +147,16 @@ class RunnerComparisonTests(unittest.TestCase):
         base = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=case.repo, text=True).strip()
         record_base_oid(resolve_repo_identity(case.repo), state["slug"], state["workflowId"], base)
         initial = len(runs())
-        (case.repo / "app.py").write_text("from typing import Any\nvalue: Any = 2\n")
-        command = ("verify", "--repo", str(case.repo), "--kind", "quality-gate")
-        failed = case.cli(*command)
-        self.assertEqual(failed.returncode, 2, failed.stdout + failed.stderr)
-        self.assertEqual(len(runs()), initial, "FAILED_GATE_RAN_COMPARISONS")
-        (case.repo / "app.py").write_text("value: int = 2\n")
-        passed = case.cli(*command)
+        (case.repo / "app.py").write_text("value: int = 1\n")
+        passed = case.cli("verify", "--repo", str(case.repo), "--kind", "quality-gate")
         self.assertEqual(passed.returncode, 0, passed.stdout + passed.stderr)
-        # CodeRabbit: the gate's own receipt is the last line, after the refresh receipts
-        self.assertEqual(json.loads(passed.stdout.strip().splitlines()[-1])["kind"], "quality-gate", "GATE_RECEIPT_NOT_LAST")
-        refreshed = runs()
-        self.assertEqual(len(refreshed), initial + 1, "QUALITY_GATE_DID_NOT_REFRESH_PROOF")
-        self.assertTrue(refreshed[-1]["valid"])
-        self.assertEqual(case.cli(*command).returncode, 0)
-        self.assertEqual(len(runs()), len(refreshed), "UNCHANGED_GATE_REPEATED_COMPARISON")
-        (case.repo / "app.py").write_text("value: int = 3\n")
-        self.assertEqual(case.cli(*command).returncode, 2, "FAILING_COMPARISON_PASSED_VERIFICATION")
-        self.assertFalse(runs()[-1]["valid"])
-        (case.repo / "app.py").write_text("value: int = 2\n")
-        missing = pending_behavior("BM_MISSING", kind="preservation", behavior="another obligation", expected="its own proof")
-        update = case.tmp / "map.json"
-        update.write_text(json.dumps({"items": [missing, self.item(2)]}))
-        result = case.cli("record", "tdd-map", "--repo", str(case.repo), "--input", str(update))
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        result = case.cli(*command)
-        self.assertEqual(result.returncode, 0, "UNRECORDED_PROBE_BLOCKED_REFRESH: " + result.stdout)
-        self.assertTrue(runs()[-1]["valid"])
-        self.assertEqual(json.loads(case.cli("status", "--repo", str(case.repo)).stdout)["tdd"], "in-progress")
+        self.assertEqual(len(runs()), initial, "QUALITY_GATE_RAN_COMPARISONS")
+        receipt = json.loads(passed.stdout.strip().splitlines()[-1])
+        self.assertEqual((receipt["kind"], receipt["nextAction"]), ("quality-gate", "tdd"), "STALE_PROOF_NOT_ROUTED_TO_TDD")
+        rerun = case.cli("tdd", "--repo", str(case.repo), "--behavior-id", "BM_VALUE")
+        self.assertEqual(rerun.returncode, 0, rerun.stdout + rerun.stderr)
+        self.assertEqual((len(runs()), json.loads(case.cli("status", "--repo", str(case.repo)).stdout)["tdd"]),
+                         (initial + 1, "passed"), "RERUN_DID_NOT_RESTORE_PROOF")
 
     def test_snapshot_git_objects_remain_readable(self):
         self.case.begin_with_map([self.item()])
@@ -260,14 +242,15 @@ class RunnerComparisonTests(unittest.TestCase):
                           sys.executable, "-m", "unittest", "test_value")
         compact = json.loads(result.stdout)
         self.assertEqual(compact["cases"], [
-            "test_loop (test_value.Value.test_loop): original=failed, current=failed; AssertionError: 1 != 2; AssertionError: 2 != 1",
+            "test_loop (test_value.Value.test_loop): original=failed (stopped), current=failed (stopped); AssertionError: 1 != 2; AssertionError: 2 != 1",
             "test_partitions (test_value.Value.test_partitions): original=failed (1 subtests), current=failed (1 subtests); "
             "AssertionError: 1 != 2 : requested; AssertionError: False != True : preserved",
-            "test_preserved (test_value.Value.test_preserved): original=passed, current=failed; AssertionError: False is not true : PRESERVATION_CHANGE",
-            "test_requested (test_value.Value.test_requested): original=failed, current=passed; AssertionError: 1 != 2 : REQUESTED_CHANGE",
-        ], "CASE_ATTRIBUTION_MISSING: " + result.stdout)
+            "test_preserved (test_value.Value.test_preserved): original=passed, current=failed (stopped); AssertionError: False is not true : PRESERVATION_CHANGE",
+            "test_requested (test_value.Value.test_requested): original=failed (stopped), current=passed; AssertionError: 1 != 2 : REQUESTED_CHANGE",
+        ], "STOPPED_EXECUTION_HIDDEN: " + result.stdout)
         self.assertEqual(compact["limitations"], ["original: 1 cases unnamed (passing subtests print no name)",
-                                                  "current: 1 cases unnamed (passing subtests print no name)"], result.stdout)
+                                                  "current: 1 cases unnamed (passing subtests print no name)", STOPPED_NOTE],
+                         "STOPPED_EXECUTION_HIDDEN: " + result.stdout)
         evidence = case.cli("evidence", "--repo", str(case.repo), "--evidence-id", compact["summaryId"], "--full")
         arms = json.loads(evidence.stdout)["document"]["runs"][compact["runIndex"]]["arms"]
         self.assertNotIn("loop input 1", arms[0]["output"])
@@ -746,26 +729,7 @@ class RunnerComparisonTests(unittest.TestCase):
             with self.subTest(signal=signum):
                 self.cancel_probe(signum, "tdd", "--behavior-id", "BM_VALUE", "--", sys.executable, "-m", "unittest", "test_value")
 
-    def test_refresh_cancellation_reaps_the_executing_probe(self):
-        self.cancel_probe(signal.SIGTERM, "verify", "--kind", "quality-gate", "--base-ref", "HEAD")
-
-    def test_refresh_missing_executable_retains_the_committed_gate_receipt(self):
-        self.assertEqual(self.operation().returncode, 0)
-        executable = self.case.tmp / "python3"
-        executable.symlink_to(sys.executable)
-        result = self.case.cli("tdd", "--repo", str(self.case.repo), "--behavior-id", "BM_VALUE",
-                               "--", str(executable), "-m", "unittest", "test_value")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        executable.unlink()
-        result = self.case.cli("verify", "--repo", str(self.case.repo), "--kind", "quality-gate", "--base-ref", "HEAD")
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn(str(executable), result.stderr)
-        receipt = json.loads(result.stdout.strip().splitlines()[-1])
-        self.assertEqual(receipt["kind"], "quality-gate", "COMMITTED_GATE_RECEIPT_LOST")
-        state = json.loads(self.case.cli("status", "--repo", str(self.case.repo)).stdout)
-        self.assertEqual(receipt["evidenceId"], state["verificationLatestEvidence"])
-
-    def test_refresh_cancellation_during_arm_setup_removes_the_snapshot(self):
+    def test_cancellation_during_arm_setup_removes_the_snapshot(self):
         case = self.case
         (case.repo / "pkg").mkdir()
         for index in range(1500):
@@ -776,8 +740,8 @@ class RunnerComparisonTests(unittest.TestCase):
         (case.repo / "app.py").write_text("value: int = 2\n")
         arms = case.tmp / "arms"
         arms.mkdir()
-        process = subprocess.Popen([sys.executable, str(case.workflow), "verify", "--repo", str(case.repo), "--kind",
-                                    "quality-gate", "--base-ref", "HEAD"], cwd=case.repo, env={**case.env, "TMPDIR": str(arms)},
+        process = subprocess.Popen([sys.executable, str(case.workflow), "tdd", "--repo", str(case.repo), "--behavior-id",
+                                    "BM_VALUE"], cwd=case.repo, env={**case.env, "TMPDIR": str(arms)},
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         deadline = time.monotonic() + 60
         while not any(arms.glob("workflow-proof-*/source")) and process.poll() is None and time.monotonic() < deadline:
@@ -785,7 +749,7 @@ class RunnerComparisonTests(unittest.TestCase):
         self.assertTrue(any(arms.glob("workflow-proof-*/source")), "arm setup did not start")
         process.send_signal(signal.SIGTERM)
         process.communicate(timeout=30)
-        self.assertEqual(list(arms.glob("workflow-proof-*")), [], "REFRESH_SETUP_CANCEL_LEAKED: interrupted arm checkout remains")
+        self.assertEqual(list(arms.glob("workflow-proof-*")), [], "SETUP_CANCEL_LEAKED: interrupted arm checkout remains")
 
     def cancel_probe(self, signum, *command):
         self.operation(2)
@@ -832,6 +796,8 @@ class RunnerComparisonTests(unittest.TestCase):
 
 
 UNITTEST_PROBE = "import unittest, app\nclass Value(unittest.TestCase):\n"
+STOPPED_NOTE = ("stopped: a test method that failed in its body skipped its remaining statements on that tree, "
+                "so inputs after the failure did not execute there")
 INTENT = ("Make the value two. Keep everything else the module already does, including the kept value. "
           "Report kept as two only when the request says so.")
 
@@ -867,13 +833,20 @@ class ReadinessTests(unittest.TestCase):
     def summary(self):
         return self.case.cli("summary", "--repo", str(self.repo)).stdout
 
+    def relaxed(self, changed, original, marker):
+        """An exposed item's kind and obligation may change; it stays open until a rerun proves it."""
+        result = self.update(changed)
+        self.assertEqual(result.returncode, 0, marker + ": " + result.stdout + result.stderr)
+        self.assertEqual(self.status()["tdd"], "in-progress", marker + ": a changed exposed item read proved")
+        self.assertEqual(self.update(original).returncode, 0, marker)
+
     def update(self, *items):
         path = self.case.tmp / "map.json"
         path.write_text(json.dumps({"items": list(items)}))
         return self.case.cli("record", "tdd-map", "--repo", str(self.repo), "--input", str(path))
 
     def open_lines(self, receipt):
-        return [line for line in receipt["next"].get("input", "").splitlines() if line.startswith("BM_")]
+        return list(receipt["open"])
 
     def test_contract_item_needs_an_attributable_difference(self):
         marker = "CONTRACT_WITHOUT_CHANGE_PASSED"
@@ -890,7 +863,7 @@ class ReadinessTests(unittest.TestCase):
         self.probe("def test_value(self): self.assertEqual(app.value, 2, 'VALUE_NOT_TWO')")
         receipt = self.tdd("BM_CHANGE")
         self.assertEqual((receipt["comparison"], self.status()["tdd"]), ("changed", "passed"), marker + ": " + json.dumps(receipt))
-        self.assertEqual(receipt["cases"], ["test_value (test_value.Value.test_value): original=failed, current=passed; "
+        self.assertEqual(receipt["cases"], ["test_value (test_value.Value.test_value): original=failed (stopped), current=passed; "
                                             "AssertionError: 1 != 2 : VALUE_NOT_TWO"], marker)
         # a shared batch needs each owner to name its cases
         self.update(pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two"),
@@ -900,18 +873,13 @@ class ReadinessTests(unittest.TestCase):
         receipt = self.tdd("BM_CHANGE", "BM_KEEP")
         self.assertEqual(sorted(line.split(" ")[0] for line in self.open_lines(receipt)), ["BM_CHANGE", "BM_KEEP"], marker + ": " + json.dumps(receipt))
         self.assertTrue(all("name its cases in boundaryInputs" in line for line in self.open_lines(receipt)), marker)
-        # a contract pair: one input shows the change, the other keeps its result; both execute on both trees;
-        # naming cases on a contract item after preflight is an authorization the request must give
-        unquoted = self.update(pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two",
-                                                boundaryInputs=["test_value", "test_kept"]))
-        self.assertEqual(unquoted.returncode, 2, marker + ": " + unquoted.stdout + unquoted.stderr)
-        self.assertIn("contract cases added", unquoted.stderr, marker)
+        # a contract pair: one input shows the change, the other keeps its result; both execute on both trees
         self.update(pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two", basis="Make the value two.",
                                      boundaryInputs=["test_value", "test_kept"]),
                     pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one",
                                      boundaryInputs=["test_kept"]))
         receipt = self.tdd("BM_CHANGE", "BM_KEEP")
-        self.assertEqual(receipt["contractChanges"], ["BM_CHANGE: contract cases added: test_kept, test_value: Make the value two."], marker)
+        self.assertIn("BM_CHANGE: contract cases added: test_kept, test_value: Make the value two.", self.summary(), marker)
         self.assertEqual((self.open_lines(receipt), self.status()["tdd"]), ([], "passed"), marker + ": " + json.dumps(receipt))
         self.probe("def test_value(self): self.assertEqual(app.value, 2, 'VALUE_NOT_TWO')",
                    "@unittest.skipIf(app.value == 1, 'original only')\n    def test_kept(self): self.assertEqual(app.kept, 1)")
@@ -920,93 +888,1034 @@ class ReadinessTests(unittest.TestCase):
         self.assertTrue(any(line.startswith("BM_CHANGE") and "test_kept skipped on original" in line for line in lines),
                         marker + ": " + json.dumps(receipt))
 
-    def test_preservation_item_rejects_a_rewritten_expectation(self):
-        marker = "REWRITTEN_EXPECTATION_PASSED"
+    def test_kind_change_requires_its_own_comparison(self):
+        marker = "KIND_CHANGE_REUSED_OLD_PROOF"
+        keep = pending_behavior("BM_KEEP", kind="preservation", behavior="kept is measured", expected="kept stays unchanged",
+                                boundaryInputs=["kept"])
+        self.begin(keep, intent="Keep kept unchanged.")
+        (self.repo / "probe.test.py").write_text("import app\nassert isinstance(app.kept, int)\nprint('kept:', app.kept)\n")
+        (self.repo / "app.py").write_text("value = 1\nkept = 2\n")
+        command = (sys.executable, "probe.test.py")
+        self.tdd("BM_KEEP", command=command)
+        self.assertEqual(self.update(keep | {"kind": "contract"}).returncode, 0, marker)
+        self.assertEqual(self.status()["tdd"], "in-progress", marker)
+        self.assertFalse(self.tdd("BM_KEEP", command=command).get("reused", False), marker)
+
+    def test_exposed_item_keeps_its_kind_and_cases(self):
+        marker = "APPROVED_OBLIGATION_REWRITTEN"
+        keep = pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one",
+                                boundaryInputs=["test_kept"])
+        change = pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two", boundaryInputs=["test_value"])
+        spare = pending_behavior("BM_SPARE", kind="preservation", behavior="value stays an int", expected="value is an int",
+                                 boundaryInputs=["test_int"])
+        later = pending_behavior("BM_LATER", kind="preservation", behavior="kept stays below two", expected="kept < 2",
+                                 boundaryInputs=["test_late"])
+        self.begin(keep, change, spare, intent="Make the value two. Keep kept unchanged.")
+        probes = lambda kept: ("def test_value(self): self.assertEqual(app.value, 2)",
+                               f"def test_kept(self): self.assertEqual(app.kept, {kept})",
+                               "def test_late(self): self.assertLess(app.kept, 2)",
+                               "def test_int(self): self.assertIsInstance(app.value, int)")
+        (self.repo / "app.py").write_text("value = 1\nkept = 2\n")
+        self.probe(*probes(2))
+        self.tdd("BM_KEEP", "BM_CHANGE")
+        snapshot = lambda: (self.status()["tdd"], self.summary().split("Open map:", 1)[-1])
+        before = snapshot()
+        self.assertEqual(before[0], "in-progress", marker)
+        for name, items in (("a preservation sentence offered as authority", [keep | {"kind": "contract", "basis": "Keep kept unchanged."}]),
+                            ("an unmet contract downgraded", [change | {"kind": "preservation"}]),
+                            ("a mixed update", [later, keep | {"kind": "contract"}])):
+            changed = self.update(*items)
+            self.assertEqual(changed.returncode, 0, f"{marker}: {name}: {changed.stdout}{changed.stderr}")
+            self.assertEqual(snapshot()[0], "in-progress", f"{marker}: {name} read proved")
+            self.assertEqual(self.update(keep, change).returncode, 0, marker)
+        # case names attach freely: replacing an exposed item's cases keeps it open, and its invariant stays
+        replaced = self.update(keep | {"boundaryInputs": ["test_value"]})
+        self.assertEqual(replaced.returncode, 0, "CASE_NAMES_FROZEN: " + replaced.stdout + replaced.stderr)
+        self.assertEqual(self.status()["tdd"], "in-progress", "CASE_NAMES_FROZEN")
+        self.assertEqual(self.update(keep).returncode, 0, "CASE_NAMES_FROZEN")
+        hook = subprocess.run([sys.executable, str(harness.ROOT / "hooks" / "rcf-intake-gate.py")], cwd=self.repo, env=self.case.env,
+                              text=True, capture_output=True, input=json.dumps({"cwd": str(self.repo), "tool_name": "spawn_agent",
+                                                                               "tool_input": {"agent_type": "default"}}))
+        self.assertIn('"deny"', hook.stdout, marker + ": " + hook.stdout + hook.stderr)
+        # a stale comparison still exposes the item, and a finding reference does not relax it
+        (self.repo / "app.py").write_text("value = 1\nkept = 2\n# touched\n")
+        self.relaxed(keep | {"kind": "contract"}, keep, marker + ": stale exposure")
+        findings = self.case.tmp / "findings.json"
+        findings.write_text(json.dumps({"findings": [{"id": "R-1", "claim": "kept must become two", "material": True, "kind": "behavioral"}]}))
+        self.assertEqual(self.case.cli("record", "review", "--repo", str(self.repo), "--input", str(findings)).returncode, 0, marker)
+        intake = self.status()["findingStates"][-1]["intakeEvidenceId"]
+        ref = {"sourceRefs": [{"type": "finding", "evidenceId": intake, "id": "R-1"}]}
+        self.relaxed(keep | {"kind": "contract"} | ref, keep | ref, marker + ": finding-owned")
+        # a new attack for the finding is evidence, listed with its finding for review
+        fix = pending_behavior("BM_FIX", behavior="value becomes two for R-1", expected="value is two", boundaryInputs=["test_value"],
+                               basis="finding R-1 attack", sourceRefs=[{"type": "finding", "evidenceId": intake, "id": "R-1"}])
+        self.assertEqual(self.update(fix).returncode, 0, marker)
+        self.assertIn("BM_FIX: contract item added after preflight (finding R-1): finding R-1 attack", self.summary(), marker)
+        # an item added after preflight is held the same way once its comparison exposes it
+        self.assertEqual(self.update(later).returncode, 0, marker)
+        self.tdd("BM_LATER")
+        self.relaxed(later | {"kind": "contract"}, later, marker + ": exposed later item relabeled")
+        # before any comparison the lead may revise an item; the revision is listed against the preflight
+        revised = self.update(spare | {"kind": "contract", "basis": "the value type may change"})
+        self.assertEqual(revised.returncode, 0, marker + ": " + revised.stdout + revised.stderr)
+        self.assertIn("BM_SPARE: preservation -> contract: the value type may change", self.summary(), marker)
+        packet = checkpoint_channels(self.repo, self.case.env, "code-review")
+        self.assertIn("BM_SPARE: preservation -> contract: the value type may change", packet["behavior-map"]["contractChanges"], marker)
+        self.assertEqual(self.update(spare).returncode, 0, marker)
+        # repaired code closes every exposed item
+        (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
+        self.probe(*probes(1))
+        receipt = self.tdd("BM_KEEP", "BM_CHANGE", "BM_LATER", "BM_SPARE", "BM_FIX")
+        self.assertEqual((self.open_lines(receipt), self.status()["tdd"]), ([], "passed"), marker + ": " + json.dumps(receipt))
+        # the user authorizes kept becoming two: the amended request starts a pass whose approved contract owns it
+        (self.repo / "app.py").write_text("value = 2\nkept = 2\n")
+        self.probe("def test_kept(self): self.assertEqual(app.kept, 2)")
+        self.case.begin_with_map([pending_behavior("BM_KEPT", behavior="kept becomes two", expected="kept is two",
+                                                   boundaryInputs=["test_kept"])], slug="amended-request", intent="Make kept two.")
+        receipt = self.tdd("BM_KEPT")
+        self.assertEqual(self.status()["tdd"], "passed", marker + ": " + json.dumps(receipt))
+        unedited = subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], cwd=self.repo, text=True).strip()
+        self.assertEqual(receipt["arms"][0]["tree"], unedited, marker)
+
+    def test_contract_cases_extend_without_quote(self):
+        marker = "EVIDENCE_EXTENSION_REFUSED"
+        change = pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two", boundaryInputs=["test_value"])
+        self.begin(change)
+        (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
+        self.probe("def test_value(self): self.assertEqual(app.value, 2)", "def test_more(self): self.assertEqual(app.value * 3, 6)")
+        self.tdd("BM_CHANGE")
+        extended = self.update(change | {"basis": "extends the batch", "boundaryInputs": ["test_value", "test_more"]})
+        self.assertEqual(extended.returncode, 0, marker + ": " + extended.stdout + extended.stderr)
+        receipt = self.tdd("BM_CHANGE")
+        self.assertIn("BM_CHANGE: contract cases added: test_more: extends the batch", self.summary(), marker)
+        self.assertEqual(self.status()["tdd"], "passed", marker + ": " + json.dumps(receipt))
+        # an added case is judged like every other
+        self.update(change | {"basis": "extends the batch", "boundaryInputs": ["test_value", "test_more", "test_broken"]})
+        self.probe("def test_value(self): self.assertEqual(app.value, 2)", "def test_more(self): self.assertEqual(app.value * 3, 6)",
+                   "def test_broken(self): self.assertEqual(app.value, 3)")
+        [line] = self.open_lines(self.tdd("BM_CHANGE"))
+        self.assertIn("test_broken failed on original, failed on current", line, marker + ": " + line)
+
+    def test_exposure_holds_until_a_comparison_proves_the_item(self):
+        marker = "EXPOSURE_RELEASED"
+        keep = pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one",
+                                boundaryInputs=["test_kept"])
+        change = pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two", boundaryInputs=["test_value"])
+        self.begin(keep, change, intent="Make the value two. Keep kept unchanged.")
+        probes = lambda kept: ("def test_value(self): self.assertEqual(app.value, 2)",
+                               f"def test_kept(self): self.assertEqual(app.kept, {kept})",
+                               "def test_int(self): self.assertIsInstance(app.kept, int)")
+        (self.repo / "app.py").write_text("value = 1\nkept = 2\n")
+        self.probe(*probes(1))
+        self.tdd("BM_KEEP", "BM_CHANGE")
+        for field in ("behavior", "seam", "expected"):  # rewording drops the comparison, so it is refused too
+            self.relaxed(keep | {field: "reworded"}, keep, f"{marker}: {field} reworded")
+            self.relaxed(change | {field: "reworded"}, change, f"{marker}: {field} reworded")
+        # a later comparison that leaves the cases missing or unverified does not prove the item
+        for command in ((sys.executable, "-m", "unittest", "test_value.Value.test_int"),
+                        (sys.executable, "-c", "print('test_kept: unverified - fixture lost'); print('test_value: unverified - fixture lost')")):
+            self.tdd("BM_KEEP", "BM_CHANGE", command=command)
+            for relaxed, original in ((keep | {"kind": "contract", "basis": "Keep kept unchanged."}, keep),
+                                      (change | {"kind": "preservation", "boundaryInputs": ["test_int"]}, change)):
+                self.relaxed(relaxed, original, marker + ": " + " ".join(command))
+            self.assertEqual(self.status()["tdd"], "in-progress", marker)
+        (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
+        receipt = self.tdd("BM_KEEP", "BM_CHANGE")
+        self.assertEqual((self.open_lines(receipt), self.status()["tdd"]), ([], "passed"), marker + ": " + json.dumps(receipt))
+        self.assertEqual(self.update(keep | {"expected": "kept is exactly one"}).returncode, 0, marker + ": proved item stays revisable")
+
+    def test_wrapped_report_beside_printed_output_is_judged(self):
+        marker = "MIXED_BATCH_HIDDEN"
+        self.begin(pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one"))
+        self.probe("def test_int(self): self.assertIsInstance(app.value, int)")
+        (self.repo / "probe.test.py").write_text("import app\nprint(f'kept is {app.kept}')\n")
+        batch = ("bash", "-c", f"{sys.executable} -m unittest -v test_value 2>&1; {sys.executable} probe.test.py")
+        (self.repo / "app.py").write_text("value = 1\nkept = 2\n")
+        receipt = self.tdd("BM_KEEP", command=batch)
+        self.assertIn("unnamed output differs", " ".join(self.open_lines(receipt)), marker + ": " + json.dumps(receipt))
+        (self.repo / "app.py").write_text("value = 1\nkept = 1\n# touched\n")
+        receipt = self.tdd("BM_KEEP", command=batch)
+        self.assertEqual((self.open_lines(receipt), self.status()["tdd"]), ([], "passed"), marker + ": " + json.dumps(receipt))
+
+    def test_hold_releases_only_on_the_exposing_cases(self):
+        marker = "EXPOSURE_RELEASED"
+        keep = pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one")
+        self.begin(keep, intent="Keep kept unchanged.")
+        full = (sys.executable, "-c", "import app\nprint('kept:', app.kept)\nprint('value type:', type(app.value).__name__)")
+        (self.repo / "app.py").write_text("value = 1\nkept = 2\n")
+        self.probe("def test_int(self): self.assertIsInstance(app.value, int)")
+        self.tdd("BM_KEEP", command=full)
+        for narrower in ((sys.executable, "-c", "import app\nprint('value type:', type(app.value).__name__)"),
+                         (sys.executable, "-m", "unittest", "test_value.Value.test_int")):
+            receipt = self.tdd("BM_KEEP", command=narrower)
+            self.relaxed(keep | {"kind": "contract", "basis": "Keep kept unchanged."}, keep, marker + ": " + " ".join(narrower))
+            self.assertEqual(self.status()["tdd"], "in-progress", marker + ": " + json.dumps(receipt))
+        (self.repo / "app.py").write_text("value = 1\nkept = 1\n")
+        receipt = self.tdd("BM_KEEP", command=full)
+        self.assertEqual((self.open_lines(receipt), self.status()["tdd"]), ([], "passed"), marker + ": " + json.dumps(receipt))
+
+    def test_every_subtest_label_form_fails_its_test(self):
+        marker = "LABELLED_SUBTEST_PASSED"
         self.begin(pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one",
                                     boundaryInputs=["test_kept"]))
-        self.probe("def test_kept(self): self.assertEqual(app.kept, 1)")
-        receipt = self.tdd("BM_KEEP")
-        self.assertEqual((receipt["comparison"], self.status()["tdd"]), ("preserved", "passed"), json.dumps(receipt))
         (self.repo / "app.py").write_text("value = 1\nkept = 2\n")
-        self.probe("def test_kept(self): self.assertEqual(app.kept, 2, 'KEPT_REWRITTEN')")
-        receipt = self.tdd("BM_KEEP")
-        self.assertEqual((receipt["comparison"], self.status()["tdd"]), ("changed", "in-progress"), marker + ": " + json.dumps(receipt))
-        [line] = self.open_lines(receipt)
-        self.assertIn("test_kept differs (original=failed, current=passed)", line, marker)
-        self.assertIn("authorized contract change", line, marker)
-        (self.repo / "app.py").write_text("value = 1\nkept = 1\n")
-        self.probe("def test_kept(self): self.assertEqual(app.kept, 1)")
-        self.tdd("BM_KEEP")
-        self.assertEqual(self.status()["tdd"], "passed", marker)
-        (self.repo / "app.py").write_text("value = 1\nkept = 2\n")
-        self.probe("def test_kept(self): self.assertEqual(app.kept, 2, 'KEPT_REWRITTEN')")
-        self.tdd("BM_KEEP")
-        self.assertEqual(self.status()["tdd"], "in-progress", marker)
-        converted = lambda basis: pending_behavior("BM_KEEP", behavior="kept becomes two", expected="kept is two",
-                                                   basis=basis, boundaryInputs=["test_kept"])
-        for basis in ("Keep everything else.", "Keep everything else the module already does.", "Keep.",
-                      "else the module already does, including the kept value."):
-            refused = self.update(converted(basis))
-            self.assertEqual(refused.returncode, 2, marker + ": " + basis + refused.stdout + refused.stderr)
-            self.assertIn("BM_KEEP", refused.stderr, marker)
-        # re-pointing the preservation case away from the differing one needs the same authorization,
-        # as does releasing the differing case, or attaching an unrelated finding to the conversion
-        repointed = self.update(pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one",
-                                                 boundaryInputs=["test_value"]))
-        self.assertEqual(repointed.returncode, 2, marker + ": " + repointed.stdout + repointed.stderr)
-        self.assertIn("test_kept", repointed.stderr, marker)
-        released = self.update(pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one",
-                                                boundaryInputs=["test_kept"], released={"reason": "kept=1 is unreachable now", "case": "test_kept"}))
-        self.assertEqual(released.returncode, 2, marker + ": " + released.stdout + released.stderr)
-        self.assertIn("printed note", released.stderr, marker)
-        note = self.case.tmp / "note.json"
-        note.write_text(json.dumps({"findings": [{"id": "N-1", "claim": "an unrelated note", "material": False, "kind": "nonbehavioral"}]}))
-        self.assertEqual(self.case.cli("record", "review", "--repo", str(self.repo), "--input", str(note)).returncode, 0, marker)
-        intake = json.loads(self.case.cli("status", "--repo", str(self.repo)).stdout)["findingStates"][0]["intakeEvidenceId"]
-        owned = self.update(converted("Keep everything else the module already does.")
-                            | {"sourceRefs": [{"type": "finding", "evidenceId": intake, "id": "N-1"}]})
-        self.assertEqual(owned.returncode, 2, marker + ": " + owned.stdout + owned.stderr)
-        accepted = self.update(converted("Report kept as two only when the request says so."))
-        self.assertEqual(accepted.returncode, 0, marker + ": " + accepted.stdout + accepted.stderr)
-        receipt = self.tdd("BM_KEEP")
-        self.assertEqual(self.status()["tdd"], "passed", marker + ": " + json.dumps(receipt))
-        change = "BM_KEEP: preservation -> contract: Report kept as two only when the request says so."
-        self.assertEqual(receipt["contractChanges"], [change], marker)
-        self.assertIn(change, self.summary(), marker)
-        packet = checkpoint_channels(self.repo, self.case.env, "code-review")
-        self.assertEqual(packet["behavior-map"]["contractChanges"], [change], marker)
-        # a contract item added or re-worded after preflight needs the request sentence too
-        added = self.update(pending_behavior("BM_MORE", behavior="value becomes three", expected="value is three"))
-        self.assertEqual(added.returncode, 2, marker + ": " + added.stdout + added.stderr)
-        reworded = self.update(converted("Keep everything else the module already does.") | {"expected": "kept is exactly two"})
-        self.assertEqual(reworded.returncode, 2, marker + ": " + reworded.stdout + reworded.stderr)
-        self.assertIn("contract expectation re-worded", reworded.stderr, marker)
-        reworded = self.update(converted("Report kept as two only when the request says so.") | {"expected": "kept is exactly two"})
-        self.assertEqual(reworded.returncode, 0, marker + ": " + reworded.stdout + reworded.stderr)
-        self.assertIn(change, self.summary(), marker)
+        for subtest in ("'X | K=T | a', n=n", "'a] b - c'"):
+            self.probe(f"def test_kept(self):\n        for n in (1, 2):\n            with self.subTest({subtest}): self.assertEqual(app.kept, 1)")
+            receipt = self.tdd("BM_KEEP", command=(sys.executable, "-m", "pytest", "-q", "test_value.py"))
+            [line] = self.open_lines(receipt)
+            self.assertIn("test_kept passed on original, failed on current", line, marker + ": " + subtest + line)
+        (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
+        self.update(pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two", boundaryInputs=["test_value"]))
+        self.probe("def test_value(self):\n        for n in (1, 2):\n            with self.subTest('X | P=T | a', n=n): self.assertEqual(app.value, 2)")
+        receipt = self.tdd("BM_CHANGE", command=(sys.executable, "-m", "pytest", "-q", "test_value.py"))
+        self.assertFalse(any(line.startswith("BM_CHANGE") for line in self.open_lines(receipt)), marker + ": " + json.dumps(receipt))
 
-        # a release bound to an unrelated passing case does not waive the differing one
-        self.update(pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one", boundaryInputs=["test_kept"]))
-        self.probe("def test_kept(self): self.assertEqual(app.kept, 2, 'KEPT_REWRITTEN')", "def test_other(self): self.assertEqual(app.value, 1)")
+    def test_printed_output_beside_a_changed_report_is_judged(self):
+        marker = "MIXED_BATCH_HIDDEN"
+        self.begin(pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two", boundaryInputs=["test_value"]),
+                   pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one",
+                                    boundaryInputs=["test_int"]))
+        self.probe("def test_value(self): self.assertEqual(app.value, 2)", "def test_int(self): self.assertIsInstance(app.value, int)")
+        (self.repo / "probe.test.py").write_text("import app\nprint(f'kept is {app.kept}')\n")
+        batch = ("bash", "-c", f"{sys.executable} -m unittest -v test_value 2>&1; {sys.executable} probe.test.py")
+        (self.repo / "app.py").write_text("value = 2\nkept = 2\n")
+        receipt = self.tdd("BM_CHANGE", "BM_KEEP", command=batch)
+        lines = [line for line in self.open_lines(receipt) if line.startswith("BM_KEEP")]
+        self.assertTrue(lines and "unnamed output differs" in lines[0], marker + ": " + json.dumps(receipt))
+        (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
+        receipt = self.tdd("BM_CHANGE", "BM_KEEP", command=batch)
+        self.assertEqual((self.open_lines(receipt), self.status()["tdd"]), ([], "passed"), marker + ": " + json.dumps(receipt))
+
+    def test_hold_releases_when_repaired_code_proves_it(self):
+        marker = "HOLD_UNRELEASABLE"
+        operation = "value = {}\nkept = 1\ndef run():\n    print('kept:', kept)\n"
+        (self.repo / "app.py").write_text(operation.format(1))
+        self.case.git("add", "app.py")
+        self.case.git("commit", "-qm", "an operation")
+        keep = pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept: 1", boundaryInputs=["kept"])
+        test = pending_behavior("BM_TEST", kind="preservation", behavior="kept stays one", expected="kept is one", boundaryInputs=["test_kept"])
+        loose = pending_behavior("BM_LOOSE", kind="preservation", behavior="the module keeps its results", expected="unchanged")
+        change = pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two", boundaryInputs=["test_value"])
+        self.begin(keep, test, loose, change, intent="Make the value two. Keep everything else.")
+        run = (sys.executable, "-c", "import app\napp.run()")
+        pytest = (sys.executable, "-m", "pytest", "-q", "test_value.py")
+        proved = lambda receipt, *ids: not [line for line in self.open_lines(receipt) if line.split(" ", 1)[0] in ids]
+        # an unintended record holds the item to its command: a narrower one cannot release it, the repaired code can
+        (self.repo / "app.py").write_text(operation.format(1) + "    print('debug:', value)\n")
+        self.tdd("BM_KEEP", command=run)
+        self.tdd("BM_LOOSE", command=run)
+        self.tdd("BM_KEEP", command=(sys.executable, "-c", "import app\nprint('kept:', app.kept)"))
+        self.relaxed(keep | {"kind": "contract"}, keep, marker + ": a narrower command released the hold")
+        (self.repo / "app.py").write_text(operation.format(1))
+        for item in ("BM_KEEP", "BM_LOOSE"):
+            receipt = self.tdd(item, command=run)
+            self.assertTrue(proved(receipt, item), marker + ": removed record: " + json.dumps(receipt))
+        # an import broken mid-edit, and a switch of runner while it is broken
+        self.probe("def test_kept(self): self.assertEqual(app.kept, 1)")
+        (self.repo / "app.py").write_text(operation.format(1) + "import no_such_module\n")
+        for item, command in (("BM_TEST", None), ("BM_LOOSE", None), ("BM_LOOSE", pytest)):
+            self.tdd(item, **({"command": command} if command else {}))
+        (self.repo / "app.py").write_text(operation.format(1))
+        for item, command in (("BM_TEST", None), ("BM_LOOSE", None), ("BM_LOOSE", pytest)):
+            receipt = self.tdd(item, **({"command": command} if command else {}))
+        self.assertTrue(proved(receipt, "BM_TEST", "BM_LOOSE"), marker + ": repaired import: " + json.dumps(receipt))
+        # a case added after release does not bring the hold back
+        self.assertEqual(self.update(test | {"boundaryInputs": ["test_kept", "test_more"]}).returncode, 0, marker)
+        self.assertEqual(self.update(test).returncode, 0, marker + ": released hold resurrected")
+        # a mixed batch on a correct edit, then the split commands its receipt advises
+        (self.repo / "app.py").write_text(operation.format(2))
+        self.probe("def test_value(self): self.assertEqual(app.value, 2)", "def test_kept(self): self.assertEqual(app.kept, 1)")
+        (self.repo / "probe.test.py").write_text("import app\napp.run()\n")
+        self.tdd("BM_CHANGE", "BM_KEEP", command=("bash", "-c", f"{sys.executable} -m unittest test_value 2>&1; {sys.executable} probe.test.py"))
+        self.tdd("BM_CHANGE")
+        receipt = self.tdd("BM_KEEP", command=(sys.executable, "probe.test.py"))
+        self.assertTrue(proved(receipt, "BM_CHANGE", "BM_KEEP"), marker + ": split batch: " + json.dumps(receipt))
+
+    def test_report_span_starts_at_the_runner_first_line(self):
+        marker = "REPORT_SPAN_WRONG"
+        self.begin(pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two", boundaryInputs=["test_value"]),
+                   pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one",
+                                    boundaryInputs=["test_x_int"]))
+        self.probe('def test_value(self):\n        """The value."""\n        self.assertEqual(app.value, 2)',
+                   "def test_x_int(self): self.assertIsInstance(app.value, int)")
+        (self.repo / "probe.test.py").write_text("import app\nprint('kept is', app.kept)\n")
+        (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
+        for flags in ("", "-v "):  # the progress line; the bare id line of a test with a docstring
+            receipt = self.tdd("BM_CHANGE", "BM_KEEP", command=(
+                "bash", "-c", f"{sys.executable} -m unittest {flags}test_value 2>&1; {sys.executable} probe.test.py"))
+            self.assertNotIn("unnamed output differs", " ".join(self.open_lines(receipt)), marker + ": " + flags + json.dumps(receipt))
+        # a printed record before the report is the command's own output, also when its name holds `::`
+        (self.repo / "probe.test.py").write_text("import app\nprint('app::kept:', app.kept)\n")
+        (self.repo / "app.py").write_text("value = 2\nkept = 2\n")
+        receipt = self.tdd("BM_KEEP", command=(
+            "bash", "-c", f"{sys.executable} probe.test.py; {sys.executable} -m unittest -v test_value.Value.test_x_int 2>&1"))
+        self.assertTrue(any(line.startswith("BM_KEEP") and "unnamed output differs" in line for line in self.open_lines(receipt)),
+                        marker + ": " + json.dumps(receipt))
+
+    def test_output_outside_every_report_is_judged(self):
+        marker = "REPORT_SEGMENT_HIDDEN"
+        self.begin(pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two", boundaryInputs=["test_value"]),
+                   pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one",
+                                    boundaryInputs=["test_x_int"]))
+        self.probe("def test_value(self): self.assertEqual(app.value, 2)", "def test_x_int(self): self.assertIsInstance(app.value, int)")
+        (self.repo / "probe.test.py").write_text("import app\nprint('kept is', app.kept)\n")
+        unittest_run = f"{sys.executable} -m unittest -v test_value 2>&1"
+        batches = (f"{sys.executable} probe.test.py; {unittest_run}",  # the original arm fails on the requested change
+                   f"{unittest_run}; {sys.executable} probe.test.py; {unittest_run}")  # a probe between two reports
+        for batch in batches:
+            (self.repo / "app.py").write_text("value = 2\nkept = 2\n")
+            receipt = self.tdd("BM_CHANGE", "BM_KEEP", command=("bash", "-c", batch))
+            self.assertTrue(any(line.startswith("BM_KEEP") and "unnamed output differs" in line for line in self.open_lines(receipt)),
+                            marker + ": " + batch + json.dumps(receipt))
+            (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
+            receipt = self.tdd("BM_CHANGE", "BM_KEEP", command=("bash", "-c", batch))
+            self.assertEqual((self.open_lines(receipt), self.status()["tdd"]), ([], "passed"), marker + ": " + batch + json.dumps(receipt))
+
+    def test_regression_named_on_a_later_contract_stays_open_until_repaired(self):
+        marker = "SIBLING_CHANGE_UNEXPLAINED"
+        keep = pending_behavior("BM_KEEP", kind="preservation", behavior="kept and type stay", expected="kept 1, type int",
+                                boundaryInputs=["type"])
+        self.begin(keep, intent="Keep kept unchanged.")
+        batch = (sys.executable, "-c", "import app\nprint('type:', type(app.value).__name__)\nprint('kept:', app.kept)")
+        (self.repo / "app.py").write_text("value = 1\nkept = 2\n")
+        receipt = self.tdd("BM_KEEP", command=batch)
+        self.assertIn("kept differs", " ".join(self.open_lines(receipt)), marker + ": " + json.dumps(receipt))
+        # naming the regression on a contract item added after preflight is recorded and resolves nothing
+        claim = pending_behavior("BM_NEW", behavior="kept becomes two", expected="kept is two", boundaryInputs=["kept"])
+        named = self.update(claim)
+        self.assertEqual(named.returncode, 0, marker + ": " + named.stdout + named.stderr)
+        receipt = self.tdd("BM_KEEP", "BM_NEW", command=batch)
+        self.assertTrue(any(line.startswith("BM_KEEP") and "kept exposed this item" in line for line in self.open_lines(receipt)),
+                        marker + ": " + json.dumps(receipt))
+        (self.repo / "app.py").write_text("value = 1\nkept = 1\n")
+        receipt = self.tdd("BM_KEEP", "BM_NEW", command=batch)
+        self.assertEqual([line.split(" ", 1)[0] for line in self.open_lines(receipt)], ["BM_NEW"], marker + ": " + json.dumps(receipt))
+
+    def test_preflight_contract_accounts_for_its_requested_change(self):
+        marker = "SIBLING_CHANGE_UNEXPLAINED"
+        change = pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two", boundaryInputs=["test_value"])
+        keep = pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one", boundaryInputs=["test_kept"])
+        self.begin(change, keep, intent="Make the value two.")
+        # an existing test changes as requested; comparing the module for BM_KEEP alone exposes it there
+        self.probe("def test_value(self): self.assertEqual(app.value, 2)", "def test_kept(self): self.assertEqual(app.kept, 1)",
+                   "def test_old(self): self.assertEqual(app.value * 10, 20)")
+        (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
+        [line] = [line for line in self.open_lines(self.tdd("BM_KEEP")) if line.startswith("BM_KEEP")]
+        self.assertTrue("test_old differs" in line and "test_value" not in line, marker + ": " + line)
+        # a contract item re-worded since preflight does not account for it
+        reworded = self.update(change | {"expected": "value is 2", "boundaryInputs": ["test_value", "test_old"]})
+        self.assertEqual(reworded.returncode, 0, marker + ": " + reworded.stdout + reworded.stderr)
+        receipt = self.tdd("BM_CHANGE", "BM_KEEP")
+        self.assertEqual([line.split(" ", 1)[0] for line in self.open_lines(receipt)], ["BM_KEEP"], marker + ": " + json.dumps(receipt))
+        # the preflight contract item, its obligation unchanged, does
+        extended = self.update(change | {"boundaryInputs": ["test_value", "test_old"]})
+        self.assertEqual(extended.returncode, 0, marker + ": " + extended.stdout + extended.stderr)
+        receipt = self.tdd("BM_CHANGE", "BM_KEEP")
+        self.assertEqual((self.open_lines(receipt), self.status()["tdd"]), ([], "passed"), marker + ": " + json.dumps(receipt))
+        self.assertIn("BM_CHANGE: contract cases added: test_old: test fixture behavior", self.summary(), marker)
+
+    def test_shared_batch_judges_each_case_under_its_owner(self):
+        marker = "SIBLING_CHANGE_UNEXPLAINED"
+        self.begin(pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two", boundaryInputs=["test_value"]),
+                   pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one",
+                                    boundaryInputs=["test_kept"]))
+        self.probe("def test_value(self): self.assertEqual(app.value, 2)", "def test_kept(self): self.assertEqual(app.kept, 1)")
+        (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
+        # the shared batch run for the preservation item alone: the sibling's mapped change is the sibling's
+        receipt = self.tdd("BM_KEEP")
+        self.assertEqual([line.split(" ", 1)[0] for line in self.open_lines(receipt)], ["BM_CHANGE"], marker + ": " + json.dumps(receipt))
+        receipt = self.tdd("BM_CHANGE")
+        self.assertEqual((self.open_lines(receipt), self.status()["tdd"]), ([], "passed"), marker + ": " + json.dumps(receipt))
+        # a regression fails the shared batch for every item that runs it, and stays its owner's question
+        (self.repo / "app.py").write_text("value = 2\nkept = 2\n")
+        receipt = self.tdd("BM_CHANGE")
+        self.assertEqual([line.split(" ", 1)[0] for line in self.open_lines(receipt)], ["BM_CHANGE", "BM_KEEP"], marker + ": " + json.dumps(receipt))
+        [line] = [line for line in self.open_lines(self.tdd("BM_KEEP")) if line.startswith("BM_KEEP")]
+        self.assertIn("test_kept passed on original, failed on current", line, marker + ": " + line)
+
+    def test_predicted_case_names_give_way_to_executed_cases(self):
+        marker = "CASE_NAMES_FROZEN"
+        change = pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two", boundaryInputs=["test_value_planned"])
+        self.begin(change, intent="Make the value two.")
+        self.probe("def test_value(self): self.assertEqual(app.value, 2)")
+        (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
+        [line] = self.open_lines(self.tdd("BM_CHANGE"))
+        self.assertIn("test_value_planned missing on original, current", line, marker + ": " + line)
+        renamed = self.update(change | {"boundaryInputs": ["test_value"]})
+        self.assertEqual(renamed.returncode, 0, marker + ": " + renamed.stdout + renamed.stderr)
+        receipt = self.tdd("BM_CHANGE")
+        self.assertEqual((self.open_lines(receipt), self.status()["tdd"]), ([], "passed"), marker + ": " + json.dumps(receipt))
+
+    def test_regression_outlives_its_exposing_case(self):
+        marker = "REGRESSION_EVIDENCE_LOST"
+        keep = pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one",
+                                boundaryInputs=["test_kept", "test_int"])
+        self.begin(keep, intent="Keep kept unchanged.")
+        kept, remainder = "def test_kept(self): self.assertEqual(app.kept, 1)", "def test_int(self): self.assertIsInstance(app.value, int)"
+        self.probe(kept, remainder)
+        (self.repo / "app.py").write_text("value = 1\nkept = 2\n")
         self.tdd("BM_KEEP")
-        waived = self.update(pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one",
-                                              boundaryInputs=["test_kept"], released={"reason": "kept=1 unreachable", "case": "test_other"}))
-        self.assertEqual(waived.returncode, 2, marker + ": " + waived.stdout + waived.stderr)
-        self.assertIn("printed note", waived.stderr, marker)
+        dropped = self.update(keep | {"boundaryInputs": ["test_int"]})
+        self.assertEqual(dropped.returncode, 0, marker + ": " + dropped.stdout + dropped.stderr)
+        # the identical command, without the exposing case: deleted, skipped, renamed; then a narrower command
+        for name, methods, command in (("deleted", (remainder,), None),
+                                       ("skipped", ("@unittest.skip('later')\n    " + kept, remainder), None),
+                                       ("renamed", ("def test_kept_type(self): self.assertIsInstance(app.kept, int)", remainder), None),
+                                       ("narrower", (kept, remainder), (sys.executable, "-m", "unittest", "test_value.Value.test_int"))):
+            self.probe(*methods)
+            receipt = self.tdd("BM_KEEP", **({"command": command} if command else {}))
+            lines = self.open_lines(receipt)
+            self.assertTrue(len(lines) == 1 and "test_kept exposed this item" in lines[0], f"{marker}: {name}: " + json.dumps(receipt))
+            self.assertEqual(self.status()["tdd"], "in-progress", f"{marker}: {name}")
+
+    def test_genuine_repair_resolves_the_retained_regression(self):
+        marker = "REGRESSION_EVIDENCE_LOST"
+        keep = pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one",
+                                boundaryInputs=["test_kept"])
+        self.begin(keep, intent="Keep kept unchanged.")
+        remainder = "def test_int(self): self.assertIsInstance(app.value, int)"
+        self.probe("def test_kept(self): self.assertEqual(app.kept, 1)", remainder)
+        (self.repo / "app.py").write_text("value = 1\nkept = 2\n")
+        self.assertTrue(self.open_lines(self.tdd("BM_KEEP")), marker)
+        (self.repo / "app.py").write_text("value = 1\nkept = 1\n")
+        receipt = self.tdd("BM_KEEP")
+        self.assertEqual((self.open_lines(receipt), self.status()["tdd"]), ([], "passed"), marker + ": " + json.dumps(receipt))
+        # a resolved regression stays resolved once its case leaves the batch
+        self.probe(remainder)
+        self.assertEqual(self.update(keep | {"boundaryInputs": ["test_int"]}).returncode, 0, marker)
+        receipt = self.tdd("BM_KEEP")
+        self.assertEqual((self.open_lines(receipt), self.status()["tdd"]), ([], "passed"), marker + ": " + json.dumps(receipt))
+
+    def test_dropped_output_does_not_repair_its_regression(self):
+        marker = "RESOLVED_WITHOUT_ITS_CASE"
+        keep = pending_behavior("BM_KEEP", kind="preservation", behavior="kept and total stay", expected="kept 1, total 2",
+                                boundaryInputs=["kept"])
+        self.begin(keep, intent="Keep kept and the total unchanged.")
+        command = (sys.executable, "probe.test.py")
+        full = "import app\nprint('kept:', app.kept)\nprint('total is', app.value + app.kept)\n"
+        (self.repo / "probe.test.py").write_text(full)
+        (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
+        self.tdd("BM_KEEP", command=command)
+        (self.repo / "probe.test.py").write_text("import app\nprint('kept:', app.kept)\n")
+        receipt = self.tdd("BM_KEEP", command=command)
+        self.assertEqual(self.status()["tdd"], "in-progress", marker + ": same command, output dropped: " + json.dumps(receipt))
+        (self.repo / "probe.test.py").write_text(full)
+        (self.repo / "app.py").write_text("value = 1\nkept = 1\n")
+        receipt = self.tdd("BM_KEEP", command=command)
+        self.assertEqual((self.open_lines(receipt), self.status()["tdd"]), ([], "passed"), marker + ": " + json.dumps(receipt))
+
+    def test_another_test_of_the_same_name_does_not_repair(self):
+        marker = "RESOLVED_WITHOUT_ITS_CASE"
+        self.begin(pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one",
+                                    boundaryInputs=["test_kept"]), intent="Keep kept unchanged.")
+        self.probe("def test_kept(self): self.assertEqual(app.kept, 1)")
+        (self.repo / "test_other.py").write_text("import unittest, app\nclass Other(unittest.TestCase):\n"
+                                                 "    def test_kept(self): self.assertIsInstance(app.kept, int)\n")
+        (self.repo / "app.py").write_text("value = 1\nkept = 2\n")
+        self.tdd("BM_KEEP")
+        receipt = self.tdd("BM_KEEP", command=(sys.executable, "-m", "unittest", "test_other"))
+        self.assertEqual(self.status()["tdd"], "in-progress", marker + ": " + json.dumps(receipt))
+
+    def test_a_name_without_its_execution_does_not_repair(self):
+        marker = "RESOLVED_WITHOUT_ITS_CASE"
+        a = pending_behavior("BM_A", kind="preservation", behavior="kept and total stay", expected="kept 1, total 2", boundaryInputs=["kept"])
+        b = pending_behavior("BM_B", kind="preservation", behavior="value stays an int", expected="type int", boundaryInputs=["type"])
+        self.begin(a, b, intent="Keep everything.")
+        (self.repo / "probe_a.test.py").write_text("import app\nprint('kept:', app.kept)\nprint('total:', app.value + app.kept)\n")
+        (self.repo / "probe_b.test.py").write_text("import app\nprint('type:', type(app.value).__name__)\n")
+        full, narrow, own = ((sys.executable, "probe_a.test.py"), (sys.executable, "-c", "import app\nprint('kept:', app.kept)"),
+                             (sys.executable, "probe_b.test.py"))
+        (self.repo / "app.py").write_text("value = 2\nkept = 1\n")  # total regresses from 2 to 3
+        self.tdd("BM_B", command=own)
+        self.tdd("BM_A", command=full)
+        for step in ("named elsewhere, rerun", "narrowed", "unnamed again"):
+            if step == "named elsewhere, rerun":
+                self.assertEqual(self.update(b | {"boundaryInputs": ["type", "total"]}).returncode, 0, marker)
+                receipt = self.tdd("BM_A", command=full)
+            elif step == "narrowed":
+                receipt = self.tdd("BM_A", command=narrow)
+            else:
+                self.assertEqual(self.update(b).returncode, 0, marker)
+                receipt = self.tdd("BM_B", command=own)
+            self.assertTrue(any(line.startswith("BM_A") and "total" in line for line in self.open_lines(receipt)),
+                            f"{marker}: {step}: " + json.dumps(receipt))
+        # the item that names it runs it: the regression is that item's question, never a pass
+        self.assertEqual(self.update(b | {"boundaryInputs": ["type", "total"]}).returncode, 0, marker)
+        receipt = self.tdd("BM_A", "BM_B", command=full)
+        self.assertTrue(any(line.startswith("BM_B") and "total differs" in line for line in self.open_lines(receipt)),
+                        marker + ": " + json.dumps(receipt))
+
+    def test_equal_failures_and_skips_are_not_regressions(self):
+        marker = "EQUAL_FAILURE_RETAINED"
+        loose = pending_behavior("BM_LOOSE", kind="preservation", behavior="the module keeps its results", expected="unchanged")
+        self.begin(loose, intent="Make the value two. Keep everything else.")
+        self.probe("def test_kept(self): self.assertEqual(app.kept, 1)",
+                   "def test_env(self): self.assertEqual(1, 2, 'PRE-EXISTING')",
+                   "@unittest.skipIf(True, 'needs a database')\n    def test_db(self): pass")
+        (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
+        self.tdd("BM_LOOSE")
+        self.assertEqual(self.update(loose | {"boundaryInputs": ["test_kept"]}).returncode, 0, marker)
+        receipt = self.tdd("BM_LOOSE", command=(sys.executable, "-m", "unittest", "test_value.Value.test_kept"))
+        self.assertEqual((self.open_lines(receipt), self.status()["tdd"]), ([], "passed"), marker + ": " + json.dumps(receipt))
+
+    def test_a_stale_comparison_does_not_repair_another_items_regression(self):
+        marker = "STALE_JUDGE_REPAIRED"
+        a = pending_behavior("BM_A", kind="preservation", behavior="kept and total stay", expected="kept 1, total 2", boundaryInputs=["kept"])
+        b = pending_behavior("BM_B", kind="preservation", behavior="value stays an int", expected="type int", boundaryInputs=["type"])
+        self.begin(a, b, intent="Keep everything.")
+        (self.repo / "probe_a.test.py").write_text("import app\nprint('kept:', app.kept)\nprint('total:', app.value + app.kept)\n")
+        (self.repo / "probe_b.test.py").write_text("import app, sys\nprint('type:', type(app.value).__name__)\n"
+                                                   "if 'full' in sys.argv: print('total:', app.value + app.kept)\n")
+        self.tdd("BM_B", command=(sys.executable, "probe_b.test.py", "full"))  # before the edit: total unchanged
+        (self.repo / "app.py").write_text("value = 2\nkept = 1\n")  # total regresses from 2 to 3
+        self.tdd("BM_A", command=(sys.executable, "probe_a.test.py"))
+        self.assertEqual(self.update(b | {"boundaryInputs": ["type", "total"]}).returncode, 0, marker)
+        self.tdd("BM_A", command=(sys.executable, "probe_a.test.py"))
+        self.tdd("BM_A", command=(sys.executable, "-c", "import app\nprint('kept:', app.kept)"))
+        self.assertEqual(self.update(b).returncode, 0, marker)
+        receipt = self.tdd("BM_B", command=(sys.executable, "probe_b.test.py"))
+        self.assertTrue(any(line.startswith("BM_A") and "total exposed this item" in line for line in self.open_lines(receipt)),
+                        marker + ": " + json.dumps(receipt))
+
+    def test_output_regression_resolves_by_line_counts(self):
+        marker = "OUTPUT_RESOLUTION_WRONG"
+        keep = pending_behavior("BM_KEEP", kind="preservation", behavior="the report stays", expected="unchanged", boundaryInputs=["kept"])
+        operation = ("value = {value}\nkept = 1\nscale = {scale}\nEXTRA = {extra}\n"
+                     "def run():\n    print('ok')\n    if EXTRA: print('ok')\n    print()\n    if EXTRA: print()\n    print('done')\n")
+        (self.repo / "app.py").write_text(operation.format(value=1, scale=1, extra=False))
+        self.case.git("add", "app.py")
+        self.case.git("commit", "-qm", "report")
+        self.begin(keep, intent="Keep the report.")
+        command = (sys.executable, "probe.test.py")
+        probe = lambda tail: ("import app\nprint('kept:', app.kept)\napp.run()\nfor i in range(30): print('row', i, i * app.value)\n"
+                              f"for i in range({tail}): print('tail', i, i * app.scale)\n")
+        (self.repo / "probe.test.py").write_text(probe(30))
+        # lost tail lines after 60 differing row lines: deleting their print under the same command repairs nothing
+        (self.repo / "app.py").write_text(operation.format(value=2, scale=3, extra=False))
+        self.tdd("BM_KEEP", command=command)
+        (self.repo / "app.py").write_text(operation.format(value=1, scale=3, extra=False))
+        (self.repo / "probe.test.py").write_text(probe(0))
+        receipt = self.tdd("BM_KEEP", command=command)
+        self.assertEqual(self.status()["tdd"], "in-progress", marker + ": lost lines deleted: " + json.dumps(receipt))
+        (self.repo / "app.py").write_text(operation.format(value=1, scale=1, extra=False))
+        (self.repo / "probe.test.py").write_text(probe(30))
+        receipt = self.tdd("BM_KEEP", command=command)
+        self.assertEqual((self.open_lines(receipt), self.status()["tdd"]), ([], "passed"), marker + ": tail repaired: " + json.dumps(receipt))
+        # a duplicated line and an extra blank line, genuinely repaired under the same command
+        (self.repo / "app.py").write_text(operation.format(value=1, scale=1, extra=True))
+        self.tdd("BM_KEEP", command=command)
+        (self.repo / "app.py").write_text(operation.format(value=1, scale=1, extra=False) + "# repaired\n")
+        receipt = self.tdd("BM_KEEP", command=command)
+        self.assertEqual((self.open_lines(receipt), self.status()["tdd"]), ([], "passed"), marker + ": duplicates repaired: " + json.dumps(receipt))
+
+    def test_naming_a_retained_case_on_an_uncompared_item(self):
+        marker = "UNCOMPARED_JUDGE_CRASHED"
+        a = pending_behavior("BM_A", kind="preservation", behavior="kept and total stay", expected="kept 1, total 2", boundaryInputs=["kept"])
+        b = pending_behavior("BM_B", kind="preservation", behavior="value stays an int", expected="type int", boundaryInputs=["type"])
+        self.begin(a, b, intent="Keep everything.")
+        (self.repo / "probe_a.test.py").write_text("import app\nprint('kept:', app.kept)\nprint('total:', app.value + app.kept)\n")
+        (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
+        self.tdd("BM_A", command=(sys.executable, "probe_a.test.py"))
+        named = self.update(b | {"boundaryInputs": ["type", "total"]})
+        self.assertEqual(named.returncode, 0, marker + ": " + named.stdout + named.stderr)
+        self.assertIn("total", " ".join(line for line in self.summary().split("; ") if "BM_A" in line or "total" in line), marker)
+        self.assertEqual(self.status()["tdd"], "in-progress", marker)
+
+    def test_a_later_output_diff_keeps_the_earlier_lines(self):
+        marker = "OUTPUT_COUNTS_OVERWRITTEN"
+        keep = pending_behavior("BM_KEEP", kind="preservation", behavior="the report stays", expected="unchanged", boundaryInputs=["kept"])
+        (self.repo / "app.py").write_text("value = 1\nkept = 1\nscale = 1\n")
+        self.case.git("add", "app.py")
+        self.case.git("commit", "-qm", "scale")
+        self.begin(keep, intent="Keep the report.")
+        command = (sys.executable, "probe.test.py")
+        (self.repo / "probe.test.py").write_text("import app\nprint('kept:', app.kept)\nprint('total is', app.value + app.kept)\n"
+                                                 "print('scaled is', 10 * app.scale)\n")
+        (self.repo / "app.py").write_text("value = 2\nkept = 1\nscale = 3\n")
+        self.tdd("BM_KEEP", command=command)
+        (self.repo / "probe.test.py").write_text("import app\nprint('kept:', app.kept)\nprint('scaled is', 10 * app.scale)\n")
+        self.tdd("BM_KEEP", command=command)
+        (self.repo / "app.py").write_text("value = 2\nkept = 1\nscale = 1\n")
+        receipt = self.tdd("BM_KEEP", command=command)
+        self.assertEqual(self.status()["tdd"], "in-progress", marker + ": " + json.dumps(receipt))
+
+    def test_a_judge_must_show_the_same_change(self):
+        marker = "JUDGE_WITHOUT_THE_CHANGE"
+        for name, judge in (("equal failure", "if 'judge' in sys.argv:\n    print('total:', 2)\n    sys.exit(1)\n"),
+                            ("unverified", "if 'judge' in sys.argv: print('total: unverified - not measured by this probe')\n"),
+                            ("other measurement", "if 'judge' in sys.argv: print('total:', 2)\n")):
+            with self.subTest(name):
+                self.setUp()
+                a = pending_behavior("BM_A", kind="preservation", behavior="kept and total stay", expected="kept 1, total 2",
+                                     boundaryInputs=["kept"])
+                b = pending_behavior("BM_B", kind="preservation", behavior="the config type stays", expected="type int",
+                                     boundaryInputs=["type"])
+                self.begin(a, b, intent="Keep everything.")
+                (self.repo / "probe_a.test.py").write_text("import app\nprint('kept:', app.kept)\nprint('total:', app.value + app.kept)\n")
+                (self.repo / "probe_b.test.py").write_text("import app, sys\nprint('type:', type(app.value).__name__)\n" + judge)
+                full_a, own_b = (sys.executable, "probe_a.test.py"), (sys.executable, "probe_b.test.py")
+                (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
+                self.tdd("BM_A", command=full_a)
+                self.tdd("BM_B", command=own_b)
+                self.assertEqual(self.update(b | {"boundaryInputs": ["type", "total"]}).returncode, 0, marker)
+                self.tdd("BM_B", command=(*own_b, "judge"))
+                self.tdd("BM_A", command=full_a)
+                self.tdd("BM_A", command=(sys.executable, "-c", "import app\nprint('kept:', app.kept)"))
+                self.assertEqual(self.update(b).returncode, 0, marker)
+                receipt = self.tdd("BM_B", command=own_b)
+                self.assertTrue(any(line.startswith("BM_A") and "total exposed this item" in line for line in self.open_lines(receipt)),
+                                f"{marker}: {name}: " + json.dumps(receipt))
+
+    def test_a_contract_naming_a_regression_excuses_it_only_while_named(self):
+        marker = "CONTRACT_NAMING_PAID"
+        (self.repo / "app.py").write_text("value = 1\nkept = 1\nlabel = 'a'\n")
+        self.case.git("add", "app.py")
+        self.case.git("commit", "-qm", "label")
+        a = pending_behavior("BM_A", kind="preservation", behavior="kept and total stay", expected="kept 1, total 2", boundaryInputs=["kept"])
+        c = pending_behavior("BM_C", behavior="label becomes upper case", expected="label A", boundaryInputs=["label"])
+        self.begin(a, c, intent="Make the label upper case. Keep everything else.")
+        (self.repo / "probe_a.test.py").write_text("import app\nprint('kept:', app.kept)\nprint('total:', app.value + app.kept)\n")
+        (self.repo / "probe_c.test.py").write_text("import app\nprint('label:', app.label)\n")
+        (self.repo / "app.py").write_text("value = 2\nkept = 1\nlabel = 'A'\n")
+        self.tdd("BM_C", command=(sys.executable, "probe_c.test.py"))
+        self.tdd("BM_A", command=(sys.executable, "probe_a.test.py"))
+        self.assertEqual(self.update(c | {"boundaryInputs": ["label", "total"]}).returncode, 0, marker)
+        self.tdd("BM_A", command=(sys.executable, "probe_a.test.py"))
+        self.tdd("BM_A", command=(sys.executable, "-c", "import app\nprint('kept:', app.kept)"))
+        self.assertEqual(self.update(c).returncode, 0, marker)
         self.assertEqual(self.status()["tdd"], "in-progress", marker + ": " + self.summary())
-        self.assertIn("test_kept differs", self.summary(), marker)
-        # a new attack claims the case only for a material behavioral finding, and is listed with it
-        fixture = lambda ref, basis: pending_behavior("BM_FIX", behavior="kept becomes two", expected="kept is two", basis=basis,
-                                                      boundaryInputs=["test_kept"], sourceRefs=[{"type": "finding", "evidenceId": ref, "id": "N-1"}])
-        unowned = self.update(fixture(intake, "an unrelated note"))
-        self.assertEqual(unowned.returncode, 2, marker + ": " + unowned.stdout + unowned.stderr)
-        note.write_text(json.dumps({"findings": [{"id": "N-1", "claim": "kept must become two", "material": True, "kind": "behavioral"}]}))
-        self.assertEqual(self.case.cli("record", "review", "--repo", str(self.repo), "--input", str(note)).returncode, 0, marker)
-        behavioral = json.loads(self.case.cli("status", "--repo", str(self.repo)).stdout)["findingStates"][-1]["intakeEvidenceId"]
-        self.assertEqual(self.update(fixture(behavioral, "finding N-1 attack")).returncode, 0, marker)
-        self.assertIn("BM_FIX: contract item added after preflight (finding N-1): finding N-1 attack", self.summary(), marker)
-        receipt = self.tdd("BM_KEEP", "BM_FIX")
-        self.assertTrue(all(line.startswith("BM_KEEP") for line in self.open_lines(receipt)), marker + ": " + json.dumps(receipt))
+        self.assertIn("total exposed this item", self.summary(), marker)
+
+    def test_an_edit_only_case_is_gone_only_from_a_passing_run(self):
+        marker = "CRASH_PAID_EDIT_ONLY_CASE"
+        self.begin(pending_behavior("BM_A", kind="preservation", behavior="the extras stay as they were", expected="no extras"),
+                   intent="Keep everything.")
+        (self.repo / "probe_a.test.py").write_text("import app\nprint('start')\nfor k, v in getattr(app, 'EXTRA', {}).items(): print(f'{k}:', v)\n")
+        full = (sys.executable, "probe_a.test.py")
+        (self.repo / "app.py").write_text("value = 1\nkept = 1\nEXTRA = {'extra': 5}\n")
+        self.tdd("BM_A", command=full)
+        (self.repo / "app.py").write_text("value = 1\nkept = 1\nclass E(dict):\n    def items(self): raise RuntimeError('x')\nEXTRA = E(extra=5)\n")
+        self.tdd("BM_A", command=full)
+        (self.repo / "app.py").write_text("value = 1\nkept = 1\nEXTRA = {'extra': 5}\n")
+        receipt = self.tdd("BM_A", command=(sys.executable, "-c", "import app\nprint('start')\nprint('kept:', app.kept)"))
+        self.assertEqual(self.status()["tdd"], "in-progress", marker + ": " + json.dumps(receipt))
+
+    def test_a_later_contract_proves_its_change_after_a_crash(self):
+        marker = "REQUESTED_CHANGE_UNCLEARABLE"
+        (self.repo / "app.py").write_text("value = 1\nkept = 1\ndef scaled():\n    return 10\n")
+        self.case.git("add", "app.py")
+        self.case.git("commit", "-qm", "scaled")
+        self.begin(pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays", expected="kept 1", boundaryInputs=["kept"]),
+                   intent="Make scaled twenty. Keep kept.")
+        late = pending_behavior("BM_LATE", behavior="scaled becomes twenty", expected="scaled 20", boundaryInputs=["scaled"])
+        self.assertEqual(self.update(late).returncode, 0, marker)
+        (self.repo / "late.test.py").write_text("import app\nprint('scaled:', app.scaled())\n")
+        (self.repo / "keep.test.py").write_text("import app\nprint('kept:', app.kept)\n")
+        (self.repo / "app.py").write_text("value = 1\nkept = 1\ndef scaled():\n    raise RuntimeError('half done')\n")
+        self.tdd("BM_LATE", command=(sys.executable, "late.test.py"))
+        (self.repo / "app.py").write_text("value = 1\nkept = 1\ndef scaled():\n    return 20\n")
+        self.tdd("BM_LATE", command=(sys.executable, "late.test.py"))
+        receipt = self.tdd("BM_KEEP", command=(sys.executable, "keep.test.py"))
+        self.assertEqual((self.open_lines(receipt), self.status()["tdd"]), ([], "passed"), marker + ": " + json.dumps(receipt))
+
+    def test_an_excused_regression_still_holds_its_item(self):
+        marker = "EXCUSED_ITEM_REWORDED"
+        (self.repo / "app.py").write_text("value = 1\nkept = 1\nlabel = 'a'\n")
+        self.case.git("add", "app.py")
+        self.case.git("commit", "-qm", "label")
+        a = pending_behavior("BM_A", kind="preservation", behavior="kept and total stay", expected="kept 1, total 2", boundaryInputs=["kept"])
+        c = pending_behavior("BM_C", behavior="label becomes upper case", expected="label A", boundaryInputs=["label"])
+        self.begin(a, c, intent="Make the label upper case. Keep everything else.")
+        (self.repo / "probe_a.test.py").write_text("import app\nprint('kept:', app.kept)\nprint('total:', app.value + app.kept)\n")
+        (self.repo / "probe_c.test.py").write_text("import app\nprint('label:', app.label)\nprint('total:', app.value + app.kept)\n")
+        (self.repo / "app.py").write_text("value = 2\nkept = 1\nlabel = 'A'\n")
+        self.tdd("BM_A", command=(sys.executable, "probe_a.test.py"))
+        self.assertEqual(self.update(c | {"boundaryInputs": ["label", "total"]}).returncode, 0, marker)
+        self.tdd("BM_C", command=(sys.executable, "probe_c.test.py"))
+        self.tdd("BM_A", command=(sys.executable, "-c", "import app\nprint('kept:', app.kept)"))
+        self.relaxed(a | {"expected": "kept stays one"}, a, marker)
+
+    def test_a_namesake_does_not_excuse_a_regression(self):
+        marker = "NAMESAKE_EXCUSED"
+        unit = "import unittest\nimport app\n\n"
+        (self.repo / "test_c.py").write_text(unit + "class C(unittest.TestCase):\n    def test_check(self): self.assertEqual(app.value, 2)\n")
+        (self.repo / "test_a.py").write_text(unit + "class A(unittest.TestCase):\n    def test_check(self): self.assertEqual(app.kept, 1)\n"
+                                             "    def test_int(self): self.assertIsInstance(app.kept, int)\n")
+        self.case.git("add", "test_c.py", "test_a.py")
+        self.case.git("commit", "-qm", "probes")
+        a = pending_behavior("BM_A", kind="preservation", behavior="kept stays one", expected="kept is one",
+                             boundaryInputs=["test_check (test_a.A.test_check)", "test_int"])
+        self.begin(a, pending_behavior("BM_C", behavior="value becomes two", expected="value is two", boundaryInputs=["test_check"]),
+                   intent="Make the value two. Keep kept.")
+        (self.repo / "app.py").write_text("value = 2\nkept = 2\n")
+        self.tdd("BM_C", command=(sys.executable, "-m", "unittest", "test_c"))
+        self.tdd("BM_A", command=(sys.executable, "-m", "unittest", "test_a"))
+        self.assertEqual(self.update(a | {"boundaryInputs": ["test_int"]}).returncode, 0, marker)
+        receipt = self.tdd("BM_A", command=(sys.executable, "-m", "unittest", "test_a.A.test_int"))
+        self.assertEqual(self.status()["tdd"], "in-progress", marker + ": " + json.dumps(receipt))
+
+    def test_governance_revalidation_reruns_stale_comparisons(self):
+        marker = "REVALIDATION_STUCK_ON_STALE_PROOF"
+        from hooks.lib.repo_identity import resolve_repo_identity
+        from hooks.lib.workflow_state import invalidate_after_edit, set_phase
+        from hooks.tests.support import commit_ready_envelope, record_context_forge
+        _, wid = self.begin(pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two",
+                                             boundaryInputs=["test_value"]), intent="Make the value two.")
+        self.probe("def test_value(self): self.assertEqual(app.value, 2)")
+        (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
+        self.tdd("BM_CHANGE")
+
+        def close_out():
+            for command in (("verify", "--", sys.executable, "-c", "pass"), ("verify", "--kind", "quality-gate", "--base-ref", "HEAD")):
+                self.case.cli(*command, "--repo", str(self.repo))
+            record_context_forge(self.repo, self.case.tmp)
+            set_phase(resolve_repo_identity(self.repo), "code-review", "passed", findings="none")
+            for command in (("record", "advisor-result", "--slug", "mapped-repair", "--workflow-id", wid, "--stage", "final",
+                             "--source", "codex-advisor", "--input", commit_ready_envelope(self.case.tmp)),
+                            ("record", "advisor-disposition", "--slug", "mapped-repair", "--workflow-id", wid, "--stage", "final",
+                             "--findings", "none")):
+                self.case.cli(*command, "--repo", str(self.repo))
+            return self.case.cli("complete", "--repo", str(self.repo))
+
+        self.assertEqual(close_out().returncode, 0, marker)
+        for path in ("skills/x/SKILL.md", "AGENTS.md"):
+            (self.repo / path).parent.mkdir(parents=True, exist_ok=True)
+            (self.repo / path).write_text(f"# governance edit {path}\n")
+            invalidate_after_edit(resolve_repo_identity(self.repo), path)
+            self.case.cli("verify", "--repo", str(self.repo), "--", sys.executable, "-c", "pass")
+            self.assertEqual(self.status()["nextAction"], "tdd", f"{marker}: {path}")
+            rerun = self.case.cli("tdd", "--repo", str(self.repo), "--behavior-id", "BM_CHANGE")
+            self.assertEqual(rerun.returncode, 0, f"{marker}: {path}: " + rerun.stdout + rerun.stderr)
+            completed = close_out()
+            self.assertEqual(completed.returncode, 0, f"{marker}: {path}: " + completed.stdout + completed.stderr)
+
+    def test_only_attributable_restoration_pays_debt(self):
+        marker = "DEBT_PAID_WITHOUT_RESTORATION"
+        cases = {
+            "printed unnamed value": ("state = 'unnamed'\n", "state = 'ready'\n", None,
+                                      "import app\nprint('state:', app.state)\nprint('kept:', app.kept)\n", ["state", "kept"]),
+            "reordered output": ("def report():\n    print('head')\n    print('body')\n",
+                                 "def report():\n    print('body')\n    print('head')\n", None,
+                                 "import app\nprint('kept:', app.kept)\napp.report()\n", ["kept"]),
+            "crashed wrapped output": ("EXTRA = False\nCRASH = False\ndef emit():\n    if CRASH: raise RuntimeError('blocked')\n"
+                                       "    if EXTRA: print('unexpected extra')\n", "EXTRA = True\n", "CRASH = True\n",
+                                       "import app\napp.emit()\n", []),
+        }
+        for name, (original, edit, crash, probe, inputs) in cases.items():
+            with self.subTest(name):
+                self.setUp()
+                source = "value = 1\nkept = 1\n" + original
+                (self.repo / "app.py").write_text(source)
+                self.case.git("add", "app.py")
+                self.case.git("commit", "-qm", "operation")
+                keep = pending_behavior("BM_KEEP", kind="preservation", behavior="the operation stays", expected="unchanged",
+                                        **({"boundaryInputs": inputs} if inputs else {}))
+                self.begin(keep, intent="Keep everything.")
+                (self.repo / "probe.test.py").write_text(probe)
+                command = (sys.executable, "probe.test.py")
+                if crash:
+                    self.probe("def test_int(self): self.assertIsInstance(app.value, int)")
+                    command = ("bash", "-c", f"{sys.executable} -m unittest -v test_value 2>&1; {sys.executable} probe.test.py 2>/dev/null")
+                edited = source.replace("EXTRA = False\n", edit) if crash else source.replace(original, edit)
+                (self.repo / "app.py").write_text(edited)
+                self.tdd("BM_KEEP", command=command)
+                if crash:
+                    (self.repo / "app.py").write_text(edited.replace("CRASH = False\n", crash))
+                    self.tdd("BM_KEEP", command=command)
+                    self.tdd("BM_KEEP", command=(sys.executable, "-c", "import app\nprint('kept:', app.kept)"))
+                else:
+                    self.assertEqual(self.update(keep | {"boundaryInputs": ["kept"]}).returncode, 0, marker)
+                    (self.repo / "probe.test.py").write_text("import app\nprint('kept:', app.kept)\n")
+                    self.tdd("BM_KEEP", command=command)
+                self.assertEqual(self.status()["tdd"], "in-progress", f"{marker}: {name}")
+
+    def test_sibling_alias_does_not_hide_first_exposure(self):
+        marker = "SIBLING_ALIAS_HID_REGRESSION"
+        unit = "import unittest\nimport app\n\n"
+        (self.repo / "test_c.py").write_text(unit + "class C(unittest.TestCase):\n    def test_check(self): self.assertEqual(app.value, 2)\n")
+        (self.repo / "test_a.py").write_text(unit + "class A(unittest.TestCase):\n    def test_check(self): self.assertEqual(app.kept, 1)\n"
+                                             "    def test_int(self): self.assertIsInstance(app.kept, int)\n")
+        self.begin(pending_behavior("BM_C", behavior="value becomes two", expected="value is two", boundaryInputs=["test_check"]),
+                   pending_behavior("BM_A", kind="preservation", behavior="kept stays one", expected="kept is one", boundaryInputs=["test_int"]),
+                   intent="Make the value two. Keep kept unchanged.")
+        (self.repo / "app.py").write_text("value = 2\nkept = 2\n")
+        sibling, own = (sys.executable, "-m", "unittest", "test_c"), (sys.executable, "-m", "unittest", "test_a")
+        for order in ("sibling first", "sibling last"):
+            with self.subTest(order):
+                if order == "sibling last":
+                    self.setUp()
+                    (self.repo / "test_c.py").write_text(unit + "class C(unittest.TestCase):\n    def test_check(self): self.assertEqual(app.value, 2)\n")
+                    (self.repo / "test_a.py").write_text(unit + "class A(unittest.TestCase):\n    def test_check(self): self.assertEqual(app.kept, 1)\n"
+                                                         "    def test_int(self): self.assertIsInstance(app.kept, int)\n")
+                    self.begin(pending_behavior("BM_C", behavior="value becomes two", expected="value is two", boundaryInputs=["test_check"]),
+                               pending_behavior("BM_A", kind="preservation", behavior="kept stays one", expected="kept is one",
+                                                boundaryInputs=["test_int"]), intent="Make the value two. Keep kept unchanged.")
+                    (self.repo / "app.py").write_text("value = 2\nkept = 2\n")
+                else:
+                    self.tdd("BM_C", command=sibling)
+                self.tdd("BM_A", command=own)
+                receipt = self.tdd("BM_A", command=(sys.executable, "-m", "unittest", "test_a.A.test_int"))
+                if order == "sibling last":
+                    receipt = self.tdd("BM_C", command=sibling)
+                self.assertEqual(self.status()["tdd"], "in-progress", f"{marker}: {order}: " + json.dumps(receipt))
+
+    def test_receipt_omits_contract_history_review_keeps_it(self):
+        marker = "CONTRACT_NOISE_IN_RECEIPT"
+        change = pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two",
+                                  boundaryInputs=["test_value", "test_value_planned"])
+        self.begin(change, intent="Make the value two.")
+        self.probe("def test_value(self): self.assertEqual(app.value, 2)")
+        (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
+        self.assertEqual(self.update(change | {"boundaryInputs": ["test_value", "test_more"]}).returncode, 0, marker)
+        receipt = self.tdd("BM_CHANGE")
+        self.assertNotIn("contractChanges", receipt, marker + ": " + json.dumps(receipt))
+        self.assertTrue(any("test_more missing on original, current" in line for line in self.open_lines(receipt)),
+                        marker + ": " + json.dumps(receipt))
+        dropped = "BM_CHANGE: contract cases dropped: test_value_planned"
+        self.assertIn(dropped, self.summary(), marker)
+        packet = checkpoint_channels(self.repo, self.case.env, "code-review")
+        self.assertTrue(any(line.startswith(dropped) for line in packet["behavior-map"]["contractChanges"]), marker + ": " + json.dumps(packet))
+
+    def test_printed_lines_after_the_last_footer_are_judged(self):
+        marker = "REPORT_TAIL_HIDDEN"
+        self.begin(pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two", boundaryInputs=["test_value"]),
+                   pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one",
+                                    boundaryInputs=["test_x_int"]))
+        self.probe("def test_value(self): self.assertEqual(app.value, 2)", "def test_x_int(self): self.assertIsInstance(app.value, int)")
+        probe = f"{sys.executable} probe.test.py"
+        batch = ("bash", "-c", f"{probe} before; {sys.executable} -m unittest -v test_value 2>&1; {probe} between; "
+                               f"{sys.executable} -m unittest test_value 2>&1; {probe} after")
+        for line, place in ((line, place) for line in ("...", "E", "-" * 70, "=" * 70, "checked (2 cases)", "loaded (cfg.main)")
+                            for place in ("before", "between", "after")):
+            (self.repo / "probe.test.py").write_text(f"import app, sys\nif sys.argv[1] == {place!r}:\n"
+                                                     f"    print({line!r})\n    print('kept is', app.kept)\n")
+            (self.repo / "app.py").write_text("value = 2\nkept = 2\n")
+            receipt = self.tdd("BM_CHANGE", "BM_KEEP", command=batch)
+            self.assertTrue(any(line.startswith("BM_KEEP") and "unnamed output differs" in line for line in self.open_lines(receipt)),
+                            f"{marker if place == 'after' else 'REPORT_HEAD_HIDDEN'}: {line!r} {place}: " + json.dumps(receipt))
+        (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
+        receipt = self.tdd("BM_CHANGE", "BM_KEEP", command=batch)
+        self.assertEqual((self.open_lines(receipt), self.status()["tdd"]), ([], "passed"), marker + ": " + json.dumps(receipt))
+
+    def test_diagnostics_never_become_printed_cases(self):
+        marker = "DIAGNOSTIC_PSEUDO_CASE"
+        self.begin(pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one"))
+        (self.repo / "app.py").write_text("value = 1\nkept = 2\n")
+        (self.repo / "test_p.py").write_text("import app\ndef test_a(): assert app.value == 1\n"
+                                             "def test_b(): assert {'k': app.kept} == {'k': 1}\n")
+        (self.repo / "probe.test.py").write_text("import app, unittest\nprint('value:', app.value)\n"
+                                                 "unittest.TestCase().assertEqual({'kept': app.kept, 'v': 1}, {'kept': 1, 'v': 1})\n")
+        for command, allowed in ((("bash", "-c", f"{sys.executable} -m pytest -qq test_p.py 2>&1"), lambda name: "::" in name),
+                                 ((sys.executable, "probe.test.py"), lambda name: name == "value")):
+            receipt = self.tdd("BM_KEEP", command=command)
+            evidence = json.loads(self.case.cli("evidence", "--repo", str(self.repo), "--evidence-id", receipt["summaryId"], "--full").stdout)
+            names = {name for arm in evidence["document"]["runs"][receipt["runIndex"]]["arms"] for name in arm["cases"]}
+            self.assertTrue(names and all(map(allowed, names)), marker + ": " + " ".join(command) + json.dumps(sorted(names)))
+
+    def test_wrapped_runner_output_is_attributed_natively(self):
+        marker = "WRAPPED_RUNNER_MISATTRIBUTED"
+        self.begin(pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two", boundaryInputs=["test_value"]),
+                   pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one",
+                                    boundaryInputs=["test_kept"]))
+        (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
+        self.probe("def test_value(self): self.assertEqual({'candidates': [app.value]}, {'candidates': [2]})",
+                   "def test_kept(self): self.assertEqual(app.kept, 1)")
+        for runner in (f"{sys.executable} -m unittest -v test_value 2>&1", f"{sys.executable} -m pytest -v test_value.py 2>&1",
+                       f"{sys.executable} -m unittest -v test_value 2>&1 | sed '/^Ran /,$d'"):
+            receipt = self.tdd("BM_CHANGE", "BM_KEEP", command=("bash", "-c", runner))
+            self.assertEqual(self.status()["tdd"], "passed", marker + ": " + runner + json.dumps(receipt))
+            [case] = receipt["cases"]
+            self.assertTrue(case.startswith(("test_value (test_value.Value.test_value): ", "test_value.py::Value::test_value: ")),
+                            marker + ": " + runner + json.dumps(receipt["cases"]))
+        # a wrapped report naming no case gets the supported invocation once
+        receipt = self.tdd("BM_KEEP", command=("bash", "-c", f"{sys.executable} -m unittest test_value.Value.test_kept 2>&1"))
+        [note] = [line for line in receipt["limitations"] if "names no case" in line]
+        self.assertIn("`python3 -m unittest ...` itself as the command", note, marker + ": " + note)
+        self.assertIn("test_kept missing on original, current", " ".join(self.open_lines(receipt)), marker)
+        # a printed probe that raises keeps its printed case and gains no traceback case; a rule-less FAIL: x is a record
+        receipt = self.tdd("BM_CHANGE", command=(sys.executable, "-c", "import app\nprint('test_value:', app.value)\n"
+                                                 "print('FAIL: x')\nassert app.value == 2, 'not two'"))
+        self.assertFalse(any(line.startswith("BM_CHANGE") for line in self.open_lines(receipt)), marker + ": " + json.dumps(receipt))
+        self.assertNotIn("AssertionError", json.dumps(receipt["cases"]), marker)
+        evidence = json.loads(self.case.cli("evidence", "--repo", str(self.repo), "--evidence-id", receipt["summaryId"], "--full").stdout)
+        arms = evidence["document"]["runs"][receipt["runIndex"]]["arms"]
+        self.assertEqual(sorted(arms[0]["cases"]), ["FAIL", "test_value"], marker + ": " + json.dumps(arms[0]["cases"]))
+
+    def test_pytest_subtest_failure_fails_its_test(self):
+        marker = "SUBTEST_FAILURE_PASSED"
+        self.begin(pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one",
+                                    boundaryInputs=["test_kept"]))
+        (self.repo / "app.py").write_text("value = 1\nkept = 2\n")
+        for subtest in ("n=n", "'X | K=T | a (n)'", "label='a b) c'"):
+            if subtest != "n=n":
+                marker = "LABELLED_SUBTEST_PASSED"
+            self.probe(f"def test_kept(self):\n        for n in (1, 2):\n            with self.subTest({subtest}): self.assertEqual(app.kept, 1)")
+            receipt = self.tdd("BM_KEEP", command=(sys.executable, "-m", "pytest", "-q", "test_value.py"))
+            self.assertEqual(self.status()["tdd"], "in-progress", marker + ": " + subtest + json.dumps(receipt))
+            [line] = self.open_lines(receipt)
+            self.assertIn("test_kept passed on original, failed on current", line, marker + ": " + subtest + line)
+
+    def test_stopped_method_is_reported(self):
+        marker = "STOPPED_EXECUTION_HIDDEN"
+        self.begin(pending_behavior("BM_CHANGE", behavior="value becomes two across boundary cases", expected="value is two",
+                                    boundaryInputs=["test_loop"]),
+                   pending_behavior("BM_LOOP", behavior="each input reports two", expected="two", boundaryInputs=["empty", "one", "several"]))
+        (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
+        self.probe("def test_loop(self):\n        for name in ['empty', 'one', 'several']:\n            self.assertEqual(app.value, 2, name)")
+        receipt = self.tdd("BM_CHANGE")
+        self.assertEqual(receipt["cases"], ["test_loop (test_value.Value.test_loop): original=failed (stopped), current=passed; "
+                                            "AssertionError: 1 != 2 : empty"], marker + ": " + json.dumps(receipt))
+        [note] = [line for line in receipt["limitations"] if "stopped" in line]
+        self.assertFalse({"one", "several"} & set(note.replace(",", " ").split()), marker + ": " + note)
+        self.assertFalse(any(line.startswith("BM_CHANGE") for line in self.open_lines(receipt)), marker)
+        # inputs the map declares as their own cases stay open while the original stops before them
+        script = "import app\nfor name in ['empty', 'one', 'several']:\n    print(name + ':', app.value)\n    assert app.value == 2, name"
+        receipt = self.tdd("BM_LOOP", command=(sys.executable, "-c", script))
+        [line] = [line for line in self.open_lines(receipt) if line.startswith("BM_LOOP")]
+        self.assertIn("one unnamed on original", line, marker + ": " + line)
+        self.assertIn("several unnamed on original", line, marker + ": " + line)
+
+    def test_domain_unverified_value_is_not_a_note(self):
+        marker = "DOMAIN_VALUE_HELD"
+        (self.repo / "app.py").write_text("value = 1\nkept = 1\nstatus = 'unverified'\n")
+        self.case.git("add", "app.py")
+        self.case.git("commit", "-qm", "a real account status")
+        self.begin(pending_behavior("BM_STATUS", kind="preservation", behavior="new accounts remain unverified", expected="unverified",
+                                    boundaryInputs=["account"]))
+        receipt = self.tdd("BM_STATUS", command=(sys.executable, "-c", "import app\nassert app.status == 'unverified'\n"
+                                                 "print('account: ' + app.status)"))
+        self.assertEqual(self.status()["tdd"], "passed", marker + ": " + json.dumps(receipt))
+        # the documented note still holds its item, and an assertion naming the word is an ordinary result
+        receipt = self.tdd("BM_STATUS", command=(sys.executable, "-c", "print('account: unverified - the fixture cannot open one')"))
+        [line] = self.open_lines(receipt)
+        self.assertIn("account unverified", line, marker + ": " + line)
+        self.update(pending_behavior("BM_WORD", behavior="status becomes verified", expected="verified", boundaryInputs=["test_word"]))
+        self.probe("def test_word(self): self.assertEqual('verified' if app.value == 2 else 'unverified', 'verified')")
+        (self.repo / "app.py").write_text("value = 2\nkept = 1\nstatus = 'unverified'\n")
+        receipt = self.tdd("BM_WORD")
+        self.assertFalse(any(line.startswith("BM_WORD") for line in self.open_lines(receipt)), marker + ": " + json.dumps(receipt))
+
+    def test_receipt_renders_each_question_once(self):
+        marker = "QUESTION_REPEATED"
+        self.begin(pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one",
+                                    boundaryInputs=["test_kept", "test_other"]))
+        (self.repo / "app.py").write_text("value = 1\nkept = 2\n")
+        self.probe("def test_kept(self): self.assertEqual(app.kept, 2)", "def test_other(self): self.assertEqual(app.kept * 2, 4)")
+        receipt = self.tdd("BM_KEEP")
+        [line] = self.open_lines(receipt)
+        self.assertNotIn(line, receipt["next"].get("input", ""), marker + ": " + json.dumps(receipt["next"]))
+        self.assertEqual(line.count("must pass unchanged on both trees"), 1, marker + ": " + line)
+
+    def test_shared_assertion_rendered_once(self):
+        marker = "ASSERTION_REPEATED"
+        self.begin(pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one",
+                                    boundaryInputs=["test_a", "test_b"]))
+        (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
+        self.probe("def test_a(self): self.fail('SHARED_DIAGNOSTIC')",
+                   "def test_b(self):\n        if app.value == 2: self.fail('SHARED_DIAGNOSTIC')")
+        receipt = self.tdd("BM_KEEP")
+        self.assertEqual(len(receipt["cases"]), 2, marker + ": " + json.dumps(receipt["cases"]))
+        self.assertEqual(sum(line.count("SHARED_DIAGNOSTIC") for line in receipt["cases"]), 1, marker + ": " + json.dumps(receipt["cases"]))
+
+    def test_short_name_matching_several_tests_stays_open(self):
+        marker = "AMBIGUOUS_ALIAS_DISCHARGED"
+        self.begin(pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two", boundaryInputs=["test_value"]))
+        (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
+        (self.repo / "test_value.py").write_text(UNITTEST_PROBE + "    def test_value(self): self.assertEqual(app.value, 2)\n"
+                                                 "class Other(unittest.TestCase):\n    def test_value(self): self.assertEqual(app.kept, 1)\n")
+        receipt = self.tdd("BM_CHANGE")
+        self.assertEqual(self.status()["tdd"], "in-progress", marker + ": " + json.dumps(receipt))
+        [line] = self.open_lines(receipt)
+        self.assertIn("test_value matches several tests", line, marker + ": " + line)
+        self.update(pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two",
+                                     boundaryInputs=["test_value (test_value.Value.test_value)"]))
+        receipt = self.tdd("BM_CHANGE")
+        self.assertEqual((self.open_lines(receipt), self.status()["tdd"]), ([], "passed"), marker + ": " + json.dumps(receipt))
+
+    def test_named_preservation_still_judges_unnamed_output(self):
+        marker = "UNNAMED_OUTPUT_IGNORED"
+        self.begin(pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one", boundaryInputs=["kept"]))
+        (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
+        receipt = self.tdd("BM_KEEP", command=(sys.executable, "-c", "import app\nprint('kept:', app.kept)\nprint('total is', app.value + app.kept)"))
+        self.assertEqual(self.status()["tdd"], "in-progress", marker + ": " + json.dumps(receipt))
+        [line] = self.open_lines(receipt)
+        self.assertIn("unnamed output differs", line, marker + ": " + line)
+
+    def test_unrelated_failed_run_is_not_replayed(self):
+        marker = "UNRELATED_TREE_REPLAYED"
+        self.begin(pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two", boundaryInputs=["test_value"]),
+                   pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one",
+                                    boundaryInputs=["test_kept"]))
+        value, kept = ((sys.executable, "-m", "unittest", f"test_value.Value.{name}") for name in ("test_value", "test_kept"))
+        self.probe("def test_value(self): self.assertEqual(app.value, 2)", "def test_kept(self): self.assertEqual(app.kept, 1)")
+        (self.repo / "app.py").write_text("value = 2\nkept = 2\n")
+        self.tdd("BM_KEEP", command=kept)
+        (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
+        self.tdd("BM_CHANGE", command=value)
+        self.probe("def test_value(self): self.assertEqual(app.value, 2, 'REVISED')", "def test_kept(self): self.assertEqual(app.kept, 1)")
+        receipt = self.tdd("BM_CHANGE", command=value)
+        self.assertEqual([arm["source"] for arm in receipt["arms"]], ["original", "current"], marker + ": " + json.dumps(receipt["arms"]))
+        # this batch's own failed run on a broken edit returns when its probe is revised again
+        (self.repo / "app.py").write_text("value = 3\nkept = 1\n")
+        self.tdd("BM_CHANGE", command=value)
+        (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
+        self.tdd("BM_CHANGE", command=value)
+        self.probe("def test_value(self): self.assertEqual(app.value, 2, 'REVISED AGAIN')", "def test_kept(self): self.assertEqual(app.kept, 1)")
+        receipt = self.tdd("BM_CHANGE", command=value)
+        self.assertEqual([arm["source"] for arm in receipt["arms"]], ["original", "earlier", "current"], marker + ": " + json.dumps(receipt["arms"]))
+
+    def test_narrowing_reports_every_selection_form(self):
+        marker = "NARROWING_MISREPORTED"
+        self.begin(pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one",
+                                    boundaryInputs=["test_kept"]))
+        self.probe("def test_kept(self): self.assertEqual(app.kept, 1)", "def test_other(self): self.assertEqual(app.value, 1)")
+        for command, form in (((sys.executable, "-m", "pytest", "-qk", "kept", "test_value.py"), "-k kept"),
+                              ((sys.executable, "-m", "pytest", "--deselect", "test_value.py::Value::test_other", "test_value.py"),
+                               "--deselect test_value.py::Value::test_other"),
+                              ((sys.executable, "-m", "unittest", "test_value.Value"), "test_value.Value")):
+            receipt = self.tdd("BM_KEEP", command=command)
+            self.assertEqual(receipt.get("limitations"), [f"narrowed selection: {form}; tests outside it are not compared"],
+                             marker + ": " + json.dumps(receipt))
+
+    def test_infeasible_context_needs_executed_cases(self):
+        marker = "SELF_RELEASE_ACCEPTED"
+        (self.repo / "app.py").write_text(
+            "value = 1\nkept = 1\n"
+            "def parse(k, q):\n    if k and q:\n        raise ValueError('K and Q are exclusive')\n    return k, q\n"
+            "def decide(p, x, k, q):\n    k, q = parse(k, q)\n    return 'OUT' if p and x and (k or q) else None\n")
+        self.case.git("add", "app.py")
+        self.case.git("commit", "-qm", "a parse constraint")
+        pair = ["X | P=T,K=T,Q=T | a", "X | P=T,K=T,Q=T | b"]
+        context = pending_behavior("BM_CTX", kind="preservation", behavior="X decides OUT when P=T,K=T,Q=T",
+                                   expected="unreachable: parse raises ValueError when K and Q are both true", boundaryInputs=pair)
+        self.begin(context, pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two",
+                                             boundaryInputs=["value", *pair]))
+        note = "X | P=T,K=T,Q=T: unreachable - parse rejects K and Q together"
+        self.tdd("BM_CTX", command=(sys.executable, "-c", f"print({note!r})"))
+        released = self.update(context | {"released": {"reason": "parse rejects K and Q", "case": "X | P=T,K=T,Q=T"}})
+        self.assertEqual(released.returncode, 2, marker + ": " + released.stdout + released.stderr)
+        self.assertIn("unknown fields: released", released.stderr, marker)
+        self.assertEqual(self.status()["tdd"], "in-progress", marker)
+        crashed = self.update(context | {"released": {"reason": "parse rejects K and Q", "case": "X | P=T,K=T,Q=T"}, "sourceRefs": 1})
+        self.assertEqual(crashed.returncode, 2, marker + ": " + crashed.stdout + crashed.stderr)
+        self.assertIn("sourceRefs must be an array", crashed.stderr, marker)
+        self.assertNotIn("Traceback", crashed.stderr, marker)
+        # the Interface itself shows the context cannot be reached, on both trees, for both item kinds
+        (self.repo / "probe.test.py").write_text(
+            "import app\nfor label, x in (('a', True), ('b', False)):\n    try:\n        result = app.decide(True, x, True, True)\n"
+            "    except ValueError as error:\n        result = 'rejected by parse: ' + str(error)\n"
+            "    print(f'X | P=T,K=T,Q=T | {label}: {result}')\nprint('value:', app.value)\n")
+        (self.repo / "app.py").write_text((self.repo / "app.py").read_text().replace("value = 1", "value = 2"))
+        receipt = self.tdd("BM_CTX", "BM_CHANGE", command=(sys.executable, "probe.test.py"))
+        self.assertEqual((self.open_lines(receipt), self.status()["tdd"]), ([], "passed"), marker + ": " + json.dumps(receipt))
+        packet = checkpoint_channels(self.repo, self.case.env, "code-review")
+        [item] = [item for item in packet["behavior-map"]["items"] if item["id"] == "BM_CTX"]
+        self.assertIn("parse raises ValueError", item["expected"], marker)
+        # once the constraint changes, the same cases reopen the item
+        (self.repo / "app.py").write_text((self.repo / "app.py").read_text().replace("if k and q:", "if False:"))
+        receipt = self.tdd("BM_CTX", "BM_CHANGE", command=(sys.executable, "probe.test.py"))
+        self.assertTrue(any(line.startswith("BM_CTX") and "X | P=T,K=T,Q=T | a differs" in line for line in self.open_lines(receipt)),
+                        marker + ": " + json.dumps(receipt))
 
     def test_unnamed_preservation_owns_its_differing_cases(self):
         marker = "REWRITTEN_EXPECTATION_PASSED"
@@ -1020,12 +1929,6 @@ class ReadinessTests(unittest.TestCase):
         self.assertEqual(narrowed.returncode, 0, marker + ": " + narrowed.stdout + narrowed.stderr)
         self.assertEqual(self.status()["tdd"], "in-progress", marker + ": " + self.summary())
         self.assertIn("test_kept differs", self.summary(), marker)
-        # naming it on a contract item claims the change, with the request sentence
-        claimed = self.update(pending_behavior("BM_NEW", behavior="kept becomes two", expected="kept is two",
-                                               basis="Report kept as two only when the request says so.", boundaryInputs=["test_kept"]))
-        self.assertEqual(claimed.returncode, 0, marker + ": " + claimed.stdout + claimed.stderr)
-        receipt = self.tdd("BM_KEEP", "BM_NEW")
-        self.assertEqual((self.open_lines(receipt), self.status()["tdd"]), ([], "passed"), marker + ": " + json.dumps(receipt))
 
     def test_boundary_inputs_are_proved_by_execution(self):
         marker = "UNEXECUTED_BOUNDARY_PASSED"
@@ -1110,85 +2013,6 @@ class ReadinessTests(unittest.TestCase):
         self.assertEqual(full.returncode, 0, marker + ": " + full.stdout + full.stderr)
         self.assertEqual(self.status()["tdd"], "passed", marker + ": " + self.summary())
 
-    def test_release_is_bound_to_an_executed_probe_note(self):
-        marker = "RELEASE_INVISIBLE"
-        self.begin(pending_behavior("BM_CTX", kind="preservation", behavior="X decides OUT when P=T,K=T,Q=T",
-                                    expected="a: OUT, b: none", boundaryInputs=["X | P=T,K=T,Q=T | a", "X | P=T,K=T,Q=T | b"]),
-                   pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two"))
-        note = "X | P=T,K=T,Q=T: unreachable - Q requires K false in parse()"
-        command = (sys.executable, "-c", f"import app\nprint({note!r})")
-        receipt = self.tdd("BM_CTX", command=command)
-        self.assertEqual(self.status()["tdd"], "in-progress", json.dumps(receipt))
-        release = lambda **fields: pending_behavior("BM_CTX", kind="preservation", behavior="X decides OUT when P=T,K=T,Q=T",
-                                                    expected="a: OUT, b: none",
-                                                    boundaryInputs=["X | P=T,K=T,Q=T | a", "X | P=T,K=T,Q=T | b"], **fields)
-        (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
-        differing = self.tdd("BM_CTX", command=(sys.executable, "-c", "import app\nprint('X | P=T,K=T,Q=T:', app.value)"))
-        self.assertEqual(differing["comparison"], "changed", json.dumps(differing))
-        for fields in ({"released": {"reason": "cannot construct", "case": "X | nowhere"}},
-                       {"released": {"reason": "value changed, so unreachable", "case": "X | P=T,K=T,Q=T"}},
-                       {"released": {"reason": "", "case": "X | P=T,K=T,Q=T"}},
-                       {"released": {"reason": "Q with K is rejected", "case": "X | P=T,K=T,Q=T"},
-                        "interpretations": ["Q is parsed", "Q is ignored"]}):
-            refused = self.update(release(**fields))
-            self.assertEqual(refused.returncode, 2, marker + ": " + json.dumps(fields) + refused.stdout + refused.stderr)
-        contract = self.update(pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two",
-                                                released={"reason": "not needed", "case": "X | P=T,K=T,Q=T"}))
-        self.assertEqual(contract.returncode, 2, marker + ": " + contract.stdout + contract.stderr)
-        (self.repo / "app.py").write_text("value = 1\nkept = 1\n")
-        receipt = self.tdd("BM_CTX", command=command)
-        accepted = self.update(release(released={"reason": "Q requires K false in parse()", "case": "X | P=T,K=T,Q=T"}))
-        self.assertEqual(accepted.returncode, 0, marker + ": " + accepted.stdout + accepted.stderr)
-        released = "released: BM_CTX: Q requires K false in parse() (X | P=T,K=T,Q=T)"
-        self.assertIn(released, self.summary(), marker)
-        self.assertNotIn("BM_CTX", json.loads(self.case.cli("status", "--repo", str(self.repo)).stdout).get("open", ""), marker)
-        receipt = self.tdd("BM_CTX", command=command)
-        self.assertEqual(receipt["released"], [released], marker + ": " + json.dumps(receipt))
-        self.assertFalse(any(line.startswith("BM_CTX") for line in self.open_lines(receipt)), marker + ": " + json.dumps(receipt))
-        packet = checkpoint_channels(self.repo, self.case.env, "code-review")
-        self.assertEqual(packet["behavior-map"]["released"], [released], marker)
-        # a release answers only its own context's inputs; another context's absent input stays open
-        other = self.update(pending_behavior("BM_CTX", kind="preservation", behavior="X decides OUT when P=T,K=T,Q=T", expected="a: OUT, b: none",
-                                             boundaryInputs=["X | P=T,K=T,Q=T | a", "X | P=T,K=T,Q=T | b", "Y | P=F | a"],
-                                             released={"reason": "Q requires K false in parse()", "case": "X | P=T,K=T,Q=T"}))
-        self.assertEqual(other.returncode, 0, marker + ": " + other.stdout + other.stderr)
-        [line] = [line for line in self.open_lines(self.tdd("BM_CTX", command=command)) if line.startswith("BM_CTX")]
-        self.assertIn("Y | P=F | a missing on original, current", line, marker + ": " + line)
-        self.assertNotIn("X | P=T,K=T,Q=T | a", line, marker)
-        self.update(release(released={"reason": "Q requires K false in parse()", "case": "X | P=T,K=T,Q=T"}))
-        # a test whose assertion text contains the word is not the lead's note
-        added = self.update(pending_behavior("BM_WORD", behavior="status becomes verified", expected="verified",
-                                             basis=INTENT.split(". ")[0] + ".", boundaryInputs=["test_word"]))
-        self.assertEqual(added.returncode, 0, marker + ": " + added.stdout + added.stderr)
-        self.probe("def test_word(self): self.assertEqual('verified' if app.value == 2 else 'unverified', 'verified')")
-        (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
-        receipt = self.tdd("BM_WORD")
-        self.assertFalse(any(line.startswith("BM_WORD") for line in self.open_lines(receipt)), marker + ": " + json.dumps(receipt))
-        (self.repo / "app.py").write_text("value = 1\nkept = 1\n")
-        # the lead's own unverified note neither proves the case nor releases it
-        unverified = "X | P=T,K=F,Q=T | a: unverified - fixture cannot set Q"
-        self.update(pending_behavior("BM_UNV", kind="preservation", behavior="X decides OUT when P=T,K=F,Q=T",
-                                     expected="a: OUT, b: none", boundaryInputs=["X | P=T,K=F,Q=T | a"]))
-        receipt = self.tdd("BM_UNV", command=(sys.executable, "-c", f"print({unverified!r})"))
-        self.assertEqual(receipt["comparison"], "preserved", json.dumps(receipt))
-        [line] = [line for line in self.open_lines(receipt) if line.startswith("BM_UNV")]
-        self.assertIn("X | P=T,K=F,Q=T | a unverified", line, marker + ": " + json.dumps(receipt))
-        refused = self.update(pending_behavior("BM_UNV", kind="preservation", behavior="X decides OUT when P=T,K=F,Q=T",
-                                               expected="a: OUT, b: none", boundaryInputs=["X | P=T,K=F,Q=T | a"],
-                                               released={"reason": "measurement unavailable", "case": "X | P=T,K=F,Q=T | a"}))
-        self.assertEqual(refused.returncode, 2, marker + ": " + refused.stdout + refused.stderr)
-        self.assertIn("unverified", refused.stderr, marker)
-        # a release settles only while its comparison is current and still prints the note unchanged
-        (self.repo / "app.py").write_text("value = 3\nkept = 1\n")
-        self.assertTrue(any(line.startswith("BM_CTX") and "stale" in line for line in self.open_lines(self.tdd("BM_UNV", command=(sys.executable, "-c", f"print({unverified!r})")))), marker)
-        receipt = self.tdd("BM_CTX", command=(sys.executable, "-c", "import app\nprint('X | P=T,K=T,Q=T: unverified - lost')"))
-        [line] = [line for line in self.open_lines(receipt) if line.startswith("BM_CTX")]
-        self.assertIn("release unbound", line, marker + ": " + json.dumps(receipt))
-        receipt = self.tdd("BM_CTX", command=(sys.executable, "-c", "import app\nprint('nothing')"))
-        self.assertTrue(any(line.startswith("BM_CTX") and "was not executed" in line for line in self.open_lines(receipt)), marker + ": " + json.dumps(receipt))
-        receipt = self.tdd("BM_CTX", command=(sys.executable, "-c", f"import app\nprint({note!r} if app.value == 3 else 'nothing')"))
-        self.assertTrue(any(line.startswith("BM_CTX") and "not printed on both trees" in line for line in self.open_lines(receipt)), marker + ": " + json.dumps(receipt))
-
     def test_readiness_is_one_result_across_consumers(self):
         marker = "READINESS_NOT_SHARED"
         self.begin(pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two"))
@@ -1203,15 +2027,27 @@ class ReadinessTests(unittest.TestCase):
         complete = self.case.cli("complete", "--repo", str(self.repo))
         self.assertNotEqual(complete.returncode, 0, marker)
         self.assertIn("BM_CHANGE", complete.stdout + complete.stderr, marker)
-        hook = subprocess.run([sys.executable, str(harness.ROOT / "hooks" / "rcf-intake-gate.py")], cwd=self.repo, env=self.case.env,
-                              text=True, capture_output=True, input=json.dumps({"cwd": str(self.repo), "tool_name": "spawn_agent",
-                                                                               "tool_input": {"agent_type": "default"}}))
+        dispatch = lambda: subprocess.run([sys.executable, str(harness.ROOT / "hooks" / "rcf-intake-gate.py")], cwd=self.repo,
+                                          env=self.case.env, text=True, capture_output=True,
+                                          input=json.dumps({"cwd": str(self.repo), "tool_name": "spawn_agent",
+                                                            "tool_input": {"agent_type": "default"}}))
+        hook = dispatch()
         self.assertIn('"deny"', hook.stdout, marker + ": " + hook.stdout + hook.stderr)
         self.assertIn("tdd", hook.stdout, marker)
         (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
         self.probe("def test_value(self): self.assertEqual(app.value, 2)")
         self.tdd("BM_CHANGE")
         self.assertEqual(self.status()["tdd"], "passed", marker)
+        # an edit after green leaves the proof stale: every reader routes back to tdd until it reruns
+        (self.repo / "app.py").write_text("value = 2\nkept = 1\n# edited\n")
+        status = self.status()
+        self.assertEqual((status["tdd"], status["nextAction"]), ("in-progress", "tdd"), "STALE_PROOF_READ_AS_PASSED")
+        self.assertIn("comparison stale", self.summary(), "STALE_PROOF_READ_AS_PASSED")
+        checkpoint = json.loads(self.case.cli("checkpoint", "--repo", str(self.repo), "--phase", "code-review").stdout)
+        self.assertIn("tdd", checkpoint["missing"], "STALE_PROOF_READ_AS_PASSED: " + json.dumps(checkpoint))
+        self.assertIn("tdd", dispatch().stdout, "STALE_PROOF_READ_AS_PASSED")
+        self.tdd("BM_CHANGE")
+        self.assertEqual(self.status()["tdd"], "passed", "STALE_PROOF_READ_AS_PASSED")
         reopened = self.update(pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two",
                                                 basis="Make the value two.", boundaryInputs=["test_value", "test_missing"]))
         self.assertEqual(reopened.returncode, 0, reopened.stdout + reopened.stderr)
@@ -1280,7 +2116,7 @@ class ReadinessTests(unittest.TestCase):
         self.assertEqual(receipt["cases"], [
             "test_kept (test_value.Value.test_kept): original=failed (2 subtests), current=passed; "
             "AssertionError: 1 != 20; AssertionError: 1 != 2",
-            "test_value (test_value.Value.test_value): original=failed, current=passed; AssertionError: 1 != 2 : VALUE_NOT_TWO",
+            "test_value (test_value.Value.test_value): original=failed (stopped), current=passed; AssertionError: 1 != 2 : VALUE_NOT_TWO",
         ], "VIEW_NOT_COMPACT: " + json.dumps(receipt))
         # a subtest message contained in an earlier one is a distinct assertion (the runner's stored
         # shape keeps a trailing newline; the folding rule must not compare by substring)
@@ -1314,7 +2150,7 @@ class ReadinessTests(unittest.TestCase):
         (self.repo / "app.py").write_text("value = 1\nkept = 3\n")
         self.probe("def test_kept(self): self.assertEqual(app.kept, 2, 'KEPT_WRONG')")
         receipt = self.tdd("BM_KEEP")
-        self.assertEqual(receipt["cases"], ["test_kept (test_value.Value.test_kept): original=failed, current=failed; "
+        self.assertEqual(receipt["cases"], ["test_kept (test_value.Value.test_kept): original=failed (stopped), current=failed (stopped); "
                                             "AssertionError: 1 != 2 : KEPT_WRONG; AssertionError: 3 != 2 : KEPT_WRONG"], marker + ": " + json.dumps(receipt))
         self.assertIn("BM_KEEP (preservation): kept stays one => kept is one; no current valid comparison; test_kept failed on original, failed on current",
                       self.summary(), "READINESS_NOT_SHARED: " + self.summary())
@@ -1390,9 +2226,9 @@ class ReadinessTests(unittest.TestCase):
         for key in ("sourceDelta", "coverage", "output", "observation"):
             self.assertNotIn(key, json.dumps(compared), marker + ": " + key)
         self.assertEqual(receipt["cases"], [
-            "test_broken (test_value.Value.test_broken): original=failed, current=failed; AssertionError: 1 != 3 : ALWAYS_BROKEN",
+            "test_broken (test_value.Value.test_broken): original=failed (stopped), current=failed (stopped); AssertionError: 1 != 3 : ALWAYS_BROKEN",
             "2 cases: test_same_text (test_value.Value.test_same_text), test_value (test_value.Value.test_value): "
-            "original=failed, current=passed; AssertionError: 1 != 2 : VALUE_NOT_TWO",
+            "original=failed (stopped), current=passed; AssertionError: 1 != 2 : VALUE_NOT_TWO",
         ], marker)
         self.assertNotIn("test_kept", json.dumps(receipt["cases"]), marker)
         self.assertEqual([(arm["source"], arm["outcome"], arm["testsExecuted"], arm["unnamed"]) for arm in receipt["arms"]],

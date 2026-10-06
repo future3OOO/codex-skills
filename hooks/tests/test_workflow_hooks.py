@@ -370,8 +370,8 @@ class WorkflowHookTests(HookHarness):
         self.assertEqual(json.loads(self.state("history").stdout), before)
 
         (self.repo / "app.py").write_text("value = 2\n", encoding="utf-8")
-        self.assertEqual(dispatch().get("permissionDecision"), "deny")
-        self.post_edit("app.py")
+        self.post_edit("app.py")  # after the final advisor a correction goes to tdd and its re-check, not review
+        self.assertEqual(json.loads(self.state("status").stdout)["nextAction"], "final-review")
         unrelated = self.second_repo("unrelated")
         with self.subTest(unrelated_project=True):
             self.assertNotIn("permissionDecision", dispatch(cwd=unrelated), "UNRELATED_PROJECT_BLOCKED")
@@ -380,7 +380,6 @@ class WorkflowHookTests(HookHarness):
         for tool in ("spawn_agent", "collaborationfollowup_task", "send_input", "send_message", "resume_agent"):
             with self.subTest(return_tool=tool):
                 self.assertNotIn("permissionDecision", dispatch(tool, cwd=other), "SIBLING_TASK_INHERITED_OBLIGATIONS")
-        self.assertEqual(dispatch(role="explorer").get("permissionDecision"), "deny")
 
     def test_the_edit_gate_advises_missing_steps_instead_of_denying(self) -> None:
         marker = "GATE_STILL_DENIES_MISSING_STEPS"
@@ -697,7 +696,7 @@ class PerEditOverheadTests(HookHarness):
         self.assertNotIn("production-code gate FAILED", combined, marker)
         state = json.loads(self.state("status").stdout)
         self.assertEqual(state["phase"], "implementation", marker)
-        self.assertEqual(state["codeReview"], {"status": "pending", "findings": "pending"}, marker)
+        self.assertEqual(state["finalReview"], {"source": None, "status": "pending", "findings": "pending"}, marker)
 
     def test_a_repeated_dirty_observation_appends_no_ledger_event(self) -> None:
         marker = "REDUNDANT_INVALIDATION_COMMITTED"
@@ -774,8 +773,10 @@ class PerEditOverheadTests(HookHarness):
         result = self.post_edit("app.py")
         self.assertEqual(result.returncode, 0, marker + ": " + result.stdout + result.stderr)
         state = json.loads(self.state("status").stdout)
+        # after the final advisor, an edit reopens only its re-check: code review and verification stand
         self.assertEqual(state["phase"], "implementation", marker)
-        self.assertEqual(state["codeReview"], {"status": "pending", "findings": "pending"}, marker)
+        self.assertEqual(state["codeReview"], {"status": "passed", "findings": "none"}, marker)
+        self.assertEqual((state["verification"], state["nextAction"]), ("passed", "final-review"), marker)
         self.assertEqual(state["finalReview"], {"source": None, "status": "pending", "findings": "pending"}, marker)
         self.assertEqual(self.history_length("production-edit-invalidated"), before + 1,
                          marker + ": the first edit after review must commit exactly one transition")

@@ -259,6 +259,26 @@ class PreflightContinuation(Ceremony):
         stored = self.ok("evidence", "--full", "--evidence-id", result["evidenceId"])
         self.assertEqual(stored["document"]["document"], approved["preflightDraft"], marker)
 
+    def test_the_second_consult_is_the_advisors_own_approved_draft(self) -> None:
+        marker = "PREFLIGHT_ROUNDS_UNBOUNDED"
+        self.begin()
+        self.advice("changes-required")
+        refused = self.cli("record", "advisor-result", "--stage", "preflight", "--source", "codex-advisor",
+                           "--input", str(self.tmp / "advice.json"), "--preflight-file", str(self.tmp / "draft.json"),
+                           "--design-declaration", str(self.tmp / "design.json"))
+        self.assertEqual(refused.returncode, 2, marker + ": a third preflight round was opened: " + refused.stdout)
+        edited = {"authoritativeContract": "the advisor's corrected contract", "behaviorMap": [item("BM_ONE"), item("BM_TWO")]}
+        (self.tmp / "advice.json").write_text(json.dumps({"schemaVersion": 1, "verdict": "approved", "findings": [],
+                                                          "preflightDraft": edited}))
+        receipt = self.ok("record", "advisor-result", "--stage", "preflight", "--source", "codex-advisor",
+                          "--input", str(self.tmp / "advice.json"), "--preflight-file", str(self.tmp / "draft.json"),
+                          "--design-declaration", str(self.tmp / "design.json"))
+        recorded = subprocess.run(shlex.split(receipt["next"]["command"]), cwd=self.tmp, env=self.env, capture_output=True, text=True)
+        self.assertEqual(recorded.returncode, 0, marker + recorded.stderr)
+        stored = self.ok("evidence", "--full", "--evidence-id", json.loads(recorded.stdout)["evidenceId"])["document"]["document"]
+        self.assertEqual((stored["authoritativeContract"], [entry["id"] for entry in stored["behaviorMap"]]),
+                         ("the advisor's corrected contract", ["BM_ONE", "BM_TWO"]), marker)
+
     def test_explicit_draft_binding_and_record_atomicity(self) -> None:
         self.begin()
         marker = "PREFLIGHT_BINDING_CHANGED"
@@ -770,7 +790,7 @@ EXPECTED_MATRIX: list[dict[str, object]] = json.loads(r'''[
  {"next":"verification","blockers":["verification"],"edit":[true,[]],"complete":"workflow incomplete: verification, codeReview, finalReview, repoContextForge"},
  {"next":"code-review","blockers":[],"edit":[true,[]],"complete":"workflow incomplete: codeReview, finalReview, repoContextForge"},
  {"next":"final-review","blockers":[],"edit":[true,[]],"complete":"workflow incomplete: finalReview, repoContextForge"},
- {"next":"classify-current-findings","blockers":[],"edit":[true,[]],"complete":"workflow incomplete: pending findings: final:F-1, finalReview, repoContextForge"}
+ {"next":"classify-current-findings","blockers":[],"edit":[true,[]],"complete":"workflow incomplete: pending findings: final:F-1, finalReview"}
 ]''')
 
 
@@ -1314,7 +1334,7 @@ class FlagDisposition(Ceremony):
         self.assertEqual(disposition["dispositions"][0]["evidenceRefs"], [f"{self.state()['tddEvidence']}:{later.rsplit(':', 1)[1]}"],
                          "FLAG_FIXED_NEEDS_EVIDENCE_REF")
 
-    def test_finding_relink_keeps_proof_for_the_gate_refresh(self) -> None:
+    def test_finding_relink_keeps_proof_after_its_rerun(self) -> None:
         wid = self.begin()
         identity = resolve_repo_identity(self.repo)
         self.record_preflight({"authoritativeContract": "fixture", "behaviorMap": [item("BM_ATTACK", basis="fixture")]})
@@ -1323,6 +1343,7 @@ class FlagDisposition(Ceremony):
         (self.repo / "app.py").write_text("value = 2\nother = 1\n", encoding="utf-8")
         self.comparison(0, "BM_ATTACK")
         self.ok("record", "tdd-map", "--input", "-", input=json.dumps({"items": [item("BM_ATTACK", refs=[ref], basis="fixture")]}))
+        self.comparison(0, "BM_ATTACK")
         self.ok_raw("verify", "--kind", "quality-gate", "--base-ref", "HEAD")
         fixed = self.cli("record", "advisor-disposition", "--finding", "SPEC-1", "--fixed", "--reason", "relinked owner")
         self.assertEqual(fixed.returncode, 0, "RELINK_DROPPED_PROOF: " + fixed.stderr[-400:])

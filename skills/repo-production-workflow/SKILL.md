@@ -99,7 +99,7 @@ result; run further MCP checks when they widen the surface the packet fixed.
 ### 4. Draft and advisor review
 
 Invoke `production-preflight` and draft its two-field artifact before consulting.
-Its map follows TDD's [Behavior Map](../tdd/SKILL.md#behavior-map): each item's
+Its map follows TDD's [Behavior Map](../tdd/recorder.md#behavior-map): each item's
 `kind`, its required boundary cases and any competing readings. Invoke
 `codebase-design` when changing a Module, public Interface or Seam. The draft owns
 the contract and planned attacks.
@@ -113,7 +113,7 @@ Record the exact approved contract and probe list with `record preflight --input
 
 ### 6. Select the probe batch
 
-Before editing, select the direct batch each map item will run through, under
+Invoke `tdd` before editing, then select the direct batch each map item will run through, under
 AGENTS.md's Real-Seam proof invariant: reuse existing cases, fixtures and assertions;
 add a probe only for behavior no existing case covers. Entrypoint absence does not
 prove independent guarantees. The comparison itself runs after the edit (step 8).
@@ -142,11 +142,12 @@ Source and probe edits invalidate affected proof and reopen required verificatio
 ### 9. Verification
 
 After coherent repair and cleanup, assess the intended outcome against the
-verification derived in step 2. Run the typed quality gate; after it passes it
-refreshes stale comparisons through their retained commands, so recorded probes are
-already verified on the current candidate. Before another test command, identify the
+verification derived in step 2. Run the typed quality gate; it runs no comparison. A
+source edit leaves recorded comparisons stale, and every reader then routes to `tdd`
+until the lead reruns them on the current candidate. Before another test command, identify the
 assertion those comparisons cannot establish. Extend the existing targeted batch
 for that gap and keep enclosing-operation checks only for their own assertions.
+Never run existing test classes, modules or suites; CI owns them.
 Reuse current comparisons; use generic verification for required lint/typecheck/build,
 with graph reanalysis when required. Follow AGENTS.md's attack-probe and verification rules.
 CI's `contracts` job owns the full runner here and step 12 waits for it.
@@ -235,6 +236,8 @@ that would leave a fixed finding without its owning attack refuses.
 
 #### Recurring behavioral repairs
 
+Findings and map items batch by owner. A finding names one owning Module and violated invariant and lists every demonstrated input as its cases; a later input to the same owner and invariant is a case of that finding through `priorFinding`, and its repair is the owner's class-wide correction. The map carries one contract and one preservation item per owning Interface, each decisive context a case of it. Observations, recurrence and dispositions stay immutable.
+
 Before another repair, explain the missed cause, affected inputs/paths, invariants,
 class-wide correction and latest counterexample; include reachable states/shared
 writers where relevant. Record the diagnosis once in the existing finding reason,
@@ -284,8 +287,9 @@ diff anchors. It applies
 to the original objective before judging implementation and dispositions. Missing material
 acceptance evidence forbids `commit-ready`. Address and disposition material findings. The
 wrapper leaves final findings pending; the lead explicitly records `none` or
-`addressed` only after validating the output. After a production edit, satisfy current-candidate verification, continue review
-on the affected delta, and repeat final review. Reuse applicable evidence. Once every
+`addressed` only after validating the output. After the first final verdict, a correction
+needs only the `tdd` rerun of its items and the final advisor's re-check: code review,
+verification and context revalidation are not repeated. Reuse applicable evidence. Once every
 final finding is dispositioned (`nextAction` `complete-workflow`), a requested
 reassessment of the unchanged candidate runs the same `final-review` phase and records
 as a fresh final result.

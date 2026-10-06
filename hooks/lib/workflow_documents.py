@@ -45,6 +45,10 @@ def preflight_document(path: str) -> JsonObject:
         value = json.loads(raw, object_pairs_hook=_unique)
     except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
         raise ValueError(f"cannot read preflight JSON: {exc}") from exc
+    return preflight_value(value)
+
+
+def preflight_value(value: object) -> JsonObject:
     if not isinstance(value, dict):
         raise ValueError("preflight document must be a JSON object")
     errors = [message for message, bad in (
@@ -71,8 +75,10 @@ def advisor_envelope(
         value = json.loads(text, object_pairs_hook=_unique)
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise ValueError(f"cannot read advisor envelope JSON: {exc}") from exc
-    if not isinstance(value, dict) or set(value) != {"schemaVersion", "findings", "verdict"}:
-        raise ValueError("advisor envelope requires only schemaVersion, findings, and verdict")
+    edited = isinstance(value, dict) and stage == "preflight" and value.get("verdict") == "approved" and "preflightDraft" in value
+    if not isinstance(value, dict) or set(value) - ({"preflightDraft"} if edited else set()) != {"schemaVersion", "findings", "verdict"}:
+        raise ValueError("advisor envelope requires only schemaVersion, findings, and verdict"
+                         " (and preflightDraft with an approved preflight verdict)")
     findings, verdict = value.get("findings"), value.get("verdict")
     if type(value.get("schemaVersion")) is not int or value.get("schemaVersion") != 1 or not isinstance(findings, list):
         raise ValueError("advisor envelope requires schemaVersion 1 and a findings array")
@@ -117,6 +123,7 @@ def advisor_envelope(
         "stage": stage,
         "verdict": verdict,
         "findings": typed,
+        **({"advisorDraft": preflight_value(value["preflightDraft"])} if edited else {}),
         "sha256": hashlib.sha256(raw).hexdigest(),
         "recordedAt": utc_timestamp(),
         "observationId": uuid.uuid4().hex,

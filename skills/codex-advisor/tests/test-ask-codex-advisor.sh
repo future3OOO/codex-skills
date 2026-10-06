@@ -257,6 +257,14 @@ check "design telemetry emitted" "codex_advisor_evidence name=governing-design" 
 check "canonical design declaration is retained" '"sha256"' "$(cat "$rigtmp/capture/payload-1")"
 check "current-pass diff carries the changed value" "diff> +value = 2" "$(cat "$rigtmp/capture/payload-1")"
 check "projection is framed as channel-prefixed data" "advisor-projection> {" "$(cat "$rigtmp/capture/payload-1")"
+check "ADVISOR_PROMPT_STALE preflight asks for the planned decisive contexts" "decisive contexts of the planned change" "$(cat "$rigtmp/capture/payload-1")"
+check "PREDICTED_NAMES_DEMANDED preflight attaches executed cases after implementation" "executed cases are attached after implementation" "$(cat "$rigtmp/capture/payload-1")"
+check_absent "PREDICTED_NAMES_DEMANDED preflight demands no future case names" "naming its pair cases" "$(cat "$rigtmp/capture/payload-1")"
+check_absent "PREDICTED_NAMES_DEMANDED skills demand no future case names" "pair cases before implementation" "$(cat "$ROOT/skills/production-preflight/SKILL.md" "$ROOT/skills/codex-advisor/SKILL.md")"
+check "ADDED_CONDITION_UNSATISFIABLE preflight takes an added condition's contexts from the edited decision" "the edited decision for a condition the plan adds" "$(cat "$rigtmp/capture/payload-1")"
+check "OWNER_BATCHED preflight batches map items by owning Interface" "one contract and one preservation item per owning Interface" "$(cat "$rigtmp/capture/payload-1")"
+check "OWNER_BATCHED preflight batches findings by owner and invariant" "one finding per owning Module and violated invariant" "$(cat "$rigtmp/capture/payload-1")"
+check "OWNER_BATCHED review skill batches findings by owner and invariant" "one finding per owning Module and violated invariant" "$(cat "$ROOT/skills/code-review/SKILL.md")"
 check_status "one projection section" 1 "$(count_exact "$rigtmp/capture/payload-1" '--- advisor projection (schemaVersion 1) ---')"
 check_status "one current-pass diff section" 1 "$(count_exact "$rigtmp/capture/payload-1" '--- current-pass diff: passStartOid^{tree} -> activeCandidateTree;')"
 for old in 'repo context packet' 'Repo Context Forge graph evidence' '--- unstaged diff ---' '--- staged diff ---' '--- untracked diff ---' 'recorded TDD summary' 'recorded code-review summary'; do
@@ -313,6 +321,10 @@ check "projection telemetry emitted" "codex_advisor_evidence name=advisor-projec
 check "diff telemetry emitted" "codex_advisor_evidence name=diff " "$(cat "$rigtmp/final.err")"
 check "completion marker emitted" "codex_advisor_complete status=0 provider=codex" "$(cat "$rigtmp/final.err")"
 check "outgoing final payload retains selected receipt" "$selected_receipt" "$(cat "$rigtmp/capture/payload-4")"
+check "OWNER_BATCHED final batches findings by owner and invariant" "one finding per owning Module and violated invariant" "$(cat "$rigtmp/capture/payload-4")"
+check "ADVISOR_PROMPT_STALE final judges a finding-owned change against its finding" "against its owning finding" "$(cat "$rigtmp/capture/payload-4")"
+check "ADVISOR_PROMPT_STALE final covers added and strengthened conditions" "adds, removes, weakens, strengthens or rewrites" "$(cat "$rigtmp/capture/payload-4")"
+check_absent "ADVISOR_PROMPT_STALE final judges no release" "each release against" "$(cat "$rigtmp/capture/payload-4")"
 
 cat >"$rigtmp/home/.bashrc" <<'BASHRC'
 alias claudex='ANTHROPIC_BASE_URL=https://transport.invalid ANTHROPIC_AUTH_TOKEN=offline-token CLAUDE_CODE_SUBAGENT_MODEL=offline-model \

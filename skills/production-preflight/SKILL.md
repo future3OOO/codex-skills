@@ -46,7 +46,7 @@ predicate that decides an outcome:
 2. **Challenge the rule, even when it seems conventional.** Compare it with the
    task contract and the rules used by other Modules on the same path. Could a
    supported value receive different decisions under plausible readings? Apply
-   [TDD's differential proof](../tdd/tests.md#what-a-slice-must-prove): derive a
+   [TDD's differential proof](../tdd/tests.md#what-the-batch-must-prove): derive a
    concrete counterexample, evaluate the competing rules on it, and compare the
    outcomes. Test the proposed meaning, not an implementation chosen in advance.
 3. **Resolve from governing authority or expose the uncertainty.** The authority
@@ -72,7 +72,7 @@ readings of one behavior, is a pending `behaviorMap` item, not an unknown.
 
 ### `behaviorMap`
 
-Record concrete falsifiers of the load-bearing public promises. Each item requires `id`, `kind`, `basis`, `behavior`, `seam` and `expected`; `boundaryInputs`, `interpretations` (with `interpretation` and `authority` once settled) and `sourceRefs` are optional and defined in TDD's [Behavior Map](../tdd/SKILL.md#behavior-map), which is what readiness enforces by execution. IDs are stable uppercase identifiers. `kind` is `contract` for a requested change and `preservation` for an invariant the change must keep. The basis ties the expectation to the original request or affected preservation; select the `seam` under AGENTS.md's Real-Seam proof invariant, naming the responsible production Interface and its real setup for the assertion being proved.
+Record concrete falsifiers of the load-bearing public promises. TDD's [Behavior Map](../tdd/recorder.md#behavior-map) defines the fields and what readiness enforces by execution. IDs are stable uppercase identifiers. The basis ties the expectation to the original request or affected preservation; select the `seam` under AGENTS.md's Real-Seam proof invariant, naming the responsible production Interface and its real setup for the assertion being proved. For each condition the plan adds, removes, weakens, strengthens or changes, state each feasible decisive context ([MC/DC](../tdd/tests.md#mcdc)), with its inputs and required result, in the item owning its Interface: one contract and one preservation item per owning Interface, each context a case of it. Attach the executed cases to that item's `boundaryInputs` after implementation.
 
 ```json
 [{"id":"BM_EXPIRY","kind":"contract","basis":"the deadline is inclusive","behavior":"expires at the deadline","seam":"Expiry.is_expired with a real clock","expected":"now equal to expiresAt is expired","boundaryInputs":["test_expires_at_deadline","test_not_expired_before_deadline"],"interpretations":["now > expiresAt","now >= expiresAt"],"interpretation":"now >= expiresAt","authority":"the request's 'at the deadline'"}]

@@ -70,7 +70,9 @@ expected/observed results under those same verification rules.
 
 ## 5. Review both axes
 
-Apply TDD's [MC/DC decisive contexts](../tdd/SKILL.md#mcdc-decisive-contexts) to the diff: for every condition the edit removed, weakened or rewrote, check that each feasible decisive context has a map item whose pair executed on both sources, or a release the probe's own note supports. Judge each listed contract change (a preservation item turned contract, a dropped preservation case, a contract item added or re-worded after preflight) against the request sentence it quotes. A check that finds words in the request or confirms the observed difference does not refute a finding that the difference is unauthorized. Reuse applicable proof; the packet's `open`, `released` and `contractChanges` lines are the readiness result, not a second inventory.
+Apply TDD's [MC/DC](../tdd/tests.md#mcdc) to the diff: for every condition the edit adds, removes, weakens, strengthens or rewrites, check that each feasible decisive context has its pair executed on both sources in the item owning its Interface, or an executed case showing the context cannot be reached. Judge each listed contract change (a changed kind, a contract item added or re-worded, contract cases added, a case dropped) against the original request, and a finding-owned one against its owning finding's immutable claim; a listing authorizes nothing. A check that finds words in the request or confirms the observed difference does not refute a finding that the difference is unauthorized. Reuse applicable proof; the packet's `open` and `contractChanges` lines are the readiness result, not a second inventory.
+
+Report one finding per owning Module and violated invariant: list every demonstrated input as a case of that finding and sketch the owner's class-wide correction, not one instance; a further input to an already-reported owner and invariant is a case of that finding (priorFinding), not a new finding.
 
 Run **Standards** and **Spec** independently:
 

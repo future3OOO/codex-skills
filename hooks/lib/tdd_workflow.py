@@ -18,7 +18,7 @@ from .command_runner import emit_json as _emit_json, interruptible, run as _run,
 from .repo_identity import RepoIdentity, resolve_repo_identity
 from .state_store import _active_candidate_tree, _git, is_test_path, tree_manifest, utc_timestamp
 from .workflow_state import (
-    NO_INSTANCE_ID, TDD_CLOSED, WorkflowError, bound_state,
+    NO_INSTANCE_ID, WorkflowError, bound_state,
     commit_tdd, evidence_document, instance_id, operation_receipt,
 )
 
@@ -80,8 +80,6 @@ def completion_blockers(identity: RepoIdentity, state: JsonObject) -> list[str]:
 
 def _active_candidate(identity: RepoIdentity, value: str | None) -> tuple[JsonObject, str, str]:
     state = bound_state(identity, value)
-    if state.get("revalidation"):
-        raise WorkflowError(TDD_CLOSED)
     if state.get("preflight") != "passed" or not state.get("preflightEvidence"):
         raise WorkflowError("tdd requires recorded preflight evidence")
     if (workflow_id := instance_id(state)) is None:
@@ -297,12 +295,12 @@ def _run_tdd(values: list[str]) -> int:
     reviewed = {reference: tree for sources in owner_sources.values() for reference, tree in sources.items()}
     previous = [item.get("comparison") for item in mapped]
     runs = (current or {}).get("runs", [])
-    # An earlier edited tree runs again only to show a revised probe's sensitivity: the probe
-    # files changed since it last ran and it has failed this batch before (the broken edit).
+    # An earlier edited tree runs again only to show a revised probe's sensitivity: a run of this
+    # command at a probe key these items last compared failed there (the broken edit).
     probe_key = _probe_key(identity, candidate, files)
-    earlier = [run["candidateTree"] for run in runs if set(run.get("probeFiles", [])) & set(files)
-               and run["arms"][-1]["outcome"] == "failed"
-               and any(proof and proof.get("probeKey") != probe_key for proof in previous)]
+    revised = {proof["probeKey"] for proof in previous if proof and proof.get("probeKey") not in (None, probe_key)}
+    earlier = [run["candidateTree"] for run in runs if run.get("probeKey") in revised
+               and run.get("command") == shlex.join(command) and run["arms"][-1]["outcome"] == "failed"]
     sources = [original, *dict.fromkeys(tree for tree in [*reviewed.values(), *earlier]
                                        if tree not in {original, candidate}), candidate]
     execution = {"executable": _executable(identity, command[0]),
@@ -313,8 +311,9 @@ def _run_tdd(values: list[str]) -> int:
     sources, keys = map(list, zip(*[(source, key) for index, (source, key) in enumerate(zip(sources, keys))
                                      if index in (0, len(sources) - 1) or key not in (keys[0], keys[-1])]))
     if (all(proof and proof.get("valid") and proof.get("fresh") and proof.get("candidateKey") == keys[-1] for proof in previous)
+            and all(behavior_map.producer_proved(item) for item in mapped)
             and len({proof["runIndex"] for proof in previous}) == 1
-            and not _readiness_stale(state, items)):
+            and state.get("tdd") == ("in-progress" if behavior_map.unresolved(items) else "passed")):
         receipt = operation_receipt(state, identity, kind="tdd", **selection, **behavior_map.comparison_view(previous[0]),
                                     summaryId=state["tddEvidence"], reused=True)
         _emit_json(receipt, sort_keys=False)
@@ -343,8 +342,18 @@ def _run_tdd(values: list[str]) -> int:
            "sourceDelta": _source_delta(identity, original, candidate),
            "comparison": comparison, "arms": arms, "valid": valid, "execution": execution,
            "exitCode": 0 if valid else 1, "timedOut": any(arm["timedOut"] for arm in arms)}
+    # Each comparison carries the regressions earlier ones exposed until executed evidence resolves them,
+    # and whether its item is the preflight contract with an unchanged obligation.
+    approved = behavior_map.approved_contracts(items, behavior_map.recorded_map(
+        None, evidence_document(identity, state.get("preflightEvidence"))))
+    priors = [behavior_map.judgement(item, items) or {"owed": {}, "exposed": False} for item in mapped]
+    for item, prior in zip(mapped, priors):
+        item["comparison"] = {**run, "reviewSources": owner_sources[item["id"]], "approved": item["id"] in approved,
+                              "obligation": behavior_map.obligation(item),
+                              "regressions": prior["owed"], "exposed": prior["exposed"]}
     for item in mapped:
-        item["comparison"] = {**run, "reviewSources": owner_sources[item["id"]]}
+        if judged := behavior_map.judgement(item, items):
+            item["comparison"].update(regressions=judged["owed"], exposed=judged["exposed"], deferred=sorted(judged["deferred"]))
     document = {"workflowId": workflow_id, "slug": slug, "kind": "comparison", "behaviorMap": items,
                 "runs": [*runs, run], "updatedAt": utc_timestamp()}
     state, evidence = commit_tdd(identity, slug, workflow_id, document,
@@ -355,33 +364,6 @@ def _run_tdd(values: list[str]) -> int:
     return 0 if run["valid"] else 2
 
 
-def refresh_comparisons(identity: RepoIdentity, state: JsonObject) -> bool:
-    """Refresh recorded operations after quality succeeds, without caller reassembly.
-    Stale recorded readiness republishes through one owning operation's cached arms."""
-    items, _ = current_map(identity, state)
-    refreshed = set()
-    stale = _readiness_stale(state, items or [])
-    for item in items or []:
-        proof = item.get("comparison")
-        if not proof or (proof.get("fresh") and not stale) or proof["runIndex"] in refreshed:
-            continue
-        arguments = ["--repo", str(identity.root), "--slug", state["slug"], "--timeout", str(proof["timeout"])]
-        for owner in items:
-            if owner.get("comparison", {}).get("runIndex") == proof["runIndex"]:
-                arguments.extend(["--behavior-id", owner["id"]])
-        for name in proof["support"]:
-            arguments.extend(["--support", name])
-        if _run_tdd([*arguments, "--", *shlex.split(proof["command"])]):
-            return False
-        refreshed.add(proof["runIndex"])
-        stale = False
-    return True
-
-
-def _readiness_stale(state: JsonObject, items: list[JsonObject]) -> bool:
-    return state.get("tdd") != ("in-progress" if behavior_map.unresolved(items) else "passed")
-
-
 def map_update(identity: RepoIdentity, state: JsonObject, value: JsonObject) -> JsonObject:
     if set(value) not in ({"items"}, {"added"}):
         raise ValueError("tdd-map takes items to update by id; statuses and dispositions are runner-owned")
@@ -389,23 +371,13 @@ def map_update(identity: RepoIdentity, state: JsonObject, value: JsonObject) -> 
     previous, current = current_map(identity, state)
     recorded = {entry["id"]: entry for entry in previous or []}
     items = list({item["id"]: item for item in [*(previous or []), *updates]}.values())
-    owned = {(str(finding["intakeEvidenceId"]), str(finding["findingId"])) for finding in state.get("findingStates", [])
-             if finding.get("kind") == "behavioral" and finding.get("material") is True}
     for entry in updates:
         prior = recorded.get(entry["id"])
         if prior is not None and prior.get("boundaryInputs") == [] and "boundaryInputs" not in entry:
             entry["boundaryInputs"] = []  # unmapped recorded inputs stay until executed case names replace them
-        if (changes := behavior_map.authorization_needed(entry, prior, owned)) and not behavior_map.quoted(
-                entry["basis"], str(state.get("intent") or "")):
-            raise ValueError(f"probe {entry['id']}: {'; '.join(changes)}: the basis must quote, verbatim, the complete "
-                             "sentence of the recorded request that names this changed result")
-        if prior and "comparison" in prior and all(prior.get(k) == entry.get(k) for k in {*prior, *entry}
-                                                   - {"comparison"} - behavior_map.JUDGEMENT_FIELDS):  # kind, basis, cases, readings, release, refs re-judge
-            entry["comparison"] = prior["comparison"]
-        if entry.get("released") and (problem := (behavior_map.release_binding(entry) if behavior_map.producer_proved(entry)
-                                                  else "no current valid comparison")):
-            raise ValueError(f"probe {entry['id']} release must bind to a case its current valid comparison executed "
-                             f"unchanged on both trees: {problem}")
+        if prior and "comparison" in prior:  # a changed kind or obligation keeps its debts and reads stale until rerun
+            entry["comparison"] = {**prior["comparison"],
+                                   "obligation": prior["comparison"].get("obligation", behavior_map.obligation(prior))}
     if items == previous:
         return operation_receipt(state, identity, summaryId=state.get("tddEvidence") or state["preflightEvidence"],
                                  pending=behavior_map.unresolved(items), reused=True)

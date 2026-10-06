@@ -112,8 +112,9 @@ The edit hook runs no impacted-test scan: a file-level list sent agents into
 whole test modules without naming the tests a change breaks.
 
 A governance-document edit after completion is the sole controlled revalidation exception: it opens a window in
-which only verification, code review, the final advisor review, and completion
-are accepted, production editing stays closed, and completing again restores
+which only verification, reruns of mapped comparisons a governance edit left stale,
+code review, the final advisor review, and completion are accepted, the Behavior Map
+and production editing stay closed, and completing again restores
 the terminal state. The read-only `checkpoint` query reports consult
 readiness for the advisor phases without mutating anything.
 

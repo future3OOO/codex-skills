@@ -56,10 +56,10 @@ Repo Context Forge analysis copy. For codex-skills installation, follow
   that operation's behavior or integration.
 - **Attack probes first.** Unit tests must themselves probe real production
   behavior. Maximize attack coverage across affected inputs, failures,
-  interactions, and preservation. Run affected-surface checks; a full suite
-  requires a demonstrated gap that targeted checks and available CI cannot close.
-  Name that gap first. Never replace real-Seam proof with a suite or duplicate
-  retained probes with a parallel unit-test suite.
+  interactions, and preservation. Verify through the targeted probes only; never
+  run existing test classes, modules or suites, which CI owns. Never replace
+  real-Seam proof with a suite or duplicate retained probes with a parallel
+  unit-test suite.
 - **Imaginary-risk ban.** A theoretical risk with no demonstrated failure is a
   report line, not a system. Build nothing for it.
 - **Root-cause-first.** Use `$diagnose` for bugs, failures, flaky behavior, and
