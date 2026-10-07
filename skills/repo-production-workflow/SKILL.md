@@ -109,7 +109,7 @@ with the governing-design declaration. Continue to recording only after `approve
 
 ### 5. Record approved preflight once
 
-Record the exact approved contract and probe list with `record preflight --input FILE`. Keep this workflow pass when scope changes; update changed items by identity through `record tdd-map`; untouched items and valid proof remain.
+Record the approved contract and probe list with `record preflight` (no input: it records the advisor-approved draft). Keep this workflow pass when scope changes; update changed items by identity through `record tdd-map`; untouched items and valid proof remain.
 
 ### 6. Select the probe batch
 

@@ -2264,7 +2264,7 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
         intake = (evidence_document(identity, advice.get("intakeEvidence")) or {}) if preflight else {}
         draft = intake.get("preflightDraft")
         if (preflight and advice.get("status") == "approved" and intake.get("verdict") == "approved"
-                and isinstance(draft, dict) and (preflight_draft is None
+                and isinstance(draft, dict) and (preflight_draft is None or state.get("preflightRounds", 0) >= 2
                 or json.dumps(draft, sort_keys=True) == json.dumps(preflight_draft, sort_keys=True))):
             return {"command": shlex.join([*cli, "record", "preflight", *bound])}
         design = repo_state_dir(identity) / "designs" / f"{state['workflowId']}.md"

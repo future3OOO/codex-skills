@@ -268,6 +268,7 @@ class PreflightContinuation(Ceremony):
                   "--design-declaration", str(self.tmp / "design.json"))
         refused = self.cli(*record)
         self.assertEqual(refused.returncode, 2, marker + ": a third preflight round was opened: " + refused.stdout)
+        unedited = (self.tmp / "draft.json").read_text()  # the lead's own file, which the advisor does not edit
         edited = {"authoritativeContract": "the advisor's corrected contract", "behaviorMap": [item("BM_ONE"), item("BM_TWO")]}
         answer = {"schemaVersion": 1, "verdict": "approved",
                   "findings": [{"id": "SPEC-1", "claim": "BM_TWO was missing; added to the draft", "material": False}]}
@@ -276,7 +277,12 @@ class PreflightContinuation(Ceremony):
         (self.tmp / "draft.json").write_text(json.dumps(edited))  # the advisor's in-place edit of the recorded copy
         (self.tmp / "advice.json").write_text(json.dumps(answer))
         receipt = self.ok(*record)
-        recorded = subprocess.run(shlex.split(receipt["next"]["command"]), cwd=self.tmp, env=self.env, capture_output=True, text=True)
+        misled = self.cli("record", "preflight", "--input", "-", input=unedited)
+        guidance = json.loads(misled.stdout)["next"]["command"]
+        self.assertEqual((misled.returncode, "ask-codex-advisor" in guidance, shlex.split(guidance)[-2:]),
+                         (2, False, shlex.split(receipt["next"]["command"])[-2:]),
+                         "PREFLIGHT_RECORD_MISGUIDED: after the last round the refusal must record the approved draft: " + guidance)
+        recorded = subprocess.run(shlex.split(guidance), cwd=self.tmp, env=self.env, capture_output=True, text=True)
         self.assertEqual(recorded.returncode, 0, marker + recorded.stderr)
         stored = self.ok("evidence", "--full", "--evidence-id", json.loads(recorded.stdout)["evidenceId"])["document"]["document"]
         self.assertEqual((stored["authoritativeContract"], [entry["id"] for entry in stored["behaviorMap"]]),

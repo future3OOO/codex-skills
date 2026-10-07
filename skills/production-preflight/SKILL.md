@@ -89,7 +89,8 @@ An owning probe links a finding with `sourceRefs: [{"type":"finding","evidenceId
 Submit the exact artifact through [Codex Advisor's preflight loop](../codex-advisor/SKILL.md#preflight-advice) before tracked edits.
 Record it once the advisor returns `approved` for that content.
 
-In the governed workflow record it with `python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" record preflight --input -`
+In the governed workflow record it with `python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" record preflight`:
+with no input it records the advisor-approved draft, including the advisor's last-round edits
 (shape: `record preflight --help`; `--check` validates without recording). A refusal
 names every violation at once and mutates nothing. Key order and JSON formatting
 do not change content.

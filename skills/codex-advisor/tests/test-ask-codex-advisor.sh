@@ -267,6 +267,7 @@ check "ADVISOR_PROMPT_STALE preflight asks for the planned decisive contexts" "d
 check "PREDICTED_NAMES_DEMANDED preflight attaches executed cases after implementation" "executed cases are attached after implementation" "$(cat "$rigtmp/capture/payload-1")"
 check_absent "PREDICTED_NAMES_DEMANDED preflight demands no future case names" "naming its pair cases" "$(cat "$rigtmp/capture/payload-1")"
 check_absent "PREDICTED_NAMES_DEMANDED skills demand no future case names" "pair cases before implementation" "$(cat "$ROOT/skills/production-preflight/SKILL.md" "$ROOT/skills/codex-advisor/SKILL.md")"
+check_absent "PREFLIGHT_RECORD_MISGUIDED skills record the approved draft, not a lead file" "record preflight --input" "$(cat "$ROOT/skills/production-preflight/SKILL.md" "$ROOT/skills/repo-production-workflow/SKILL.md")"
 check "ADDED_CONDITION_UNSATISFIABLE preflight takes an added condition's contexts from the edited decision" "the edited decision for a condition the plan adds" "$(cat "$rigtmp/capture/payload-1")"
 check "OWNER_BATCHED preflight batches map items by owning Interface" "one contract and one preservation item per owning Interface" "$(cat "$rigtmp/capture/payload-1")"
 check "OWNER_BATCHED preflight batches findings by owner and invariant" "one finding per owning Module and violated invariant" "$(cat "$rigtmp/capture/payload-1")"
