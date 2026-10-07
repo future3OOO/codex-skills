@@ -219,9 +219,8 @@ python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" recor
 ```
 
 A no-finding intake binds the reviewed tree and passes immediately. A finding
-intake stays pending until its appended dispositions resolve every material
-finding. Dispositions may cover any subset of an intake; every material finding still
-needs a terminal disposition before completion; a `material:false` note needs none. Verification, the typed gate, and a new review all run while findings
+is answered by the fix, `tdd` and a re-review: a re-review with no material finding
+settles the reviewer's open findings. A disputed finding takes a disposition. Verification, the typed gate, and a new review all run while findings
 are open; open findings block completion only. A false premise records normalized `result`
 exactly `false`; otherwise
 rejection requires zero occurrence on a complete domain. `report-only` resolves

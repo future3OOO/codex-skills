@@ -333,26 +333,22 @@ class ReviewSummaryTests(ReviewSummaryHarness):
         self.assertEqual(json.loads(ready.stdout)["status"], "passed", marker)
         self.assertEqual(read_workflow(resolve_repo_identity(self.repo))["findingStates"], list(states.values()), marker)
 
-    def test_pending_review_refreshes_binding_without_closing_findings(self) -> None:
-        path = self.tmp / "pending-review.json"
-        previous = None
-        for findings in ([self.review_finding()], []):
-            if previous is not None:
-                (self.repo / "app.py").write_text("value = 2\n")
-                verified = self.run_script(WORKFLOW, "verify", "--slug", "review-summary", "--kind", "quality-gate", "--base-ref", "HEAD")
-                self.assertEqual(verified.returncode, 0, verified.stdout + verified.stderr)
-            path.write_text(json.dumps({"findings": findings}))
-            recorded = self.record_review(path, "current-pending-review")
-            self.assertEqual(recorded.returncode, 0, recorded.stdout + recorded.stderr)
-            state = json.loads(self.run_script(WORKFLOW, "status").stdout)
-            self.assertEqual(state["codeReview"]["status"], "pending")
-            self.assertEqual(state["findingStates"][0]["status"], "pending")
-            self.assertIsNotNone(state.get("reviewManifestId"), "PENDING_REVIEW_BINDING_STALE")
-            self.assertNotEqual(state["reviewManifestId"], previous, "PENDING_REVIEW_BINDING_STALE")
-            checkpoint = json.loads(self.run_script(WORKFLOW, "checkpoint", "--phase", "final-review").stdout)
-            self.assertFalse(any("review-manifest" in reason for reason in checkpoint["missing"]),
-                             "PENDING_REVIEW_BINDING_STALE")
-            previous = state["reviewManifestId"]
+    def test_a_clean_rereview_settles_its_findings_and_refreshes_the_binding(self) -> None:
+        marker, path = "PENDING_REVIEW_BINDING_STALE", self.tmp / "pending-review.json"
+        status = lambda: json.loads(self.run_script(WORKFLOW, "status").stdout)
+        path.write_text(json.dumps({"findings": [self.review_finding()]}))
+        self.assertEqual(self.record_review(path, "current-pending-review").returncode, 0, marker)
+        first = status()
+        self.assertEqual((first["findingStates"][0]["status"], first["nextAction"]), ("pending", "code-review"), marker)
+        (self.repo / "app.py").write_text("value = 2\n")
+        verified = self.run_script(WORKFLOW, "verify", "--slug", "review-summary", "--kind", "quality-gate", "--base-ref", "HEAD")
+        self.assertEqual(verified.returncode, 0, verified.stdout + verified.stderr)
+        path.write_text(json.dumps({"findings": [{"id": "R-2", "material": False, "kind": "nonbehavioral", "claim": "a note"}]}))
+        self.assertEqual(self.record_review(path, "current-pending-review").returncode, 0, marker)
+        state = status()
+        self.assertEqual(({e["findingId"]: e["status"] for e in state["findingStates"]}["SPEC-1"], state["codeReview"]["status"]),
+                         ("resolved", "passed"), marker + ": the clean re-review left its finding open")
+        self.assertNotEqual(state["reviewManifestId"], first["reviewManifestId"], marker)
 
     def test_legacy_empty_document_is_a_no_finding_intake(self) -> None:
         path = self.tmp / "legacy-empty.json"

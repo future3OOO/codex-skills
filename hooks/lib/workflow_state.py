@@ -206,10 +206,6 @@ def _derive_next_action(state: JsonObject, tdd_document: JsonObject | None = Non
     ] if isinstance(finding_states, list) else []
     if state.get("finalReviewContextMismatchEvidence"):
         return "re-consult-final-review"
-    # A final finding is settled by the advisor's own re-check: fix, rerun tdd, re-consult.
-    if any(entry.get("status") == "pending" and entry.get("stage") != "final" and _finding_unresolved(entry)
-           for entry in correction):
-        return "classify-current-findings"
     accepted = any(
         entry.get("status") == "accepted-follow-up" and entry.get("material") is True
         for entry in correction
@@ -686,6 +682,10 @@ def commit_review(
         if summary_doc.get("reviewContextId") and not any(
                 _finding_unresolved(entry) and entry.get("repairOwner") for entry in state.get("findingStates", [])):
             state["reviewerContextId"] = summary_doc["reviewContextId"]
+        if not any(finding.get("material") is not False for finding in intake):  # a clean re-review settles its findings
+            for entry in state.get("findingStates", []):
+                if entry.get("stage") == "code-review" and entry.get("producer") == "code-review" and _finding_unresolved(entry):
+                    entry.update(status="resolved", dispositionEvidenceId=write.evidence_id)
         unresolved = _stage_unresolved(state, "code-review", "code-review")
         if not (_allows_next(state, "tdd") and _allows_next(state, "verification")):
             _reset_reviews(state)
@@ -2312,8 +2312,7 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
                     needed.append("--preflight-file <current-draft.json>")
             return {"command": shlex.join(command), "input": "; ".join(needed)}
         command = [*cli, "paths", "--repo", str(identity.root), "--workflow-id", str(state["workflowId"])]
-    elif action in {"tdd", "run-mapped-tdd", "code-review", "classify-current-findings",
-                    "close-current-findings", "address-review-findings"}:
+    elif action in {"tdd", "run-mapped-tdd", "code-review", "close-current-findings", "address-review-findings"}:
         producer = {"tdd": ["tdd"], "run-mapped-tdd": ["tdd"], "address-review-findings": ["tdd"],
                     "code-review": ["record", "review"]}.get(str(action))
         if producer is None:
