@@ -340,6 +340,8 @@ check "projection telemetry emitted" "codex_advisor_evidence name=advisor-projec
 check "diff telemetry emitted" "codex_advisor_evidence name=diff " "$(cat "$rigtmp/final.err")"
 check "completion marker emitted" "codex_advisor_complete status=0 provider=codex" "$(cat "$rigtmp/final.err")"
 check "outgoing final payload retains selected receipt" "$selected_receipt" "$(cat "$rigtmp/capture/payload-4")"
+check_absent "LEDGER_OWNERSHIP_RULE final demands no recorded owning attacks" "owning attacks" "$(cat "$rigtmp/capture/payload-4")"
+check "LEDGER_OWNERSHIP_RULE final judges each ledger claim on the candidate" "whether the current candidate resolves its immutable claim" "$(cat "$rigtmp/capture/payload-4")"
 check "OWNER_BATCHED final batches findings by owner and invariant" "one finding per owning Module and violated invariant" "$(cat "$rigtmp/capture/payload-4")"
 check "ADVISOR_PROMPT_STALE final judges a finding-owned change against its finding" "against its owning finding" "$(cat "$rigtmp/capture/payload-4")"
 check "ADVISOR_PROMPT_STALE final covers added and strengthened conditions" "adds, removes, weakens, strengthens or rewrites" "$(cat "$rigtmp/capture/payload-4")"
