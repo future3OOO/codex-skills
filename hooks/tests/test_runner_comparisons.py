@@ -1626,6 +1626,11 @@ class ReadinessTests(unittest.TestCase):
         statuses = lambda: {e["findingId"]: e["status"] for e in self.status()["findingStates"]}
         self.assertEqual(statuses(), {"SPEC-1": "pending", "SPEC-2": "pending"}, marker + ": a fix-before-commit settled a finding")
         correct(4)
+        gate = lambda: {k: self.status().get(k) for k in ("verification", "qualityGateManifestId", "nextAction")}
+        bound = gate()
+        for exit_code in (0, 1):  # an observed run is a receipt only, passing or failing
+            self.case.cli("verify", "--observed", "--", sys.executable, "-c", f"raise SystemExit({exit_code})")
+            self.assertEqual(gate(), bound, f"OBSERVED_RUN_DROPPED_GATE: exit {exit_code}")
         self.assertEqual(final("commit-ready").returncode, 0, marker)
         self.assertEqual((statuses(), self.status()["finalReview"]["findings"]),
                          ({"SPEC-1": "resolved", "SPEC-2": "resolved"}, "none"), marker + ": the commit-ready re-check left findings open")

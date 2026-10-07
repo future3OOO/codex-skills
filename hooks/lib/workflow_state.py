@@ -903,12 +903,9 @@ def commit_verification(
             manifest = manifest_write(str(state["workflowId"]), "quality-gate-tree", tree_before)
             manifests.append(manifest)
             quality_manifest_id: str | None = manifest.manifest_id
-        elif (
-            latest.get("quality-gate") is True
-            and isinstance(prior_manifest_id, str)
-            and current is not None
-            and transaction.manifest(prior_manifest_id) == current
-        ):
+        elif isinstance(prior_manifest_id, str) and (observed or (  # an observed run is a receipt only
+                latest.get("quality-gate") is True and current is not None
+                and transaction.manifest(prior_manifest_id) == current)):
             quality_manifest_id = prior_manifest_id
         else:
             quality_manifest_id = None

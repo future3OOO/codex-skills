@@ -228,9 +228,9 @@ rejection requires zero occurrence on a complete domain. `report-only` resolves
 completion without authorizing an edit and cannot later become `fixed`. A
 behavioral finding is fixed by owning it: add the attack item with its finding
 `sourceRefs` through `record tdd-map`, run the owning comparison, then record the
-`fixed` receipt above (`finding_id`, `status`, `reason`) or, for an advisor finding,
-`record advisor-disposition --finding <ID> --fixed --behavior-id <BM_ID>`; the
-recorder binds the owning comparison's current run. Nonbehavioral
+`fixed` receipt above (`finding_id`, `status`, `reason`); the recorder binds the
+owning comparison's current run. A final advisor finding is answered by the fix,
+`tdd` and the advisor's re-check: its commit-ready settles the finding. Nonbehavioral
 corrections record their current-tree evidence directly. A later map update
 that would leave a fixed finding without its owning attack refuses.
 

@@ -211,5 +211,5 @@ If transport is genuinely unavailable, record the preflight result as
 review. No nonce, skip file, stamp, attestation, or audited exception authorizes
 completion.
 
-Close a repaired final finding with `workflow.py record advisor-disposition --finding <ID> --fixed --behavior-id <BM_ID>`; the recorder derives the finding kind, context, stage and owning comparison results. Successful original/reviewed/candidate results can establish preservation; the reviewer and advisor judge whether the exercised cases address the claim.
-See `record advisor-disposition --help` for other dispositions.
+A repaired final finding needs no disposition: after the fix and `tdd`, the re-check's commit-ready settles it. Successful original/reviewed/candidate results can establish preservation; the reviewer and advisor judge whether the exercised cases address the claim.
+A finding the lead disputes takes `record advisor-disposition --rejected` (see `--help`).

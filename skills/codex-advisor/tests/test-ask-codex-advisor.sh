@@ -277,6 +277,8 @@ for root in "$ROOT" ${UNUSED_SKILL_ESTATES:-}; do
   check_absent "UNUSED_SKILL_PRESENT $root: no pointer to the retired setup skill" "$setup_skill" \
     "$(grep -rl --exclude-dir=.git "$setup_skill" "$root/skills" "$root/docs" "$root/hooks" "$root/README.md" "$root/AGENTS.md" 2>/dev/null)"
 done
+check_absent "MANUAL_DISPOSITION_GUIDED skills route no manual final disposition" "--fixed --behavior-id <BM_ID>" "$(cat "$ROOT/skills/repo-production-workflow/SKILL.md" "$ROOT/skills/codex-advisor/SKILL.md")"
+check "MANUAL_DISPOSITION_GUIDED the re-check settles a final finding" "its commit-ready settles the finding" "$(cat "$ROOT/skills/repo-production-workflow/SKILL.md")"
 check "ADDED_CONDITION_UNSATISFIABLE preflight takes an added condition's contexts from the edited decision" "the edited decision for a condition the plan adds" "$(cat "$rigtmp/capture/payload-1")"
 check "OWNER_BATCHED preflight batches map items by owning Interface" "one contract and one preservation item per owning Interface" "$(cat "$rigtmp/capture/payload-1")"
 check "OWNER_BATCHED preflight batches findings by owner and invariant" "one finding per owning Module and violated invariant" "$(cat "$rigtmp/capture/payload-1")"
