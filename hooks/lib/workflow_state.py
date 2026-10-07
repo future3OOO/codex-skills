@@ -1165,9 +1165,9 @@ def record_advisor_result(
                 if intake is None or preflight_draft is None:
                     raise WorkflowError("draft advice requires its reviewed preflight artifact")
                 if verdict == "changes-required" and state.get("preflightRounds"):
-                    raise WorkflowError("the second preflight consult is the last: the advisor returns approved, "
-                                        "with its own edited preflightDraft when a gap remains")
-                intake["preflightDraft"] = intake.pop("advisorDraft", None) or preflight_draft
+                    raise WorkflowError("the second preflight consult is the last: the advisor edits the draft "
+                                        "in place and returns approved")
+                intake["preflightDraft"] = preflight_draft
                 state["preflightRounds"] = int(state.get("preflightRounds", 0)) + 1
             measured_reason = str(reason or "").strip() or None
             if verdict == "unavailable" and not measured_reason:

@@ -182,7 +182,13 @@ printf '%s\n' "$*" >"$CAPTURE_DIR/args-$count"
 cat >"$CAPTURE_DIR/payload-$count"
 if [[ "${FAIL_PROVIDER:-0}" == 1 ]]; then exit 7; fi
 printf 'session id: 00000000-0000-7000-8000-%012d\n' "$count" >&2
-if [[ " $* " == *" resume "* ]] || grep -q 'final-review' "$CAPTURE_DIR/payload-$count"; then
+if [[ -n "${PROVIDER_EDIT:-}" ]]; then
+  draft=$(grep -o '/[^ ]*/preflight\.json in place' "$CAPTURE_DIR/payload-$count" | head -1); draft=${draft% in place}
+  python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d["authoritativeContract"]=sys.argv[2]; json.dump(d,open(sys.argv[1],"w"))' "$draft" "$PROVIDER_EDIT"
+fi
+if [[ -n "${PROVIDER_ENVELOPE:-}" ]]; then
+  printf '%s\n' "$PROVIDER_ENVELOPE"
+elif [[ " $* " == *" resume "* ]] || grep -q 'final-review' "$CAPTURE_DIR/payload-$count"; then
   printf '%s\n' '{"schemaVersion":1,"findings":[],"verdict":"commit-ready"}'
 else
   printf '%s\n' '{"schemaVersion":1,"findings":[],"verdict":"approved"}'
@@ -293,6 +299,7 @@ FAIL_PROVIDER=1 run_wrapper --slug scoped-rig --phase final-review --design-file
 check_status "resume provider failure propagates" 7 "$status"
 resume_args=$(cat "$rigtmp/capture/args-2")
 check "final resumes same session" "exec resume $preflight_sid" "$resume_args"
+check "RESUME_INHERITS_WRITE final resume is explicitly read-only" 'sandbox_mode="read-only"' "$resume_args"
 check_absent "resume failure has no cold-start fallback" "exec --sandbox" "$resume_args"
 check_status "resume failure does not re-invoke the provider" 2 "$(cat "$rigtmp/capture/count")"
 
@@ -351,6 +358,54 @@ check_status "controlled max-context isolation consult exits 0" 0 "$status"
 check "a parent-exported unconfigured max-context is cleared" "CLAUDE_CODE_MAX_CONTEXT_TOKENS=unset" "$(cat "$rigtmp/capture/env-6")"
 check "the alias-configured window still reaches the provider" "CLAUDE_CODE_AUTO_COMPACT_WINDOW=240000" "$(cat "$rigtmp/capture/env-6")"
 check "a parent-exported unconfigured percent remains cleared" "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=unset" "$(cat "$rigtmp/capture/env-6")"
+
+# Preflight round 2: the resumed advisor edits the wrapper's recorded draft copy in place.
+r2repo="$rigtmp/round-two"
+git init -q "$r2repo"
+git -C "$r2repo" config user.email test@example.invalid
+git -C "$r2repo" config user.name Harness
+cp "$rigtmp/repo/.gitignore" "$r2repo/.gitignore"; printf 'value = 1\n' >"$r2repo/app.py"
+git -C "$r2repo" add app.py .gitignore
+git -C "$r2repo" commit -q -m base
+CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" begin --repo "$r2repo" --slug round-two --intent 'round two' >/dev/null
+CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 - "$ROOT" "$r2repo" "$rigtmp" <<'PY'
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from hooks.tests.support import record_context_forge
+record_context_forge(Path(sys.argv[2]), Path(sys.argv[3]))
+PY
+round_two() {
+  PATH="$rigtmp/bin:$PATH" HOME="$rigtmp/home" CODEX_HOME="$rigtmp/claude" CODEX_WORKFLOW_STATE_ROOT="$rigstate" \
+    CAPTURE_DIR="$rigtmp/capture" "$WRAPPER" --cwd "$r2repo" --slug round-two --phase preflight-advice \
+    --preflight-file "$rigtmp/preflight.json" --design-absent 'round two rig' "$@"
+}
+PROVIDER_ENVELOPE='{"schemaVersion":1,"findings":[{"id":"SPEC-1","claim":"a decisive case is missing","material":true}],"verdict":"changes-required"}' \
+  round_two -- 'round one' >/dev/null 2>&1; status=$?
+check_status "round one records changes-required" 0 "$status"
+check "round one creates a read-only session" "exec --sandbox read-only" "$(cat "$rigtmp/capture/args-$(cat "$rigtmp/capture/count")")"
+PROVIDER_EDIT='ADVISOR_IN_PLACE_EDIT' PROVIDER_ENVELOPE='{"schemaVersion":1,"findings":[{"id":"SPEC-2","claim":"added the case","material":false}],"verdict":"approved"}' \
+  round_two --reconsult -- 'round two' >/dev/null 2>&1; status=$?
+check_status "round two records approved" 0 "$status"
+recorded=$(CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" record preflight --repo "$r2repo" 2>&1)
+check "ROUND2_NOT_IN_PLACE record preflight records the advisor's in-place edit" '"status": "passed"' "$recorded"
+preflight_id=$(printf '%s' "$recorded" | python3 -c 'import json,sys; print(json.load(sys.stdin)["evidenceId"])' 2>/dev/null)
+check "ROUND2_NOT_IN_PLACE the recorded preflight is the edited copy" "ADVISOR_IN_PLACE_EDIT" \
+  "$(CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" evidence --repo "$r2repo" --full --evidence-id "$preflight_id" 2>&1)"
+round_two_args=$(cat "$rigtmp/capture/args-$(cat "$rigtmp/capture/count")")
+round_two_payload=$(cat "$rigtmp/capture/payload-$(cat "$rigtmp/capture/count")")
+check "ROUND2_NOT_IN_PLACE round two resumes the session" " resume " "$round_two_args"
+check "ROUND2_NOT_IN_PLACE round two may edit its draft copy" 'sandbox_mode="danger-full-access"' "$round_two_args"
+for phrase in "/preflight.json in place" "smallest edits" "keep the lead's design and settled items" "do not redesign or re-review" \
+              "record advisor-result --check" "--input - --preflight-file" "fix and re-run it until it passes" "material false"; do
+  check "ROUND2_NOT_IN_PLACE round-two instruction: $phrase" "$phrase" "$round_two_payload"
+done
+check_absent "ROUND2_NOT_IN_PLACE round two asks for no rewritten artifact" "preflightDraft" "$round_two_payload"
+run_wrapper --slug adhoc-question -- 'first ad-hoc question' >/dev/null 2>&1
+run_wrapper --slug adhoc-question -- 'second ad-hoc question' >/dev/null 2>&1
+adhoc_args=$(cat "$rigtmp/capture/args-$(cat "$rigtmp/capture/count")")
+check "RESUME_INHERITS_WRITE an ad-hoc question resumes its session" " resume " "$adhoc_args"
+check "RESUME_INHERITS_WRITE an ad-hoc resume is explicitly read-only" 'sandbox_mode="read-only"' "$adhoc_args"
 rm -rf "$rigtmp"
 
 if [[ "${LIVE:-0}" == 1 ]]; then

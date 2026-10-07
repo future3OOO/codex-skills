@@ -263,16 +263,19 @@ class PreflightContinuation(Ceremony):
         marker = "PREFLIGHT_ROUNDS_UNBOUNDED"
         self.begin()
         self.advice("changes-required")
-        refused = self.cli("record", "advisor-result", "--stage", "preflight", "--source", "codex-advisor",
-                           "--input", str(self.tmp / "advice.json"), "--preflight-file", str(self.tmp / "draft.json"),
-                           "--design-declaration", str(self.tmp / "design.json"))
+        record = ("record", "advisor-result", "--stage", "preflight", "--source", "codex-advisor", "--input",
+                  str(self.tmp / "advice.json"), "--preflight-file", str(self.tmp / "draft.json"),
+                  "--design-declaration", str(self.tmp / "design.json"))
+        refused = self.cli(*record)
         self.assertEqual(refused.returncode, 2, marker + ": a third preflight round was opened: " + refused.stdout)
         edited = {"authoritativeContract": "the advisor's corrected contract", "behaviorMap": [item("BM_ONE"), item("BM_TWO")]}
-        (self.tmp / "advice.json").write_text(json.dumps({"schemaVersion": 1, "verdict": "approved", "findings": [],
-                                                          "preflightDraft": edited}))
-        receipt = self.ok("record", "advisor-result", "--stage", "preflight", "--source", "codex-advisor",
-                          "--input", str(self.tmp / "advice.json"), "--preflight-file", str(self.tmp / "draft.json"),
-                          "--design-declaration", str(self.tmp / "design.json"))
+        answer = {"schemaVersion": 1, "verdict": "approved",
+                  "findings": [{"id": "SPEC-1", "claim": "BM_TWO was missing; added to the draft", "material": False}]}
+        (self.tmp / "advice.json").write_text(json.dumps({**answer, "preflightDraft": edited}))
+        self.assertEqual(self.cli(*record).returncode, 2, "FULL_REWRITE_ACCEPTED: the advisor replaced the draft wholesale")
+        (self.tmp / "draft.json").write_text(json.dumps(edited))  # the advisor's in-place edit of the recorded copy
+        (self.tmp / "advice.json").write_text(json.dumps(answer))
+        receipt = self.ok(*record)
         recorded = subprocess.run(shlex.split(receipt["next"]["command"]), cwd=self.tmp, env=self.env, capture_output=True, text=True)
         self.assertEqual(recorded.returncode, 0, marker + recorded.stderr)
         stored = self.ok("evidence", "--full", "--evidence-id", json.loads(recorded.stdout)["evidenceId"])["document"]["document"]

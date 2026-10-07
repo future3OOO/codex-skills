@@ -25,9 +25,10 @@ materially different readings with concrete discriminating probes and the origin
 
 Return `approved` when the draft has no material gap, otherwise
 `changes-required`. The lead revises once and uses `--reconsult` in the same session;
-no per-cycle user permission is needed. That second consult is the last: the advisor
-returns `approved`, adding `preflightDraft` (its own corrected artifact) when a gap
-remains, and `record preflight` records that approved draft. The checkpoint sends the delta from the
+no per-cycle user permission is needed. That second consult is the last: it runs with write access, the advisor
+edits the wrapper's draft copy in place with the smallest edits that close any remaining
+gap, checks its answer with the recorder's dry run, and returns `approved`; `record
+preflight` records that edited copy. The checkpoint sends the delta from the
 last recorded draft with base and target content identities. A failed result does
 not advance that base; retries may repeat the delta. With no recorded base, the
 retry carries the full artifact. Draft findings stay in their consult intake;
@@ -140,7 +141,7 @@ For a long question, drop the `--` argument and feed it on stdin:
 ### Providers
 
 `--provider codex` is the default: a `codex exec` run on `gpt-6-astra` at
-`xhigh` reasoning, read-only sandbox. `CODEX_ADVISOR_MODEL` or `--codex-model`
+`xhigh` reasoning, read-only sandbox (also set explicitly on every resume except preflight round 2). `CODEX_ADVISOR_MODEL` or `--codex-model`
 and `CODEX_ADVISOR_EFFORT` or `--codex-effort` override model and effort. The
 first consult persists the session; later consults on the same slug resume it
 with `codex exec resume`, so the final review keeps the preflight session's
