@@ -190,8 +190,8 @@ delegate (`spawn_agent`, `agent_type=default`, `fork_turns="none"`, normal nativ
 model selection) in the lead's native task checkout. Supply the target and correction delta; instruct it to apply `code-review`,
 which loads the request, contract, comparison outcomes and diff itself.
 Wait without editing the candidate. It returns a
-Standards/Spec review and a findings intake. Verify every finding and
-disposition each one. A disposition is invalid
+Standards/Spec review and a findings intake. Verify every finding; fix it or
+dispute it with a disposition. A disposition is invalid
 without its measurement; advisor agreement is not authorization; historical behavior
 is contextual evidence only — a current Interface claim needs current documentation,
 callers, tests, or another active authority. In this governed workflow `workflow.py record review` is the required producer for non-trivial review state; outside the governed
@@ -208,8 +208,8 @@ Historical receipts retain their original identity. Every review must describe
 the current candidate.
 
 Record the delegate's JSON intake (`{"findings":[{"id","claim","material","kind"}]}`),
-then, when it has findings, dispositions against the returned `summaryId`:
-`{"intakeEvidenceId":"<summaryId>","dispositions":[{"finding_id":"R-1","status":"fixed","reason":"..."}]}`.
+then, for a disputed finding, a disposition against the returned `summaryId`:
+`{"intakeEvidenceId":"<summaryId>","dispositions":[{"finding_id":"R-1","status":"report-only","reason":"..."}]}`.
 `record review --help` prints both shapes; a document carrying both refuses.
 Pass `--review-context-id <agent-id>` with the delegate's review: a second
 recurrence hands its repair to the first reviewer a review names.
@@ -220,18 +220,14 @@ python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" recor
 
 A no-finding intake binds the reviewed tree and passes immediately. A finding
 is answered by the fix, `tdd` and a re-review: a re-review with no material finding
-settles the reviewer's open findings. A disputed finding takes a disposition. Verification, the typed gate, and a new review all run while findings
-are open; open findings block completion only. A false premise records normalized `result`
-exactly `false`; otherwise
-rejection requires zero occurrence on a complete domain. `report-only` resolves
-completion without authorizing an edit and cannot later become `fixed`. A
-behavioral finding is fixed by owning it: add the attack item with its finding
-`sourceRefs` through `record tdd-map`, run the owning comparison, then record the
-`fixed` receipt above (`finding_id`, `status`, `reason`); the recorder binds the
-owning comparison's current run. A final advisor finding is answered by the fix,
-`tdd` and the advisor's re-check: its commit-ready settles the finding. Nonbehavioral
-corrections record their current-tree evidence directly. A later map update
-that would leave a fixed finding without its owning attack refuses.
+settles the reviewer's open findings. A final advisor finding is answered by the fix,
+`tdd` and the advisor's re-check: its commit-ready settles the finding. Only a
+disputed finding takes a disposition: a false premise records
+normalized `result` exactly `false`; otherwise rejection requires zero occurrence on a
+complete domain; `report-only` resolves completion without authorizing an edit.
+Verification, the typed gate, and a new review all run while findings are open; open
+findings block completion only. A later map update that would leave a fixed finding
+without its owning attack refuses.
 
 #### Recurring behavioral repairs
 
@@ -248,8 +244,8 @@ explanation and current owning attacks; instance-only repairs remain
 Both intake paths reconcile retained namespace/ID and exact behavioral claims
 (outer whitespace only). Changed wording/identity can use an owned
 `priorFinding: {"evidenceId":"...","id":"..."}`; ambiguous matches require one.
-Distinct findings need distinct IDs. Pending retries preserve progress; only `fixed` → re-intake increments
-recurrence. Observations, dispositions, mechanism evidence and proof stay immutable.
+Distinct findings need distinct IDs. Pending retries preserve progress; only a fixed or
+settled finding raised again increments recurrence. Observations, dispositions, mechanism evidence and proof stay immutable.
 
 At recurrence two or later, the retained reviewer implements and the lead reviews. This
 exception overrides step 10's read-only and repair-before-dispatch rules: continue

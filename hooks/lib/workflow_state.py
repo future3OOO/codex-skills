@@ -596,6 +596,16 @@ def _finding_unresolved(entry: JsonObject) -> bool:
     )
 
 
+def _settle(state: JsonObject, stage: str, producer: str, evidence_id: str, candidate: str) -> None:
+    """A clean re-review or commit-ready re-check settles its producer's open findings; a second
+    recurrence still needs the lead's current review of the reviewer's repair, as `fixed` does."""
+    for entry in state.get("findingStates", []):
+        if (isinstance(entry, dict) and entry.get("stage") == stage and entry.get("producer") == producer
+                and _finding_unresolved(entry) and (int(entry.get("recurrence", 0)) < 2
+                                                    or entry.get("repairReviewedTree") == candidate)):
+            entry.update(status="resolved", dispositionEvidenceId=evidence_id)
+
+
 def _stage_unresolved(state: JsonObject, stage: str, source: str, excluded: Sequence[JsonObject] = ()) -> bool:
     """Whether any registered finding of this stage and producer is still open."""
     return any(
@@ -683,9 +693,7 @@ def commit_review(
                 _finding_unresolved(entry) and entry.get("repairOwner") for entry in state.get("findingStates", [])):
             state["reviewerContextId"] = summary_doc["reviewContextId"]
         if not any(finding.get("material") is not False for finding in intake):  # a clean re-review settles its findings
-            for entry in state.get("findingStates", []):
-                if entry.get("stage") == "code-review" and entry.get("producer") == "code-review" and _finding_unresolved(entry):
-                    entry.update(status="resolved", dispositionEvidenceId=write.evidence_id)
+            _settle(state, "code-review", "code-review", write.evidence_id, summary_doc["candidateTree"])
         unresolved = _stage_unresolved(state, "code-review", "code-review")
         if not (_allows_next(state, "tdd") and _allows_next(state, "verification")):
             _reset_reviews(state)
@@ -1088,7 +1096,7 @@ def _register_finding_intake(
                 root = next(iter(matches))
                 entry["canonicalFinding"] = {"evidenceId": root[0], "id": root[1]}
                 if item["kind"] == "behavioral":
-                    entry["recurrence"] = int(prior.get("recurrence", 0)) + (prior.get("kind") == "behavioral" and prior.get("status") == "fixed")
+                    entry["recurrence"] = int(prior.get("recurrence", 0)) + (prior.get("kind") == "behavioral" and prior.get("status") in {"fixed", "resolved"})
                     for field in ("mechanismEvidence", "repairOwner"):
                         if prior.get(field):
                             entry[field] = prior[field]
@@ -1315,10 +1323,8 @@ def record_advisor_result(
                     )
                     state.pop("finalAppealConsumed", None)
                     if verdict == "commit-ready":  # the re-check judged every pending final finding: they are settled
-                        for entry in finding_states:
-                            if (isinstance(entry, dict) and entry.get("stage") == "final" and entry.get("producer") == source
-                                    and _finding_unresolved(entry)):
-                                entry.update(status="resolved", dispositionEvidenceId=intake_reference)
+                        _settle(state, "final", source, intake_reference,
+                                expected_candidate_tree or _active_candidate_tree(identity))
                     state["finalReview"] = {
                         "source": source, "status": verdict, "intakeEvidence": intake_reference,
                         "findings": "pending" if _stage_unresolved(state, stage, source) else "none",

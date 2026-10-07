@@ -1634,6 +1634,10 @@ class ReadinessTests(unittest.TestCase):
         self.assertEqual(final("commit-ready").returncode, 0, marker)
         self.assertEqual((statuses(), self.status()["finalReview"]["findings"]),
                          ({"SPEC-1": "resolved", "SPEC-2": "resolved"}, "none"), marker + ": the commit-ready re-check left findings open")
+        self.assertEqual(final("fix-before-commit", "SPEC-1").returncode, 0, marker)
+        self.assertEqual(self.status()["findingStates"][-1].get("recurrence"), 1, "SETTLED_FINDING_RECURRENCE_LOST")
+        correct(5)
+        self.assertEqual(final("commit-ready").returncode, 0, marker)
         completed = self.case.cli("complete", "--repo", str(self.repo))
         self.assertEqual(completed.returncode, 0, marker + ": " + completed.stdout + completed.stderr)
 

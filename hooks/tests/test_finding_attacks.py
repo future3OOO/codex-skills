@@ -1351,11 +1351,11 @@ class WorkflowRecovery(AttackHarness):
         (self.repo / "app.py").write_text("value = 3\n")
         summary = self.ok_text("summary")
         self.assertIn("verification=pending", summary, "STALE_RECOVERY_ADVERTISED_SUCCESS")
-        self.assertNotIn("next=repo-context-forge", summary, "MANUAL_REFRESH_ROUTED")  # verify refreshes the graph itself
+        self.assertIn("next=tdd", summary, "STALE_RECOVERY_MISROUTED")  # stale comparisons route to tdd
         self.assertIn("quality-gate-tree-stale", summary, "STALE_RECOVERY_ADVERTISED_SUCCESS")
         receipt = self.ok("pause", "--slug", slug, "--workflow-id", self.status()["workflowId"],
                           "--reason", "Inspect current recovery")
-        self.assertNotEqual(receipt["nextAction"], "repo-context-forge", "MANUAL_REFRESH_ROUTED")
+        self.assertEqual(receipt["nextAction"], "tdd", "STALE_RECOVERY_MISROUTED")
 
 
 

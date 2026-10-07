@@ -1447,10 +1447,7 @@ class MinimalDocuments(Ceremony):
         self.ok("verify", "--kind", "quality-gate", "--base-ref", "HEAD")
         review = {"findings": [{"id": "R-1", "claim": "a real claim", "material": True,
                                 "axis": "Spec", "location": "extra context is dropped"}]}
-        intake = self.ok("record", "review", "--input", "-", input=json.dumps(review))
-        self.assertIn("record advisor-disposition", intake["next"]["command"], marker)
-        self.assertNotIn("--input", intake["next"]["command"], marker)
-        self.assertIn("--finding R-1", intake["next"]["command"], marker)
+        self.ok("record", "review", "--input", "-", input=json.dumps(review))
         self.assertEqual(self.state()["codeReview"]["findings"], "pending", marker)
         self.ok("record", "advisor-disposition", "--finding", "R-1", "--report-only",
                 "--reason", "The measured condition has no material consequence on this task.")

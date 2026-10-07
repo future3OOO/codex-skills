@@ -336,7 +336,8 @@ class ReviewSummaryTests(ReviewSummaryHarness):
     def test_a_clean_rereview_settles_its_findings_and_refreshes_the_binding(self) -> None:
         marker, path = "PENDING_REVIEW_BINDING_STALE", self.tmp / "pending-review.json"
         status = lambda: json.loads(self.run_script(WORKFLOW, "status").stdout)
-        path.write_text(json.dumps({"findings": [self.review_finding()]}))
+        findings = [self.review_finding(), {**self.review_finding(), "id": "SPEC-2", "kind": "behavioral", "claim": "value must stay two"}]
+        path.write_text(json.dumps({"findings": findings}))
         self.assertEqual(self.record_review(path, "current-pending-review").returncode, 0, marker)
         first = status()
         self.assertEqual((first["findingStates"][0]["status"], first["nextAction"]), ("pending", "code-review"), marker)
@@ -348,7 +349,17 @@ class ReviewSummaryTests(ReviewSummaryHarness):
         state = status()
         self.assertEqual(({e["findingId"]: e["status"] for e in state["findingStates"]}["SPEC-1"], state["codeReview"]["status"]),
                          ("resolved", "passed"), marker + ": the clean re-review left its finding open")
-        self.assertNotEqual(state["reviewManifestId"], first["reviewManifestId"], marker)
+        self.assertNotIn(state.get("reviewManifestId"), (None, first["reviewManifestId"]), marker)
+        path.write_text(json.dumps({"findings": findings}))
+        self.assertEqual(self.record_review(path, "current-pending-review").returncode, 0, marker)
+        self.assertEqual({e["findingId"]: e.get("recurrence") for e in status()["findingStates"][-2:]},
+                         {"SPEC-1": None, "SPEC-2": 1}, "SETTLED_FINDING_RECURRENCE_LOST")
+        clean, again = json.dumps({"findings": []}), json.dumps({"findings": findings[1:]})
+        for document in (clean, again, clean):  # recurrence two: an uncertified clean review settles nothing
+            path.write_text(document)
+            self.assertEqual(self.record_review(path, "current-pending-review").returncode, 0, marker)
+        self.assertEqual((status()["findingStates"][-1].get("recurrence"), status()["findingStates"][-1]["status"]),
+                         (2, "pending"), "UNCERTIFIED_REPAIR_SETTLED")
 
     def test_legacy_empty_document_is_a_no_finding_intake(self) -> None:
         path = self.tmp / "legacy-empty.json"

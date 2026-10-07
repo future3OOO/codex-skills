@@ -109,6 +109,12 @@ if P and X and K:
 
 When `K=T`, `K or Q` is true and the output is `OUT_K` whatever `Q` is, so `Q=F` and `Q=T` are one context; choose either. `X` has two decisive contexts: `(P,K,Q)=(T,F,T)` and `(T,T,-)`. Do not merge them: they produce different outcomes (`OUT_Q` and `OUT_K`).
 
+#### Pair 3: requested change for `Q`
+
+Context: `P=T, X=T, K=F`. Input `Q=T` gives `OUT_Q` on the original and no output on the edited code; input `Q=F` gives no output on both. The edit removed `Q` too, so `Q` needs this pair of its own.
+
+The batch is complete only when every changed condition has a pair in each of its decisive contexts: here `X` twice and `Q` once.
+
 ### Context completeness
 
 The runner enforces each declared case: it must execute and carry its item's outcome. The runner does not derive the required contexts, and it does not check that a pair is independent. You derive every feasible context from the original decision and the diff; the preflight advisor and final review check your list.
