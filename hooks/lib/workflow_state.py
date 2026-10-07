@@ -206,7 +206,9 @@ def _derive_next_action(state: JsonObject, tdd_document: JsonObject | None = Non
     ] if isinstance(finding_states, list) else []
     if state.get("finalReviewContextMismatchEvidence"):
         return "re-consult-final-review"
-    if any(entry.get("status") == "pending" and _finding_unresolved(entry) for entry in correction):
+    # A final finding is settled by the advisor's own re-check: fix, rerun tdd, re-consult.
+    if any(entry.get("status") == "pending" and entry.get("stage") != "final" and _finding_unresolved(entry)
+           for entry in correction):
         return "classify-current-findings"
     accepted = any(
         entry.get("status") == "accepted-follow-up" and entry.get("material") is True
@@ -959,23 +961,45 @@ def graph_projection(identity: RepoIdentity, value: object, candidate: str) -> J
                                    "basis": "unchanged graph inputs and Python source positions"}}
 
 
+def _own_graph(document: object, slug: object, workflow_id: object) -> bool:
+    return (isinstance(document, dict) and type(document.get("schemaVersion")) is int and document.get("schemaVersion") == 1
+            and document.get("slug") == slug and document.get("workflowId") == workflow_id)
+
+
 def _graph_candidate_ready(
-    document: object, candidate: str, *, identity: RepoIdentity, slug: object, workflow_id: object, final: bool = False,
+    document: object, candidate: str, *, identity: RepoIdentity, slug: object, workflow_id: object,
 ) -> bool:
-    if (
-        not isinstance(document, dict)
-        or type(document.get("schemaVersion")) is not int
-        or document.get("schemaVersion") != 1
-        or document.get("slug") != slug
-        or document.get("workflowId") != workflow_id
-    ):
+    if not _own_graph(document, slug, workflow_id):
         return False
     try:
-        (validate_advisor_projection if final else lambda value: graph_projection(identity, value, candidate))(
-            document.get("advisorProjection"))
+        graph_projection(identity, document.get("advisorProjection"), candidate)
     except ValueError:
         return False
     return True
+
+
+def refresh_context(identity: RepoIdentity) -> None:
+    """Re-record Repo Context Forge evidence for the active candidate, only when the recorded
+    projection no longer describes it; the consumers that need a current snapshot call this."""
+    state = _require_state(read_workflow(identity))
+    document = evidence_document(identity, state.get("repoContextForgeEvidence"))
+    if not _own_graph(document, state.get("slug"), state.get("workflowId")):
+        return  # missing, foreign or corrupt evidence is refused by its consumer, never refreshed over
+    try:
+        validate_advisor_projection(document.get("advisorProjection"))
+    except ValueError:
+        return
+    try:
+        candidate = _active_candidate_tree(identity)
+    except OSError:
+        return  # an uncapturable tree is reported by the consumer's own capture
+    if _graph_candidate_ready(document, candidate, identity=identity,
+                              slug=state.get("slug"), workflow_id=state.get("workflowId")):
+        return
+    command = next_operation(identity, {**state, "nextAction": "repo-context-forge"})["command"]
+    result = subprocess.run(shlex.split(command), cwd=identity.root, capture_output=True, text=True, check=False)
+    if result.returncode:
+        raise WorkflowError("Repo Context Forge refresh failed: " + (result.stderr or result.stdout).strip()[-600:])
 
 
 def _finding_kind(finding: JsonObject) -> str:
@@ -1293,6 +1317,11 @@ def record_advisor_result(
                         transaction, state, intake_write.evidence_id, intake, intakes,
                     )
                     state.pop("finalAppealConsumed", None)
+                    if verdict == "commit-ready":  # the re-check judged every pending final finding: they are settled
+                        for entry in finding_states:
+                            if (isinstance(entry, dict) and entry.get("stage") == "final" and entry.get("producer") == source
+                                    and _finding_unresolved(entry)):
+                                entry.update(status="resolved", dispositionEvidenceId=intake_reference)
                     state["finalReview"] = {
                         "source": source, "status": verdict, "intakeEvidence": intake_reference,
                         "findings": "pending" if _stage_unresolved(state, stage, source) else "none",
@@ -1896,10 +1925,7 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
         try:
             projection = graph_projection(identity, graph_document.get("advisorProjection"), candidate)
         except ValueError as exc:
-            if state.get("finalStarted"):
-                projection = validate_advisor_projection(graph_document.get("advisorProjection"))
-            else:
-                missing.append(str(exc))
+            missing.append(str(exc))
     design_evidence_id = state.get("governedDesignEvidence")
     if isinstance(design_evidence_id, str):
         try:
@@ -2004,7 +2030,7 @@ def complete(
         graph_document = transaction.evidence(graph_id) if isinstance(graph_id, str) else None
         if (
             not _graph_candidate_ready(
-                graph_document, _active_candidate_tree(identity), final=bool(state.get("finalStarted")),
+                graph_document, _active_candidate_tree(identity),
                 identity=identity, slug=state.get("slug"), workflow_id=state.get("workflowId"),
             )
             and "repoContextForge" not in missing
@@ -2137,7 +2163,7 @@ def public_status(state: JsonObject, identity: RepoIdentity | None = None, *,
     )
     ready = _allows_next(state, "repo-context-forge") and (
         candidate is None or _graph_candidate_ready(
-            graph_document, candidate, final=bool(state.get("finalStarted")),
+            graph_document, candidate,
             identity=identity, slug=state.get("slug"), workflow_id=state.get("workflowId"),
         )
     )
@@ -2152,8 +2178,8 @@ def public_status(state: JsonObject, identity: RepoIdentity | None = None, *,
         drift = _binding_drift(identity, state, "quality-gate") if state.get("qualityGateEvidence") else None
         if drift:
             result.update(verification="pending", bindingError=drift)
-        if not ready or drift:
-            result["nextAction"] = _derive_next_action(result)
+        if drift:  # a stale projection is refreshed by the consumer that needs it, not routed to the lead
+            result["nextAction"] = _derive_next_action({**result, "repoContextForge": stored})
     if fields is None:
         # The recorded task text is multi-KB and already in the caller's context; it is
         # read back on request (--fields intent) and by the advisor checkpoint, never by default.
@@ -2240,7 +2266,7 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
     if state.get("phase") == "complete" and not state.get("revalidation"):
         return {"command": None}
     if action == "repo-context-forge":
-        command = [sys.executable, str(Path.home() / ".codex/skills/repo-context-forge/scripts/bootstrap.py"),
+        command = [sys.executable, str(scripts / "repo-context-forge/scripts/bootstrap.py"),
                    "--repo", str(identity.root), "--workflow-slug", str(state["slug"]),
                    "--base", str(state.get("baseOid") or state["passStartOid"])]
         if not state.get("repoContextForgeEvidence"):
@@ -2291,7 +2317,7 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
         command = [*cli, "paths", "--repo", str(identity.root), "--workflow-id", str(state["workflowId"])]
     elif action in {"tdd", "run-mapped-tdd", "code-review", "classify-current-findings",
                     "close-current-findings", "address-review-findings"}:
-        producer = {"tdd": ["tdd"], "run-mapped-tdd": ["tdd"],
+        producer = {"tdd": ["tdd"], "run-mapped-tdd": ["tdd"], "address-review-findings": ["tdd"],
                     "code-review": ["record", "review"]}.get(str(action))
         if producer is None:
             producer = ["record", "advisor-disposition"]

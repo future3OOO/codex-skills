@@ -1589,6 +1589,49 @@ class ReadinessTests(unittest.TestCase):
             completed = close_out()
             self.assertEqual(completed.returncode, 0, f"{marker}: {path}: " + completed.stdout + completed.stderr)
 
+    def test_the_final_recheck_closes_its_own_findings(self):
+        marker = "RECHECK_NEEDS_DISPOSITIONS"
+        from hooks.lib.repo_identity import resolve_repo_identity
+        from hooks.lib.workflow_state import invalidate_after_edit, set_phase
+        from hooks.tests.support import record_context_forge
+        _, wid = self.begin(pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two",
+                                             boundaryInputs=["test_value"]), intent="Make the value two.")
+        self.probe("def test_value(self): self.assertEqual(app.value, 2)")
+        identity = resolve_repo_identity(self.repo)
+
+        def final(verdict, *ids):
+            envelope = self.case.tmp / "final.json"
+            envelope.write_text(json.dumps({"schemaVersion": 1, "verdict": verdict, "findings": [
+                {"id": i, "claim": f"{i}: the value must stay two", "material": True, "kind": "behavioral"} for i in ids]}))
+            return self.case.cli("record", "advisor-result", "--slug", "mapped-repair", "--workflow-id", wid, "--stage", "final",
+                                 "--source", "codex-advisor", "--input", str(envelope), "--repo", str(self.repo))
+
+        def correct(value):
+            (self.repo / "app.py").write_text(f"value = 2\nkept = {value}\n")
+            invalidate_after_edit(identity, "app.py")
+            self.tdd("BM_CHANGE")
+            record_context_forge(self.repo, self.case.tmp)
+
+        (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
+        self.tdd("BM_CHANGE")
+        for command in (("verify", "--", sys.executable, "-c", "pass"), ("verify", "--kind", "quality-gate", "--base-ref", "HEAD")):
+            self.case.cli(*command, "--repo", str(self.repo))
+        record_context_forge(self.repo, self.case.tmp)
+        set_phase(identity, "code-review", "passed", findings="none")
+        self.assertEqual(final("fix-before-commit", "SPEC-1", "SPEC-2").returncode, 0, marker)
+        self.assertEqual(self.status()["nextAction"], "address-review-findings", marker + ": the fix waits on dispositions")
+        correct(3)
+        self.assertEqual(self.status()["nextAction"], "final-review", marker)
+        self.assertEqual(final("fix-before-commit", "SPEC-2").returncode, 0, marker)
+        statuses = lambda: {e["findingId"]: e["status"] for e in self.status()["findingStates"]}
+        self.assertEqual(statuses(), {"SPEC-1": "pending", "SPEC-2": "pending"}, marker + ": a fix-before-commit settled a finding")
+        correct(4)
+        self.assertEqual(final("commit-ready").returncode, 0, marker)
+        self.assertEqual((statuses(), self.status()["finalReview"]["findings"]),
+                         ({"SPEC-1": "resolved", "SPEC-2": "resolved"}, "none"), marker + ": the commit-ready re-check left findings open")
+        completed = self.case.cli("complete", "--repo", str(self.repo))
+        self.assertEqual(completed.returncode, 0, marker + ": " + completed.stdout + completed.stderr)
+
     def test_only_attributable_restoration_pays_debt(self):
         marker = "DEBT_PAID_WITHOUT_RESTORATION"
         cases = {

@@ -415,6 +415,7 @@ class AdvisorDiffBounded(Ceremony):
         (self.repo / "evil\n+FORGED").unlink()
         (self.repo / "config").mkdir()
         (self.repo / "config" / "default.yaml").write_text("replaced: 2\n", encoding="utf-8")
+        record_context_forge(self.repo, self.tmp)
         diff = checkpoint_channels(self.repo, self.env, "preflight-advice")["diff"]
         self.assertIn("diff --git a/gone.py b/gone.py\ndeleted file: 50 lines\n", diff, f"{marker}: {diff[:600]}")
         self.assertNotIn("DELETED-BODY", diff, f"{marker}: a deleted file's body was sent")
@@ -797,9 +798,9 @@ EXPECTED_MATRIX: list[dict[str, object]] = json.loads(r'''[
  {"next":"verification","blockers":["verification"],"edit":[true,[]],"complete":"workflow incomplete: verification, codeReview, finalReview"},
  {"next":"verification","blockers":["verification"],"edit":[true,[]],"complete":"workflow incomplete: verification, codeReview, finalReview"},
  {"next":"verification","blockers":["verification"],"edit":[true,[]],"complete":"workflow incomplete: verification, codeReview, finalReview, repoContextForge"},
- {"next":"code-review","blockers":[],"edit":[true,[]],"complete":"workflow incomplete: codeReview, finalReview, repoContextForge"},
- {"next":"final-review","blockers":[],"edit":[true,[]],"complete":"workflow incomplete: finalReview, repoContextForge"},
- {"next":"classify-current-findings","blockers":[],"edit":[true,[]],"complete":"workflow incomplete: pending findings: final:F-1, finalReview"}
+ {"next":"code-review","blockers":[],"edit":[true,[]],"complete":"workflow incomplete: codeReview, finalReview"},
+ {"next":"final-review","blockers":[],"edit":[true,[]],"complete":"workflow incomplete: finalReview"},
+ {"next":"address-review-findings","blockers":[],"edit":[true,[]],"complete":"workflow incomplete: pending findings: final:F-1, finalReview"}
 ]''')
 
 
@@ -1213,6 +1214,7 @@ class ObservedInWorkflow(Ceremony):
         for index in range(11):
             (self.repo / f"escape{index:02}.py").write_text(f"X = {index}  # TO" + "DO later\n", encoding="utf-8")
         self.env["TMPDIR"] = str(self.tmp)  # where the printed retrieval saves the report
+        record_context_forge(self.repo, self.tmp)
         return self.cli("verify", "--kind", "quality-gate", "--base-ref", "HEAD", *flags)
 
     def retrieval(self, stdout: str, marker: str) -> tuple[dict[str, object], str]:

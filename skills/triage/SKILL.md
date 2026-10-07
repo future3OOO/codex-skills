@@ -43,7 +43,7 @@ Five **state** roles:
 
 Every triaged issue carries one category and one state role. Reconcile conflicts to the maintainer's explicit target; ask only when that target is unknown.
 
-These are canonical role names — the actual label strings used in the issue tracker may differ. The mapping should have been provided to you - run `/setup-matt-pocock-skills` if not.
+These are canonical role names — the actual label strings used in the issue tracker may differ. The mapping should have been provided to you.
 
 State transitions normally go from unlabeled to `needs-triage`, then `needs-info`, `ready-for-agent`, `ready-for-human`, or `wontfix`. Reporter replies return `needs-info` to `needs-triage`. Honor explicit maintainer overrides; ask before proposing an unusual transition without authorization.
 

@@ -170,8 +170,8 @@ active failure. Other failures, stale/concurrent results and drift stay effectiv
 Which commands suffice remains review judgment. Completion requires the typed `quality-gate` run over the current reviewable tree.
 
 The typed runner uses the recorded graph input; reuse it when its binding and
-scope match the candidate. Refresh Repo Context Forge after relevant edits or
-when evidence is absent/stale. The gate's binding check adjudicates applicability;
+scope match the candidate; after edits the gate and the advisor checkpoint refresh
+a stale projection themselves. The gate's binding check adjudicates applicability;
 unchanged source alone does not establish coverage for a broadened contract.
 
 ### 10. Delegate code review

@@ -1404,23 +1404,6 @@ class TollDeletionTests(HookHarness):
         completed = self.state("complete")
         self.assertEqual(completed.returncode, 0, marker + ": " + completed.stdout + completed.stderr)
 
-    def test_a_material_finding_survives_a_later_review_and_empty_intake(self) -> None:
-        marker = "MATERIAL_FINDING_CLOSED_BY_EMPTY_INTAKE"
-        slug = "material-survives"
-        wid = self.advance_to_review(slug)
-        first = self.final_intake(slug, wid, [{"id": "FINAL-1", "claim": "real gap", "material": True, "kind": "behavioral"}], "fix-before-commit")
-        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
-        (self.repo / "app.py").write_text("value = 3\n", encoding="utf-8")
-        self.post_edit("app.py")
-        record_context_forge(self.repo, self.tmp)
-        self.run_verification(slug)
-        self.owner_phase("code-review", "passed", findings="none")
-        second = self.final_intake(slug, wid, [{"id": "REVIEW-1", "claim": "advice", "material": False, "kind": "nonbehavioral"}])
-        self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
-        completed = self.state("complete")
-        self.assertEqual(completed.returncode, 2, marker + ": " + completed.stdout)
-        self.assertIn("FINAL-1", completed.stderr, marker + ": " + completed.stderr)
-
     def test_an_unproved_map_cannot_complete(self) -> None:
         marker = "UNPROVED_MAP_COMPLETED"
         slug = "unproved"

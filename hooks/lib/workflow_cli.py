@@ -43,6 +43,7 @@ from .workflow_state import (
     operation_receipt as _receipt,
     pause,
     public_status,
+    refresh_context,
     read_workflow,
     record_advisor_result,
     set_phase,
@@ -292,6 +293,9 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
         binding_error = str(exc)
 
     if args.kind == "quality-gate":
+        if binding_error is None:  # the gate binds the recorded graph evidence to the candidate it checks
+            refresh_context(identity)
+            state = bound_state(identity, slug, workflow_id)
         args.base_ref = args.base_ref or state.get("baseOid")
         if not args.base_ref:
             raise ValueError("quality-gate verification needs the recorded base or --base-ref")
@@ -540,6 +544,8 @@ def _dispatch(args: argparse.Namespace) -> int:
         _emit_json(_receipt(pause(identity, args.slug, args.workflow_id, args.reason,
                                   expected_candidate_tree=_active_candidate_tree(identity)), identity))
     elif args.command == "checkpoint":
+        if args.channel_dir:  # a consult is about to read the projection
+            refresh_context(identity)
         _emit_json(checkpoint(identity, args.phase, reconsult=args.reconsult, channel_dir=args.channel_dir,
                               preflight_draft=preflight_document(args.preflight_file) if args.preflight_file else None))
     elif args.command == "complete":

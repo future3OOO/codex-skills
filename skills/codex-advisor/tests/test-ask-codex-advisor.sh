@@ -268,6 +268,15 @@ check "PREDICTED_NAMES_DEMANDED preflight attaches executed cases after implemen
 check_absent "PREDICTED_NAMES_DEMANDED preflight demands no future case names" "naming its pair cases" "$(cat "$rigtmp/capture/payload-1")"
 check_absent "PREDICTED_NAMES_DEMANDED skills demand no future case names" "pair cases before implementation" "$(cat "$ROOT/skills/production-preflight/SKILL.md" "$ROOT/skills/codex-advisor/SKILL.md")"
 check_absent "PREFLIGHT_RECORD_MISGUIDED skills record the approved draft, not a lead file" "record preflight --input" "$(cat "$ROOT/skills/production-preflight/SKILL.md" "$ROOT/skills/repo-production-workflow/SKILL.md")"
+setup_skill="setup-matt-pocock""-skills"  # split so this check is not itself a pointer
+for root in "$ROOT" ${UNUSED_SKILL_ESTATES:-}; do
+  check "UNUSED_SKILL_PRESENT $root: is an estate that retains diagnose" "name: diagnose" "$(cat "$root/skills/diagnose/SKILL.md" 2>&1)"
+  for retired in "$setup_skill" grill-me migrate-to-shoehorn scaffold-exercises diagnosing-bugs improve-codebase-architecture.txt; do
+    check_absent "UNUSED_SKILL_PRESENT $root: $retired" "present" "$([[ -e "$root/skills/$retired" ]] && printf present)"
+  done
+  check_absent "UNUSED_SKILL_PRESENT $root: no pointer to the retired setup skill" "$setup_skill" \
+    "$(grep -rl --exclude-dir=.git "$setup_skill" "$root/skills" "$root/docs" "$root/hooks" "$root/README.md" "$root/AGENTS.md" 2>/dev/null)"
+done
 check "ADDED_CONDITION_UNSATISFIABLE preflight takes an added condition's contexts from the edited decision" "the edited decision for a condition the plan adds" "$(cat "$rigtmp/capture/payload-1")"
 check "OWNER_BATCHED preflight batches map items by owning Interface" "one contract and one preservation item per owning Interface" "$(cat "$rigtmp/capture/payload-1")"
 check "OWNER_BATCHED preflight batches findings by owner and invariant" "one finding per owning Module and violated invariant" "$(cat "$rigtmp/capture/payload-1")"
