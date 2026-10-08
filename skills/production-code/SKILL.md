@@ -19,12 +19,9 @@ python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" verif
 
 It prints a bounded summary, a command that saves the complete report (kept
 compressed in the pass ledger) to a file outside chat, and a bounded `jq`
-projection for reading it; never print the saved file whole. It attaches the pass's
-recorded snapshot-bound Repo Context Forge evidence, which
-`QG54-OWNER-COMPETITION-PRODUCTION` needs; without it that rule reports
-incomplete. Load
-[references/gate-policy.md](references/gate-policy.md) when interpreting the
-gate's JSON contract.
+projection for reading it; never print the saved file whole. Load
+[references/gate-policy.md](references/gate-policy.md) only when the gate fails or a
+hard rule reports `incomplete`; a warning-only rule's `incomplete` needs no action.
 
 ## Execution Checklist
 
@@ -193,4 +190,4 @@ Load [references/transaction-doctrine.md](references/transaction-doctrine.md) fo
 
 ## Bundled Gate Policy
 
-Load [references/gate-policy.md](references/gate-policy.md) when running or interpreting the bundled gate. The gate is non-mutating.
+Load [references/gate-policy.md](references/gate-policy.md) when the bundled gate fails. The gate is non-mutating.

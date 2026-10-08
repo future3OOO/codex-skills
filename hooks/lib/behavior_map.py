@@ -64,6 +64,8 @@ def _field_errors(raw: JsonObject, identifier: str) -> list[str]:
         isinstance(raw["kind"], str) and raw["kind"] in KINDS) else []
     if "boundaryInputs" in raw and _strings(raw["boundaryInputs"]) is None:
         errors.append(f"probe {identifier} boundaryInputs must name executed cases as non-empty strings")
+    elif described := [name for name in raw.get("boundaryInputs") or [] if ": " in name and "::" not in name]:
+        errors.append(f"probe {identifier} boundaryInputs name executed cases; move the description {described[0]!r} into expected")
     readings = raw.get("interpretations")
     if "interpretations" in raw and (_strings(readings) is None or len(readings) < 2):
         errors.append(f"probe {identifier} interpretations requires at least two competing readings")

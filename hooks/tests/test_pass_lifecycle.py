@@ -654,34 +654,29 @@ class PassLifecycleTests(unittest.TestCase):
             (2, True), marker + result.stdout + result.stderr,
         )
 
-    def test_advisor_result_refuses_a_candidate_newer_than_its_checkpoint(self) -> None:
-        marker = "STALE_ADVISOR_RESULT_RECORDED"
-        slug, wid = "stale-advisor-result", self.begin_slug("stale-advisor-result")
-        self.advance_to_context_forge()
-        checkpoint_candidate = self.checkpoint("preflight-advice")["activeCandidateTree"]
-        envelope = self.tmp / "advisor-envelope.json"
-        envelope.write_text(json.dumps({
-            "schemaVersion": 1, "findings": [], "verdict": "completed",
-        }), encoding="utf-8")
+    def test_a_preflight_result_binds_its_draft_and_a_final_result_its_candidate(self) -> None:
+        marker = "ADVISOR_RESULT_BINDING"
         app = self.repo / "app.py"
+        wid = self.begin_slug("advisor-binding")
+        self.advance_to_context_forge()
+        checked = self.checkpoint("preflight-advice")["activeCandidateTree"]
+        app.write_text(app.read_text(encoding="utf-8") + "# provider race\n", encoding="utf-8")
+        envelope = self.json_file("preflight-envelope.json", {"schemaVersion": 1, "findings": [], "verdict": "completed"})
+        recorded = self.cli("record", "advisor-result", "--slug", "advisor-binding", "--workflow-id", wid, "--stage", "preflight",
+                            "--source", "codex-advisor", "--input", str(envelope), "--expected-candidate-tree", str(checked))
+        self.assertEqual(recorded.returncode, 0, marker + ": a tree change discarded a preflight verdict: " + recorded.stderr)
+        intake = json.loads(self.cli("status").stdout)["advisorPreflight"]["intakeEvidence"]
+        self.assertEqual(self.evidence(intake)["candidateTree"], checked, marker)
+        wid = self.begin_slug("advisor-binding-final")
+        self.advance_to_verification("advisor-binding-final", wid)
+        self.owner_phase("code-review", "passed", findings="none")
+        checked = self.checkpoint("final-review")["activeCandidateTree"]
         app.write_text(app.read_text(encoding="utf-8") + "# provider race\n", encoding="utf-8")
         before = self.ledger_rows()
-
-        result = self.cli(
-            "record", "advisor-result", "--slug", slug, "--workflow-id", wid,
-            "--stage", "preflight", "--source", "codex-advisor",
-            "--input", str(envelope),
-            "--expected-candidate-tree", str(checkpoint_candidate),
-        )
-        self.assertEqual(
-            (
-                result.returncode,
-                "active candidate changed" in result.stderr.lower(),
-                self.ledger_rows(),
-            ),
-            (2, True, before),
-            marker + result.stdout + result.stderr,
-        )
+        refused = self.cli("record", "advisor-result", "--slug", "advisor-binding-final", "--workflow-id", wid, "--stage", "final",
+                           "--source", "codex-advisor", "--input", commit_ready_envelope(self.tmp), "--expected-candidate-tree", str(checked))
+        self.assertEqual((refused.returncode, "active candidate changed" in refused.stderr.lower(), self.ledger_rows()),
+                         (2, True, before), marker + refused.stdout + refused.stderr)
 
     def ledger_rows(self) -> tuple[tuple[object, ...], ...]:
         tables = ("ledger_metadata", "workflows", "evidence", "review_manifests", "workflow_events",

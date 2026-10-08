@@ -63,7 +63,7 @@ RECORD_SHAPES = {
                        'fix-before-commit|context-mismatch"}, or --verdict unavailable --reason TEXT'),
     "advisor-disposition": ("--finding F --fixed [--behavior-id BM]; or --finding F "
                             "--rejected|--report-only|--follow-up REF --reason TEXT; or --findings none"),
-    "tdd-map": f'{{"items":[{ITEM_SHAPE}]}}',
+    "tdd-map": f'{{"items":[{ITEM_SHAPE}]}}; a recorded item needs only id and the changed fields, null removes one',
 }
 DISPOSITION_FLAGS = {"fixed": "fixed", "rejected": "rejected-with-evidence", "report_only": "report-only"}
 # Failing checks' first five locations, then the first six active findings with three each. Each location
@@ -464,7 +464,7 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
         elif verdict is None:
             raise ValueError("record advisor-result requires --input or --verdict unavailable --reason")
         expected = args.expected_candidate_tree
-        if expected is not None and expected != candidate:
+        if args.stage != "preflight" and expected not in (None, candidate):  # a preflight verdict judges its draft
             raise WorkflowError("active candidate changed after the advisor checkpoint")
         state = record_advisor_result(
             identity, slug, workflow_id, args.stage, args.source, verdict, reason=args.reason,

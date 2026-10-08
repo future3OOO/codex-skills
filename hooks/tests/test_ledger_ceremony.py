@@ -899,7 +899,7 @@ class EveryViolation(Ceremony):
         self.assertEqual(stored["document"]["behaviorMap"][0]["basis"], "fixture contract")
         lost += self.pairs("tdd-map", {"items": [item("BM_NEW", kind="preservation"), item("BM_KEEP")]}, {
             "item": (("items", 0, "behavior"), ""), "item-basis": (("items", 0, "basis"), _DROP),
-            "item-id": (("items", 0, "id"), "BM_KEEP"),
+            "item-id": (("items", 1, "id"), "BM_NEW"),
             "unknown": (("items", 0, "bogus"), 1),
             "refs": (("items", 1, "sourceRefs"), 5)})
         self.assertEqual(lost, [], "VIOLATION_HIDDEN: " + "; ".join(lost))
@@ -1455,6 +1455,33 @@ class MinimalDocuments(Ceremony):
 
         self.ok("record", "tdd-map", "--input", "-", input=json.dumps({"items": [item("BM_TWO", kind="preservation")]}))
         self.assertEqual(self.state()["tdd"], "in-progress", marker)
+
+    def test_a_map_update_names_only_what_changes(self) -> None:
+        marker = "PARTIAL_MAP_UPDATE"
+        self.begin()
+        self.record_preflight({"authoritativeContract": "fixture", "behaviorMap": [
+            item("BM_ONE", interpretations=["a", "b"], interpretation="a", authority="spec", boundaryInputs=["test_old"])]})
+        current = lambda: evidence_document(resolve_repo_identity(self.repo), self.state()["tddEvidence"])["behaviorMap"]
+        self.ok("record", "tdd-map", "--input", "-", input=json.dumps({"items": [{"id": "BM_ONE", "boundaryInputs": ["test_y"]}]}))
+        [one] = current()
+        self.assertEqual((one["boundaryInputs"], one["interpretations"], one["behavior"]), (["test_y"], ["a", "b"], "BM_ONE behavior"), marker)
+        self.ok("record", "tdd-map", "--input", "-", input=json.dumps({"items": [{"id": "BM_ONE", "interpretations": ["c", "d"]}]}))
+        self.assertNotIn("interpretation", current()[0], marker + ": new readings kept the old choice")
+        self.ok("record", "tdd-map", "--input", "-", input=json.dumps({"items": [{"id": "BM_ONE", "interpretations": None}]}))
+        self.assertNotIn("interpretations", current()[0], marker)
+        added = self.cli("record", "tdd-map", "--input", "-", input=json.dumps({"items": [{"id": "BM_NEW", "boundaryInputs": ["test_z"]}]}))
+        self.assertEqual(added.returncode, 2, marker + ": a new partial item was recorded")
+
+    def test_the_dry_run_refuses_a_description_as_a_case_name(self) -> None:
+        marker = "DESCRIPTION_RECORDED_AS_CASE"
+        self.begin()
+        draft, envelope = self.tmp / "draft.json", json.dumps({"schemaVersion": 1, "verdict": "approved", "findings": []})
+        for names, code in ((["test_kept: kept stays one"], 2), (["t.py::test_kept[a: b]", "kept"], 0)):
+            draft.write_text(json.dumps({"authoritativeContract": "c", "behaviorMap": [item("BM_ONE", boundaryInputs=names)]}))
+            checked = self.cli("record", "advisor-result", "--check", "--stage", "preflight", "--input", "-",
+                               "--preflight-file", str(draft), input=envelope)
+            self.assertEqual(checked.returncode, code, f"{marker}: {names}: {checked.stderr[-300:]}")
+            self.assertEqual("into expected" in checked.stderr, code == 2, marker)
 
 
 class DerivedIdentity(Ceremony):

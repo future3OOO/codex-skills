@@ -368,9 +368,18 @@ def _run_tdd(values: list[str]) -> int:
 def map_update(identity: RepoIdentity, state: JsonObject, value: JsonObject) -> JsonObject:
     if set(value) not in ({"items"}, {"added"}):
         raise ValueError("tdd-map takes items to update by id; statuses and dispositions are runner-owned")
-    updates = behavior_map.initial_items(value.get("items", value.get("added")))
     previous, current = current_map(identity, state)
     recorded = {entry["id"]: entry for entry in previous or []}
+    merged = value.get("items", value.get("added"))
+    if isinstance(merged, list):  # an item names only what changes: a given field replaces, null removes, an omitted field stays
+        fields = behavior_map.REQUIRED_FIELDS | behavior_map.JUDGEMENT_FIELDS
+        for position, entry in enumerate(merged):
+            if isinstance(entry, dict):
+                prior = recorded.get(str(entry.get("id")).strip(), {})
+                kept = {key: prior[key] for key in fields if prior.get(key) not in (None, [])
+                        and not ("interpretations" in entry and key in ("interpretation", "authority"))}
+                merged[position] = {key: field for key, field in {**kept, **entry}.items() if field is not None}
+    updates = behavior_map.initial_items(merged)
     items = list({item["id"]: item for item in [*(previous or []), *updates]}.values())
     for entry in updates:
         prior = recorded.get(entry["id"])

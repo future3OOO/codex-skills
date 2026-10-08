@@ -1155,7 +1155,7 @@ def record_advisor_result(
         raise ValueError("advisor-result records findings=pending; disposition findings with advisor-disposition")
     if stage == "final" and intake is None:
         raise ValueError("a final advisor-result records the advisor finding envelope (--input)")
-    with mutation(identity, expected_candidate_tree=expected_candidate_tree) as transaction:
+    with mutation(identity, expected_candidate_tree=None if stage == "preflight" else expected_candidate_tree) as transaction:
         state = _bound_instance_state(transaction.state, slug, workflow_id)
         writes: list[EvidenceWrite] = []
         intake_write: EvidenceWrite | None = None
