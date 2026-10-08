@@ -80,7 +80,7 @@ original request and public Interface promise; which production operations can
 falsify each load-bearing promise;
 which of those are unattacked through the real Seam in the supplied evidence;
 whether the current candidate resolves each ledger finding's immutable claim, or,
-for a rejected or report-only finding, whether its recorded measurement still holds;
+for a rejected or report-only finding, whether its recorded measurement refutes the claim or shows it immaterial;
 and only then the changed Module shape, minimality, security boundary,
 candidate binding, and visible regression coverage. A promised load-bearing
 surface with no attack forbids `commit-ready` even when every declared map item
