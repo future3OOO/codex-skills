@@ -1166,7 +1166,7 @@ class ReadinessTests(unittest.TestCase):
         self.assertEqual((self.open_lines(receipt), self.status()["tdd"]), ([], "passed"), marker + ": " + json.dumps(receipt))
 
     def test_readiness_reads_only_the_latest_run(self):
-        marker = "REGRESSION_EVIDENCE_LOST"
+        marker = "READINESS_IGNORED_LATEST_RUN"
         kept, remainder = "def test_kept(self): self.assertEqual(app.kept, 1)", "def test_int(self): self.assertIsInstance(app.value, int)"
         unit = lambda *methods: UNITTEST_PROBE + "".join(f"    {method}\n" for method in methods)
         run = lambda *arguments: (sys.executable, *arguments)
