@@ -8,8 +8,7 @@ description: Enforce production-only implementation standards for this repo. Use
 Apply this skill before writing any repository code or file content change, keep it active while implementing, and run its bundled gate before finalizing.
 Use the production-preflight skill first on before-edit turns that require explicit preflight. `code-quality` owns the seven quality principles and wins on conflict; this skill extends them with implementation procedure.
 
-In a governed production workflow, invoke this skill after planning the real probe and before production, configuration, or runtime implementation edits; the probe edit may precede it. Run
-the bundled gate over the pre-implementation tree as the clean baseline, then keep
+In a governed production workflow, invoke this skill after planning the real probe and before production, configuration, or runtime implementation edits; the probe edit may precede it. Keep
 this doctrine active through implementation and final verification.
 
 Before editing, use the standards below to choose the smallest production-safe implementation path. In a governed pass, run the bundled gate before finalizing:
