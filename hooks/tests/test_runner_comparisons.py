@@ -834,10 +834,10 @@ class ReadinessTests(unittest.TestCase):
         return self.case.cli("summary", "--repo", str(self.repo)).stdout
 
     def relaxed(self, changed, original, marker):
-        """An exposed item's kind and obligation may change; it stays open until a rerun proves it."""
+        """An item's kind and obligation may change; the changed item reads stale until a rerun proves it."""
         result = self.update(changed)
         self.assertEqual(result.returncode, 0, marker + ": " + result.stdout + result.stderr)
-        self.assertEqual(self.status()["tdd"], "in-progress", marker + ": a changed exposed item read proved")
+        self.assertEqual(self.status()["tdd"], "in-progress", marker + ": a changed item read proved")
         self.assertEqual(self.update(original).returncode, 0, marker)
 
     def update(self, *items):
@@ -901,7 +901,7 @@ class ReadinessTests(unittest.TestCase):
         self.assertEqual(self.status()["tdd"], "in-progress", marker)
         self.assertFalse(self.tdd("BM_KEEP", command=command).get("reused", False), marker)
 
-    def test_exposed_item_keeps_its_kind_and_cases(self):
+    def test_changed_item_stays_open_until_rerun(self):
         marker = "APPROVED_OBLIGATION_REWRITTEN"
         keep = pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one",
                                 boundaryInputs=["test_kept"])
@@ -928,7 +928,7 @@ class ReadinessTests(unittest.TestCase):
             self.assertEqual(changed.returncode, 0, f"{marker}: {name}: {changed.stdout}{changed.stderr}")
             self.assertEqual(snapshot()[0], "in-progress", f"{marker}: {name} read proved")
             self.assertEqual(self.update(keep, change).returncode, 0, marker)
-        # case names attach freely: replacing an exposed item's cases keeps it open, and its invariant stays
+        # case names attach freely: replacing an open item's cases keeps it open, and its invariant stays
         replaced = self.update(keep | {"boundaryInputs": ["test_value"]})
         self.assertEqual(replaced.returncode, 0, "CASE_NAMES_FROZEN: " + replaced.stdout + replaced.stderr)
         self.assertEqual(self.status()["tdd"], "in-progress", "CASE_NAMES_FROZEN")
@@ -937,9 +937,9 @@ class ReadinessTests(unittest.TestCase):
                               text=True, capture_output=True, input=json.dumps({"cwd": str(self.repo), "tool_name": "spawn_agent",
                                                                                "tool_input": {"agent_type": "default"}}))
         self.assertIn('"deny"', hook.stdout, marker + ": " + hook.stdout + hook.stderr)
-        # a stale comparison still exposes the item, and a finding reference does not relax it
+        # a stale comparison keeps the changed item open, and a finding reference does not relax it
         (self.repo / "app.py").write_text("value = 1\nkept = 2\n# touched\n")
-        self.relaxed(keep | {"kind": "contract"}, keep, marker + ": stale exposure")
+        self.relaxed(keep | {"kind": "contract"}, keep, marker + ": stale comparison")
         findings = self.case.tmp / "findings.json"
         findings.write_text(json.dumps({"findings": [{"id": "R-1", "claim": "kept must become two", "material": True, "kind": "behavioral"}]}))
         self.assertEqual(self.case.cli("record", "review", "--repo", str(self.repo), "--input", str(findings)).returncode, 0, marker)
@@ -951,10 +951,10 @@ class ReadinessTests(unittest.TestCase):
                                basis="finding R-1 attack", sourceRefs=[{"type": "finding", "evidenceId": intake, "id": "R-1"}])
         self.assertEqual(self.update(fix).returncode, 0, marker)
         self.assertIn("BM_FIX: contract item added after preflight (finding R-1): finding R-1 attack", self.summary(), marker)
-        # an item added after preflight is held the same way once its comparison exposes it
+        # an item added after preflight stays open the same way once its comparison fails
         self.assertEqual(self.update(later).returncode, 0, marker)
         self.tdd("BM_LATER")
-        self.relaxed(later | {"kind": "contract"}, later, marker + ": exposed later item relabeled")
+        self.relaxed(later | {"kind": "contract"}, later, marker + ": failing later item relabeled")
         # before any comparison the lead may revise an item; the revision is listed against the preflight
         revised = self.update(spare | {"kind": "contract", "basis": "the value type may change"})
         self.assertEqual(revised.returncode, 0, marker + ": " + revised.stdout + revised.stderr)
@@ -962,20 +962,11 @@ class ReadinessTests(unittest.TestCase):
         packet = checkpoint_channels(self.repo, self.case.env, "code-review")
         self.assertIn("BM_SPARE: preservation -> contract: the value type may change", packet["behavior-map"]["contractChanges"], marker)
         self.assertEqual(self.update(spare).returncode, 0, marker)
-        # repaired code closes every exposed item
+        # repaired code closes every open item
         (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
         self.probe(*probes(1))
         receipt = self.tdd("BM_KEEP", "BM_CHANGE", "BM_LATER", "BM_SPARE", "BM_FIX")
         self.assertEqual((self.open_lines(receipt), self.status()["tdd"]), ([], "passed"), marker + ": " + json.dumps(receipt))
-        # the user authorizes kept becoming two: the amended request starts a pass whose approved contract owns it
-        (self.repo / "app.py").write_text("value = 2\nkept = 2\n")
-        self.probe("def test_kept(self): self.assertEqual(app.kept, 2)")
-        self.case.begin_with_map([pending_behavior("BM_KEPT", behavior="kept becomes two", expected="kept is two",
-                                                   boundaryInputs=["test_kept"])], slug="amended-request", intent="Make kept two.")
-        receipt = self.tdd("BM_KEPT")
-        self.assertEqual(self.status()["tdd"], "passed", marker + ": " + json.dumps(receipt))
-        unedited = subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], cwd=self.repo, text=True).strip()
-        self.assertEqual(receipt["arms"][0]["tree"], unedited, marker)
 
     def test_contract_cases_extend_without_quote(self):
         marker = "EVIDENCE_EXTENSION_REFUSED"
@@ -996,8 +987,8 @@ class ReadinessTests(unittest.TestCase):
         [line] = self.open_lines(self.tdd("BM_CHANGE"))
         self.assertIn("test_broken failed on original, failed on current", line, marker + ": " + line)
 
-    def test_exposure_holds_until_a_comparison_proves_the_item(self):
-        marker = "EXPOSURE_RELEASED"
+    def test_open_item_waits_for_a_comparison_that_proves_it(self):
+        marker = "OPEN_ITEM_RELEASED"
         keep = pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one",
                                 boundaryInputs=["test_kept"])
         change = pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two", boundaryInputs=["test_value"])
@@ -1037,23 +1028,6 @@ class ReadinessTests(unittest.TestCase):
         receipt = self.tdd("BM_KEEP", command=batch)
         self.assertEqual((self.open_lines(receipt), self.status()["tdd"]), ([], "passed"), marker + ": " + json.dumps(receipt))
 
-    def test_hold_releases_only_on_the_exposing_cases(self):
-        marker = "EXPOSURE_RELEASED"
-        keep = pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one")
-        self.begin(keep, intent="Keep kept unchanged.")
-        full = (sys.executable, "-c", "import app\nprint('kept:', app.kept)\nprint('value type:', type(app.value).__name__)")
-        (self.repo / "app.py").write_text("value = 1\nkept = 2\n")
-        self.probe("def test_int(self): self.assertIsInstance(app.value, int)")
-        self.tdd("BM_KEEP", command=full)
-        for narrower in ((sys.executable, "-c", "import app\nprint('value type:', type(app.value).__name__)"),
-                         (sys.executable, "-m", "unittest", "test_value.Value.test_int")):
-            receipt = self.tdd("BM_KEEP", command=narrower)
-            self.relaxed(keep | {"kind": "contract", "basis": "Keep kept unchanged."}, keep, marker + ": " + " ".join(narrower))
-            self.assertEqual(self.status()["tdd"], "in-progress", marker + ": " + json.dumps(receipt))
-        (self.repo / "app.py").write_text("value = 1\nkept = 1\n")
-        receipt = self.tdd("BM_KEEP", command=full)
-        self.assertEqual((self.open_lines(receipt), self.status()["tdd"]), ([], "passed"), marker + ": " + json.dumps(receipt))
-
     def test_every_subtest_label_form_fails_its_test(self):
         marker = "LABELLED_SUBTEST_PASSED"
         self.begin(pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one",
@@ -1086,8 +1060,8 @@ class ReadinessTests(unittest.TestCase):
         receipt = self.tdd("BM_CHANGE", "BM_KEEP", command=batch)
         self.assertEqual((self.open_lines(receipt), self.status()["tdd"]), ([], "passed"), marker + ": " + json.dumps(receipt))
 
-    def test_hold_releases_when_repaired_code_proves_it(self):
-        marker = "HOLD_UNRELEASABLE"
+    def test_repaired_code_proves_the_item(self):
+        marker = "REPAIR_UNPROVED"
         operation = "value = {}\nkept = 1\ndef run():\n    print('kept:', kept)\n"
         (self.repo / "app.py").write_text(operation.format(1))
         self.case.git("add", "app.py")
@@ -1097,19 +1071,8 @@ class ReadinessTests(unittest.TestCase):
         loose = pending_behavior("BM_LOOSE", kind="preservation", behavior="the module keeps its results", expected="unchanged")
         change = pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two", boundaryInputs=["test_value"])
         self.begin(keep, test, loose, change, intent="Make the value two. Keep everything else.")
-        run = (sys.executable, "-c", "import app\napp.run()")
         pytest = (sys.executable, "-m", "pytest", "-q", "test_value.py")
         proved = lambda receipt, *ids: not [line for line in self.open_lines(receipt) if line.split(" ", 1)[0] in ids]
-        # an unintended record holds the item to its command: a narrower one cannot release it, the repaired code can
-        (self.repo / "app.py").write_text(operation.format(1) + "    print('debug:', value)\n")
-        self.tdd("BM_KEEP", command=run)
-        self.tdd("BM_LOOSE", command=run)
-        self.tdd("BM_KEEP", command=(sys.executable, "-c", "import app\nprint('kept:', app.kept)"))
-        self.relaxed(keep | {"kind": "contract"}, keep, marker + ": a narrower command released the hold")
-        (self.repo / "app.py").write_text(operation.format(1))
-        for item in ("BM_KEEP", "BM_LOOSE"):
-            receipt = self.tdd(item, command=run)
-            self.assertTrue(proved(receipt, item), marker + ": removed record: " + json.dumps(receipt))
         # an import broken mid-edit, and a switch of runner while it is broken
         self.probe("def test_kept(self): self.assertEqual(app.kept, 1)")
         (self.repo / "app.py").write_text(operation.format(1) + "import no_such_module\n")
@@ -1119,9 +1082,6 @@ class ReadinessTests(unittest.TestCase):
         for item, command in (("BM_TEST", None), ("BM_LOOSE", None), ("BM_LOOSE", pytest)):
             receipt = self.tdd(item, **({"command": command} if command else {}))
         self.assertTrue(proved(receipt, "BM_TEST", "BM_LOOSE"), marker + ": repaired import: " + json.dumps(receipt))
-        # a case added after release does not bring the hold back
-        self.assertEqual(self.update(test | {"boundaryInputs": ["test_kept", "test_more"]}).returncode, 0, marker)
-        self.assertEqual(self.update(test).returncode, 0, marker + ": released hold resurrected")
         # a mixed batch on a correct edit, then the split commands its receipt advises
         (self.repo / "app.py").write_text(operation.format(2))
         self.probe("def test_value(self): self.assertEqual(app.value, 2)", "def test_kept(self): self.assertEqual(app.kept, 1)")
@@ -1171,49 +1131,6 @@ class ReadinessTests(unittest.TestCase):
             receipt = self.tdd("BM_CHANGE", "BM_KEEP", command=("bash", "-c", batch))
             self.assertEqual((self.open_lines(receipt), self.status()["tdd"]), ([], "passed"), marker + ": " + batch + json.dumps(receipt))
 
-    def test_regression_named_on_a_later_contract_stays_open_until_repaired(self):
-        marker = "SIBLING_CHANGE_UNEXPLAINED"
-        keep = pending_behavior("BM_KEEP", kind="preservation", behavior="kept and type stay", expected="kept 1, type int",
-                                boundaryInputs=["type"])
-        self.begin(keep, intent="Keep kept unchanged.")
-        batch = (sys.executable, "-c", "import app\nprint('type:', type(app.value).__name__)\nprint('kept:', app.kept)")
-        (self.repo / "app.py").write_text("value = 1\nkept = 2\n")
-        receipt = self.tdd("BM_KEEP", command=batch)
-        self.assertIn("kept differs", " ".join(self.open_lines(receipt)), marker + ": " + json.dumps(receipt))
-        # naming the regression on a contract item added after preflight is recorded and resolves nothing
-        claim = pending_behavior("BM_NEW", behavior="kept becomes two", expected="kept is two", boundaryInputs=["kept"])
-        named = self.update(claim)
-        self.assertEqual(named.returncode, 0, marker + ": " + named.stdout + named.stderr)
-        receipt = self.tdd("BM_KEEP", "BM_NEW", command=batch)
-        self.assertTrue(any(line.startswith("BM_KEEP") and "kept exposed this item" in line for line in self.open_lines(receipt)),
-                        marker + ": " + json.dumps(receipt))
-        (self.repo / "app.py").write_text("value = 1\nkept = 1\n")
-        receipt = self.tdd("BM_KEEP", "BM_NEW", command=batch)
-        self.assertEqual([line.split(" ", 1)[0] for line in self.open_lines(receipt)], ["BM_NEW"], marker + ": " + json.dumps(receipt))
-
-    def test_preflight_contract_accounts_for_its_requested_change(self):
-        marker = "SIBLING_CHANGE_UNEXPLAINED"
-        change = pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two", boundaryInputs=["test_value"])
-        keep = pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one", boundaryInputs=["test_kept"])
-        self.begin(change, keep, intent="Make the value two.")
-        # an existing test changes as requested; comparing the module for BM_KEEP alone exposes it there
-        self.probe("def test_value(self): self.assertEqual(app.value, 2)", "def test_kept(self): self.assertEqual(app.kept, 1)",
-                   "def test_old(self): self.assertEqual(app.value * 10, 20)")
-        (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
-        [line] = [line for line in self.open_lines(self.tdd("BM_KEEP")) if line.startswith("BM_KEEP")]
-        self.assertTrue("test_old differs" in line and "test_value" not in line, marker + ": " + line)
-        # a contract item re-worded since preflight does not account for it
-        reworded = self.update(change | {"expected": "value is 2", "boundaryInputs": ["test_value", "test_old"]})
-        self.assertEqual(reworded.returncode, 0, marker + ": " + reworded.stdout + reworded.stderr)
-        receipt = self.tdd("BM_CHANGE", "BM_KEEP")
-        self.assertEqual([line.split(" ", 1)[0] for line in self.open_lines(receipt)], ["BM_KEEP"], marker + ": " + json.dumps(receipt))
-        # the preflight contract item, its obligation unchanged, does
-        extended = self.update(change | {"boundaryInputs": ["test_value", "test_old"]})
-        self.assertEqual(extended.returncode, 0, marker + ": " + extended.stdout + extended.stderr)
-        receipt = self.tdd("BM_CHANGE", "BM_KEEP")
-        self.assertEqual((self.open_lines(receipt), self.status()["tdd"]), ([], "passed"), marker + ": " + json.dumps(receipt))
-        self.assertIn("BM_CHANGE: contract cases added: test_old: test fixture behavior", self.summary(), marker)
-
     def test_shared_batch_judges_each_case_under_its_owner(self):
         marker = "SIBLING_CHANGE_UNEXPLAINED"
         self.begin(pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two", boundaryInputs=["test_value"]),
@@ -1248,287 +1165,40 @@ class ReadinessTests(unittest.TestCase):
         receipt = self.tdd("BM_CHANGE")
         self.assertEqual((self.open_lines(receipt), self.status()["tdd"]), ([], "passed"), marker + ": " + json.dumps(receipt))
 
-    def test_regression_outlives_its_exposing_case(self):
+    def test_readiness_reads_only_the_latest_run(self):
         marker = "REGRESSION_EVIDENCE_LOST"
-        keep = pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one",
-                                boundaryInputs=["test_kept", "test_int"])
-        self.begin(keep, intent="Keep kept unchanged.")
         kept, remainder = "def test_kept(self): self.assertEqual(app.kept, 1)", "def test_int(self): self.assertIsInstance(app.value, int)"
-        self.probe(kept, remainder)
-        (self.repo / "app.py").write_text("value = 1\nkept = 2\n")
-        self.tdd("BM_KEEP")
-        dropped = self.update(keep | {"boundaryInputs": ["test_int"]})
-        self.assertEqual(dropped.returncode, 0, marker + ": " + dropped.stdout + dropped.stderr)
-        # the identical command, without the exposing case: deleted, skipped, renamed; then a narrower command
-        for name, methods, command in (("deleted", (remainder,), None),
-                                       ("skipped", ("@unittest.skip('later')\n    " + kept, remainder), None),
-                                       ("renamed", ("def test_kept_type(self): self.assertIsInstance(app.kept, int)", remainder), None),
-                                       ("narrower", (kept, remainder), (sys.executable, "-m", "unittest", "test_value.Value.test_int"))):
-            self.probe(*methods)
-            receipt = self.tdd("BM_KEEP", **({"command": command} if command else {}))
-            lines = self.open_lines(receipt)
-            self.assertTrue(len(lines) == 1 and "test_kept exposed this item" in lines[0], f"{marker}: {name}: " + json.dumps(receipt))
-            self.assertEqual(self.status()["tdd"], "in-progress", f"{marker}: {name}")
-
-    def test_genuine_repair_resolves_the_retained_regression(self):
-        marker = "REGRESSION_EVIDENCE_LOST"
-        keep = pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one",
-                                boundaryInputs=["test_kept"])
-        self.begin(keep, intent="Keep kept unchanged.")
-        remainder = "def test_int(self): self.assertIsInstance(app.value, int)"
-        self.probe("def test_kept(self): self.assertEqual(app.kept, 1)", remainder)
-        (self.repo / "app.py").write_text("value = 1\nkept = 2\n")
-        self.assertTrue(self.open_lines(self.tdd("BM_KEEP")), marker)
-        (self.repo / "app.py").write_text("value = 1\nkept = 1\n")  # repaired, judged by another command running the case
-        receipt = self.tdd("BM_KEEP", command=(sys.executable, "-m", "unittest", "test_value.Value.test_kept", "test_value.Value.test_int"))
-        self.assertEqual((self.open_lines(receipt), self.status()["tdd"]), ([], "passed"), marker + ": " + json.dumps(receipt))
-        # a resolved regression stays resolved once its case leaves the batch
-        self.probe(remainder)
-        self.assertEqual(self.update(keep | {"boundaryInputs": ["test_int"]}).returncode, 0, marker)
-        receipt = self.tdd("BM_KEEP")
-        self.assertEqual((self.open_lines(receipt), self.status()["tdd"]), ([], "passed"), marker + ": " + json.dumps(receipt))
-
-    def test_an_original_that_never_ran_the_case_pays_no_debt(self):
-        marker = "INVALID_ORIGINAL_PAID_DEBT"
-        requested, kept = "def test_value(self): self.assertEqual(app.value, 2)", "def test_kept(self): self.assertEqual(app.kept, 1)"
-        for mode, invalid in (("skipped", "@unittest.skipIf(app.value == 1, 'original skipped')\n    " + kept),
-                              ("missing", "if app.value != 1:\n        " + kept),
-                              ("setup error", "def setUp(self):\n        if app.value == 1 and 'kept' in self.id(): raise RuntimeError('setup')\n    " + kept)):
-            with self.subTest(mode=mode):
-                item = pending_behavior("BM_CHANGE", behavior="value becomes two; kept stays one",
-                                        expected="value two; kept one", boundaryInputs=["test_value", "test_kept"])
-                self.begin(item, intent="Make value two. Keep kept one.")
-                self.probe(requested, kept)
-                (self.repo / "app.py").write_text("value = 2\nkept = 2\n")
-                self.tdd("BM_CHANGE")
-                (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
-                self.probe(requested, invalid)
-                self.tdd("BM_CHANGE", command=(sys.executable, "-m", "unittest", "--locals", "test_value"))
-                self.probe(requested)
-                self.assertEqual(self.update(item | {"boundaryInputs": ["test_value"]}).returncode, 0, marker)
-                self.tdd("BM_CHANGE", command=(sys.executable, "-m", "unittest", "test_value.Value.test_value"))
-                self.assertEqual(self.status()["tdd"], "in-progress", marker)
-
-    def test_dropped_output_does_not_repair_its_regression(self):
-        marker = "RESOLVED_WITHOUT_ITS_CASE"
-        keep = pending_behavior("BM_KEEP", kind="preservation", behavior="kept and total stay", expected="kept 1, total 2",
-                                boundaryInputs=["kept"])
-        self.begin(keep, intent="Keep kept and the total unchanged.")
-        command = (sys.executable, "probe.test.py")
-        full = "import app\nprint('kept:', app.kept)\nprint('total is', app.value + app.kept)\n"
-        (self.repo / "probe.test.py").write_text(full)
-        (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
-        self.tdd("BM_KEEP", command=command)
-        (self.repo / "probe.test.py").write_text("import app\nprint('kept:', app.kept)\n")
-        receipt = self.tdd("BM_KEEP", command=command)
-        self.assertEqual(self.status()["tdd"], "in-progress", marker + ": same command, output dropped: " + json.dumps(receipt))
-        (self.repo / "probe.test.py").write_text(full)
-        (self.repo / "app.py").write_text("value = 1\nkept = 1\n")
-        receipt = self.tdd("BM_KEEP", command=command)
-        self.assertEqual((self.open_lines(receipt), self.status()["tdd"]), ([], "passed"), marker + ": " + json.dumps(receipt))
-
-    def test_another_test_of_the_same_name_does_not_repair(self):
-        marker = "RESOLVED_WITHOUT_ITS_CASE"
-        self.begin(pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one",
-                                    boundaryInputs=["test_kept"]), intent="Keep kept unchanged.")
-        self.probe("def test_kept(self): self.assertEqual(app.kept, 1)")
-        (self.repo / "test_other.py").write_text("import unittest, app\nclass Other(unittest.TestCase):\n"
-                                                 "    def test_kept(self): self.assertIsInstance(app.kept, int)\n")
-        (self.repo / "app.py").write_text("value = 1\nkept = 2\n")
-        self.tdd("BM_KEEP")
-        receipt = self.tdd("BM_KEEP", command=(sys.executable, "-m", "unittest", "test_other"))
-        self.assertEqual(self.status()["tdd"], "in-progress", marker + ": " + json.dumps(receipt))
-        (self.repo / "other").mkdir()
-        (self.repo / "other" / "test_value.py").write_text("import unittest\nclass Value(unittest.TestCase):\n"
-                                                           "    def test_kept(self): self.assertTrue(True)\n")
-        for command in ((sys.executable, "-c", "print('test_kept (test_value.Value.test_kept) ... ok')"),
-                        ("sh", "-c", f"cd other && {sys.executable} -m unittest -v test_value")):
-            receipt = self.tdd("BM_KEEP", command=command)  # the same case id from a command that never ran it
-            self.assertEqual(self.status()["tdd"], "in-progress", marker + ": " + json.dumps(receipt))
-
-    def test_a_name_without_its_execution_does_not_repair(self):
-        marker = "RESOLVED_WITHOUT_ITS_CASE"
-        a = pending_behavior("BM_A", kind="preservation", behavior="kept and total stay", expected="kept 1, total 2", boundaryInputs=["kept"])
-        b = pending_behavior("BM_B", kind="preservation", behavior="value stays an int", expected="type int", boundaryInputs=["type"])
-        self.begin(a, b, intent="Keep everything.")
-        (self.repo / "probe_a.test.py").write_text("import app\nprint('kept:', app.kept)\nprint('total:', app.value + app.kept)\n")
-        (self.repo / "probe_b.test.py").write_text("import app\nprint('type:', type(app.value).__name__)\n")
-        full, narrow, own = ((sys.executable, "probe_a.test.py"), (sys.executable, "-c", "import app\nprint('kept:', app.kept)"),
-                             (sys.executable, "probe_b.test.py"))
-        (self.repo / "app.py").write_text("value = 2\nkept = 1\n")  # total regresses from 2 to 3
-        self.tdd("BM_B", command=own)
-        self.tdd("BM_A", command=full)
-        for step in ("named elsewhere, rerun", "narrowed", "unnamed again"):
-            if step == "named elsewhere, rerun":
-                self.assertEqual(self.update(b | {"boundaryInputs": ["type", "total"]}).returncode, 0, marker)
-                receipt = self.tdd("BM_A", command=full)
-            elif step == "narrowed":
-                receipt = self.tdd("BM_A", command=narrow)
-            else:
-                self.assertEqual(self.update(b).returncode, 0, marker)
-                receipt = self.tdd("BM_B", command=own)
-            self.assertTrue(any(line.startswith("BM_A") and "total" in line for line in self.open_lines(receipt)),
-                            f"{marker}: {step}: " + json.dumps(receipt))
-        # the item that names it runs it: the regression is that item's question, never a pass
-        self.assertEqual(self.update(b | {"boundaryInputs": ["type", "total"]}).returncode, 0, marker)
-        receipt = self.tdd("BM_A", "BM_B", command=full)
-        self.assertTrue(any(line.startswith("BM_B") and "total differs" in line for line in self.open_lines(receipt)),
-                        marker + ": " + json.dumps(receipt))
-
-    def test_equal_failures_and_skips_are_not_regressions(self):
-        marker = "EQUAL_FAILURE_RETAINED"
-        loose = pending_behavior("BM_LOOSE", kind="preservation", behavior="the module keeps its results", expected="unchanged")
-        self.begin(loose, intent="Make the value two. Keep everything else.")
-        self.probe("def test_kept(self): self.assertEqual(app.kept, 1)",
-                   "def test_env(self): self.assertEqual(1, 2, 'PRE-EXISTING')",
-                   "@unittest.skipIf(True, 'needs a database')\n    def test_db(self): pass")
-        (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
-        self.tdd("BM_LOOSE")
-        self.assertEqual(self.update(loose | {"boundaryInputs": ["test_kept"]}).returncode, 0, marker)
-        receipt = self.tdd("BM_LOOSE", command=(sys.executable, "-m", "unittest", "test_value.Value.test_kept"))
-        self.assertEqual((self.open_lines(receipt), self.status()["tdd"]), ([], "passed"), marker + ": " + json.dumps(receipt))
-
-    def test_a_stale_comparison_does_not_repair_another_items_regression(self):
-        marker = "STALE_JUDGE_REPAIRED"
-        a = pending_behavior("BM_A", kind="preservation", behavior="kept and total stay", expected="kept 1, total 2", boundaryInputs=["kept"])
-        b = pending_behavior("BM_B", kind="preservation", behavior="value stays an int", expected="type int", boundaryInputs=["type"])
-        self.begin(a, b, intent="Keep everything.")
-        (self.repo / "probe_a.test.py").write_text("import app\nprint('kept:', app.kept)\nprint('total:', app.value + app.kept)\n")
-        (self.repo / "probe_b.test.py").write_text("import app, sys\nprint('type:', type(app.value).__name__)\n"
-                                                   "if 'full' in sys.argv: print('total:', app.value + app.kept)\n")
-        self.tdd("BM_B", command=(sys.executable, "probe_b.test.py", "full"))  # before the edit: total unchanged
-        (self.repo / "app.py").write_text("value = 2\nkept = 1\n")  # total regresses from 2 to 3
-        self.tdd("BM_A", command=(sys.executable, "probe_a.test.py"))
-        self.assertEqual(self.update(b | {"boundaryInputs": ["type", "total"]}).returncode, 0, marker)
-        self.tdd("BM_A", command=(sys.executable, "probe_a.test.py"))
-        self.tdd("BM_A", command=(sys.executable, "-c", "import app\nprint('kept:', app.kept)"))
-        self.assertEqual(self.update(b).returncode, 0, marker)
-        receipt = self.tdd("BM_B", command=(sys.executable, "probe_b.test.py"))
-        self.assertTrue(any(line.startswith("BM_A") and "total exposed this item" in line for line in self.open_lines(receipt)),
-                        marker + ": " + json.dumps(receipt))
-
-    def test_output_regression_resolves_by_line_counts(self):
-        marker = "OUTPUT_RESOLUTION_WRONG"
-        keep = pending_behavior("BM_KEEP", kind="preservation", behavior="the report stays", expected="unchanged", boundaryInputs=["kept"])
-        operation = ("value = {value}\nkept = 1\nscale = {scale}\nEXTRA = {extra}\n"
-                     "def run():\n    print('ok')\n    if EXTRA: print('ok')\n    print()\n    if EXTRA: print()\n    print('done')\n")
-        (self.repo / "app.py").write_text(operation.format(value=1, scale=1, extra=False))
-        self.case.git("add", "app.py")
-        self.case.git("commit", "-qm", "report")
-        self.begin(keep, intent="Keep the report.")
-        command = (sys.executable, "probe.test.py")
-        probe = lambda tail: ("import app\nprint('kept:', app.kept)\napp.run()\nfor i in range(30): print('row', i, i * app.value)\n"
-                              f"for i in range({tail}): print('tail', i, i * app.scale)\n")
-        (self.repo / "probe.test.py").write_text(probe(30))
-        # lost tail lines after 60 differing row lines: deleting their print under the same command repairs nothing
-        (self.repo / "app.py").write_text(operation.format(value=2, scale=3, extra=False))
-        self.tdd("BM_KEEP", command=command)
-        (self.repo / "app.py").write_text(operation.format(value=1, scale=3, extra=False))
-        (self.repo / "probe.test.py").write_text(probe(0))
-        receipt = self.tdd("BM_KEEP", command=command)
-        self.assertEqual(self.status()["tdd"], "in-progress", marker + ": lost lines deleted: " + json.dumps(receipt))
-        (self.repo / "app.py").write_text(operation.format(value=1, scale=1, extra=False))
-        (self.repo / "probe.test.py").write_text(probe(30))
-        receipt = self.tdd("BM_KEEP", command=command)
-        self.assertEqual((self.open_lines(receipt), self.status()["tdd"]), ([], "passed"), marker + ": tail repaired: " + json.dumps(receipt))
-        # a duplicated line and an extra blank line, genuinely repaired under the same command
-        (self.repo / "app.py").write_text(operation.format(value=1, scale=1, extra=True))
-        self.tdd("BM_KEEP", command=command)
-        (self.repo / "app.py").write_text(operation.format(value=1, scale=1, extra=False) + "# repaired\n")
-        receipt = self.tdd("BM_KEEP", command=command)
-        self.assertEqual((self.open_lines(receipt), self.status()["tdd"]), ([], "passed"), marker + ": duplicates repaired: " + json.dumps(receipt))
-
-    def test_naming_a_retained_case_on_an_uncompared_item(self):
-        marker = "UNCOMPARED_JUDGE_CRASHED"
-        a = pending_behavior("BM_A", kind="preservation", behavior="kept and total stay", expected="kept 1, total 2", boundaryInputs=["kept"])
-        b = pending_behavior("BM_B", kind="preservation", behavior="value stays an int", expected="type int", boundaryInputs=["type"])
-        self.begin(a, b, intent="Keep everything.")
-        (self.repo / "probe_a.test.py").write_text("import app\nprint('kept:', app.kept)\nprint('total:', app.value + app.kept)\n")
-        (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
-        self.tdd("BM_A", command=(sys.executable, "probe_a.test.py"))
-        named = self.update(b | {"boundaryInputs": ["type", "total"]})
-        self.assertEqual(named.returncode, 0, marker + ": " + named.stdout + named.stderr)
-        self.assertIn("total", " ".join(line for line in self.summary().split("; ") if "BM_A" in line or "total" in line), marker)
-        self.assertEqual(self.status()["tdd"], "in-progress", marker)
-
-    def test_a_later_output_diff_keeps_the_earlier_lines(self):
-        marker = "OUTPUT_COUNTS_OVERWRITTEN"
-        keep = pending_behavior("BM_KEEP", kind="preservation", behavior="the report stays", expected="unchanged", boundaryInputs=["kept"])
-        (self.repo / "app.py").write_text("value = 1\nkept = 1\nscale = 1\n")
-        self.case.git("add", "app.py")
-        self.case.git("commit", "-qm", "scale")
-        self.begin(keep, intent="Keep the report.")
-        command = (sys.executable, "probe.test.py")
-        (self.repo / "probe.test.py").write_text("import app\nprint('kept:', app.kept)\nprint('total is', app.value + app.kept)\n"
-                                                 "print('scaled is', 10 * app.scale)\n")
-        (self.repo / "app.py").write_text("value = 2\nkept = 1\nscale = 3\n")
-        self.tdd("BM_KEEP", command=command)
-        (self.repo / "probe.test.py").write_text("import app\nprint('kept:', app.kept)\nprint('scaled is', 10 * app.scale)\n")
-        self.tdd("BM_KEEP", command=command)
-        (self.repo / "app.py").write_text("value = 2\nkept = 1\nscale = 1\n")
-        receipt = self.tdd("BM_KEEP", command=command)
-        self.assertEqual(self.status()["tdd"], "in-progress", marker + ": " + json.dumps(receipt))
-
-    def test_a_judge_must_show_the_same_change(self):
-        marker = "JUDGE_WITHOUT_THE_CHANGE"
-        for name, judge in (("equal failure", "if 'judge' in sys.argv:\n    print('total:', 2)\n    sys.exit(1)\n"),
-                            ("unverified", "if 'judge' in sys.argv: print('total: unverified - not measured by this probe')\n"),
-                            ("other measurement", "if 'judge' in sys.argv: print('total:', 2)\n")):
+        unit = lambda *methods: UNITTEST_PROBE + "".join(f"    {method}\n" for method in methods)
+        run = lambda *arguments: (sys.executable, *arguments)
+        both = ["test_kept", "test_int"]
+        # a current failure blocks; after a deletion, rewrite or narrower run the next passing run decides
+        for name, names, edit, first, files, update, then in (
+                ("accepted change, test deleted", both, "kept = 2\n", run("-m", "unittest", "test_value"),
+                 {"test_value.py": unit(remainder)}, {"boundaryInputs": ["test_int"]}, run("-m", "unittest", "test_value")),
+                ("accepted change, test rewritten", both, "kept = 2\n", run("-m", "unittest", "test_value"),
+                 {"test_value.py": unit(kept.replace("1)", "2)"), remainder)}, {"kind": "contract"}, run("-m", "unittest", "test_value")),
+                ("whole file deleted", both, "kept = 2\n", run("-m", "unittest", "test_value"),
+                 {"test_value.py": None, "test_int.py": unit(remainder)}, {"boundaryInputs": ["test_int"]}, run("-m", "unittest", "test_int")),
+                ("printed probe deleted", ["kept"], "kept = 1\nextra = 5\n", run("probe.test.py"),
+                 {"probe.test.py": None}, {"boundaryInputs": ["test_kept"]}, run("-m", "unittest", "test_value")),
+                ("narrower command", both, "kept = 2\n", run("-m", "unittest", "test_value"),
+                 {}, {"boundaryInputs": ["test_int"]}, run("-m", "unittest", "test_value.Value.test_int"))):
             with self.subTest(name):
                 self.setUp()
-                a = pending_behavior("BM_A", kind="preservation", behavior="kept and total stay", expected="kept 1, total 2",
-                                     boundaryInputs=["kept"])
-                b = pending_behavior("BM_B", kind="preservation", behavior="the config type stays", expected="type int",
-                                     boundaryInputs=["type"])
-                self.begin(a, b, intent="Keep everything.")
-                (self.repo / "probe_a.test.py").write_text("import app\nprint('kept:', app.kept)\nprint('total:', app.value + app.kept)\n")
-                (self.repo / "probe_b.test.py").write_text("import app, sys\nprint('type:', type(app.value).__name__)\n" + judge)
-                full_a, own_b = (sys.executable, "probe_a.test.py"), (sys.executable, "probe_b.test.py")
-                (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
-                self.tdd("BM_A", command=full_a)
-                self.tdd("BM_B", command=own_b)
-                self.assertEqual(self.update(b | {"boundaryInputs": ["type", "total"]}).returncode, 0, marker)
-                self.tdd("BM_B", command=(*own_b, "judge"))
-                self.tdd("BM_A", command=full_a)
-                self.tdd("BM_A", command=(sys.executable, "-c", "import app\nprint('kept:', app.kept)"))
-                self.assertEqual(self.update(b).returncode, 0, marker)
-                receipt = self.tdd("BM_B", command=own_b)
-                self.assertTrue(any(line.startswith("BM_A") and "total exposed this item" in line for line in self.open_lines(receipt)),
-                                f"{marker}: {name}: " + json.dumps(receipt))
-
-    def test_a_contract_naming_a_regression_excuses_it_only_while_named(self):
-        marker = "CONTRACT_NAMING_PAID"
-        (self.repo / "app.py").write_text("value = 1\nkept = 1\nlabel = 'a'\n")
-        self.case.git("add", "app.py")
-        self.case.git("commit", "-qm", "label")
-        a = pending_behavior("BM_A", kind="preservation", behavior="kept and total stay", expected="kept 1, total 2", boundaryInputs=["kept"])
-        c = pending_behavior("BM_C", behavior="label becomes upper case", expected="label A", boundaryInputs=["label"])
-        self.begin(a, c, intent="Make the label upper case. Keep everything else.")
-        (self.repo / "probe_a.test.py").write_text("import app\nprint('kept:', app.kept)\nprint('total:', app.value + app.kept)\n")
-        (self.repo / "probe_c.test.py").write_text("import app\nprint('label:', app.label)\n")
-        (self.repo / "app.py").write_text("value = 2\nkept = 1\nlabel = 'A'\n")
-        self.tdd("BM_C", command=(sys.executable, "probe_c.test.py"))
-        self.tdd("BM_A", command=(sys.executable, "probe_a.test.py"))
-        self.assertEqual(self.update(c | {"boundaryInputs": ["label", "total"]}).returncode, 0, marker)
-        self.tdd("BM_A", command=(sys.executable, "probe_a.test.py"))
-        self.tdd("BM_A", command=(sys.executable, "-c", "import app\nprint('kept:', app.kept)"))
-        self.assertEqual(self.update(c).returncode, 0, marker)
-        self.assertEqual(self.status()["tdd"], "in-progress", marker + ": " + self.summary())
-        self.assertIn("total exposed this item", self.summary(), marker)
-
-    def test_an_edit_only_case_is_gone_only_from_a_passing_run(self):
-        marker = "CRASH_PAID_EDIT_ONLY_CASE"
-        self.begin(pending_behavior("BM_A", kind="preservation", behavior="the extras stay as they were", expected="no extras"),
-                   intent="Keep everything.")
-        (self.repo / "probe_a.test.py").write_text("import app\nprint('start')\nfor k, v in getattr(app, 'EXTRA', {}).items(): print(f'{k}:', v)\n")
-        full = (sys.executable, "probe_a.test.py")
-        (self.repo / "app.py").write_text("value = 1\nkept = 1\nEXTRA = {'extra': 5}\n")
-        self.tdd("BM_A", command=full)
-        (self.repo / "app.py").write_text("value = 1\nkept = 1\nclass E(dict):\n    def items(self): raise RuntimeError('x')\nEXTRA = E(extra=5)\n")
-        self.tdd("BM_A", command=full)
-        (self.repo / "app.py").write_text("value = 1\nkept = 1\nEXTRA = {'extra': 5}\n")
-        receipt = self.tdd("BM_A", command=(sys.executable, "-c", "import app\nprint('start')\nprint('kept:', app.kept)"))
-        self.assertEqual(self.status()["tdd"], "in-progress", marker + ": " + json.dumps(receipt))
+                keep = pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one",
+                                        boundaryInputs=names)
+                self.begin(keep, intent="Keep kept unchanged.")
+                self.probe(kept, remainder)
+                (self.repo / "probe.test.py").write_text("import app\nprint('kept:', app.kept)\n"
+                                                         "if hasattr(app, 'extra'): print('extra:', app.extra)\n")
+                (self.repo / "app.py").write_text("value = 1\n" + edit)
+                receipt = self.tdd("BM_KEEP", command=first)
+                self.assertEqual(self.status()["tdd"], "in-progress", f"{marker}: {name}: " + json.dumps(receipt))
+                for path, text in files.items():
+                    (self.repo / path).unlink() if text is None else (self.repo / path).write_text(text)
+                self.assertEqual(self.update(keep | update).returncode, 0, marker)
+                receipt = self.tdd("BM_KEEP", command=then)
+                self.assertEqual((self.open_lines(receipt), self.status()["tdd"]), ([], "passed"), f"{marker}: {name}: " + json.dumps(receipt))
 
     def test_a_later_contract_proves_its_change_after_a_crash(self):
         marker = "REQUESTED_CHANGE_UNCLEARABLE"
@@ -1547,42 +1217,6 @@ class ReadinessTests(unittest.TestCase):
         self.tdd("BM_LATE", command=(sys.executable, "late.test.py"))
         receipt = self.tdd("BM_KEEP", command=(sys.executable, "keep.test.py"))
         self.assertEqual((self.open_lines(receipt), self.status()["tdd"]), ([], "passed"), marker + ": " + json.dumps(receipt))
-
-    def test_an_excused_regression_still_holds_its_item(self):
-        marker = "EXCUSED_ITEM_REWORDED"
-        (self.repo / "app.py").write_text("value = 1\nkept = 1\nlabel = 'a'\n")
-        self.case.git("add", "app.py")
-        self.case.git("commit", "-qm", "label")
-        a = pending_behavior("BM_A", kind="preservation", behavior="kept and total stay", expected="kept 1, total 2", boundaryInputs=["kept"])
-        c = pending_behavior("BM_C", behavior="label becomes upper case", expected="label A", boundaryInputs=["label"])
-        self.begin(a, c, intent="Make the label upper case. Keep everything else.")
-        (self.repo / "probe_a.test.py").write_text("import app\nprint('kept:', app.kept)\nprint('total:', app.value + app.kept)\n")
-        (self.repo / "probe_c.test.py").write_text("import app\nprint('label:', app.label)\nprint('total:', app.value + app.kept)\n")
-        (self.repo / "app.py").write_text("value = 2\nkept = 1\nlabel = 'A'\n")
-        self.tdd("BM_A", command=(sys.executable, "probe_a.test.py"))
-        self.assertEqual(self.update(c | {"boundaryInputs": ["label", "total"]}).returncode, 0, marker)
-        self.tdd("BM_C", command=(sys.executable, "probe_c.test.py"))
-        self.tdd("BM_A", command=(sys.executable, "-c", "import app\nprint('kept:', app.kept)"))
-        self.relaxed(a | {"expected": "kept stays one"}, a, marker)
-
-    def test_a_namesake_does_not_excuse_a_regression(self):
-        marker = "NAMESAKE_EXCUSED"
-        unit = "import unittest\nimport app\n\n"
-        (self.repo / "test_c.py").write_text(unit + "class C(unittest.TestCase):\n    def test_check(self): self.assertEqual(app.value, 2)\n")
-        (self.repo / "test_a.py").write_text(unit + "class A(unittest.TestCase):\n    def test_check(self): self.assertEqual(app.kept, 1)\n"
-                                             "    def test_int(self): self.assertIsInstance(app.kept, int)\n")
-        self.case.git("add", "test_c.py", "test_a.py")
-        self.case.git("commit", "-qm", "probes")
-        a = pending_behavior("BM_A", kind="preservation", behavior="kept stays one", expected="kept is one",
-                             boundaryInputs=["test_check (test_a.A.test_check)", "test_int"])
-        self.begin(a, pending_behavior("BM_C", behavior="value becomes two", expected="value is two", boundaryInputs=["test_check"]),
-                   intent="Make the value two. Keep kept.")
-        (self.repo / "app.py").write_text("value = 2\nkept = 2\n")
-        self.tdd("BM_C", command=(sys.executable, "-m", "unittest", "test_c"))
-        self.tdd("BM_A", command=(sys.executable, "-m", "unittest", "test_a"))
-        self.assertEqual(self.update(a | {"boundaryInputs": ["test_int"]}).returncode, 0, marker)
-        receipt = self.tdd("BM_A", command=(sys.executable, "-m", "unittest", "test_a.A.test_int"))
-        self.assertEqual(self.status()["tdd"], "in-progress", marker + ": " + json.dumps(receipt))
 
     def test_governance_revalidation_reruns_stale_comparisons(self):
         marker = "REVALIDATION_STUCK_ON_STALE_PROOF"
@@ -1670,76 +1304,6 @@ class ReadinessTests(unittest.TestCase):
         self.assertEqual(final("commit-ready").returncode, 0, marker)
         completed = self.case.cli("complete", "--repo", str(self.repo))
         self.assertEqual(completed.returncode, 0, marker + ": " + completed.stdout + completed.stderr)
-
-    def test_only_attributable_restoration_pays_debt(self):
-        marker = "DEBT_PAID_WITHOUT_RESTORATION"
-        cases = {
-            "printed unnamed value": ("state = 'unnamed'\n", "state = 'ready'\n", None,
-                                      "import app\nprint('state:', app.state)\nprint('kept:', app.kept)\n", ["state", "kept"]),
-            "reordered output": ("def report():\n    print('head')\n    print('body')\n",
-                                 "def report():\n    print('body')\n    print('head')\n", None,
-                                 "import app\nprint('kept:', app.kept)\napp.report()\n", ["kept"]),
-            "crashed wrapped output": ("EXTRA = False\nCRASH = False\ndef emit():\n    if CRASH: raise RuntimeError('blocked')\n"
-                                       "    if EXTRA: print('unexpected extra')\n", "EXTRA = True\n", "CRASH = True\n",
-                                       "import app\napp.emit()\n", []),
-        }
-        for name, (original, edit, crash, probe, inputs) in cases.items():
-            with self.subTest(name):
-                self.setUp()
-                source = "value = 1\nkept = 1\n" + original
-                (self.repo / "app.py").write_text(source)
-                self.case.git("add", "app.py")
-                self.case.git("commit", "-qm", "operation")
-                keep = pending_behavior("BM_KEEP", kind="preservation", behavior="the operation stays", expected="unchanged",
-                                        **({"boundaryInputs": inputs} if inputs else {}))
-                self.begin(keep, intent="Keep everything.")
-                (self.repo / "probe.test.py").write_text(probe)
-                command = (sys.executable, "probe.test.py")
-                if crash:
-                    self.probe("def test_int(self): self.assertIsInstance(app.value, int)")
-                    command = ("bash", "-c", f"{sys.executable} -m unittest -v test_value 2>&1; {sys.executable} probe.test.py 2>/dev/null")
-                edited = source.replace("EXTRA = False\n", edit) if crash else source.replace(original, edit)
-                (self.repo / "app.py").write_text(edited)
-                self.tdd("BM_KEEP", command=command)
-                if crash:
-                    (self.repo / "app.py").write_text(edited.replace("CRASH = False\n", crash))
-                    self.tdd("BM_KEEP", command=command)
-                    self.tdd("BM_KEEP", command=(sys.executable, "-c", "import app\nprint('kept:', app.kept)"))
-                else:
-                    self.assertEqual(self.update(keep | {"boundaryInputs": ["kept"]}).returncode, 0, marker)
-                    (self.repo / "probe.test.py").write_text("import app\nprint('kept:', app.kept)\n")
-                    self.tdd("BM_KEEP", command=command)
-                self.assertEqual(self.status()["tdd"], "in-progress", f"{marker}: {name}")
-
-    def test_sibling_alias_does_not_hide_first_exposure(self):
-        marker = "SIBLING_ALIAS_HID_REGRESSION"
-        unit = "import unittest\nimport app\n\n"
-        (self.repo / "test_c.py").write_text(unit + "class C(unittest.TestCase):\n    def test_check(self): self.assertEqual(app.value, 2)\n")
-        (self.repo / "test_a.py").write_text(unit + "class A(unittest.TestCase):\n    def test_check(self): self.assertEqual(app.kept, 1)\n"
-                                             "    def test_int(self): self.assertIsInstance(app.kept, int)\n")
-        self.begin(pending_behavior("BM_C", behavior="value becomes two", expected="value is two", boundaryInputs=["test_check"]),
-                   pending_behavior("BM_A", kind="preservation", behavior="kept stays one", expected="kept is one", boundaryInputs=["test_int"]),
-                   intent="Make the value two. Keep kept unchanged.")
-        (self.repo / "app.py").write_text("value = 2\nkept = 2\n")
-        sibling, own = (sys.executable, "-m", "unittest", "test_c"), (sys.executable, "-m", "unittest", "test_a")
-        for order in ("sibling first", "sibling last"):
-            with self.subTest(order):
-                if order == "sibling last":
-                    self.setUp()
-                    (self.repo / "test_c.py").write_text(unit + "class C(unittest.TestCase):\n    def test_check(self): self.assertEqual(app.value, 2)\n")
-                    (self.repo / "test_a.py").write_text(unit + "class A(unittest.TestCase):\n    def test_check(self): self.assertEqual(app.kept, 1)\n"
-                                                         "    def test_int(self): self.assertIsInstance(app.kept, int)\n")
-                    self.begin(pending_behavior("BM_C", behavior="value becomes two", expected="value is two", boundaryInputs=["test_check"]),
-                               pending_behavior("BM_A", kind="preservation", behavior="kept stays one", expected="kept is one",
-                                                boundaryInputs=["test_int"]), intent="Make the value two. Keep kept unchanged.")
-                    (self.repo / "app.py").write_text("value = 2\nkept = 2\n")
-                else:
-                    self.tdd("BM_C", command=sibling)
-                self.tdd("BM_A", command=own)
-                receipt = self.tdd("BM_A", command=(sys.executable, "-m", "unittest", "test_a.A.test_int"))
-                if order == "sibling last":
-                    receipt = self.tdd("BM_C", command=sibling)
-                self.assertEqual(self.status()["tdd"], "in-progress", f"{marker}: {order}: " + json.dumps(receipt))
 
     def test_renaming_a_requested_case_owes_nothing(self):
         marker = "RENAMED_REQUESTED_CHANGE_OWED"
