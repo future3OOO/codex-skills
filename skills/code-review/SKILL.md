@@ -31,9 +31,10 @@ you reviewed.
 
 Trace the affected Seam through related modules, callers, callees, other writers
 of shared state and competing implementations. Inspect governing artifacts and
-named no-change surfaces using the recorded Repo Context Forge packet, GitNexus
-evidence and source. Do not begin a workflow, run the Repo Context Forge
-bootstrap, or mutate workflow state: the lead's pass owns those operations.
+named no-change surfaces using the recorded Repo Context Forge packet (the
+package's `advisor-projection` channel), GitNexus evidence and source. Do not
+begin a workflow, run the Repo Context Forge bootstrap, or mutate workflow
+state: the lead's pass owns those operations.
 Write the reviewer intake JSON required below. On continuation, inspect
 the correction delta and affected preservation/interactions; reuse the unchanged
 contract, instructions and applicable evidence. Report when the prior context is
@@ -70,7 +71,7 @@ expected/observed results under those same verification rules.
 
 ## 5. Review both axes
 
-Apply TDD's [MC/DC](../tdd/tests.md#mcdc) to the diff: for every condition the edit adds, removes, weakens, strengthens or rewrites, check that each feasible decisive context has its pair executed on both sources in the item owning its Interface, or an executed case showing on both sources that the context cannot be reached. Judge each listed contract change (a changed kind, a contract item added or re-worded, contract cases added, a case dropped) against the original request, and a finding-owned one against its owning finding's immutable claim; a listing authorizes nothing. A check that finds words in the request or confirms the observed difference does not refute a finding that the difference is unauthorized. Reuse applicable proof; the packet's `open` and `contractChanges` lines are the readiness result, not a second inventory.
+Apply TDD's [MC/DC](../tdd/tests.md#mcdc) to the diff: for every condition the edit adds, removes, weakens, strengthens or rewrites, check that each feasible decisive context has its pair executed on both sources in the item owning its Interface, or an executed case showing on both sources that the context cannot be reached. Run each missing pair yourself on both sources: extract the original with `original=$(mktemp -d) && git archive <passStartOid> | tar -x -C "$original"`, using the package's `passStartOid`; keep the probe in its own temporary directory, and leave the checkout's `git status` unchanged. Do not re-run the lead's recorded cases. Judge each listed contract change (a changed kind, a contract item added or re-worded, contract cases added, a case dropped) against the original request, and a finding-owned one against its owning finding's immutable claim; a listing authorizes nothing. A check that finds words in the request or confirms the observed difference does not refute a finding that the difference is unauthorized. Reuse applicable proof; the packet's `open` and `contractChanges` lines are the readiness result, not a second inventory.
 
 Report one finding per owning Module and violated invariant: list every demonstrated input as a case of that finding and sketch the owner's class-wide correction, not one instance; a further input to an already-reported owner and invariant is a case of that finding (priorFinding), not a new finding.
 
@@ -91,8 +92,8 @@ and the smallest correction.
 ## 6. Return structured output
 
 Return the reviewed checkout/workflow/tree and a Standards/Spec report with the
-actual receipt references. Write the immutable intake directly as JSON for the
-lead's `--input`; do not make the lead transcribe findings. Continuations report
+actual receipt references in your reply, not in the intake. Write the immutable
+intake as a JSON file for the lead's `--input`. Continuations report
 original identities as corrected, still present or awaiting evidence, and intake
 only new findings. An empty return cannot close an earlier unresolved finding:
 
