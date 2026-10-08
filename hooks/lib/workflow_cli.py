@@ -63,7 +63,7 @@ RECORD_SHAPES = {
                        'fix-before-commit|context-mismatch"}, or --verdict unavailable --reason TEXT'),
     "advisor-disposition": ("--finding F --fixed [--behavior-id BM]; or --finding F "
                             "--rejected|--report-only|--follow-up REF --reason TEXT; or --findings none"),
-    "tdd-map": f'{{"items":[{ITEM_SHAPE}]}}; a recorded item needs only id and the changed fields, null removes one',
+    "tdd-map": f'{{"items":[{ITEM_SHAPE}]}}; a recorded item needs only id and the changed fields, null removes an optional one',
 }
 DISPOSITION_FLAGS = {"fixed": "fixed", "rejected": "rejected-with-evidence", "report_only": "report-only"}
 # Failing checks' first five locations, then the first six active findings with three each. Each location

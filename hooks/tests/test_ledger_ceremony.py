@@ -1476,7 +1476,7 @@ class MinimalDocuments(Ceremony):
         marker = "DESCRIPTION_RECORDED_AS_CASE"
         self.begin()
         draft, envelope = self.tmp / "draft.json", json.dumps({"schemaVersion": 1, "verdict": "approved", "findings": []})
-        for names, code in ((["test_kept: kept stays one"], 2), (["t.py::test_kept[a: b]", "kept"], 0)):
+        for names, code in ((["test_kept: kept stays one"], 2), (["t.py::test_kept: kept stays one"], 2), (["t.py::test_kept[a: b]", "kept"], 0)):
             draft.write_text(json.dumps({"authoritativeContract": "c", "behaviorMap": [item("BM_ONE", boundaryInputs=names)]}))
             checked = self.cli("record", "advisor-result", "--check", "--stage", "preflight", "--input", "-",
                                "--preflight-file", str(draft), input=envelope)
