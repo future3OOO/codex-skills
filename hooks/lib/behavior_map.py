@@ -379,12 +379,14 @@ def _owed(entry: JsonObject, items: list[JsonObject], cases: dict[str, dict[str,
           exposing: dict[str, object]) -> dict[str, dict[str, object]]:
     """The one rule that clears a regression. Per command, an item owes every observation that exposed
     it, kept from its first exposure with the original tree's result. The debt is paid only when that
-    command runs again and restores it: the case runs and passes unchanged on both trees, a case only
-    the edited source produced is gone from a passing run, each lost output line is printed by a passing
-    run as often as the original printed it; a contract item's own requested case passes verified. An
-    observation that differs in this comparison is owed by it. A missing, skipped, unverified or
-    renamed case, another command, another item or a passing remainder pays nothing; another contract
-    naming the case only excuses it (`judgement`)."""
+    command, or for a case exposed by a directly invoked unittest or pytest run (whose ids are the same
+    for every such run from the checkout root) any such run, executes the case again and restores it:
+    it passes on the original again and unchanged on current, or it is a contract item's own requested case passing verified, the original passing again if it passed when exposed; a case
+    only the edited source produced must be gone, and each lost output line printed as often as the
+    original printed it, under the command that exposed it. An observation that differs in this
+    comparison is owed by it. A missing, skipped, unverified or renamed case, a command that does not
+    run it, another item or a passing remainder pays nothing; another contract naming the case only
+    excuses it (`judgement`)."""
     run = entry["comparison"]
     command, before, after = run.get("command"), run["arms"][0]["outcome"], run["arms"][-1]["outcome"]
     own = {case for name in entry.get("boundaryInputs") or [] for case in _matched(name, cases)[0]} if entry.get("kind") == "contract" else set()
@@ -397,13 +399,24 @@ def _owed(entry: JsonObject, items: list[JsonObject], cases: dict[str, dict[str,
         if result is None:
             return current is None and after == "passed"
         return _passed(current, after) and not unverified(current) and (
-            observation in own or _passed(original, before) and not _differs(original, current))
+            observation in own and (result != "passed" or _passed(original, before))
+            or _passed(original, before) and not _differs(original, current))
 
     stored = run.get("regressions") or {}
-    pending = {**exposing, **stored.get(command, {})}
-    owed = {**stored, command: {observation: result for observation, result in pending.items()
-                                if observation in exposing or not paid(observation, result)}}
-    return {key: results for key, results in owed.items() if results}
+    owed = {}
+    for key, results in {**stored, command: {**exposing, **stored.get(command, {})}}.items():
+        here = lambda observation: key == command or (_direct(key) and _direct(command)
+                                                      and cases.get(observation, {}).get("current") is not None)
+        if kept := {observation: result for observation, result in results.items()
+                    if key == command and observation in exposing or not (here(observation) and paid(observation, result))}:
+            owed[key] = kept
+    return owed
+
+
+def _direct(command: str | None) -> bool:
+    """A unittest or pytest run invoked directly, not by discovery from another start directory."""
+    surface = tdd_surface.identify(shlex.split(command or ""))
+    return surface.get("runner") in tdd_surface.NATIVE_RUNNERS and (surface.get("arguments") or [""])[0] != "discover"
 
 
 def judgement(entry: JsonObject, items: list[JsonObject], cases: dict[str, dict[str, JsonObject]] | None = None) -> JsonObject | None:
@@ -440,7 +453,7 @@ def approved_contracts(items: list[JsonObject], recorded: list[JsonObject] | Non
 def _retained_line(command: str, observations: list[str]) -> str:
     what = ", ".join(dict.fromkeys("its differing output" if key.startswith(OUTPUT_LINE) else case_label(key) for key in observations))
     return (f"{what} exposed this item under `{command}` and has not come back since: repair the code and rerun "
-            "that command; a passing remainder is not a repair")
+            "it; a passing remainder is not a repair")
 
 
 def open_obligations(items: list[JsonObject]) -> list[str]:
@@ -468,6 +481,8 @@ def open_obligations(items: list[JsonObject]) -> list[str]:
                     f"{name} " + ", ".join(f"{_state(cases.get(case, {}).get(label))} on {label}" for label in ("original", "current"))
                     for name in entry["boundaryInputs"]
                     for case in [next(iter(_matched(name, cases)[0]), None)])
+            elif entry.get("boundaryInputs"):
+                reason += "; its cases: " + ", ".join(map(str, entry["boundaryInputs"]))
             if judged := judgement(entry, items, cases):
                 reason += "".join(f"; {_retained_line(key, seen)}" for key, seen in judged["retained"].items())
             lines.append(head + reason)

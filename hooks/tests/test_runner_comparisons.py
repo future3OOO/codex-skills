@@ -1237,6 +1237,8 @@ class ReadinessTests(unittest.TestCase):
         marker = "CASE_NAMES_FROZEN"
         change = pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two", boundaryInputs=["test_value_planned"])
         self.begin(change, intent="Make the value two.")
+        paused = json.loads(self.case.cli("pause", "--repo", str(self.repo), "--reason", "inspect").stdout)
+        self.assertIn("its cases: test_value_planned", paused["next"]["input"], "MAPPED_CASE_UNSHOWN")
         self.probe("def test_value(self): self.assertEqual(app.value, 2)")
         (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
         [line] = self.open_lines(self.tdd("BM_CHANGE"))
@@ -1277,14 +1279,35 @@ class ReadinessTests(unittest.TestCase):
         self.probe("def test_kept(self): self.assertEqual(app.kept, 1)", remainder)
         (self.repo / "app.py").write_text("value = 1\nkept = 2\n")
         self.assertTrue(self.open_lines(self.tdd("BM_KEEP")), marker)
-        (self.repo / "app.py").write_text("value = 1\nkept = 1\n")
-        receipt = self.tdd("BM_KEEP")
+        (self.repo / "app.py").write_text("value = 1\nkept = 1\n")  # repaired, judged by another command running the case
+        receipt = self.tdd("BM_KEEP", command=(sys.executable, "-m", "unittest", "test_value.Value.test_kept", "test_value.Value.test_int"))
         self.assertEqual((self.open_lines(receipt), self.status()["tdd"]), ([], "passed"), marker + ": " + json.dumps(receipt))
         # a resolved regression stays resolved once its case leaves the batch
         self.probe(remainder)
         self.assertEqual(self.update(keep | {"boundaryInputs": ["test_int"]}).returncode, 0, marker)
         receipt = self.tdd("BM_KEEP")
         self.assertEqual((self.open_lines(receipt), self.status()["tdd"]), ([], "passed"), marker + ": " + json.dumps(receipt))
+
+    def test_an_original_that_never_ran_the_case_pays_no_debt(self):
+        marker = "INVALID_ORIGINAL_PAID_DEBT"
+        requested, kept = "def test_value(self): self.assertEqual(app.value, 2)", "def test_kept(self): self.assertEqual(app.kept, 1)"
+        for mode, invalid in (("skipped", "@unittest.skipIf(app.value == 1, 'original skipped')\n    " + kept),
+                              ("missing", "if app.value != 1:\n        " + kept),
+                              ("setup error", "def setUp(self):\n        if app.value == 1 and 'kept' in self.id(): raise RuntimeError('setup')\n    " + kept)):
+            with self.subTest(mode=mode):
+                item = pending_behavior("BM_CHANGE", behavior="value becomes two; kept stays one",
+                                        expected="value two; kept one", boundaryInputs=["test_value", "test_kept"])
+                self.begin(item, intent="Make value two. Keep kept one.")
+                self.probe(requested, kept)
+                (self.repo / "app.py").write_text("value = 2\nkept = 2\n")
+                self.tdd("BM_CHANGE")
+                (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
+                self.probe(requested, invalid)
+                self.tdd("BM_CHANGE", command=(sys.executable, "-m", "unittest", "--locals", "test_value"))
+                self.probe(requested)
+                self.assertEqual(self.update(item | {"boundaryInputs": ["test_value"]}).returncode, 0, marker)
+                self.tdd("BM_CHANGE", command=(sys.executable, "-m", "unittest", "test_value.Value.test_value"))
+                self.assertEqual(self.status()["tdd"], "in-progress", marker)
 
     def test_dropped_output_does_not_repair_its_regression(self):
         marker = "RESOLVED_WITHOUT_ITS_CASE"
@@ -1315,6 +1338,13 @@ class ReadinessTests(unittest.TestCase):
         self.tdd("BM_KEEP")
         receipt = self.tdd("BM_KEEP", command=(sys.executable, "-m", "unittest", "test_other"))
         self.assertEqual(self.status()["tdd"], "in-progress", marker + ": " + json.dumps(receipt))
+        (self.repo / "other").mkdir()
+        (self.repo / "other" / "test_value.py").write_text("import unittest\nclass Value(unittest.TestCase):\n"
+                                                           "    def test_kept(self): self.assertTrue(True)\n")
+        for command in ((sys.executable, "-c", "print('test_kept (test_value.Value.test_kept) ... ok')"),
+                        ("sh", "-c", f"cd other && {sys.executable} -m unittest -v test_value")):
+            receipt = self.tdd("BM_KEEP", command=command)  # the same case id from a command that never ran it
+            self.assertEqual(self.status()["tdd"], "in-progress", marker + ": " + json.dumps(receipt))
 
     def test_a_name_without_its_execution_does_not_repair(self):
         marker = "RESOLVED_WITHOUT_ITS_CASE"
