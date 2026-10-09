@@ -50,15 +50,14 @@ Repo Context Forge analysis copy. For codex-skills installation, follow
   primary proof. Mocks, stubs, fakes, fixture-substituted collaborators, invented
   gateways, and test-only adapters never prove behavior. Capturing a Module's
   own outgoing process boundary proves only what it emits. `$production-code`
-  owns the comparison procedure. For the code being changed, reuse the project's
-  relevant cases, fixtures and assertions through the responsible production
-  Module's Interface. Use an enclosing operation only when the assertion concerns
-  that operation's behavior or integration.
-- **Attack probes first.** Unit tests must themselves probe real production
-  behavior. Maximize attack coverage across affected inputs, failures,
-  interactions, and preservation. Prove each changed line with a direct N/N+1
-  probe that calls it. Add an existing test only when it calls the changed code
-  directly; never run whole classes, modules or suites. Never duplicate retained probes with a parallel unit-test suite.
+  owns the comparison procedure. Reuse the project's fixtures and assertions
+  inside direct probes; use an enclosing operation only when the assertion
+  concerns that operation's behavior or integration.
+- **Attack probes first.** Maximize attack coverage across affected inputs,
+  failures, interactions, and preservation. Prove each changed line with a
+  direct N/N+1 probe that calls it. Add an existing test only when it calls the
+  changed code directly; never run whole classes, modules or suites. Never
+  duplicate retained probes with a parallel unit-test suite.
 - **Imaginary-risk ban.** A theoretical risk with no demonstrated failure is a
   report line, not a system. Build nothing for it.
 - **Root-cause-first.** Use `$diagnose` for bugs, failures, flaky behavior, and
