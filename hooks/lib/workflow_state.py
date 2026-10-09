@@ -30,7 +30,7 @@ from ._workflow_db import (
 )
 from .advisor_diff import current_pass_evidence
 from .repo_identity import RepoIdentity
-from .workflow_documents import validate_advisor_projection, validate_design_declaration
+from .workflow_documents import RECORD_SHAPES, validate_advisor_projection, validate_design_declaration
 from .state_store import (
     _active_candidate_tree,
     _paths,
@@ -1996,6 +1996,7 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
             str(identity.root), f"{state['passStartOid']}^{{tree}}", candidate, since=since)),
     }
     result["channels"] = []
+    Path(channel_dir).mkdir(parents=True, exist_ok=True)
     for position, (name, description) in enumerate(CHANNELS):
         evidence, content = values[name]
         if not content:
@@ -2315,7 +2316,7 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
                 if preflight_file:
                     command += ["--preflight-file", preflight_file]
                 else:
-                    needed.append("--preflight-file <current-draft.json>")
+                    needed.append("--preflight-file <current-draft.json>" + ("" if isinstance(draft, dict) else " shaped " + RECORD_SHAPES["preflight"]))
             return {"command": shlex.join(command), "input": "; ".join(needed)}
         command = [*cli, "paths", "--repo", str(identity.root), "--workflow-id", str(state["workflowId"])]
     elif action in {"tdd", "run-mapped-tdd", "code-review", "close-current-findings", "address-review-findings"}:
@@ -2328,12 +2329,13 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
                    for f in state.get("findingStates", []) if _finding_unresolved(f)]
         if producer[-1] == "advisor-disposition" and pending:
             command += ["--finding", str(pending[0]["findingId"])]
+        ids = [str(entry["id"]) for entry in _map_items(evidence_document(
+            identity, state.get("tddEvidence") or state.get("preflightEvidence"))) or []] if producer == ["tdd"] else []
         operation: JsonObject = {"command": shlex.join(command + (["--input", "-"] if producer[-1] == "review" else [])),
-                                "help": shlex.join([*cli, *producer, "--help"]),
                                 "input": {
-                                    "review": "independent review findings on stdin",
+                                    "review": "independent review findings on stdin: " + RECORD_SHAPES["review"],
                                     "advisor-disposition": "--fixed, --rejected, --report-only or --follow-up REFERENCE; --reason for the judgment",
-                                    "tdd": "--behavior-id and real command after --",
+                                    "tdd": f"--behavior-id ID (repeatable; recorded: {', '.join(ids) or 'none'}) -- COMMAND [ARG...]",
                                 }[producer[-1]]}
         if pending:
             operation["findings"] = pending

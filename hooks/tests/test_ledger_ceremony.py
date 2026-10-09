@@ -222,6 +222,7 @@ class PreflightContinuation(Ceremony):
             for required in ("--preflight-file", "--design-file", "--design-absent", "stdin"):
                 self.assertIn(required, operation["input"], marker)
         self.assertIn("preflight-advice", self.ok_raw("summary"), marker)
+        self.assertIn('"authoritativeContract"', self.ok_raw("summary"), marker)
 
     def test_changes_required_guidance_resumes_with_the_recorded_design(self) -> None:
         self.begin()
@@ -237,6 +238,7 @@ class PreflightContinuation(Ceremony):
             self.assertEqual(args[args.index("--design-absent") + 1], "single owner repair", marker)
             self.assertIn("--preflight-file", operation["input"], marker)
         self.assertIn("--reconsult", receipt["next"]["command"], marker)
+        self.assertNotIn('"authoritativeContract"', receipt["next"]["input"], marker)
         self.assertIn(receipt["next"]["command"], self.ok_raw("summary"), marker)
 
     def test_approved_command_records_its_retained_draft_from_scratch(self) -> None:
@@ -480,10 +482,10 @@ class ChannelManifest(Ceremony):
         marker = "CHANNEL_MANIFEST_MISSING"
         (self.repo / "app.py").write_text("value = 3\nother = 1\n", encoding="utf-8")
         self.begin()
-        channels_dir = self.tmp / "channels"
-        channels_dir.mkdir()
-        point = self.cli("checkpoint", "--phase", "preflight-advice", "--channel-dir", str(channels_dir))
-        self.assertEqual(point.returncode, 0, f"{marker}: {point.stderr[-300:]}")
+        channels_dir = self.tmp / "channels" / "missing"
+        for _ in range(2):  # created when missing, reused when present
+            point = self.cli("checkpoint", "--phase", "preflight-advice", "--channel-dir", str(channels_dir))
+            self.assertEqual(point.returncode, 0, f"{marker}: {point.stderr[-300:]}")
         document = json.loads(point.stdout)
         channels = document.get("channels")
         self.assertIsInstance(channels, list, marker)
@@ -1034,7 +1036,7 @@ class ObservedCapture(Ceremony):
         self.assertEqual(observed.returncode, direct.returncode, marker)
         self.assertIn("VALUE_NOT_TWO", observed.stdout + observed.stderr, marker)
         self.assertIn("workflow.py tdd --repo", observed.stderr, "OBSERVATION_BYPASSES_TDD")
-        self.assertIn("--behavior-id and real command after --", observed.stderr, "COMPARISON_INPUTS_HIDDEN")
+        self.assertIn("--behavior-id ID (repeatable; recorded: BM_ONE) -- COMMAND", observed.stderr, "COMPARISON_INPUTS_HIDDEN")
         state = self.state()
         self.assertEqual(state["verification"], verification, f"{marker}: observation changed verification")
         runs = evidence_document(resolve_repo_identity(self.repo), str(state["verificationLatestEvidence"]))["runs"]
@@ -1229,13 +1231,14 @@ class ObservedInWorkflow(Ceremony):
     def test_the_typed_gate_summary_stays_bounded(self) -> None:
         marker = "VERIFY_OUTPUT_UNBOUNDED"
         self.begin()
-        printed = self.gate(150).stdout  # 153 duplicated regions: 24,748 bytes printed whole before
+        gated = self.gate(150)
+        printed = gated.stderr  # 153 duplicated regions: 24,748 bytes printed whole before
         self.assertTrue(printed.startswith("Production Code Quality Gate\nverdict: fail")
                         and "- QG54-OWNER-COMPETITION-PRODUCTION [" in printed, f"GATE_SUMMARY_NOT_SHOWN: {printed[:80]}")
         self.assertLessEqual(len(printed.encode()), 6000, marker)
         self.assertIn("- no-quality-escapes: fail (escape00.py:1, escape01.py:1, escape02.py:1, +8 more)", printed, marker)
         self.assertIn(", +150 more", printed, marker)
-        receipt = json.loads(printed.splitlines()[-1])
+        receipt = json.loads(gated.stdout)
         self.assertTrue(receipt["valid"] is False and receipt["next"]["command"], f"{marker}: {receipt}")
         run = evidence_document(resolve_repo_identity(self.repo), str(self.state()["verificationLatestEvidence"]))["runs"][-1]
         self.assertEqual(set(run["gate"]), {"ok", "errors"}, "GATE_WARNINGS_HIDDEN")
@@ -1256,14 +1259,14 @@ class ObservedInWorkflow(Ceremony):
         marker = "VERIFY_OUTPUT_OVER_BYTE_BOUND"
         self.begin()
         self.multibyte(4)
-        printed = self.gate().stdout
+        printed = self.gate().stderr
         self.assertLessEqual(len(printed.encode()), 6000, f"{marker}: {len(printed)} characters")
 
     def test_the_printed_projection_is_bounded_in_bytes(self) -> None:
         marker = "PROJECTION_OVER_BYTE_BOUND"
         self.begin()  # just past each cutoff: 7 locations per check and finding, locations over 100 JSON-escaped bytes
         self.multibyte(7, chr(0x1F9EA) * 10, '"\\\x01' * 12)
-        ran = subprocess.run(self.retrieval(self.gate().stdout, marker)[1], shell=True, env=self.env,
+        ran = subprocess.run(self.retrieval(self.gate().stderr, marker)[1], shell=True, env=self.env,
                              capture_output=True, text=True)
         shown = ran.stdout
         at = [len(json.dumps(item, ensure_ascii=False).encode()) for line in shown.splitlines() for item in json.loads(line)["at"]]
@@ -1272,7 +1275,7 @@ class ObservedInWorkflow(Ceremony):
     def test_the_typed_gate_names_its_complete_retained_report(self) -> None:
         marker = "VERIFY_REPORT_NOT_RETAINED"
         self.begin()
-        printed = self.gate(150).stdout
+        printed = self.gate(150).stderr
         report, projection = self.retrieval(printed, marker)  # the save prints nothing
         shown = subprocess.run(projection, shell=True, env=self.env, capture_output=True, text=True)
         direct = subprocess.run([sys.executable, str(ROOT / "skills/production-code/scripts/code_quality_gate.py"), "check",
@@ -1282,16 +1285,16 @@ class ObservedInWorkflow(Ceremony):
                         and shown.returncode == 0 < len(shown.stdout.encode()) <= 4200
                         and "QG54-DUPLICATE-ADDED-BLOCK" in shown.stdout, marker)
         cut = self.gate(150, "--timeout", "0")  # no verdict, so no report to name
-        self.assertTrue(cut.returncode == 2 and "complete report" not in cut.stdout, f"{marker}: {cut.stdout[-300:]}")
+        self.assertTrue(cut.returncode == 2 and "complete report" not in cut.stderr and json.loads(cut.stdout)["valid"] is False, f"{marker}: {cut.stdout[-300:]}")
         self.git(self.repo, "commit", "--allow-empty", "-qm", "second base")  # overlapping runs over distinct bases
         bases = [subprocess.run(["git", "rev-parse", ref], cwd=self.repo, env=self.env, capture_output=True, text=True).stdout.strip()
                  for ref in ("HEAD", "HEAD~1")]
         racing = [subprocess.Popen([sys.executable, str(WORKFLOW), "verify", "--kind", "quality-gate", "--base-ref", base],
-                                   cwd=self.repo, env=self.env, stdout=subprocess.PIPE, text=True) for base in bases]
-        self.assertEqual([self.retrieval(run.communicate()[0], marker)[0]["evaluation"]["base"]["commit"] for run in racing], bases,
+                                   cwd=self.repo, env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for base in bases]
+        self.assertEqual([self.retrieval(run.communicate()[1], marker)[0]["evaluation"]["base"]["commit"] for run in racing], bases,
                          f"{marker}: overlapping runs")
         (self.repo / "later.py").write_text("LATER = 1\n", encoding="utf-8")
-        later = self.retrieval(self.cli("verify", "--kind", "quality-gate", "--base-ref", "HEAD").stdout, marker)[0]
+        later = self.retrieval(self.cli("verify", "--kind", "quality-gate", "--base-ref", "HEAD").stderr, marker)[0]
         self.assertTrue(later["candidateTree"] != report["candidateTree"] and self.retrieval(printed, marker)[0] == report, f"{marker}: earlier locator moved")
 
 class FlagDisposition(Ceremony):
@@ -1379,7 +1382,9 @@ class FlagDisposition(Ceremony):
         self.record_preflight({"authoritativeContract": "Create keeps its suppression", "behaviorMap": [item("BM_ATTACK", basis="fixture")]})
         (self.repo / "app.py").write_text("value = 2\nother = 1\n", encoding="utf-8")
         self.comparison(0, "BM_ATTACK")
-        self.ok_raw("verify", "--kind", "quality-gate", "--base-ref", "HEAD")
+        gate = self.cli("verify", "--kind", "quality-gate", "--base-ref", "HEAD")
+        handoff = json.loads(gate.stdout)["next"]  # a passing gate's stdout is its receipt alone
+        self.assertTrue(gate.returncode == 0 and '{"findings":' in handoff["input"] and "help" not in handoff and "complete report" not in gate.stderr)
         package = self.cli("checkpoint", "--phase", "code-review", "--channel-dir", str(self.tmp))
         self.assertEqual(package.returncode, 0, "REVIEW_PACKAGE_MISSING: " + package.stderr[-300:])
         channels = {channel["name"]: Path(channel["contentPath"]).read_text() for channel in json.loads(package.stdout)["channels"]}

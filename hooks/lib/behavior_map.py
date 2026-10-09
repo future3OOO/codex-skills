@@ -453,27 +453,32 @@ def comparison_view(run: JsonObject) -> JsonObject:
     surface = tdd_surface.identify(shlex.split(run["command"])) if run.get("command") else {}
     runner = _runner(run)
     outcomes = dict(zip(labels, (arm["outcome"] for arm in run["arms"])))
-    groups: dict[tuple[str, str], list[str]] = {}
+    groups: dict[tuple[bool, tuple], list[str]] = {}
     for name, by_tree in sorted(cases.items()):
         original, current = by_tree.get("original"), by_tree.get("current")
         if _passed(current, outcomes["current"]) and all(not _differs(original, by_tree.get(label)) for label in labels):
             continue
-        pattern = ", ".join(f"{label}={_state(by_tree.get(label))}"
-                            + (" (stopped)" if by_tree.get(label, {}).get("execution") == "stopped" else "")
-                            + (f" ({by_tree[label]['subtests']} subtests)" if by_tree.get(label, {}).get("subtests") else "")
-                            for label in labels)
-        assertions = tuple(dict.fromkeys(" ".join(part.split()) for label in labels
-                                         for part in str(by_tree.get(label, {}).get("assertion") or "").split("\n") if part.strip()))
-        groups.setdefault((pattern, assertions), []).append(name)
+        slots: dict[tuple[str, ...], dict[str, list[str]]] = {}  # assertions -> state -> the sources showing them
+        for label in labels:
+            entry = by_tree.get(label) or {}
+            state = (_state(by_tree.get(label)) + (" (stopped)" if entry.get("execution") == "stopped" else "")
+                     + (f" ({entry['subtests']} subtests)" if entry.get("subtests") else ""))
+            parts = tuple(dict.fromkeys(" ".join(part.split()) for part in str(entry.get("assertion") or "").split("\n") if part.strip()))
+            slots.setdefault(parts, {}).setdefault(state, []).append(label)
+        key = tuple((", ".join(f"{'+'.join(sources)}={state}" for state, sources in states.items()), parts) for parts, states in slots.items())
+        groups.setdefault((_passed(current, outcomes["current"]), key), []).append(name)
     lines: list[str] = []
     shown: set[str] = set()
-    for (pattern, assertions), names in groups.items():
+    for (_, key), names in sorted(groups.items(), key=lambda group: group[0][0]):  # current blockers first
         listed = ", ".join(names[:8]) + (f" +{len(names) - 8} more in evidence" if len(names) > 8 else "")
-        line = (f"{len(names)} cases: " if len(names) > 1 else "") + f"{listed}: {pattern}"
-        for assertion in (fresh := [assertion for assertion in assertions if assertion not in shown]):
-            line += "; " + assertion[:240] + ("... [full assertion in evidence]" if len(assertion) > 240 else "")
-        shown.update(fresh)
-        lines.append(line + ("; assertion as above" if len(fresh) < len(assertions) else ""))
+        rendered = []
+        for sources, parts in key:
+            fresh = [part for part in parts if part not in shown]
+            shown.update(fresh)
+            rendered.append(sources + "".join(  # a part already printed reads `as above`; the state already says it failed
+                ("; " if index else ": ") + part[:240].removeprefix("AssertionError: ") + ("... [full assertion in evidence]" if len(part) > 240 else "")
+                for index, part in enumerate(fresh + (["as above"] if len(fresh) < len(parts) else []))))
+        lines.append((f"{len(names)} cases: " if len(names) > 1 else "") + f"{listed}: " + "; ".join(rendered))
     lines.extend(_unnamed_changes(run)[:40])
     limitations = [f"{label}: {count} cases unnamed" + (" (passing subtests print no name)" if runner == "unittest" else "")
                    for label, count in unnamed.items() if count]

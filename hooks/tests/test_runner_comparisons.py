@@ -237,16 +237,26 @@ class RunnerComparisonTests(unittest.TestCase):
             "            self.assertEqual(app.value, expected)\n"
             "    def test_partitions(self):\n"
             "        for name, actual, expected in [('requested',app.value,2),('preserved',app.kept,True)]:\n"
-            "            with self.subTest(name=name): self.assertEqual(actual, expected, name)\n")
+            "            with self.subTest(name=name): self.assertEqual(actual, expected, name)\n"
+            "    def test_shared(self):\n"
+            "        for index, message in enumerate(('BOTH', 'ORIGINAL' if app.value == 1 else 'CURRENT')):\n"
+            "            with self.subTest(index=index): self.fail(message)\n"
+            "    def test_wide(self):\n"
+            "        for expected in (10, 20, 30, 40):\n"
+            "            with self.subTest(expected=expected): self.assertEqual(app.value, expected)\n")
         result = case.cli("tdd", "--repo", str(case.repo), "--behavior-id", "BM_VALUE", "--",
                           sys.executable, "-m", "unittest", "test_value")
         compact = json.loads(result.stdout)
         self.assertEqual(compact["cases"], [
-            "test_loop (test_value.Value.test_loop): original=failed (stopped), current=failed (stopped); AssertionError: 1 != 2; AssertionError: 2 != 1",
-            "test_partitions (test_value.Value.test_partitions): original=failed (1 subtests), current=failed (1 subtests); "
-            "AssertionError: 1 != 2 : requested; AssertionError: False != True : preserved",
-            "test_preserved (test_value.Value.test_preserved): original=passed, current=failed (stopped); AssertionError: False is not true : PRESERVATION_CHANGE",
-            "test_requested (test_value.Value.test_requested): original=failed (stopped), current=passed; AssertionError: 1 != 2 : REQUESTED_CHANGE",
+            "test_loop (test_value.Value.test_loop): original=failed (stopped): 1 != 2; current=failed (stopped): 2 != 1",
+            "test_partitions (test_value.Value.test_partitions): original=failed (1 subtests): 1 != 2 : requested; "
+            "current=failed (1 subtests): False != True : preserved",
+            "test_preserved (test_value.Value.test_preserved): original=passed; current=failed (stopped): False is not true : PRESERVATION_CHANGE",
+            "test_shared (test_value.Value.test_shared): original=failed (2 subtests): BOTH; ORIGINAL; current=failed (2 subtests): CURRENT; as above",
+            "test_wide (test_value.Value.test_wide): original=failed (4 subtests): 1 != 10; 1 != 20; "
+            "1 != 30; 1 != 40; current=failed (4 subtests): 2 != 10; "
+            "2 != 20; 2 != 30; 2 != 40",
+            "test_requested (test_value.Value.test_requested): original=failed (stopped): 1 != 2 : REQUESTED_CHANGE; current=passed",
         ], "STOPPED_EXECUTION_HIDDEN: " + result.stdout)
         self.assertEqual(compact["limitations"], ["original: 1 cases unnamed (passing subtests print no name)",
                                                   "current: 1 cases unnamed (passing subtests print no name)", STOPPED_NOTE],
@@ -863,8 +873,8 @@ class ReadinessTests(unittest.TestCase):
         self.probe("def test_value(self): self.assertEqual(app.value, 2, 'VALUE_NOT_TWO')")
         receipt = self.tdd("BM_CHANGE")
         self.assertEqual((receipt["comparison"], self.status()["tdd"]), ("changed", "passed"), marker + ": " + json.dumps(receipt))
-        self.assertEqual(receipt["cases"], ["test_value (test_value.Value.test_value): original=failed (stopped), current=passed; "
-                                            "AssertionError: 1 != 2 : VALUE_NOT_TWO"], marker)
+        self.assertEqual(receipt["cases"], ["test_value (test_value.Value.test_value): original=failed (stopped): "
+                                            "1 != 2 : VALUE_NOT_TWO; current=passed"], marker)
         # a shared batch needs each owner to name its cases
         self.update(pending_behavior("BM_CHANGE", behavior="value becomes two", expected="value is two"),
                     pending_behavior("BM_KEEP", kind="preservation", behavior="kept stays one", expected="kept is one"))
@@ -1423,8 +1433,8 @@ class ReadinessTests(unittest.TestCase):
         (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
         self.probe("def test_loop(self):\n        for name in ['empty', 'one', 'several']:\n            self.assertEqual(app.value, 2, name)")
         receipt = self.tdd("BM_CHANGE")
-        self.assertEqual(receipt["cases"], ["test_loop (test_value.Value.test_loop): original=failed (stopped), current=passed; "
-                                            "AssertionError: 1 != 2 : empty"], marker + ": " + json.dumps(receipt))
+        self.assertEqual(receipt["cases"], ["test_loop (test_value.Value.test_loop): original=failed (stopped): "
+                                            "1 != 2 : empty; current=passed"], marker + ": " + json.dumps(receipt))
         [note] = [line for line in receipt["limitations"] if "stopped" in line]
         self.assertFalse({"one", "several"} & set(note.replace(",", " ").split()), marker + ": " + note)
         self.assertFalse(any(line.startswith("BM_CHANGE") for line in self.open_lines(receipt)), marker)
@@ -1472,9 +1482,10 @@ class ReadinessTests(unittest.TestCase):
                                     boundaryInputs=["test_a", "test_b"]))
         (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
         self.probe("def test_a(self): self.fail('SHARED_DIAGNOSTIC')",
-                   "def test_b(self):\n        if app.value == 2: self.fail('SHARED_DIAGNOSTIC')")
+                   "def test_b(self):\n        if app.value == 2:\n            with self.subTest(i=1): self.fail('SHARED_DIAGNOSTIC')\n            self.fail('B_ONLY')")
         receipt = self.tdd("BM_KEEP")
         self.assertEqual(len(receipt["cases"]), 2, marker + ": " + json.dumps(receipt["cases"]))
+        self.assertTrue(receipt["cases"][1].endswith("as above"), marker + ": a repeated assertion vanished unmarked")
         self.assertEqual(sum(line.count("SHARED_DIAGNOSTIC") for line in receipt["cases"]), 1, marker + ": " + json.dumps(receipt["cases"]))
 
     def test_short_name_matching_several_tests_stays_open(self):
@@ -1523,6 +1534,8 @@ class ReadinessTests(unittest.TestCase):
         self.probe("def test_value(self): self.assertEqual(app.value, 2, 'REVISED AGAIN')", "def test_kept(self): self.assertEqual(app.kept, 1)")
         receipt = self.tdd("BM_CHANGE", command=value)
         self.assertEqual([arm["source"] for arm in receipt["arms"]], ["original", "earlier", "current"], marker + ": " + json.dumps(receipt["arms"]))
+        self.assertEqual(receipt["cases"], ["test_value (test_value.Value.test_value): original=failed (stopped): 1 != 2 : "
+                                            "REVISED AGAIN; earlier=failed (stopped): 3 != 2 : REVISED AGAIN; current=passed"], marker)
 
     def test_narrowing_reports_every_selection_form(self):
         marker = "NARROWING_MISREPORTED"
@@ -1724,8 +1737,8 @@ class ReadinessTests(unittest.TestCase):
                    "def test_kept(self): self.assertEqual(app.kept, 1)")
         receipt = self.tdd("BM_CHANGE")
         self.assertEqual(self.status()["tdd"], "passed", marker + ": " + json.dumps(receipt))
-        self.assertEqual(receipt["cases"], ["test_loop (test_value.Value.test_loop): original=failed (3 subtests), current=passed; "
-                                            "AssertionError: 1 != 2 : LOOP_NOT_TWO"], marker)
+        self.assertEqual(receipt["cases"], ["test_loop (test_value.Value.test_loop): original=failed (3 subtests): "
+                                            "1 != 2 : LOOP_NOT_TWO; current=passed"], marker)
         self.assertEqual([(arm["source"], arm["unnamed"]) for arm in receipt["arms"]], [("original", 0), ("current", 3)], marker)
         self.assertIn("current: 3 cases unnamed (passing subtests print no name)", receipt["limitations"], marker)
 
@@ -1774,9 +1787,9 @@ class ReadinessTests(unittest.TestCase):
         self.assertEqual(self.status()["tdd"], "in-progress", marker + ": " + json.dumps(receipt))
         self.assertIn("several cases executed: name the requested ones", self.open_lines(receipt)[0], marker)
         self.assertEqual(receipt["cases"], [
-            "test_kept (test_value.Value.test_kept): original=failed (2 subtests), current=passed; "
-            "AssertionError: 1 != 20; AssertionError: 1 != 2",
-            "test_value (test_value.Value.test_value): original=failed (stopped), current=passed; AssertionError: 1 != 2 : VALUE_NOT_TWO",
+            "test_kept (test_value.Value.test_kept): original=failed (2 subtests): "
+            "1 != 20; 1 != 2; current=passed",
+            "test_value (test_value.Value.test_value): original=failed (stopped): 1 != 2 : VALUE_NOT_TWO; current=passed",
         ], "VIEW_NOT_COMPACT: " + json.dumps(receipt))
         # a subtest message contained in an earlier one is a distinct assertion (the runner's stored
         # shape keeps a trailing newline; the folding rule must not compare by substring)
@@ -1810,8 +1823,8 @@ class ReadinessTests(unittest.TestCase):
         (self.repo / "app.py").write_text("value = 1\nkept = 3\n")
         self.probe("def test_kept(self): self.assertEqual(app.kept, 2, 'KEPT_WRONG')")
         receipt = self.tdd("BM_KEEP")
-        self.assertEqual(receipt["cases"], ["test_kept (test_value.Value.test_kept): original=failed (stopped), current=failed (stopped); "
-                                            "AssertionError: 1 != 2 : KEPT_WRONG; AssertionError: 3 != 2 : KEPT_WRONG"], marker + ": " + json.dumps(receipt))
+        self.assertEqual(receipt["cases"], ["test_kept (test_value.Value.test_kept): original=failed (stopped): 1 != 2 : KEPT_WRONG; "
+                                            "current=failed (stopped): 3 != 2 : KEPT_WRONG"], marker + ": " + json.dumps(receipt))
         self.assertIn("BM_KEEP (preservation): kept stays one => kept is one; no current valid comparison; test_kept failed on original, failed on current",
                       self.summary(), "READINESS_NOT_SHARED: " + self.summary())
 
@@ -1886,9 +1899,9 @@ class ReadinessTests(unittest.TestCase):
         for key in ("sourceDelta", "coverage", "output", "observation"):
             self.assertNotIn(key, json.dumps(compared), marker + ": " + key)
         self.assertEqual(receipt["cases"], [
-            "test_broken (test_value.Value.test_broken): original=failed (stopped), current=failed (stopped); AssertionError: 1 != 3 : ALWAYS_BROKEN",
+            "test_broken (test_value.Value.test_broken): original+current=failed (stopped): 1 != 3 : ALWAYS_BROKEN",
             "2 cases: test_same_text (test_value.Value.test_same_text), test_value (test_value.Value.test_value): "
-            "original=failed (stopped), current=passed; AssertionError: 1 != 2 : VALUE_NOT_TWO",
+            "original=failed (stopped): 1 != 2 : VALUE_NOT_TWO; current=passed",
         ], marker)
         self.assertNotIn("test_kept", json.dumps(receipt["cases"]), marker)
         self.assertEqual([(arm["source"], arm["outcome"], arm["testsExecuted"], arm["unnamed"]) for arm in receipt["arms"]],

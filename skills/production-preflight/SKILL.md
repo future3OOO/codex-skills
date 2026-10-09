@@ -91,7 +91,7 @@ Record it once the advisor returns `approved` for that content.
 
 In the governed workflow record it with `python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" record preflight`:
 with no input it records the advisor-approved draft, including the advisor's last-round edits
-(shape: `record preflight --help`; `--check` validates without recording). A refusal
+(`--check` validates without recording). A refusal
 names every violation at once and mutates nothing. Key order and JSON formatting
 do not change content.
 Resolve outstanding questions before dependent implementation; settle readings and update items through `tdd-map`, never a second preflight recording. Response prose is not evidence.

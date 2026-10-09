@@ -6,7 +6,7 @@ description: Consult the Codex advisor at the workflow preflight and final-revie
 # Codex advisor
 
 For recurring behavioral findings, apply the workflow's
-[repair contract](../repo-production-workflow/SKILL.md#recurring-behavioral-repairs).
+[repair contract](../repo-production-workflow/WORKFLOW-MAP.md#recurring-behavioral-repairs).
 
 Use `scripts/ask-codex-advisor.sh` as the sole production transport. Do not use
 the plugin forwarder, Agent tool, or a second wrapper as a fallback.
@@ -109,7 +109,7 @@ a sketch once, verifies its premise, runs its real-Seam probe through the compar
 runner, adapts the change, and owns the repair. A sketch never closes a finding.
 
 The wrapper stores typed findings and the response SHA-256 once, without a raw
-answer duplicate. The digest marks `sketch=yes` or `missing/invalid`, without code.
+answer duplicate. The digest marks each finding's `material` and `sketch`, without code, then the recorded `next`.
 Later advisor ledgers omit sketches; the resumed session already holds them. Completion
 derives from the context-matched intake's effective terminal dispositions, not
 from the raw verdict alone. A `context-mismatch` advances nothing and must be
@@ -213,4 +213,4 @@ review. No nonce, skip file, stamp, attestation, or audited exception authorizes
 completion.
 
 A repaired final finding needs no disposition: after the fix and `tdd`, the re-check's commit-ready settles it. Successful original/reviewed/candidate results can establish preservation; the reviewer and advisor judge whether the exercised cases address the claim.
-A finding the lead disputes takes `record advisor-disposition --rejected` (see `--help`).
+A finding the lead disputes takes `record advisor-disposition --rejected`.

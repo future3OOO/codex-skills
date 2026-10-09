@@ -131,6 +131,20 @@ DESIGN_FILE_SHAPE = (
     '{"schemaVersion":1,"status":"present","sha256":"<64 hex>"} or '
     '{"schemaVersion":1,"status":"absent","reason":"..."}'
 )
+ITEM_SHAPE = ('{"id":"BM_X","kind":"contract|preservation","basis":"original request or preservation",'
+              '"behavior":"...","seam":"...","expected":"...","boundaryInputs":["executed case name"],'
+              '"interpretations":["reading a","reading b"],"interpretation":"...","authority":"...",'
+              '"sourceRefs":[{"type":"finding","evidenceId":"<intake>","id":"SPEC-1"}]}')
+RECORD_SHAPES = {
+    "preflight": f'{{"authoritativeContract":"text","behaviorMap":[{ITEM_SHAPE}]}}',
+    "review": '{"findings":[{"id":"R-1","claim":"...","material":true}]}',
+    "advisor-result": ('the advisor envelope {"schemaVersion":1,"findings":[{"id":"SPEC-1","claim":"...",'
+                       '"material":true}],"verdict":"approved|changes-required|completed|commit-ready|'
+                       'fix-before-commit|context-mismatch"}, or --verdict unavailable --reason TEXT'),
+    "advisor-disposition": ("--finding F --fixed [--behavior-id BM]; or --finding F "
+                            "--rejected|--report-only|--follow-up REF --reason TEXT; or --findings none"),
+    "tdd-map": f'{{"items":[{ITEM_SHAPE}]}}; a recorded item needs only id and the changed fields, null removes an optional one',
+}
 
 
 def validate_design_declaration(value: object) -> JsonObject:

@@ -162,7 +162,6 @@ if [[ -n "$phase" ]]; then
   exec 9>"$state_dir/${repo_key}-${normalized_slug}.lock"
   flock -x 9
   checkpoint_file="$transport_dir/checkpoint.json"
-  mkdir -p "$channels_dir"
   if ! python3 "$workflow_cli" checkpoint --repo "$repo_root" --phase "$phase" --channel-dir "$channels_dir" "${reconsult_args[@]}" "${draft_args[@]}" >"$checkpoint_file" 2>"$transport_dir/checkpoint-error"; then
     checkpoint_error=$(cat "$transport_dir/checkpoint-error")
     if [[ "$checkpoint_error" == *"no active workflow"* ]]; then
@@ -396,33 +395,37 @@ fi
 if [[ -z "$phase" ]]; then
   cat "$output_file"
 else
-  # Record the complete answer, then return a bounded digest; the whole envelope
-  # stays readable from the ledger. A recording refusal returns the whole answer.
+  # Record the complete answer, then return a bounded digest with the recorded continuation; the
+  # whole envelope stays readable from the ledger. A recording refusal returns the whole answer.
   record_stage=preflight; [[ "$phase" == final-review ]] && record_stage=final
   if ! python3 "$workflow_cli" record advisor-result --repo "$repo_root" --slug "$producer_slug" \
       --workflow-id "$active_wid" --stage "$record_stage" --source codex-advisor \
       --input "$output_file" --design-declaration "$design_declaration_file" \
-      --expected-candidate-tree "$candidate" "${draft_args[@]}" >/dev/null; then
+      --expected-candidate-tree "$candidate" "${draft_args[@]}" >"$transport_dir/receipt.json"; then
     cat "$output_file"
     exit 2
   fi
   python3 "$workflow_cli" status --repo "$repo_root" --fields advisorPreflight,finalReview,finalReviewContextMismatchEvidence \
     >"$transport_dir/recorded.json"
-  python3 - "$script_dir/../../.." "$record_stage" "$transport_dir/recorded.json" "$repo_root" <<'PY'
+  python3 - "$script_dir/../../.." "$record_stage" "$transport_dir/recorded.json" "$repo_root" "$transport_dir/receipt.json" <<'PY'
 import json, sys
 sys.path.insert(0, sys.argv[1])
 from hooks.lib.repo_identity import resolve_repo_identity
 from hooks.lib.workflow_state import evidence_document
 state = json.load(open(sys.argv[3], encoding="utf-8"))
+receipt = json.load(open(sys.argv[5], encoding="utf-8"))
 record = state.get("advisorPreflight" if sys.argv[2] == "preflight" else "finalReview") or {}
 intake = state.get("finalReviewContextMismatchEvidence") or record.get("appealEvidence") or record.get("intakeEvidence") or "none"
 envelope = evidence_document(resolve_repo_identity(sys.argv[4]), intake)
 findings = envelope["findings"]
 shown = findings[:40]
 head = f"verdict={envelope['verdict']} findings={len(findings)} shown={len(shown)} intake={intake}\n"
-tail = f"full envelope: workflow.py evidence --full --evidence-id {intake}\n"
+needed = (receipt["next"].get("input") or "").partition("\n")[0].encode()  # both ends: the argument and the command form
+needed = (needed if len(needed) <= 200 else needed[:97] + b" ... " + needed[-98:]).decode("utf-8", errors="ignore")
+tail = f"nextAction={receipt['nextAction']} next: {receipt['next'].get('command')}\n" + (f"input: {needed}\n" if needed else "")
 room = max(0, (1900 - len((head + tail).encode())) // max(1, len(shown)) - 1)
-lines = [f"sketch={'yes' if item.get('fixSketch') else 'missing/invalid' if item.get('fixSketchIssue') else 'n/a'} {item['id']}: {item['claim']}" for item in shown]
+lines = [f"{item['id']} material={str(item['material']).lower()} sketch={'yes' if item.get('fixSketch') else 'missing/invalid' if item.get('fixSketchIssue') else 'n/a'}"
+         f": {item['claim']}" for item in shown]
 sys.stdout.write(head + "".join(line.encode()[:room].decode("utf-8", errors="ignore") + "\n" for line in lines) + tail)
 PY
 fi

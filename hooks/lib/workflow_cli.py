@@ -6,7 +6,7 @@ import json
 import os
 import shlex
 import sqlite3
-from contextlib import closing
+from contextlib import closing, nullcontext, redirect_stdout
 import subprocess
 import sys
 import tempfile
@@ -19,6 +19,7 @@ from .state_prune import prune
 from .state_store import _active_candidate_tree, analysis_unchanged, repo_state_dir, state_root, tree_manifest, utc_timestamp
 from .tdd_surface import identify
 from .workflow_documents import (
+    RECORD_SHAPES,
     advisor_envelope,
     design_declaration,
     load_json,
@@ -51,20 +52,6 @@ from .workflow_state import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
-ITEM_SHAPE = ('{"id":"BM_X","kind":"contract|preservation","basis":"original request or preservation",'
-              '"behavior":"...","seam":"...","expected":"...","boundaryInputs":["executed case name"],'
-              '"interpretations":["reading a","reading b"],"interpretation":"...","authority":"...",'
-              '"sourceRefs":[{"type":"finding","evidenceId":"<intake>","id":"SPEC-1"}]}')
-RECORD_SHAPES = {
-    "preflight": f'{{"authoritativeContract":"text","behaviorMap":[{ITEM_SHAPE}]}}',
-    "review": '{"findings":[{"id":"R-1","claim":"...","material":true}]}',
-    "advisor-result": ('the advisor envelope {"schemaVersion":1,"findings":[{"id":"SPEC-1","claim":"...",'
-                       '"material":true}],"verdict":"approved|changes-required|completed|commit-ready|'
-                       'fix-before-commit|context-mismatch"}, or --verdict unavailable --reason TEXT'),
-    "advisor-disposition": ("--finding F --fixed [--behavior-id BM]; or --finding F "
-                            "--rejected|--report-only|--follow-up REF --reason TEXT; or --findings none"),
-    "tdd-map": f'{{"items":[{ITEM_SHAPE}]}}; a recorded item needs only id and the changed fields, null removes an optional one',
-}
 DISPOSITION_FLAGS = {"fixed": "fixed", "rejected": "rejected-with-evidence", "report_only": "report-only"}
 # Failing checks' first five locations, then the first six active findings with three each. Each location
 # prints as at most 100 bytes of JSON, escapes included (file:line tail kept), so the whole stays under 4,200.
@@ -380,7 +367,7 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
         run["bindingError"] = binding_error
     state, evidence_id, recorded = commit_verification(identity, slug, workflow_id, run, tree_before=tree_before,
                                                        report=report if gate is not None else None)
-    if recorded.get("reportEvidenceId"):
+    if recorded.get("reportEvidenceId") and recorded["valid"] is not True:
         # Retrieval stays outside chat: the save prints nothing, and the example projection is bounded.
         location = shlex.quote(str(Path(tempfile.gettempdir()) / f"{recorded['reportEvidenceId']}.json"))
         shown += (f"complete report: {len(report['findings'])} findings "
@@ -389,7 +376,8 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
                   + shlex.join([sys.executable, str(ROOT / "skills" / "repo-production-workflow" / "scripts" / "workflow.py"),
                                 "evidence", "--repo", str(identity.root), "--evidence-id", str(recorded["reportEvidenceId"]),
                                 "--full"]) + f" > {location}\n  jq -c {shlex.quote(REPORT_PROJECTION)} {location}\n").encode()
-    _print_output(shown)
+    with redirect_stdout(sys.stderr) if args.kind == "quality-gate" else nullcontext():  # stdout carries only the receipt
+        _print_output(shown)
     state = read_workflow(identity) or state
     _emit_json(_receipt(state, identity, **{
         "evidenceId": evidence_id,

@@ -55,9 +55,9 @@ The repository-scoped SQLite event ledger remembers accepted transitions, logica
 
 ## Continuation
 
-Follow the operation result's `next.command`; `next.input` names any judgment or
-document still needed. Consult `next.help` for an unfamiliar input and retain
-the supported invocation and returned evidence IDs. On resume or after edits,
+Follow the operation result's `next.command`; `next.input` names any judgment,
+document or argument still needed and its form. Retain the returned evidence IDs.
+On resume or after edits,
 use `workflow.py summary --repo <checkout>` for current recovery guidance;
 `status --fields <fields>` supplies missing facts. Resume the same pass.
 See [State Interface](WORKFLOW-MAP.md#state-interface) for receipt and status fields.
@@ -66,18 +66,8 @@ See [State Interface](WORKFLOW-MAP.md#state-interface) for receipt and status fi
 
 ### 1. Repo Context Forge
 
-Invoke `repo-context-forge`, then run its adapter with the same slug and intent:
-
-```bash
-python3 "$HOME/.codex/skills/repo-context-forge/scripts/bootstrap.py" \
-  --repo "$PWD" --workflow-slug "<task>" --intent "<user request>"
-```
-
-Stop on packet blockers. The packet fixes the initial target and coverage
-surface. When the packet resolves a real base, the adapter also records its
-fork-point commit as the pass's immutable base OID (`baseOid` in the status
-projection); the per-edit gate hook passes it as `--base-ref` so growth reads
-branch-cumulative throughout implementation.
+Invoke `repo-context-forge`, then run the bootstrap command `begin` returned as `next.command`.
+Stop on packet blockers. The packet fixes the initial target and coverage surface.
 
 ### 2. Task contract and diagnosis
 
@@ -90,11 +80,8 @@ regressions and performance failures before choosing a correction.
 
 ### 3. Packet-scoped GitNexus
 
-Repo Context Forge executes the packet's required context/impact checks and its
-adapter records that resolved graph result as `repo-context-forge` evidence, in
-the same transaction as the step. There is no separate transition to record, and
-no separate graph step exists. Read the packet's graph
-result; run further MCP checks when they widen the surface the packet fixed.
+The bootstrap already ran and recorded the packet's graph checks; there is no separate
+graph step. Run further MCP checks only when they widen the surface the packet fixed.
 
 ### 4. Draft and advisor review
 
@@ -113,10 +100,8 @@ Record the approved contract and probe list with `record preflight` (no input: i
 
 ### 6. Select the probe batch
 
-Invoke `tdd` before editing, then select the direct batch each map item will run through, under
-AGENTS.md's Real-Seam proof invariant: reuse existing cases, fixtures and assertions;
-add a probe only for behavior no existing case covers. Entrypoint absence does not
-prove independent guarantees. The comparison itself runs after the edit (step 8).
+Invoke `tdd` before editing, then select the direct batch each map item will run through under
+AGENTS.md's Real-Seam proof invariant and step 9's test selection. The comparison runs after the edit (step 8).
 
 ### 7. Production code
 
@@ -127,11 +112,7 @@ Invoke `production-code` for its standards and baseline gate. Reuse the existing
 Make the smallest change, then execute TDD's
 [required probe loop](../tdd/SKILL.md#required-probe-loop): record the edit's decisive
 contexts and boundary cases as map items, extend the existing direct batch, and compare
-the identical expanded batch on the recorded original and candidate sources:
-
-```text
-workflow.py tdd --behavior-id BM_X -- COMMAND [ARG...]
-```
+the identical expanded batch on the recorded original and candidate sources.
 
 The receipt's `open` lines are the questions the comparison leaves: answer each by
 repairing the code or the probe and rerunning the same batch. Readiness is that one
@@ -144,16 +125,13 @@ Source and probe edits invalidate affected proof and reopen required verificatio
 After coherent repair and cleanup, assess the intended outcome against the
 verification derived in step 2. Run the typed quality gate; it runs no comparison. A
 source edit leaves recorded comparisons stale, and every reader then routes to `tdd`
-until the lead reruns them on the current candidate. Before another test command, identify the
-assertion those comparisons cannot establish. Extend the existing targeted batch
-for that gap and keep enclosing-operation checks only for their own assertions.
-Never run existing test classes, modules or suites; CI owns them.
+until the lead reruns them on the current candidate. Prove each changed line with a direct N/N+1
+probe that calls it. Add an existing test only when it calls the changed code directly; never run
+whole classes, modules or suites.
 Reuse current comparisons; use generic verification for required lint/typecheck/build,
-with graph reanalysis when required. Follow AGENTS.md's attack-probe and verification rules.
-CI's `contracts` job owns the full runner here and step 12 waits for it.
+with graph reanalysis when required. CI's `contracts` job owns the full runner here and step 12 waits for it.
 Verification records only through the unified CLI runner, which executes the command it records and derives status
-per-command-latest for explicit verification. Failed explicit checks need a passing rerun
-or valid `--replaces` correction. Overlapping runs record in completion order; a run whose
+per-command-latest for explicit verification. Overlapping runs record in completion order; a run whose
 reviewable tree drifts stays invalid and names the changed paths:
 
 ```bash
@@ -161,18 +139,11 @@ python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" verif
 python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" verify -- <verification command>
 ```
 
-`verify --from-evidence <evidenceId>:<runIndex>` binds a captured execution receipt without replay.
-
 Typed verification needs no generic acknowledgement or dummy command. Correct a
 failed generic invocation with `verify --replaces <evidenceId>:<runIndex> --reason
 "<correction>" -- <command>`; only a valid current success retires that particular
 active failure. Other failures, stale/concurrent results and drift stay effective.
 Which commands suffice remains review judgment. Completion requires the typed `quality-gate` run over the current reviewable tree.
-
-The typed runner uses the recorded graph input; reuse it when its binding and
-scope match the candidate; after edits the gate and the advisor checkpoint refresh
-a stale projection themselves. The gate's binding check adjudicates applicability;
-unchanged source alone does not establish coverage for a broadened contract.
 
 ### 10. Delegate code review
 
@@ -210,9 +181,10 @@ the current candidate.
 Record the delegate's JSON intake (`{"findings":[{"id","claim","material","kind"}]}`),
 then, for a disputed finding, a disposition against the returned `summaryId`:
 `{"intakeEvidenceId":"<summaryId>","dispositions":[{"finding_id":"R-1","status":"report-only","reason":"..."}]}`.
-`record review --help` prints both shapes; a document carrying both refuses.
+A document carrying both refuses.
 Pass `--review-context-id <agent-id>` with the delegate's review: a second
-recurrence hands its repair to the first reviewer a review names.
+recurrence hands its repair to the first reviewer a review names, under the
+[recurring repair contract](WORKFLOW-MAP.md#recurring-behavioral-repairs).
 
 ```bash
 python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" record review --input <review.json> --review-context-id <agent-id>
@@ -229,45 +201,6 @@ Verification, the typed gate, and a new review all run while findings are open; 
 findings block completion only. A later map update that would leave a fixed finding
 without its owning attack refuses.
 
-#### Recurring behavioral repairs
-
-Findings and map items batch by owner. A finding names one owning Module and violated invariant and lists every demonstrated input as its cases; a later input to the same owner and invariant is a case of that finding through `priorFinding`, and its repair is the owner's class-wide correction. The map carries one contract and one preservation item per owning Interface, each decisive context a case of it. Observations, recurrence and dispositions stay immutable.
-
-Before another repair, explain the missed cause, affected inputs/paths, invariants,
-class-wide correction and latest counterexample; include reachable states/shared
-writers where relevant. Record the diagnosis once in the existing finding reason,
-or disposition `mechanism` prose/reference (`{"evidenceId":"...","id":"..."}`).
-References preserve workflow/finding ownership. Review requires an adequate
-explanation and current owning attacks; instance-only repairs remain
-`accepted-follow-up` with the in-pass obligation open.
-
-Both intake paths reconcile retained namespace/ID and exact behavioral claims
-(outer whitespace only). Changed wording/identity can use an owned
-`priorFinding: {"evidenceId":"...","id":"..."}`; ambiguous matches require one.
-Distinct findings need distinct IDs. Pending retries preserve progress; only a fixed or
-settled finding raised again increments recurrence. Observations, dispositions, mechanism evidence and proof stay immutable.
-
-At recurrence two or later, the retained reviewer implements and the lead reviews. This
-exception overrides step 10's read-only and repair-before-dispatch rules: continue
-its recorded context, without a fresh/nested reviewer or interim advisor. Certify
-through `record review` using the actual lead context and `implementationContextId`
-for the repair author. Require current-candidate, independent certification and
-product verification, then the mandatory final advisor. Ordinary assessment without
-`implementationContextId` may proceed while ownership is pending; it neither
-certifies the repair nor changes owners.
-
-For unusable/wrong-checkout contexts, follow step 10's rooted fallback. Record
-authorized succession in the lead-review intake as
-`repairSuccession: {context, findings, previousOwner, evidence}`: current
-workflow/candidate, affected `{evidenceId, id}` references, exact previous
-implementer/reviewer pair, and authorization/native-checkout evidence. Author/reviewer
-fields name actual successors. Only named pending recurring repairs transfer;
-predecessor history remains and self-certification is forbidden.
-
-After compaction, recover mechanism references and ownership from summary/checkpoint;
-retrieve long evidence with `workflow evidence`. Report missing evidence; prove
-resumed-agent use, not merely availability.
-
 ### 11. Final Codex Advisor review
 
 Before the consult, reconcile known material obligations using step 2's verification
@@ -280,9 +213,8 @@ with wrapper phase `final-review` and the same slug; the checkpoint supplies the
 diff anchors. It applies
 [Production Code's outcome verification](../production-code/SKILL.md#minimum-implementation-decision)
 to the original objective before judging implementation and dispositions. Missing material
-acceptance evidence forbids `commit-ready`. Address and disposition material findings. The
-wrapper leaves final findings pending; the lead explicitly records `none` or
-`addressed` only after validating the output. After the first final verdict, a correction
+acceptance evidence forbids `commit-ready`. The wrapper records the result and returns each
+finding's materiality with the recorded `next`; follow it. After the first final verdict, a correction
 needs only the `tdd` rerun of its items and the final advisor's re-check: code review,
 verification and context revalidation are not repeated. Reuse applicable evidence. Once every
 final finding is dispositioned (`nextAction` `complete-workflow`), a requested
