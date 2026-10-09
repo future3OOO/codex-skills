@@ -109,7 +109,7 @@ a sketch once, verifies its premise, runs its real-Seam probe through the compar
 runner, adapts the change, and owns the repair. A sketch never closes a finding.
 
 The wrapper stores typed findings and the response SHA-256 once, without a raw
-answer duplicate. The digest marks each finding's `material` and `sketch`, without code, then the recorded `next`.
+answer duplicate. The digest marks each finding's `material` and `sketch`, prints each sketch whole, then the recorded `next`.
 Later advisor ledgers omit sketches; the resumed session already holds them. Completion
 derives from the context-matched intake's effective terminal dispositions, not
 from the raw verdict alone. A `context-mismatch` advances nothing and must be

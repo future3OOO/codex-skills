@@ -426,7 +426,8 @@ tail = f"nextAction={receipt['nextAction']} next: {receipt['next'].get('command'
 room = max(0, (1900 - len((head + tail).encode())) // max(1, len(shown)) - 1)
 lines = [f"{item['id']} material={str(item['material']).lower()} sketch={'yes' if item.get('fixSketch') else 'missing/invalid' if item.get('fixSketchIssue') else 'n/a'}"
          f": {item['claim']}" for item in shown]
-sys.stdout.write(head + "".join(line.encode()[:room].decode("utf-8", errors="ignore") + "\n" for line in lines) + tail)
+sketches = "".join(f"{item['id']} fix: {item['fixSketch']['change']}\n{item['id']} probe: {item['fixSketch']['probe']}\n" for item in shown if item.get("fixSketch"))
+sys.stdout.write(head + "".join(line.encode()[:room].decode("utf-8", errors="ignore") + "\n" for line in lines) + sketches + tail)
 PY
 fi
 printf 'codex_advisor_complete status=0 provider=%s\n' "$provider" >&2
