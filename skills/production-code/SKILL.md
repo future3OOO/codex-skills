@@ -17,9 +17,8 @@ Before editing, use the standards below to choose the smallest production-safe i
 python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" verify --kind quality-gate
 ```
 
-It prints a bounded summary, a command that saves the complete report (kept
-compressed in the pass ledger) to a file outside chat, and a bounded `jq`
-projection for reading it; never print the saved file whole. Load
+It prints a bounded summary and, when the gate fails, a command that saves the complete report
+outside chat and a bounded `jq` projection; never print the saved file whole. Load
 [references/gate-policy.md](references/gate-policy.md) only when the gate fails or a
 hard rule reports `incomplete`; a warning-only rule's `incomplete` needs no action.
 

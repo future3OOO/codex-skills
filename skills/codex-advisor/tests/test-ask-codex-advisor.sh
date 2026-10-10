@@ -264,7 +264,7 @@ check "canonical design declaration is retained" '"sha256"' "$(cat "$rigtmp/capt
 check "current-pass diff carries the changed value" "diff> +value = 2" "$(cat "$rigtmp/capture/payload-1")"
 check "projection is framed as channel-prefixed data" "advisor-projection> {" "$(cat "$rigtmp/capture/payload-1")"
 check "ADVISOR_PROMPT_STALE preflight asks for the planned decisive contexts" "decisive contexts of the planned change" "$(cat "$rigtmp/capture/payload-1")"
-check "FORCED_REWRITE_RULE preflight maps every kept decision a forced test rewrite exercises" "For each existing test the request requires to change or remove, name each condition it exercises and every other decision that condition also controls; each such decision the request keeps needs a map case, or it is a material finding." "$(cat "$rigtmp/capture/payload-1")"
+check "FORCED_REWRITE_RULE preflight maps every kept decision a forced test rewrite exercises" "For each existing test the request requires to change or remove, name each changed condition it exercises and every other decision that condition also controls; each such decision the request keeps needs a map case, or it is a material finding." "$(cat "$rigtmp/capture/payload-1")"
 check "PREDICTED_NAMES_DEMANDED preflight attaches executed cases after implementation" "executed cases are attached after implementation" "$(cat "$rigtmp/capture/payload-1")"
 check_absent "PREDICTED_NAMES_DEMANDED preflight demands no future case names" "naming its pair cases" "$(cat "$rigtmp/capture/payload-1")"
 check_absent "PREDICTED_NAMES_DEMANDED skills demand no future case names" "pair cases before implementation" "$(cat "$ROOT/skills/production-preflight/SKILL.md" "$ROOT/skills/codex-advisor/SKILL.md")"
