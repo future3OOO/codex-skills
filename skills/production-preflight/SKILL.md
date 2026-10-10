@@ -32,7 +32,7 @@ local work short; transaction-sensitive work names the full surrounding surface.
 
 ### `authoritativeContract`
 
-Before editing, trace the shared responsibilities visible in the original code and derive distinguishing inputs for affected preservation, one reaching each occurrence of a changed condition, reusing existing items and probes. TDD's [required probe loop](../tdd/SKILL.md#required-probe-loop) revisits them against the actual diff.
+Before editing, trace the shared responsibilities visible in the original code and derive distinguishing inputs for affected preservation, reusing existing items and probes. TDD's [required probe loop](../tdd/SKILL.md#required-probe-loop) revisits them against the actual diff.
 
 Before choosing an implementation or writing tests, investigate each behavioral
 predicate that decides an outcome:
@@ -72,7 +72,7 @@ readings of one behavior, is a pending `behaviorMap` item, not an unknown.
 
 ### `behaviorMap`
 
-Record concrete falsifiers of the load-bearing public promises. TDD's [Behavior Map](../tdd/recorder.md#behavior-map) defines the fields and what readiness enforces by execution. IDs are stable uppercase identifiers. The basis ties the expectation to the original request or affected preservation; select the `seam` under AGENTS.md's Real-Seam proof invariant, naming the responsible production Interface and its real setup for the assertion being proved. For each condition the plan adds, removes, weakens, strengthens or changes, state each feasible decisive context ([MC/DC](../tdd/tests.md#mcdc)), with its inputs and required result, in the item owning its Interface: one contract and one preservation item per owning Interface, each context a case of it. Attach the executed cases to that item's `boundaryInputs` after implementation.
+Record concrete falsifiers of the load-bearing public promises. TDD's [Behavior Map](../tdd/recorder.md#behavior-map) defines the fields and what readiness enforces by execution. IDs are stable uppercase identifiers. The basis ties the expectation to the original request or affected preservation; select the `seam` under AGENTS.md's Real-Seam proof invariant, naming the responsible production Interface and its real setup for the assertion being proved. For each condition the plan adds, removes, weakens, strengthens or changes, state each feasible decisive context ([MC/DC](../tdd/tests.md#mcdc)) with an input that reaches that occurrence of the condition (the same check in another branch is a separate context) and, only where the request changes the decision, its required result, in the item owning its Interface: one contract and one preservation item per owning Interface, each context a case of it. A kept decision's result is the original's, supplied by the comparison. Attach the executed cases to that item's `boundaryInputs` after implementation.
 
 ```json
 [{"id":"BM_EXPIRY","kind":"contract","basis":"the deadline is inclusive","behavior":"expires at the deadline","seam":"Expiry.is_expired with a real clock","expected":"now equal to expiresAt is expired","boundaryInputs":["test_expires_at_deadline","test_not_expired_before_deadline"],"interpretations":["now > expiresAt","now >= expiresAt"],"interpretation":"now >= expiresAt","authority":"the request's 'at the deadline'"}]

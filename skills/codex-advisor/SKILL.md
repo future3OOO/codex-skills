@@ -21,7 +21,7 @@ phase belongs in `--phase`, not in the slug.
 Review the drafted production preflight before it is recorded. Supply it with
 `--preflight-file <draft.json>`; the wrapper snapshots it before consultation.
 The checkpoint sends the exact artifact, including its Behavior Map. Challenge
-materially different readings with concrete discriminating probes and the original request: an item whose readings diverge records them as `interpretations` with `boundaryInputs`; unambiguous items need no extra fields. Identify the decisive contexts of the planned change; each feasible one is a case, with its inputs and required result, of the item owning its Interface (one contract and one preservation item per owner); its executed cases are attached after implementation.
+materially different readings with concrete discriminating probes and the original request: an item whose readings diverge records them as `interpretations` with `boundaryInputs`; unambiguous items need no extra fields. Identify the decisive contexts of the planned change; each feasible one is a case, with an input reaching that occurrence of the condition and, only where the request changes the decision, its required result, of the item owning its Interface (one contract and one preservation item per owner); its executed cases are attached after implementation.
 
 Return `approved` when the draft has no material gap, otherwise
 `changes-required`. The lead revises once and uses `--reconsult` in the same session;
