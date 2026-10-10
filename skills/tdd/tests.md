@@ -42,7 +42,7 @@ A **decisive context** is a combination of the other values that permits this in
 
 ### Procedure
 
-1. Find every condition that your edit adds, removes, weakens, strengthens or changes. Rewording a condition without changing its decision creates no obligation.
+1. Find every decision your edit changes; each of its conditions, kept ones included, needs pairs. Rewording a condition without changing its decision creates no obligation.
 2. Use the original code to find **EVERY feasible decisive context**. For an added condition, use the contexts of the edited decision and compare both inputs with the original result.
 3. Write an MC/DC independence pair for each context as two executable test cases in your direct batch, labelled `<condition> | <context> | a` and `... | b`, each asserting its exact result. A pair covers only its own context. Name both cases in the owning map item's `boundaryInputs`.
 4. Put the pairs in your existing direct batch. A batch without required pairs is incomplete, even if all its tests pass.
