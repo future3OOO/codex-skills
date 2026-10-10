@@ -46,8 +46,7 @@ workflow history               # ordered accepted receipts and logical reference
 workflow evidence [--full]     # one evidence record's metadata, or its document
 workflow set-phase             # trivial code review only
 workflow record <kind> [--check] [--input -|path]
-                               # preflight|review|advisor-result|tdd-map;
-                               # `record <kind> --help` prints the accepted shape
+                               # preflight|review|advisor-result|tdd-map
 workflow record advisor-disposition --finding ID --fixed|--rejected|--report-only|--follow-up REFERENCE --reason TEXT
 workflow tdd                   # compare probes on original, reviewed and candidate sources
 workflow verify                # generic commands, typed quality gate, --observed, --from-evidence
@@ -55,7 +54,7 @@ workflow pause|checkpoint|complete|prune
 ```
 
 Mutation receipts include identity, the operation result and `next`: its bound
-`command`, any authored `input`, optional producer `help` and finding bindings.
+`command`, any authored `input` and finding bindings.
 Summary derives recovery guidance from the current checkout. Observed execution identifies its kind and
 supplies a ready verification-binding command on success; a failed observation
 leaves verification unchanged. Dry-run recording publishes no continuation or
@@ -112,8 +111,9 @@ The edit hook runs no impacted-test scan: a file-level list sent agents into
 whole test modules without naming the tests a change breaks.
 
 A governance-document edit after completion is the sole controlled revalidation exception: it opens a window in
-which only verification, code review, the final advisor review, and completion
-are accepted, production editing stays closed, and completing again restores
+which only context refresh, verification, reruns of mapped comparisons a governance edit left stale,
+code review, the final advisor review, and completion are accepted, the Behavior Map
+and production editing stay closed, and completing again restores
 the terminal state. The read-only `checkpoint` query reports consult
 readiness for the advisor phases without mutating anything.
 
@@ -218,6 +218,45 @@ Behavior Map, test command, or live review. The review-time manifest above is
 workflow state rather than one of these summaries, and it identifies working-tree
 file mode and content, plus each submodule's checked-out commit — never this
 repository's own HEAD, and never an attestation.
+
+## Recurring behavioral repairs
+
+Findings and map items batch by owner. A finding names one owning Module and violated invariant and lists every demonstrated input as its cases; a later input to the same owner and invariant is a case of that finding through `priorFinding`, and its repair is the owner's class-wide correction. The map carries one contract and one preservation item per owning Interface, each decisive context a case of it. Observations, recurrence and dispositions stay immutable.
+
+Before another repair, explain the missed cause, affected inputs/paths, invariants,
+class-wide correction and latest counterexample; include reachable states/shared
+writers where relevant. Record the diagnosis once in the existing finding reason,
+or disposition `mechanism` prose/reference (`{"evidenceId":"...","id":"..."}`).
+References preserve workflow/finding ownership. Review requires an adequate
+explanation and current owning attacks; instance-only repairs remain
+`accepted-follow-up` with the in-pass obligation open.
+
+Both intake paths reconcile retained namespace/ID and exact behavioral claims
+(outer whitespace only). Changed wording/identity can use an owned
+`priorFinding: {"evidenceId":"...","id":"..."}`; ambiguous matches require one.
+Distinct findings need distinct IDs. Pending retries preserve progress; only a fixed or
+settled finding raised again increments recurrence. Observations, dispositions, mechanism evidence and proof stay immutable.
+
+At recurrence two or later, the retained reviewer implements and the lead reviews. This
+exception overrides [step 10](SKILL.md#10-delegate-code-review)'s read-only and repair-before-dispatch rules: continue
+its recorded context, without a fresh/nested reviewer or interim advisor. Certify
+through `record review` using the actual lead context and `implementationContextId`
+for the repair author. Require current-candidate, independent certification and
+product verification, then the mandatory final advisor. Ordinary assessment without
+`implementationContextId` may proceed while ownership is pending; it neither
+certifies the repair nor changes owners.
+
+For unusable/wrong-checkout contexts, follow [step 10](SKILL.md#10-delegate-code-review)'s rooted fallback. Record
+authorized succession in the lead-review intake as
+`repairSuccession: {context, findings, previousOwner, evidence}`: current
+workflow/candidate, affected `{evidenceId, id}` references, exact previous
+implementer/reviewer pair, and authorization/native-checkout evidence. Author/reviewer
+fields name actual successors. Only named pending recurring repairs transfer;
+predecessor history remains and self-certification is forbidden.
+
+After compaction, recover mechanism references and ownership from summary/checkpoint;
+retrieve long evidence with `workflow evidence`. Report missing evidence; prove
+resumed-agent use, not merely availability.
 
 ## Delivery is separate
 

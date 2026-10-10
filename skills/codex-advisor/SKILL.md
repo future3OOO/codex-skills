@@ -6,7 +6,7 @@ description: Consult the Codex advisor at the workflow preflight and final-revie
 # Codex advisor
 
 For recurring behavioral findings, apply the workflow's
-[repair contract](../repo-production-workflow/SKILL.md#recurring-behavioral-repairs).
+[repair contract](../repo-production-workflow/WORKFLOW-MAP.md#recurring-behavioral-repairs).
 
 Use `scripts/ask-codex-advisor.sh` as the sole production transport. Do not use
 the plugin forwarder, Agent tool, or a second wrapper as a fallback.
@@ -21,11 +21,14 @@ phase belongs in `--phase`, not in the slug.
 Review the drafted production preflight before it is recorded. Supply it with
 `--preflight-file <draft.json>`; the wrapper snapshots it before consultation.
 The checkpoint sends the exact artifact, including its Behavior Map. Challenge
-materially different readings with concrete discriminating probes and the original request; no interpretation fields are required.
+materially different readings with concrete discriminating probes and the original request: an item whose readings diverge records them as `interpretations` with `boundaryInputs`; unambiguous items need no extra fields. Identify the decisive contexts of the planned change; each feasible one is a case, with one input on each side of that occurrence of the condition and, only where the request changes the decision, its required result, of the item owning its Interface (one contract and one preservation item per owner); its executed cases are attached after implementation.
 
 Return `approved` when the draft has no material gap, otherwise
-`changes-required`. The lead revises and uses `--reconsult` in the same session;
-no per-cycle user permission is needed. The checkpoint sends the delta from the
+`changes-required`. The lead revises once and uses `--reconsult` in the same session;
+no per-cycle user permission is needed. That second consult is the last: it runs with write access, the advisor
+edits the wrapper's draft copy in place with the smallest edits that close any remaining
+gap, checks its answer with the recorder's dry run, and returns `approved`; `record
+preflight` records that edited copy. The checkpoint sends the delta from the
 last recorded draft with base and target content identities. A failed result does
 not advance that base; retries may repeat the delta. With no recorded base, the
 retry carries the full artifact. Draft findings stay in their consult intake;
@@ -76,7 +79,8 @@ before the provider runs. The advisor answers in order: what the
 original request and public Interface promise; which production operations can
 falsify each load-bearing promise;
 which of those are unattacked through the real Seam in the supplied evidence;
-whether any finding disposition narrows or loses part of its immutable claim/domain, reconciling exact intake identity with executed commands, preservation, and current comparison outcomes;
+whether the current candidate resolves each ledger finding's immutable claim, or,
+for a rejected or report-only finding, whether the original already gave the candidate's result (a reading of the request is not evidence) or the difference is immaterial;
 and only then the changed Module shape, minimality, security boundary,
 candidate binding, and visible regression coverage. A promised load-bearing
 surface with no attack forbids `commit-ready` even when every declared map item
@@ -105,7 +109,7 @@ a sketch once, verifies its premise, runs its real-Seam probe through the compar
 runner, adapts the change, and owns the repair. A sketch never closes a finding.
 
 The wrapper stores typed findings and the response SHA-256 once, without a raw
-answer duplicate. The digest marks `sketch=yes` or `missing/invalid`, without code.
+answer duplicate. The digest marks each finding's `material` and `sketch`, prints each sketch whole, then the recorded `next`.
 Later advisor ledgers omit sketches; the resumed session already holds them. Completion
 derives from the context-matched intake's effective terminal dispositions, not
 from the raw verdict alone. A `context-mismatch` advances nothing and must be
@@ -138,7 +142,7 @@ For a long question, drop the `--` argument and feed it on stdin:
 ### Providers
 
 `--provider codex` is the default: a `codex exec` run on `gpt-6-astra` at
-`xhigh` reasoning, read-only sandbox. `CODEX_ADVISOR_MODEL` or `--codex-model`
+`xhigh` reasoning, read-only sandbox (also set explicitly on every resume except preflight round 2). `CODEX_ADVISOR_MODEL` or `--codex-model`
 and `CODEX_ADVISOR_EFFORT` or `--codex-effort` override model and effort. The
 first consult persists the session; later consults on the same slug resume it
 with `codex exec resume`, so the final review keeps the preflight session's
@@ -208,5 +212,5 @@ If transport is genuinely unavailable, record the preflight result as
 review. No nonce, skip file, stamp, attestation, or audited exception authorizes
 completion.
 
-Close a repaired final finding with `workflow.py record advisor-disposition --finding <ID> --fixed --behavior-id <BM_ID>`; the recorder derives the finding kind, context, stage and owning comparison results. Successful original/reviewed/candidate results can establish preservation; the reviewer and advisor judge whether the exercised cases address the claim.
-See `record advisor-disposition --help` for other dispositions.
+A repaired final finding needs no disposition: after the fix and `tdd`, the re-check's commit-ready settles it. Successful original/reviewed/candidate results can establish preservation; the reviewer and advisor judge whether the exercised cases address the claim.
+A finding the lead disputes takes `record advisor-disposition --rejected`.

@@ -8,8 +8,7 @@ description: Enforce production-only implementation standards for this repo. Use
 Apply this skill before writing any repository code or file content change, keep it active while implementing, and run its bundled gate before finalizing.
 Use the production-preflight skill first on before-edit turns that require explicit preflight. `code-quality` owns the seven quality principles and wins on conflict; this skill extends them with implementation procedure.
 
-In a governed production workflow, invoke this skill after planning the real probe and before production, configuration, or runtime implementation edits; the probe edit may precede it. Run
-the bundled gate over the pre-implementation tree as the clean baseline, then keep
+In a governed production workflow, invoke this skill after planning the real probe and before production, configuration, or runtime implementation edits; the probe edit may precede it. Keep
 this doctrine active through implementation and final verification.
 
 Before editing, use the standards below to choose the smallest production-safe implementation path. In a governed pass, run the bundled gate before finalizing:
@@ -18,14 +17,10 @@ Before editing, use the standards below to choose the smallest production-safe i
 python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" verify --kind quality-gate
 ```
 
-It prints a bounded summary, a command that saves the complete report (kept
-compressed in the pass ledger) to a file outside chat, and a bounded `jq`
-projection for reading it; never print the saved file whole. It attaches the pass's
-recorded snapshot-bound Repo Context Forge evidence, which
-`QG54-OWNER-COMPETITION-PRODUCTION` needs; without it that rule reports
-incomplete. Load
-[references/gate-policy.md](references/gate-policy.md) when interpreting the
-gate's JSON contract.
+It prints a bounded summary and, when the gate fails, a command that saves the complete report
+outside chat and a bounded `jq` projection; never print the saved file whole. Load
+[references/gate-policy.md](references/gate-policy.md) only when the gate fails or a
+hard rule reports `incomplete`; a warning-only rule's `incomplete` needs no action.
 
 ## Execution Checklist
 
@@ -194,4 +189,4 @@ Load [references/transaction-doctrine.md](references/transaction-doctrine.md) fo
 
 ## Bundled Gate Policy
 
-Load [references/gate-policy.md](references/gate-policy.md) when running or interpreting the bundled gate. The gate is non-mutating.
+Load [references/gate-policy.md](references/gate-policy.md) when the bundled gate fails. The gate is non-mutating.

@@ -1,67 +1,27 @@
 ---
 name: tdd
-description: TDD for production behavior changes through real Seams. Use when changing production behavior test-first or when another workflow requires TDD proof.
+description: TDD for production behavior changes through recorded original/candidate comparisons at real Seams. Use when changing production behavior or when another workflow requires TDD proof.
 ---
 
 # TDD through recorded source comparisons
 
-Drive retained attack probes through real production Interfaces and collaborators; assert meaningful results and state effects. Mocks, stubs, fakes and test-only adapters cannot prove behavior. See [probe quality](tests.md) and [execution](recorder.md).
-
-Before implementation, identify the requested behavior and affected preservation from the user's request; the approved preflight records an interpretation. Select and reuse probes under AGENTS.md's Real-Seam proof invariant. If its Interface does not exist yet, implement that Interface and return to exercise the independent guarantees; an import failure proves no later behavior.
+The original source is the baseline. The request decides which differences are correct. One direct batch proves both: the workflow runner executes it on the original and the edited source. Probe quality is in [tests.md](tests.md); the runner and the Behavior Map fields are in [recorder.md](recorder.md).
 
 ## Required probe loop
 
-This is the testing procedure after a coherent production edit, before verification
-or review. A passing run of the pre-edit cases does not finish it.
+Do these steps in order for each coherent production edit. Do not hand the change to a reviewer or advisor before step 6 is done.
 
-1. **Keep one reusable direct harness.** Reuse the existing fixtures, assertions and
-   real collaborators. Construct the responsible Interface with the source and state
-   its production caller supplies, without invoking that caller to obtain them.
-   Bootstrap and workflow orchestration are not setup inside decision probes. Share
-   setup where safe and isolate mutable state.
-2. **Turn the edited decisions into probe cases.** For every predicate, term, guard,
-   branch, write or return the diff adds, removes, broadens or narrows, add a case
-   for each outcome it decides in the original or candidate source, using an input
-   that produces that outcome. Put the cases in the existing direct batch and assert
-   the original result unless the request changes it; an original failure followed
-   by a candidate pass establishes a change, not preservation.
-   Use MC/DC (modified condition/decision coverage): an independence pair changes a
-   condition and the decision's outcome, holding other conditions fixed (unique-cause)
-   or varying only those that cannot affect it (masking); short-circuited operands
-   are don't-care. Our extension requires a pair in every decisive context of each
-   removed, weakened or rewritten condition: each combination of other conditions
-   where flipping it alone flips the original decision, dropping masked conditions.
-   Run the pairs on the edited code, separately from requested-change cases.
-   Inferred contexts remain unverified; if no caller-supplied input reaches a
-   context, explain why in a probe note for the reviewer, which the runner neither
-   requires nor records. For produced values, also cover boundary and partition
-   cases: empty, one and several for collections; below, at and above for limits.
-   Investigate callees and decisions the runner cannot see. Where useful, seed
-   combinations of fixture values with one printed result per case, and test
-   metamorphic relations for requested new behavior.
-3. **Run the expanded batch on both sources.** Use the existing runner below. Every
-   case must execute and assert its observable result and relevant state effects on
-   both sources. Use case-local assertions, such as unittest subtests, so an expected
-   failure in an earlier case cannot skip the remaining cases.
-4. **Investigate differences and repair.** Judge differences against the user's
-   request, challenging preflight labels and advisor approval when they conflict.
-   Challenge an assertion that endorses a regression, repair it
-   and the implementation, and rerun the same batch. Keep the distinguishing cases.
-   Complete this loop before handing the change to a reviewer or advisor.
+1. **Select the direct batch.** Start from the preflight's [Behavior Map](recorder.md#behavior-map). Reuse existing tests, fixtures and assertions. Call the responsible Interface with the source and state its production caller supplies. Do not run bootstrap or workflow orchestration inside a probe. Use real collaborators; read [mocking.md](mocking.md) when you choose the runtime or the failure path for a remote, process, filesystem or concurrent Seam. If the Interface does not exist yet, create it, then drive each guarantee through it; an import failure proves nothing. Done when each map item names its cases in the batch.
+2. **Make the edit.** Make the smallest change that meets the request.
+3. **Reconcile the actual diff.** Read the diff against the original responsibilities. For each condition, guard, branch, write or return that the edit adds, removes, weakens, strengthens or rewrites, find its decisive contexts with [MC/DC](tests.md#mcdc). Find its value boundaries (empty, one, several; below, at, above a limit). Name each existing test whose asserted output the edit changes or that the diff removes or rewrites, the changed conditions it exercises and every other decision those conditions control; a decision the request keeps needs its own case. Investigate callees and decisions the runner cannot see. Done when each context and boundary is a named case of the map item owning its Interface (`record tdd-map`), or has an executed case that shows it cannot be reached.
+4. **Extend the batch.** Add those cases to the existing direct batch. Each case asserts an existing assertion or the original's observed result, unless the request names the new result; check a fixture's assumption on the original before asserting it. Use case-local assertions, such as unittest subtests, so that one failure cannot skip later cases. Done when every named case is in the probe.
+5. **Compare.** Run the batch through the runner: `workflow.py tdd --behavior-id BM_X -- COMMAND [ARG...]`. Done when the receipt shows every named case on both trees.
+6. **Judge and repair.** The receipt's `open` list states each item that is not proved. Judge each difference against the request, not against a preflight label or an advisor approval. Deleting code does not authorize unrelated behavior changes; Production Code owns the [outcome rules](../production-code/SKILL.md#minimum-implementation-decision). Repair the code or the probe, then run the same batch again. Never rewrite an expected value to make it pass. Done when `open` is empty.
 
-The existing runner executes the same current probe and test environment on recorded
-original, recorded edited, reviewed and current candidate source trees:
+Bound each claim to the inputs the batch executed. Equal failures, skips, setup errors and timeouts prove nothing.
 
-```text
-workflow.py tdd --behavior-id BM_CHANGE --behavior-id BM_KEEP -- COMMAND [ARG...]
-```
+## Review findings
 
-Share one targeted command across its owning behaviors. Inspect the bound outcomes: a failed batch does not mean every behavior failed. Historical assertion failure followed by candidate success demonstrates a change on exercised inputs. Successful checks on both versions establish preservation. Equal failures, skips, setup errors and timeouts leave proof incomplete. The assertions must observe the public results and relevant state effects; equal exit codes alone do not establish either.
+When review adds a probe, attach the finding as `sourceRefs`. The runner then also executes the batch on the recorded reviewed tree. Do not revert edits to manufacture a failure. Deleting an owner cannot close a material finding. Repeated occurrences need proof against the latest reviewed source.
 
-Bound coverage to exercised distinguishing inputs. Deleting implementation code does
-not authorize unrelated behavior changes; Production Code owns the governing
-[outcome rules](../production-code/SKILL.md#minimum-implementation-decision).
-
-When review adds a probe, attach its existing finding source reference and run the same command against the recorded reviewed tree and current repair. Do not revert edits to manufacture a failure. Update affected items by identity when scope changes; deleting an owner cannot close a material finding. Use the existing finding disposition after the runner supplies current proof. Repeated occurrences need proof against the latest reviewed source.
-
-Continue incremental probes while implementing; follow the [verification step](../repo-production-workflow/SKILL.md#9-verification) after coherent repair and cleanup.
+After coherent repair and cleanup, follow the [verification step](../repo-production-workflow/SKILL.md#9-verification).

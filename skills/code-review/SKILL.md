@@ -6,7 +6,7 @@ description: Review a diff since a fixed point along independent Standards and S
 # Code review
 
 For recurring behavioral findings, apply the workflow's
-[repair contract](../repo-production-workflow/SKILL.md#recurring-behavioral-repairs).
+[repair contract](../repo-production-workflow/WORKFLOW-MAP.md#recurring-behavioral-repairs).
 
 Initial review uses a fresh native context in the lead's checkout; return review
 continues that context when usable. You own review, not implementation: read source and run tests or attacks, but never
@@ -31,9 +31,10 @@ you reviewed.
 
 Trace the affected Seam through related modules, callers, callees, other writers
 of shared state and competing implementations. Inspect governing artifacts and
-named no-change surfaces using the recorded Repo Context Forge packet, GitNexus
-evidence and source. Do not begin a workflow, run the Repo Context Forge
-bootstrap, or mutate workflow state: the lead's pass owns those operations.
+named no-change surfaces using the recorded Repo Context Forge packet (the
+package's `advisor-projection` channel), GitNexus evidence and source. Do not
+begin a workflow, run the Repo Context Forge bootstrap, or mutate workflow
+state: the lead's pass owns those operations.
 Write the reviewer intake JSON required below. On continuation, inspect
 the correction delta and affected preservation/interactions; reuse the unchanged
 contract, instructions and applicable evidence. Report when the prior context is
@@ -58,7 +59,7 @@ that objective is fulfilled, including materially wrong behavior the declared
 assertions would miss. Judge correction of the original failure, affected-domain
 coverage and preservation separately. Bound every claim to exercised inputs. Inspect the runner's recorded original, reviewed and candidate outcomes, including public results and durable state effects. Matching successful checks establish preservation; equal failures, nonexecution and setup failures prove neither preservation nor a requested change.
 
-Challenge the expectation itself against the original request. Deleting implementation code does not authorize unrelated behavior changes. If an assertion expects an unrequested original-allow to candidate-block regression, reject the assertion and regression even when the comparison reports a clean failure-to-success change. Preserve original behavior where the request does not authorize a difference. Challenge omissions against changed predicates, callees, shared writers and mutation paths. Return findings through the existing workflow; no new approval or interpretation form is needed.
+Challenge the expectation itself against the original request. Deleting implementation code does not authorize unrelated behavior changes. If an assertion expects an unrequested original-allow to candidate-block regression, reject the assertion and regression even when the comparison reports a clean failure-to-success change. Preserve original behavior where the request does not authorize a difference. Challenge omissions against changed predicates, callees, shared writers and mutation paths. Return findings through the existing workflow.
 
 
 
@@ -70,7 +71,9 @@ expected/observed results under those same verification rules.
 
 ## 5. Review both axes
 
-For each removed or narrowed predicate or term, trace all branches it guards in the original source and independently derive a decisive input for every role outside the authorized removal, reusing existing `behaviorMap` items and probes. A check that finds words in the request or confirms the observed difference does not refute a finding that the difference is unauthorized. Reuse applicable proof; require no interpretation form or second coverage inventory.
+Apply TDD's [MC/DC](../tdd/tests.md#mcdc) to the diff: for every condition the edit adds, removes, weakens, strengthens or rewrites, check that each feasible decisive context has its pair executed on both sources in the item owning its Interface, or an executed case showing on both sources that the context cannot be reached. Do not re-run the lead's recorded cases. Judge each listed contract change (a changed kind, a contract item added or re-worded, contract cases added, a case dropped) against the original request, and a finding-owned one against its owning finding's immutable claim; a listing authorizes nothing. A check that finds words in the request or confirms the observed difference does not refute a finding that the difference is unauthorized. Reuse applicable proof; the packet's `open` and `contractChanges` lines are the readiness result, not a second inventory.
+
+Report one finding per owning Module and violated invariant: list every demonstrated input as a case of that finding and sketch the owner's class-wide correction, not one instance; a further input to an already-reported owner and invariant is a case of that finding (priorFinding), not a new finding.
 
 Run **Standards** and **Spec** independently:
 
@@ -89,8 +92,8 @@ and the smallest correction.
 ## 6. Return structured output
 
 Return the reviewed checkout/workflow/tree and a Standards/Spec report with the
-actual receipt references. Write the immutable intake directly as JSON for the
-lead's `--input`; do not make the lead transcribe findings. Continuations report
+actual receipt references in your reply, not in the intake. Write the immutable
+intake as a JSON file for the lead's `--input`. Continuations report
 original identities as corrected, still present or awaiting evidence, and intake
 only new findings. An empty return cannot close an earlier unresolved finding:
 

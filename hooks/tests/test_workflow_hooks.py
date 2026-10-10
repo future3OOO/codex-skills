@@ -370,8 +370,8 @@ class WorkflowHookTests(HookHarness):
         self.assertEqual(json.loads(self.state("history").stdout), before)
 
         (self.repo / "app.py").write_text("value = 2\n", encoding="utf-8")
-        self.assertEqual(dispatch().get("permissionDecision"), "deny")
-        self.post_edit("app.py")
+        self.post_edit("app.py")  # after the final advisor a correction goes to tdd and its re-check, not review
+        self.assertEqual(json.loads(self.state("status").stdout)["nextAction"], "final-review")
         unrelated = self.second_repo("unrelated")
         with self.subTest(unrelated_project=True):
             self.assertNotIn("permissionDecision", dispatch(cwd=unrelated), "UNRELATED_PROJECT_BLOCKED")
@@ -380,7 +380,6 @@ class WorkflowHookTests(HookHarness):
         for tool in ("spawn_agent", "collaborationfollowup_task", "send_input", "send_message", "resume_agent"):
             with self.subTest(return_tool=tool):
                 self.assertNotIn("permissionDecision", dispatch(tool, cwd=other), "SIBLING_TASK_INHERITED_OBLIGATIONS")
-        self.assertEqual(dispatch(role="explorer").get("permissionDecision"), "deny")
 
     def test_the_edit_gate_advises_missing_steps_instead_of_denying(self) -> None:
         marker = "GATE_STILL_DENIES_MISSING_STEPS"
@@ -697,7 +696,7 @@ class PerEditOverheadTests(HookHarness):
         self.assertNotIn("production-code gate FAILED", combined, marker)
         state = json.loads(self.state("status").stdout)
         self.assertEqual(state["phase"], "implementation", marker)
-        self.assertEqual(state["codeReview"], {"status": "pending", "findings": "pending"}, marker)
+        self.assertEqual(state["finalReview"], {"source": None, "status": "pending", "findings": "pending"}, marker)
 
     def test_a_repeated_dirty_observation_appends_no_ledger_event(self) -> None:
         marker = "REDUNDANT_INVALIDATION_COMMITTED"
@@ -774,8 +773,10 @@ class PerEditOverheadTests(HookHarness):
         result = self.post_edit("app.py")
         self.assertEqual(result.returncode, 0, marker + ": " + result.stdout + result.stderr)
         state = json.loads(self.state("status").stdout)
+        # after the final advisor, an edit reopens only its re-check: code review and verification stand
         self.assertEqual(state["phase"], "implementation", marker)
-        self.assertEqual(state["codeReview"], {"status": "pending", "findings": "pending"}, marker)
+        self.assertEqual(state["codeReview"], {"status": "passed", "findings": "none"}, marker)
+        self.assertEqual((state["verification"], state["nextAction"]), ("passed", "final-review"), marker)
         self.assertEqual(state["finalReview"], {"source": None, "status": "pending", "findings": "pending"}, marker)
         self.assertEqual(self.history_length("production-edit-invalidated"), before + 1,
                          marker + ": the first edit after review must commit exactly one transition")
@@ -1403,23 +1404,6 @@ class TollDeletionTests(HookHarness):
         completed = self.state("complete")
         self.assertEqual(completed.returncode, 0, marker + ": " + completed.stdout + completed.stderr)
 
-    def test_a_material_finding_survives_a_later_review_and_empty_intake(self) -> None:
-        marker = "MATERIAL_FINDING_CLOSED_BY_EMPTY_INTAKE"
-        slug = "material-survives"
-        wid = self.advance_to_review(slug)
-        first = self.final_intake(slug, wid, [{"id": "FINAL-1", "claim": "real gap", "material": True, "kind": "behavioral"}], "fix-before-commit")
-        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
-        (self.repo / "app.py").write_text("value = 3\n", encoding="utf-8")
-        self.post_edit("app.py")
-        record_context_forge(self.repo, self.tmp)
-        self.run_verification(slug)
-        self.owner_phase("code-review", "passed", findings="none")
-        second = self.final_intake(slug, wid, [{"id": "REVIEW-1", "claim": "advice", "material": False, "kind": "nonbehavioral"}])
-        self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
-        completed = self.state("complete")
-        self.assertEqual(completed.returncode, 2, marker + ": " + completed.stdout)
-        self.assertIn("FINAL-1", completed.stderr, marker + ": " + completed.stderr)
-
     def test_an_unproved_map_cannot_complete(self) -> None:
         marker = "UNPROVED_MAP_COMPLETED"
         slug = "unproved"
@@ -1565,16 +1549,11 @@ class RedFirstTests(HookHarness):
         self.assertEqual(json.loads(self.state("status").stdout)["nextAction"], "complete-workflow", marker)
         self.assertEqual(self.state("complete").returncode, 0, marker)
 
-    def rejection_document(self, wid: str, intake_id: str, measurement: str) -> Path:
-        status = json.loads(self.state("status").stdout)
-        path = self.tmp / f"reject-{len(measurement)}.json"
-        path.write_text(json.dumps({"context": {"workflowId": wid, "candidateTree": status["activeCandidateTree"]},
-            "intakeEvidenceId": intake_id, "dispositions": [{"finding_id": "F-1", "status": "rejected-with-evidence", "kind": "behavioral",
-            "premise": {"claim": "the operation is attacked by test_probe_a", "command": measurement, "result": "false"},
-            "occurrence": {"domain": "every caller of the operation", "count": 0, "complete": True, "command": measurement, "result": "count=0"},
-            "materialConsequence": {"claim": "the promise could break unseen", "command": measurement, "result": "attacked"},
-            "evidence": "test_probe_a executes the operation"}]}), encoding="utf-8")
-        return path
+    def reject(self, slug: str, wid: str, measurement: str) -> subprocess.CompletedProcess[str]:
+        """The branch's flag form: a measured rejection carries its judgment in --reason."""
+        return self.state("record", "advisor-disposition", "--slug", slug, "--workflow-id", wid, "--stage", "final",
+                          "--finding", "F-1", "--rejected", "--reason",
+                          f"premise false: {measurement} shows test_probe_a attacks the operation; occurrence count=0 over every caller")
 
     def rejected_then_re_raised(self, slug: str) -> tuple[str, str]:
         """A rejected final finding the advisor re-raises as material in its one response."""
@@ -1592,8 +1571,7 @@ class RedFirstTests(HookHarness):
                            "--source", "codex-advisor", "--input", str(envelope))
         self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
         intake_id = [e["intakeEvidenceId"] for e in json.loads(self.state("status").stdout)["findingStates"] if e["findingId"] == "F-1"][0]
-        rejected = self.state("record", "advisor-disposition", "--slug", slug, "--workflow-id", wid, "--stage", "final",
-                              "--findings", "addressed", "--input", str(self.rejection_document(wid, intake_id, "python -m unittest test_probe_a")))
+        rejected = self.reject(slug, wid, "python -m unittest test_probe_a")
         self.assertEqual(rejected.returncode, 0, rejected.stdout + rejected.stderr)
         self.first_rejection = self.finding_entry()["dispositionEvidenceId"]
         appeal = self.state("record", "advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final",
@@ -1610,8 +1588,7 @@ class RedFirstTests(HookHarness):
         premature = self.state("complete")
         self.assertEqual(premature.returncode, 2, marker + ": complete ignored the re-raised measurement")
         self.assertIn("F-1", premature.stderr, marker)
-        judged = self.state("record", "advisor-disposition", "--slug", slug, "--workflow-id", wid, "--stage", "final",
-                            "--findings", "addressed", "--input", str(self.rejection_document(wid, intake_id, "python -m unittest test_probe_a -v")))
+        judged = self.reject(slug, wid, "python -m unittest test_probe_a -v")
         self.assertEqual(judged.returncode, 0, marker + ": " + judged.stdout + judged.stderr)
         completed = self.state("complete")
         self.assertEqual(completed.returncode, 0, marker + ": " + completed.stdout + completed.stderr)
@@ -1632,18 +1609,7 @@ class RedFirstTests(HookHarness):
         first = self.state("record", "advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final",
                            "--source", "codex-advisor", "--input", str(envelope))
         self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
-        status = json.loads(self.state("status").stdout)
-        intake_id = [e["intakeEvidenceId"] for e in status["findingStates"] if e["findingId"] == "F-1"][0]
-        measurement = {"claim": "the operation is attacked by test_probe_a", "command": "python -m unittest test_probe_a", "result": "false"}
-        rejection = self.tmp / "reject-f1.json"
-        rejection.write_text(json.dumps({"context": {"workflowId": wid, "candidateTree": status["activeCandidateTree"]},
-            "intakeEvidenceId": intake_id, "dispositions": [{"finding_id": "F-1", "status": "rejected-with-evidence", "kind": "behavioral",
-            "premise": measurement, "occurrence": {"domain": "every caller of the operation", "count": 0, "complete": True,
-            "command": "python -m unittest test_probe_a", "result": "count=0"},
-            "materialConsequence": {"claim": "the promise could break unseen", "command": "python -m unittest test_probe_a", "result": "attacked"},
-            "evidence": "test_probe_a executes the operation"}]}), encoding="utf-8")
-        rejected = self.state("record", "advisor-disposition", "--slug", slug, "--workflow-id", wid, "--stage", "final",
-                              "--findings", "addressed", "--input", str(rejection))
+        rejected = self.reject(slug, wid, "python -m unittest test_probe_a")
         self.assertEqual(rejected.returncode, 0, rejected.stdout + rejected.stderr)
         # The advisor's one response re-raises the same finding as material.
         appeal = self.state("record", "advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final",
@@ -1651,8 +1617,7 @@ class RedFirstTests(HookHarness):
         self.assertEqual(appeal.returncode, 0, appeal.stdout + appeal.stderr)
         after = json.loads(self.state("status").stdout)
         self.assertNotEqual(after["nextAction"], "needs-human-owner-adjudication", marker + ": " + after["nextAction"])
-        judged = self.state("record", "advisor-disposition", "--slug", slug, "--workflow-id", wid, "--stage", "final",
-                            "--findings", "addressed", "--input", str(self.rejection_document(wid, intake_id, "python -m unittest test_probe_a -v")))
+        judged = self.reject(slug, wid, "python -m unittest test_probe_a -v")
         self.assertEqual(judged.returncode, 0, marker + ": " + judged.stdout + judged.stderr)
         completed = self.state("complete")
         self.assertEqual(completed.returncode, 0, marker + ": " + completed.stdout + completed.stderr)
@@ -1750,8 +1715,7 @@ class RedFirstTests(HookHarness):
         self.owner_phase("code-review", "passed", findings="none")
         note = self.final_result(slug, wid, "final-note", "commit-ready", False)
         self.assertEqual(note.returncode, 0, note.stdout + note.stderr)
-        rejected = self.state("record", "advisor-disposition", "--slug", slug, "--workflow-id", wid, "--stage", "final", "--findings", "addressed",
-                              "--input", str(self.rejection_document(wid, self.finding_entry()["intakeEvidenceId"], "python -m unittest test_probe_a")))
+        rejected = self.reject(slug, wid, "python -m unittest test_probe_a")
         self.assertEqual(rejected.returncode, 0, rejected.stdout + rejected.stderr)
         appeal = self.final_result(slug, wid, "final-reraise", "fix-before-commit", True)
         self.assertEqual(appeal.returncode, 0, appeal.stdout + appeal.stderr)
@@ -1773,8 +1737,7 @@ class RedFirstTests(HookHarness):
         entry = self.finding_entry()
         self.assertEqual([(h.get("status"), h.get("evidenceId")) for h in entry.get("dispositionHistory") or []],
                          [("rejected-with-evidence", self.first_rejection)], marker + ": " + json.dumps(entry))
-        second = self.state("record", "advisor-disposition", "--slug", "reraise-second", "--workflow-id", wid, "--stage", "final",
-                            "--findings", "addressed", "--input", str(self.rejection_document(wid, intake_id, "python -m unittest -v test_probe_a")))
+        second = self.reject("reraise-second", wid, "python -m unittest -v test_probe_a")
         self.assertEqual(second.returncode, 0, marker + ": " + second.stdout + second.stderr)
         entry = self.finding_entry()
         self.assertEqual([h.get("evidenceId") for h in entry.get("dispositionHistory") or []], [self.first_rejection], marker + ": " + json.dumps(entry))

@@ -214,9 +214,10 @@ On a governed pass, use `workflow.py summary` to check the retained graph's
 applicability. Documentation and Python comment corrections with unchanged
 parsed code and source positions can reuse it; the projection keeps its original
 indexed tree and names the current reuse candidate. Current quality and review
-still run. Changed code, positions, paths, modes or dependencies require the
-bootstrap wrapper with the same `--workflow-slug` and `--revalidate` before typed
-quality-gate verification. That wrapper owns the governed candidate index and
+still run. Changed code, positions, paths, modes or dependencies are re-analyzed
+automatically: typed quality-gate verification and the advisor checkpoint run the
+bootstrap wrapper's `--revalidate` themselves when the recorded projection is stale,
+so do not run it by hand. That wrapper owns the governed candidate index and
 executed checks: do not also force-index the source checkout or repeat those
 checks. Use the refreshed packet's exact repo selector for any remaining gap.
 `detect_changes` is optional supplemental evidence for a named question; scope

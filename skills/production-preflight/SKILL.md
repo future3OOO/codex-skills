@@ -32,7 +32,7 @@ local work short; transaction-sensitive work names the full surrounding surface.
 
 ### `authoritativeContract`
 
-Before editing, trace the shared responsibilities visible in the original code and derive distinguishing inputs for affected preservation, reusing existing items and probes. TDD's [required probe loop](../tdd/SKILL.md#required-probe-loop) revisits them against the actual diff.
+Before editing, trace the shared responsibilities visible in the original code and derive distinguishing inputs for affected preservation, reusing existing items and probes; where the request invalidates an assertion in an existing test, change only that assertion and keep the test. TDD's [required probe loop](../tdd/SKILL.md#required-probe-loop) revisits them against the actual diff.
 
 Before choosing an implementation or writing tests, investigate each behavioral
 predicate that decides an outcome:
@@ -46,7 +46,7 @@ predicate that decides an outcome:
 2. **Challenge the rule, even when it seems conventional.** Compare it with the
    task contract and the rules used by other Modules on the same path. Could a
    supported value receive different decisions under plausible readings? Apply
-   [TDD's differential proof](../tdd/tests.md#what-a-slice-must-prove): derive a
+   [TDD's differential proof](../tdd/tests.md#what-the-batch-must-prove): derive a
    concrete counterexample, evaluate the competing rules on it, and compare the
    outcomes. Test the proposed meaning, not an implementation chosen in advance.
 3. **Resolve from governing authority or expose the uncertainty.** The authority
@@ -56,7 +56,8 @@ predicate that decides an outcome:
    dependent code.
 
 State the reachable values and decision rules concisely in this contract and the
-existing `behaviorMap` and concrete discriminating probes. Investigation is complete when each
+existing `behaviorMap`: competing readings go in the owning item's `interpretations`,
+and the discriminating inputs in its `boundaryInputs`. Investigation is complete when each
 decision's meaning is established over its reachable values or its uncertainty
 is explicit. Unambiguous predicates need no additional fields or inventory.
 
@@ -71,25 +72,26 @@ readings of one behavior, is a pending `behaviorMap` item, not an unknown.
 
 ### `behaviorMap`
 
-Record concrete falsifiers of the load-bearing public promises. Each item requires `id`, `basis`, `behavior`, `seam` and `expected`; `sourceRefs` is optional. IDs are stable uppercase identifiers. The basis ties the expectation to the original request or affected preservation; select the `seam` under AGENTS.md's Real-Seam proof invariant, naming the responsible production Interface and its real setup for the assertion being proved.
+Record concrete falsifiers of the load-bearing public promises. TDD's [Behavior Map](../tdd/recorder.md#behavior-map) defines the fields and what readiness enforces by execution. IDs are stable uppercase identifiers. The basis ties the expectation to the original request or affected preservation; select the `seam` under AGENTS.md's Real-Seam proof invariant, naming the responsible production Interface and its real setup for the assertion being proved. For each condition of a decision the plan edits, kept conditions included, state each feasible decisive context ([MC/DC](../tdd/tests.md#mcdc)) with one input on each side of that occurrence of the condition (the same check in another branch is a separate context) and, only where the request changes the decision, its required result, in the item owning its Interface: one contract and one preservation item per owning Interface, each context a case of it. A kept decision's result is the original's, supplied by the comparison. Attach the executed cases to that item's `boundaryInputs` after implementation.
 
 ```json
-[{"id":"BM_EXPIRY","basis":"the deadline is inclusive","behavior":"expires at the deadline","seam":"Expiry.is_expired with a real clock","expected":"now equal to expiresAt is expired"}]
+[{"id":"BM_EXPIRY","kind":"contract","basis":"the deadline is inclusive","behavior":"expires at the deadline","seam":"Expiry.is_expired with a real clock","expected":"now equal to expiresAt is expired","boundaryInputs":["test_expires_at_deadline","test_not_expired_before_deadline"],"interpretations":["now > expiresAt","now >= expiresAt"],"interpretation":"now >= expiresAt","authority":"the request's 'at the deadline'"}]
 ```
 
-Derive attacks from actual promises: atomicity needs supported failure and cancellation; persistence needs reopen and another connection; shared state needs material writer interleavings; parsers need decisive boundaries and captured production inputs. Use real collaborators and observe results and state effects. A missing entrypoint is not proof of its downstream guarantees.
+Derive attacks from actual promises: atomicity needs supported failure and cancellation; persistence needs reopen and another connection; shared state needs material writer interleavings; parsers need decisive boundaries and captured production inputs, named in `boundaryInputs`. Use real collaborators and observe results and state effects. A missing entrypoint is not proof of its downstream guarantees.
 
-Resolve materially different readings from authority and concrete discriminating inputs in the contract and probes. The existing advisor challenges the expectation itself against the request. No separate interpretation form or authored proof status is needed.
+Record materially different readings as the owning item's `interpretations` with concrete discriminating `boundaryInputs`; settle them from authority before dependent code, or leave them visibly unsettled, which keeps TDD incomplete. The existing advisor challenges the expectation itself against the request. No authored proof status exists; the runner derives it.
 
-An owning probe links a finding with `sourceRefs: [{"type":"finding","evidenceId":"<intake>","id":"R-1"}]`. The runner executes it on the recorded reviewed source and current repair. Replace the complete list with `record tdd-map` when obligations change; this cannot silently discharge a finding. The runner supplies change or preservation results, freshness and completion. An empty list is appropriate only when there is no behavior claim.
+An owning probe links a finding with `sourceRefs: [{"type":"finding","evidenceId":"<intake>","id":"R-1"}]`. The runner executes it on the recorded reviewed source and current repair. Update changed items by id with `record tdd-map` when obligations change; this cannot silently discharge a finding. The runner supplies change or preservation results, freshness and completion. An empty list is appropriate only when there is no behavior claim.
 
 ## Recording
 
 Submit the exact artifact through [Codex Advisor's preflight loop](../codex-advisor/SKILL.md#preflight-advice) before tracked edits.
 Record it once the advisor returns `approved` for that content.
 
-In the governed workflow record it with `python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" record preflight --input -`
-(shape: `record preflight --help`; `--check` validates without recording). A refusal
+In the governed workflow record it with `python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" record preflight`:
+with no input it records the advisor-approved draft, including the advisor's last-round edits
+(`--check` validates without recording). A refusal
 names every violation at once and mutates nothing. Key order and JSON formatting
 do not change content.
-Resolve outstanding questions before dependent implementation; update the list through `tdd-map`, never a second preflight recording. Response prose is not evidence.
+Resolve outstanding questions before dependent implementation; settle readings and update items through `tdd-map`, never a second preflight recording. Response prose is not evidence.

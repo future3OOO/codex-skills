@@ -56,10 +56,9 @@ Repo Context Forge analysis copy. For codex-skills installation, follow
   that operation's behavior or integration.
 - **Attack probes first.** Unit tests must themselves probe real production
   behavior. Maximize attack coverage across affected inputs, failures,
-  interactions, and preservation. Run affected-surface checks; a full suite
-  requires a demonstrated gap that targeted checks and available CI cannot close.
-  Name that gap first. Never replace real-Seam proof with a suite or duplicate
-  retained probes with a parallel unit-test suite.
+  interactions, and preservation. Prove each changed line with a direct N/N+1
+  probe that calls it. Add an existing test only when it calls the changed code
+  directly; never run whole classes, modules or suites. Never duplicate retained probes with a parallel unit-test suite.
 - **Imaginary-risk ban.** A theoretical risk with no demonstrated failure is a
   report line, not a system. Build nothing for it.
 - **Root-cause-first.** Use `$diagnose` for bugs, failures, flaky behavior, and
@@ -98,10 +97,12 @@ Repo Context Forge analysis copy. For codex-skills installation, follow
   the short plan and its checks.
 - Read changed lines first, then only the context behavior and preservation need;
   no whole-file or multi-hundred-line dumps, no `JSON.stringify` of whole tool results.
-- Invoke `$tdd` before every code change. Drive real Seams: RED/GREEN for changed
-  behavior, preservation proof for refactors. If the change creates the Seam,
-  verify its absence first, then create it and return to drive it. Absence alone
-  does not prove behavior.
+- Invoke `$tdd` before every code change. Drive real Seams through the recorded
+  original/candidate comparison: a requested change must show its difference on
+  attributable inputs, an invariant must hold on both sources, and the edit's
+  decisive contexts and boundary cases execute as named map items. If the change
+  creates the Seam, create it and return to drive it; absence alone does not prove
+  behavior.
 - Never mark work complete while required behavior or proof is missing.
 - Before handoff, inspect the delta and remove bloat, duplication, speculative
   flexibility, and unnecessary files.
@@ -150,8 +151,8 @@ Reject false premises with the measurement; zero occurrences warrant no code cha
 Code you may edit is not a constraint: before rejecting a design, calling a defect
 inherent, or documenting it as intended, name the smallest edit that would remove it
 and why that edit is out of scope.
-Before shipping parser, matcher, predicate, or external-text changes, run the new
-code over system values captured before the fix and require zero regressions.
+Before shipping parser, matcher, predicate, or external-text changes, add system values
+captured before the fix as cases in the change's comparison batch and require zero regressions.
 
 Account for every review signal: threads, inline/issue comments, annotations,
 CI failures, and human/automated findings. Give each an evidenced disposition in

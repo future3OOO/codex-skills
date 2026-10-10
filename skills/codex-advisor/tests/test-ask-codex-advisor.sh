@@ -182,7 +182,13 @@ printf '%s\n' "$*" >"$CAPTURE_DIR/args-$count"
 cat >"$CAPTURE_DIR/payload-$count"
 if [[ "${FAIL_PROVIDER:-0}" == 1 ]]; then exit 7; fi
 printf 'session id: 00000000-0000-7000-8000-%012d\n' "$count" >&2
-if [[ " $* " == *" resume "* ]] || grep -q 'final-review' "$CAPTURE_DIR/payload-$count"; then
+if [[ -n "${PROVIDER_EDIT:-}" ]]; then
+  draft=$(grep -o '/[^ ]*/preflight\.json in place' "$CAPTURE_DIR/payload-$count" | head -1); draft=${draft% in place}
+  python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d["authoritativeContract"]=sys.argv[2]; json.dump(d,open(sys.argv[1],"w"))' "$draft" "$PROVIDER_EDIT"
+fi
+if [[ -n "${PROVIDER_ENVELOPE:-}" ]]; then
+  printf '%s\n' "$PROVIDER_ENVELOPE"
+elif [[ " $* " == *" resume "* ]] || grep -q 'final-review' "$CAPTURE_DIR/payload-$count"; then
   printf '%s\n' '{"schemaVersion":1,"findings":[],"verdict":"commit-ready"}'
 else
   printf '%s\n' '{"schemaVersion":1,"findings":[],"verdict":"approved"}'
@@ -237,7 +243,7 @@ run_wrapper() {
 PYTHONPATH="$ROOT" python3 - "$rigtmp/preflight.json" <<'PYDRAFT'
 import json, sys
 from hooks.tests.support import build_document, pending_behavior
-contract = pending_behavior("BM_READER")
+contract = pending_behavior("BM_READER", boundaryInputs=["test_value", "test_note"])
 open(sys.argv[1], "w").write(json.dumps(build_document("scoped wrapper diagnostic", behavior_map=[contract])))
 PYDRAFT
 preflight_out=$(run_wrapper --slug scoped-rig --phase preflight-advice --preflight-file "$rigtmp/preflight.json" --design-file "$rigtmp/design.md" -- 'scope question' 2>"$rigtmp/preflight.err"); status=$?
@@ -257,6 +263,27 @@ check "design telemetry emitted" "codex_advisor_evidence name=governing-design" 
 check "canonical design declaration is retained" '"sha256"' "$(cat "$rigtmp/capture/payload-1")"
 check "current-pass diff carries the changed value" "diff> +value = 2" "$(cat "$rigtmp/capture/payload-1")"
 check "projection is framed as channel-prefixed data" "advisor-projection> {" "$(cat "$rigtmp/capture/payload-1")"
+check "ADVISOR_PROMPT_STALE preflight asks for the planned decisive contexts" "decisive contexts of the planned change" "$(cat "$rigtmp/capture/payload-1")"
+check "FORCED_REWRITE_RULE preflight maps every kept decision a forced test rewrite exercises" "For each existing test the request requires to change or remove, name each changed condition it exercises and every other decision that condition also controls; each such decision the request keeps needs a map case, or it is a material finding." "$(cat "$rigtmp/capture/payload-1")"
+check "PREDICTED_NAMES_DEMANDED preflight attaches executed cases after implementation" "executed cases are attached after implementation" "$(cat "$rigtmp/capture/payload-1")"
+check_absent "PREDICTED_NAMES_DEMANDED preflight demands no future case names" "naming its pair cases" "$(cat "$rigtmp/capture/payload-1")"
+check_absent "PREDICTED_NAMES_DEMANDED skills demand no future case names" "pair cases before implementation" "$(cat "$ROOT/skills/production-preflight/SKILL.md" "$ROOT/skills/codex-advisor/SKILL.md")"
+check_absent "PREFLIGHT_RECORD_MISGUIDED skills record the approved draft, not a lead file" "record preflight --input" "$(cat "$ROOT/skills/production-preflight/SKILL.md" "$ROOT/skills/repo-production-workflow/SKILL.md")"
+setup_skill="setup-matt-pocock""-skills"  # split so this check is not itself a pointer
+for root in "$ROOT" ${UNUSED_SKILL_ESTATES:-}; do
+  check "UNUSED_SKILL_PRESENT $root: is an estate that retains diagnose" "name: diagnose" "$(cat "$root/skills/diagnose/SKILL.md" 2>&1)"
+  for retired in "$setup_skill" grill-me migrate-to-shoehorn scaffold-exercises diagnosing-bugs improve-codebase-architecture.txt; do
+    check_absent "UNUSED_SKILL_PRESENT $root: $retired" "present" "$([[ -e "$root/skills/$retired" ]] && printf present)"
+  done
+  check_absent "UNUSED_SKILL_PRESENT $root: no pointer to the retired setup skill" "$setup_skill" \
+    "$(grep -rl --exclude-dir=.git "$setup_skill" "$root/skills" "$root/docs" "$root/hooks" "$root/README.md" "$root/AGENTS.md" 2>/dev/null)"
+done
+check_absent "MANUAL_DISPOSITION_GUIDED skills route no manual final disposition" "--fixed --behavior-id <BM_ID>" "$(cat "$ROOT/skills/repo-production-workflow/SKILL.md" "$ROOT/skills/codex-advisor/SKILL.md")"
+check "MANUAL_DISPOSITION_GUIDED the re-check settles a final finding" "its commit-ready settles the finding" "$(cat "$ROOT/skills/repo-production-workflow/SKILL.md")"
+check "ADDED_CONDITION_UNSATISFIABLE preflight takes an added condition's contexts from the edited decision" "the edited decision for a condition the plan adds" "$(cat "$rigtmp/capture/payload-1")"
+check "OWNER_BATCHED preflight batches map items by owning Interface" "one contract and one preservation item per owning Interface" "$(cat "$rigtmp/capture/payload-1")"
+check "OWNER_BATCHED preflight batches findings by owner and invariant" "one finding per owning Module and violated invariant" "$(cat "$rigtmp/capture/payload-1")"
+check "OWNER_BATCHED review skill batches findings by owner and invariant" "one finding per owning Module and violated invariant" "$(cat "$ROOT/skills/code-review/SKILL.md")"
 check_status "one projection section" 1 "$(count_exact "$rigtmp/capture/payload-1" '--- advisor projection (schemaVersion 1) ---')"
 check_status "one current-pass diff section" 1 "$(count_exact "$rigtmp/capture/payload-1" '--- current-pass diff: passStartOid^{tree} -> activeCandidateTree;')"
 for old in 'repo context packet' 'Repo Context Forge graph evidence' '--- unstaged diff ---' '--- staged diff ---' '--- untracked diff ---' 'recorded TDD summary' 'recorded code-review summary'; do
@@ -285,6 +312,7 @@ FAIL_PROVIDER=1 run_wrapper --slug scoped-rig --phase final-review --design-file
 check_status "resume provider failure propagates" 7 "$status"
 resume_args=$(cat "$rigtmp/capture/args-2")
 check "final resumes same session" "exec resume $preflight_sid" "$resume_args"
+check "RESUME_INHERITS_WRITE final resume is explicitly read-only" 'sandbox_mode="read-only"' "$resume_args"
 check_absent "resume failure has no cold-start fallback" "exec --sandbox" "$resume_args"
 check_status "resume failure does not re-invoke the provider" 2 "$(cat "$rigtmp/capture/count")"
 
@@ -313,6 +341,15 @@ check "projection telemetry emitted" "codex_advisor_evidence name=advisor-projec
 check "diff telemetry emitted" "codex_advisor_evidence name=diff " "$(cat "$rigtmp/final.err")"
 check "completion marker emitted" "codex_advisor_complete status=0 provider=codex" "$(cat "$rigtmp/final.err")"
 check "outgoing final payload retains selected receipt" "$selected_receipt" "$(cat "$rigtmp/capture/payload-4")"
+check_absent "LEDGER_OWNERSHIP_RULE final demands no recorded owning attacks" "owning attacks" "$(cat "$rigtmp/capture/payload-4")"
+check "LEDGER_OWNERSHIP_RULE final judges each ledger claim on the candidate" "whether the current candidate resolves its immutable claim" "$(cat "$rigtmp/capture/payload-4")"
+check "LEDGER_VERDICT_RULE final judges a rejected or report-only entry by its measurement" "for each supplied finding-ledger entry, judge whether the current candidate resolves its immutable claim; for a rejected-with-evidence or report-only entry, judge instead whether it passes the original-result test above, or for report-only shows the difference immaterial" "$(cat "$rigtmp/capture/payload-4")"
+check "ORIGINAL_RESULT_TEST final judges a rejection by the original's result, not a reading of the request" "After preflight the original's result is the test: a rejection, or a contract item added or re-worded since preflight, stands only if the original source already gives the candidate's result for its input or a contract item approved at preflight names that result; a reading of the request is not such evidence." "$(cat "$rigtmp/capture/payload-4")"
+check "LEDGER_VERDICT_RULE final vetoes an entry failing step 4" "or a ledger entry that fails step 4, forbids commit-ready" "$(cat "$rigtmp/capture/payload-4")"
+check "OWNER_BATCHED final batches findings by owner and invariant" "one finding per owning Module and violated invariant" "$(cat "$rigtmp/capture/payload-4")"
+check "ADVISOR_PROMPT_STALE final judges a finding-owned change against its finding" "against its owning finding" "$(cat "$rigtmp/capture/payload-4")"
+check "ADVISOR_PROMPT_STALE final covers added and strengthened conditions" "adds, removes, weakens, strengthens or rewrites" "$(cat "$rigtmp/capture/payload-4")"
+check_absent "ADVISOR_PROMPT_STALE final judges no release" "each release against" "$(cat "$rigtmp/capture/payload-4")"
 
 cat >"$rigtmp/home/.bashrc" <<'BASHRC'
 alias claudex='ANTHROPIC_BASE_URL=https://transport.invalid ANTHROPIC_AUTH_TOKEN=offline-token CLAUDE_CODE_SUBAGENT_MODEL=offline-model \
@@ -339,6 +376,54 @@ check_status "controlled max-context isolation consult exits 0" 0 "$status"
 check "a parent-exported unconfigured max-context is cleared" "CLAUDE_CODE_MAX_CONTEXT_TOKENS=unset" "$(cat "$rigtmp/capture/env-6")"
 check "the alias-configured window still reaches the provider" "CLAUDE_CODE_AUTO_COMPACT_WINDOW=240000" "$(cat "$rigtmp/capture/env-6")"
 check "a parent-exported unconfigured percent remains cleared" "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=unset" "$(cat "$rigtmp/capture/env-6")"
+
+# Preflight round 2: the resumed advisor edits the wrapper's recorded draft copy in place.
+r2repo="$rigtmp/round-two"
+git init -q "$r2repo"
+git -C "$r2repo" config user.email test@example.invalid
+git -C "$r2repo" config user.name Harness
+cp "$rigtmp/repo/.gitignore" "$r2repo/.gitignore"; printf 'value = 1\n' >"$r2repo/app.py"
+git -C "$r2repo" add app.py .gitignore
+git -C "$r2repo" commit -q -m base
+CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" begin --repo "$r2repo" --slug round-two --intent 'round two' >/dev/null
+CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 - "$ROOT" "$r2repo" "$rigtmp" <<'PY'
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from hooks.tests.support import record_context_forge
+record_context_forge(Path(sys.argv[2]), Path(sys.argv[3]))
+PY
+round_two() {
+  PATH="$rigtmp/bin:$PATH" HOME="$rigtmp/home" CODEX_HOME="$rigtmp/claude" CODEX_WORKFLOW_STATE_ROOT="$rigstate" \
+    CAPTURE_DIR="$rigtmp/capture" "$WRAPPER" --cwd "$r2repo" --slug round-two --phase preflight-advice \
+    --preflight-file "$rigtmp/preflight.json" --design-absent 'round two rig' "$@"
+}
+PROVIDER_ENVELOPE='{"schemaVersion":1,"findings":[{"id":"SPEC-1","claim":"a decisive case is missing","material":true}],"verdict":"changes-required"}' \
+  round_two -- 'round one' >/dev/null 2>&1; status=$?
+check_status "round one records changes-required" 0 "$status"
+check "round one creates a read-only session" "exec --sandbox read-only" "$(cat "$rigtmp/capture/args-$(cat "$rigtmp/capture/count")")"
+PROVIDER_EDIT='ADVISOR_IN_PLACE_EDIT' PROVIDER_ENVELOPE='{"schemaVersion":1,"findings":[{"id":"SPEC-2","claim":"added the case","material":false}],"verdict":"approved"}' \
+  round_two --reconsult -- 'round two' >/dev/null 2>&1; status=$?
+check_status "round two records approved" 0 "$status"
+recorded=$(CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" record preflight --repo "$r2repo" 2>&1)
+check "ROUND2_NOT_IN_PLACE record preflight records the advisor's in-place edit" '"status": "passed"' "$recorded"
+preflight_id=$(printf '%s' "$recorded" | python3 -c 'import json,sys; print(json.load(sys.stdin)["evidenceId"])' 2>/dev/null)
+check "ROUND2_NOT_IN_PLACE the recorded preflight is the edited copy" "ADVISOR_IN_PLACE_EDIT" \
+  "$(CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" evidence --repo "$r2repo" --full --evidence-id "$preflight_id" 2>&1)"
+round_two_args=$(cat "$rigtmp/capture/args-$(cat "$rigtmp/capture/count")")
+round_two_payload=$(cat "$rigtmp/capture/payload-$(cat "$rigtmp/capture/count")")
+check "ROUND2_NOT_IN_PLACE round two resumes the session" " resume " "$round_two_args"
+check "ROUND2_NOT_IN_PLACE round two may edit its draft copy" 'sandbox_mode="danger-full-access"' "$round_two_args"
+for phrase in "/preflight.json in place" "smallest edits" "keep the lead's design and settled items" "do not redesign or re-review" \
+              "record advisor-result --check" "--input - --preflight-file" "fix and re-run it until it passes" "material false"; do
+  check "ROUND2_NOT_IN_PLACE round-two instruction: $phrase" "$phrase" "$round_two_payload"
+done
+check_absent "ROUND2_NOT_IN_PLACE round two asks for no rewritten artifact" "preflightDraft" "$round_two_payload"
+run_wrapper --slug adhoc-question -- 'first ad-hoc question' >/dev/null 2>&1
+run_wrapper --slug adhoc-question -- 'second ad-hoc question' >/dev/null 2>&1
+adhoc_args=$(cat "$rigtmp/capture/args-$(cat "$rigtmp/capture/count")")
+check "RESUME_INHERITS_WRITE an ad-hoc question resumes its session" " resume " "$adhoc_args"
+check "RESUME_INHERITS_WRITE an ad-hoc resume is explicitly read-only" 'sandbox_mode="read-only"' "$adhoc_args"
 rm -rf "$rigtmp"
 
 if [[ "${LIVE:-0}" == 1 ]]; then

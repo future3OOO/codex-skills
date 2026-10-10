@@ -16,16 +16,6 @@ comparisons and delivers evidence. It does not prescribe bootstrap as the projec
 test Interface. Apply the same rule when editing the workflow itself: reuse valid
 source-bound evidence instead of repeating project verification at each stage.
 
-## Baseline and candidate execution
-
-For behavior changes, before baseline measurements or production edits, establish
-unchanged N and candidate N+1 execution with isolated mutable state. Reuse project
-environments and build/install/refresh commands to run worktree changes in N+1;
-reload cached consumers. Setup is ready when both loaded implementations are
-verified and the same real production operation can run against each. Keep candidate
-bindings current and report unavailable comparisons under
-[Production Code's verification rules](../production-code/SKILL.md#minimum-implementation-decision).
-
 ## One stable workflow
 
 Follow AGENTS.md's Production Repo Workflow section for isolation and pass reuse.
@@ -65,9 +55,9 @@ The repository-scoped SQLite event ledger remembers accepted transitions, logica
 
 ## Continuation
 
-Follow the operation result's `next.command`; `next.input` names any judgment or
-document still needed. Consult `next.help` for an unfamiliar input and retain
-the supported invocation and returned evidence IDs. On resume or after edits,
+Follow the operation result's `next.command`; `next.input` names any judgment,
+document or argument still needed and its form. Retain the returned evidence IDs.
+On resume or after edits,
 use `workflow.py summary --repo <checkout>` for current recovery guidance;
 `status --fields <fields>` supplies missing facts. Resume the same pass.
 See [State Interface](WORKFLOW-MAP.md#state-interface) for receipt and status fields.
@@ -76,18 +66,8 @@ See [State Interface](WORKFLOW-MAP.md#state-interface) for receipt and status fi
 
 ### 1. Repo Context Forge
 
-Invoke `repo-context-forge`, then run its adapter with the same slug and intent:
-
-```bash
-python3 "$HOME/.codex/skills/repo-context-forge/scripts/bootstrap.py" \
-  --repo "$PWD" --workflow-slug "<task>" --intent "<user request>"
-```
-
-Stop on packet blockers. The packet fixes the initial target and coverage
-surface. When the packet resolves a real base, the adapter also records its
-fork-point commit as the pass's immutable base OID (`baseOid` in the status
-projection); the per-edit gate hook passes it as `--base-ref` so growth reads
-branch-cumulative throughout implementation.
+Invoke `repo-context-forge`, then run the bootstrap command `begin` returned as `next.command`.
+Stop on packet blockers. The packet fixes the initial target and coverage surface.
 
 ### 2. Task contract and diagnosis
 
@@ -100,31 +80,28 @@ regressions and performance failures before choosing a correction.
 
 ### 3. Packet-scoped GitNexus
 
-Repo Context Forge executes the packet's required context/impact checks and its
-adapter records that resolved graph result as `repo-context-forge` evidence, in
-the same transaction as the step. There is no separate transition to record, and
-no separate graph step exists. Read the packet's graph
-result; run further MCP checks when they widen the surface the packet fixed.
+The bootstrap already ran and recorded the packet's graph checks; there is no separate
+graph step. Run further MCP checks only when they widen the surface the packet fixed.
 
 ### 4. Draft and advisor review
 
 Invoke `production-preflight` and draft its two-field artifact before consulting.
-Read TDD's Behavior Map requirements; invoke `codebase-design` when changing a
-Module, public Interface or Seam. The draft owns the contract and planned attacks.
+Its map follows TDD's [Behavior Map](../tdd/recorder.md#behavior-map): each item's
+`kind`, its required boundary cases and any competing readings. Invoke
+`codebase-design` when changing a Module, public Interface or Seam. The draft owns
+the contract and planned attacks.
 
 Submit the exact draft through [Codex Advisor's preflight loop](../codex-advisor/SKILL.md#preflight-advice),
 with the governing-design declaration. Continue to recording only after `approved`.
 
 ### 5. Record approved preflight once
 
-Record the exact approved contract and probe list with `record preflight --input FILE`. Keep this workflow pass when scope changes; update changed items by identity through `record tdd-map`; untouched items and valid proof remain.
+Record the approved contract and probe list with `record preflight` (no input: it records the advisor-approved draft). Keep this workflow pass when scope changes; update changed items by identity through `record tdd-map`; untouched items and valid proof remain.
 
-### 6. Drive the real probe
+### 6. Select the probe batch
 
-Invoke `tdd` before implementing a behavior slice. Follow AGENTS.md's Real-Seam
-proof invariant: reuse existing cases, fixtures and assertions; add a probe only
-for behavior no existing case covers. Entrypoint absence does not prove independent
-guarantees.
+Invoke `tdd` before editing, then select the direct batch each map item will run through under
+AGENTS.md's Real-Seam proof invariant and step 9's test selection. The comparison runs after the edit (step 8).
 
 ### 7. Production code
 
@@ -133,33 +110,28 @@ Invoke `production-code` for its standards and baseline gate. Reuse the existing
 ### 8. Implement and compare
 
 Make the smallest change, then execute TDD's
-[required probe loop](../tdd/SKILL.md#required-probe-loop). The lead extends the
-existing direct batch from the actual edit, generates combinations of supported
-inputs, and compares the identical expanded batch on recorded original, reviewed
-and candidate sources:
+[required probe loop](../tdd/SKILL.md#required-probe-loop): record the edit's decisive
+contexts and boundary cases as map items, extend the existing direct batch, and compare
+the identical expanded batch on the recorded original and candidate sources.
 
-```text
-workflow.py tdd --behavior-id BM_X -- COMMAND [ARG...]
-```
+The receipt's `open` lines are the questions the comparison leaves: answer each by
+repairing the code or the probe and rerunning the same batch. Readiness is that one
+result; `summary`, `verify`, reviewer dispatch and `complete` report it identically.
 
-Use [TDD](../tdd/SKILL.md) to judge the bound outcomes against the original request.
-
-Source and probe edits invalidate affected proof and reopen required verification/review. There are no manual RED/GREEN/baseline phases or late-RED recovery steps.
+Source and probe edits invalidate affected proof and reopen required verification/review.
 
 ### 9. Verification
 
 After coherent repair and cleanup, assess the intended outcome against the
-verification derived in step 2. Run the typed quality gate; after it passes it
-refreshes stale comparisons through their retained commands, so recorded probes are
-already verified on the current candidate. Before another test command, identify the
-assertion those comparisons cannot establish. Extend the existing targeted batch
-for that gap and keep enclosing-operation checks only for their own assertions.
+verification derived in step 2. Run the typed quality gate; it runs no comparison. A
+source edit leaves recorded comparisons stale, and every reader then routes to `tdd`
+until the lead reruns them on the current candidate. Prove each changed line with a direct N/N+1
+probe that calls it. Add an existing test only when it calls the changed code directly; never run
+whole classes, modules or suites.
 Reuse current comparisons; use generic verification for required lint/typecheck/build,
-with graph reanalysis when required. Follow AGENTS.md's attack-probe and verification rules.
-CI's `contracts` job owns the full runner here and step 12 waits for it.
+with graph reanalysis when required. CI's `contracts` job owns the full runner here and step 12 waits for it.
 Verification records only through the unified CLI runner, which executes the command it records and derives status
-per-command-latest for explicit verification. Failed explicit checks need a passing rerun
-or valid `--replaces` correction. Overlapping runs record in completion order; a run whose
+per-command-latest for explicit verification. Overlapping runs record in completion order; a run whose
 reviewable tree drifts stays invalid and names the changed paths:
 
 ```bash
@@ -167,18 +139,11 @@ python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" verif
 python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" verify -- <verification command>
 ```
 
-`verify --from-evidence <evidenceId>:<runIndex>` binds a captured execution receipt without replay.
-
 Typed verification needs no generic acknowledgement or dummy command. Correct a
 failed generic invocation with `verify --replaces <evidenceId>:<runIndex> --reason
 "<correction>" -- <command>`; only a valid current success retires that particular
 active failure. Other failures, stale/concurrent results and drift stay effective.
 Which commands suffice remains review judgment. Completion requires the typed `quality-gate` run over the current reviewable tree.
-
-The typed runner uses the recorded graph input; reuse it when its binding and
-scope match the candidate. Refresh Repo Context Forge after relevant edits or
-when evidence is absent/stale. The gate's binding check adjudicates applicability;
-unchanged source alone does not establish coverage for a broadened contract.
 
 ### 10. Delegate code review
 
@@ -196,8 +161,8 @@ delegate (`spawn_agent`, `agent_type=default`, `fork_turns="none"`, normal nativ
 model selection) in the lead's native task checkout. Supply the target and correction delta; instruct it to apply `code-review`,
 which loads the request, contract, comparison outcomes and diff itself.
 Wait without editing the candidate. It returns a
-Standards/Spec review and a findings intake. Verify every finding and
-disposition each one. A disposition is invalid
+Standards/Spec review and a findings intake. Verify every finding; fix it or
+dispute it with a disposition. A disposition is invalid
 without its measurement; advisor agreement is not authorization; historical behavior
 is contextual evidence only — a current Interface claim needs current documentation,
 callers, tests, or another active authority. In this governed workflow `workflow.py record review` is the required producer for non-trivial review state; outside the governed
@@ -214,68 +179,27 @@ Historical receipts retain their original identity. Every review must describe
 the current candidate.
 
 Record the delegate's JSON intake (`{"findings":[{"id","claim","material","kind"}]}`),
-then, when it has findings, dispositions against the returned `summaryId`:
-`{"intakeEvidenceId":"<summaryId>","dispositions":[{"finding_id":"R-1","status":"fixed","reason":"..."}]}`.
-`record review --help` prints both shapes; a document carrying both refuses.
+then, for a disputed finding, a disposition against the returned `summaryId`:
+`{"intakeEvidenceId":"<summaryId>","dispositions":[{"finding_id":"R-1","status":"report-only","reason":"..."}]}`.
+A document carrying both refuses.
 Pass `--review-context-id <agent-id>` with the delegate's review: a second
-recurrence hands its repair to the first reviewer a review names.
+recurrence hands its repair to the first reviewer a review names, under the
+[recurring repair contract](WORKFLOW-MAP.md#recurring-behavioral-repairs).
 
 ```bash
 python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" record review --input <review.json> --review-context-id <agent-id>
 ```
 
 A no-finding intake binds the reviewed tree and passes immediately. A finding
-intake stays pending until its appended dispositions resolve every material
-finding. Dispositions may cover any subset of an intake; every material finding still
-needs a terminal disposition before completion; a `material:false` note needs none. Verification, the typed gate, and a new review all run while findings
-are open; open findings block completion only. A false premise records normalized `result`
-exactly `false`; otherwise
-rejection requires zero occurrence on a complete domain. `report-only` resolves
-completion without authorizing an edit and cannot later become `fixed`. A
-behavioral finding is fixed by owning it: add the attack item with its finding
-`sourceRefs` through `record tdd-map`, run the owning comparison, then record the
-`fixed` receipt above (`finding_id`, `status`, `reason`) or, for an advisor finding,
-`record advisor-disposition --finding <ID> --fixed --behavior-id <BM_ID>`; the
-recorder binds the owning comparison's current run. Nonbehavioral
-corrections record their current-tree evidence directly. A later map update
-that would leave a fixed finding without its owning attack refuses.
-
-#### Recurring behavioral repairs
-
-Before another repair, explain the missed cause, affected inputs/paths, invariants,
-class-wide correction and latest counterexample; include reachable states/shared
-writers where relevant. Record the diagnosis once in the existing finding reason,
-or disposition `mechanism` prose/reference (`{"evidenceId":"...","id":"..."}`).
-References preserve workflow/finding ownership. Review requires an adequate
-explanation and current owning attacks; instance-only repairs remain
-`accepted-follow-up` with the in-pass obligation open.
-
-Both intake paths reconcile retained namespace/ID and exact behavioral claims
-(outer whitespace only). Changed wording/identity can use an owned
-`priorFinding: {"evidenceId":"...","id":"..."}`; ambiguous matches require one.
-Distinct findings need distinct IDs. Pending retries preserve progress; only `fixed` → re-intake increments
-recurrence. Observations, dispositions, mechanism evidence and proof stay immutable.
-
-At recurrence two or later, the retained reviewer implements and the lead reviews. This
-exception overrides step 10's read-only and repair-before-dispatch rules: continue
-its recorded context, without a fresh/nested reviewer or interim advisor. Certify
-through `record review` using the actual lead context and `implementationContextId`
-for the repair author. Require current-candidate, independent certification and
-product verification, then the mandatory final advisor. Ordinary assessment without
-`implementationContextId` may proceed while ownership is pending; it neither
-certifies the repair nor changes owners.
-
-For unusable/wrong-checkout contexts, follow step 10's rooted fallback. Record
-authorized succession in the lead-review intake as
-`repairSuccession: {context, findings, previousOwner, evidence}`: current
-workflow/candidate, affected `{evidenceId, id}` references, exact previous
-implementer/reviewer pair, and authorization/native-checkout evidence. Author/reviewer
-fields name actual successors. Only named pending recurring repairs transfer;
-predecessor history remains and self-certification is forbidden.
-
-After compaction, recover mechanism references and ownership from summary/checkpoint;
-retrieve long evidence with `workflow evidence`. Report missing evidence; prove
-resumed-agent use, not merely availability.
+is answered by the fix, `tdd` and a re-review: a re-review with no material finding
+settles the reviewer's open findings. A final advisor finding is answered by the fix,
+`tdd` and the advisor's re-check: its commit-ready settles the finding. Only a
+disputed finding takes a disposition: a false premise records
+normalized `result` exactly `false`; otherwise rejection requires zero occurrence on a
+complete domain; `report-only` resolves completion without authorizing an edit.
+Verification, the typed gate, and a new review all run while findings are open; open
+findings block completion only. A later map update that would leave a fixed finding
+without its owning attack refuses.
 
 ### 11. Final Codex Advisor review
 
@@ -289,10 +213,10 @@ with wrapper phase `final-review` and the same slug; the checkpoint supplies the
 diff anchors. It applies
 [Production Code's outcome verification](../production-code/SKILL.md#minimum-implementation-decision)
 to the original objective before judging implementation and dispositions. Missing material
-acceptance evidence forbids `commit-ready`. Address and disposition material findings. The
-wrapper leaves final findings pending; the lead explicitly records `none` or
-`addressed` only after validating the output. After a production edit, satisfy current-candidate verification, continue review
-on the affected delta, and repeat final review. Reuse applicable evidence. Once every
+acceptance evidence forbids `commit-ready`. The wrapper records the result and returns each
+finding's materiality with the recorded `next`; follow it. After the first final verdict, a correction
+needs only the `tdd` rerun of its items and the final advisor's re-check: code review,
+verification and context revalidation are not repeated. Reuse applicable evidence. Once every
 final finding is dispositioned (`nextAction` `complete-workflow`), a requested
 reassessment of the unchanged candidate runs the same `final-review` phase and records
 as a fresh final result.
