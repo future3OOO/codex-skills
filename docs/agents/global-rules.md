@@ -68,7 +68,8 @@ Repo Context Forge analysis copy. For codex-skills installation, follow
 ## Think Before Coding
 
 - State assumptions before implementing; surface materially different readings
-  of the request and simpler approaches.
+  of the request and simpler approaches. Code is truth: wording about behavior the
+  request keeps summarizes the original code, so the original's result stands.
 - If a material unknown cannot be safely discovered, ask the smallest question
   needed to resolve it before dependent work.
 

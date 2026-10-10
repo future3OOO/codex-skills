@@ -48,7 +48,7 @@ A **decisive context** is a combination of the other values that permits this in
 4. Put the pairs in your existing direct batch. A batch without required pairs is incomplete, even if all its tests pass.
 5. Run the same batch on the original code and the edited code. Use the same initial state for each test.
 6. For each input in each pair, assert that the edited result **EQUALS** the original result. Do not use subset checks. If the request names an exact change, assert that expected result instead. Rewriting the expected value or the formula that computes it is the same as changing it.
-7. Find every pair where the original decision flips and the edited decision does not. Treat each as a regression unless the request names that exact change. When a pair fails after your edit, do not change its expected value to make it pass. Fix the code. A sentence that tells you to keep existing behaviour never authorises a change to existing behaviour; it requires the original result. If you believe the request needs the new result, ask the user.
+7. Find every pair where the original decision flips and the edited decision does not. Treat each as a regression unless the request names that exact change. When a pair fails after your edit, do not change its expected value to make it pass. Fix the code. If you believe the request needs the new result, ask the user.
 8. Run the batch again.
 9. Send the corrected code and test results to review only after the receipt's `open` list is empty.
 
