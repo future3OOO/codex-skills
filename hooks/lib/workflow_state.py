@@ -596,25 +596,24 @@ def _finding_unresolved(entry: JsonObject) -> bool:
     )
 
 
+def _stage_findings(state: JsonObject, stage: str, producer: str) -> list[JsonObject]:
+    return [entry for entry in state.get("findingStates") or []
+            if isinstance(entry, dict) and _finding_unresolved(entry)
+            and any(ref.get("stage") == stage and ref.get("producer") == producer
+                    for ref in (entry, *entry.get("observations", [])))]
+
+
 def _settle(state: JsonObject, stage: str, producer: str, evidence_id: str, candidate: str) -> None:
-    """A clean re-review or commit-ready re-check settles its producer's open findings; a second
+    """A clean re-review or commit-ready re-check settles the open findings its stage raised or observed; a second
     recurrence still needs the lead's current review of the reviewer's repair, as `fixed` does."""
-    for entry in state.get("findingStates", []):
-        if (isinstance(entry, dict) and entry.get("stage") == stage and entry.get("producer") == producer
-                and _finding_unresolved(entry) and (int(entry.get("recurrence", 0)) < 2
-                                                    or entry.get("repairReviewedTree") == candidate)):
+    for entry in _stage_findings(state, stage, producer):
+        if int(entry.get("recurrence", 0)) < 2 or entry.get("repairReviewedTree") == candidate:
             entry.update(status="resolved", dispositionEvidenceId=evidence_id)
 
 
 def _stage_unresolved(state: JsonObject, stage: str, source: str, excluded: Sequence[JsonObject] = ()) -> bool:
     """Whether any registered finding of this stage and producer is still open."""
-    return any(
-        isinstance(entry, dict) and entry not in excluded and _finding_unresolved(entry)
-        and ((entry.get("stage") == stage and entry.get("producer") == source)
-             or any(ref.get("stage") == stage and ref.get("producer") == source
-                    for ref in entry.get("observations", [])))
-        for entry in state.get("findingStates") or []
-    )
+    return any(entry not in excluded for entry in _stage_findings(state, stage, source))
 
 
 def commit_review(
