@@ -32,7 +32,7 @@ local work short; transaction-sensitive work names the full surrounding surface.
 
 ### `authoritativeContract`
 
-Before editing, trace the shared responsibilities visible in the original code and derive distinguishing inputs for affected preservation, reusing existing items and probes. TDD's [required probe loop](../tdd/SKILL.md#required-probe-loop) revisits them against the actual diff.
+Before editing, trace the shared responsibilities visible in the original code and derive distinguishing inputs for affected preservation, one reaching each occurrence of a changed condition, reusing existing items and probes. TDD's [required probe loop](../tdd/SKILL.md#required-probe-loop) revisits them against the actual diff.
 
 Before choosing an implementation or writing tests, investigate each behavioral
 predicate that decides an outcome:
