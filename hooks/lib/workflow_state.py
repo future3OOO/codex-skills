@@ -1274,9 +1274,8 @@ def record_advisor_result(
                     for entry in rejected:
                         response = responses.get(str(entry["dispositionFindingId"]))
                         if response is not None and response.get("material") is True:
-                            # A material re-raise carries a new measurement: the
-                            # finding reopens for one more lead disposition, and
-                            # that second measured disposition stands.
+                            # A material re-raise upholds the finding: it reopens,
+                            # and only a fix closes it.
                             prior = entry.get("dispositionEvidenceId")
                             if prior:
                                 entry.setdefault("dispositionHistory", []).append({
@@ -1614,6 +1613,8 @@ def _apply_finding_dispositions(
         kind = str(finding_state["kind"])
         if status == current:
             raise WorkflowError(f"finding {identifier} disposition does not change effective state")
+        if current == "pending" and finding_state.get("appealStatus") == "disagreement" and status != "fixed":
+            raise WorkflowError(f"finding {identifier} was upheld on appeal; only a fix closes it")
         if current in {"fixed", "rejected-with-evidence", "report-only"}:
             correcting = False
             if kind == "behavioral" and current in {"fixed", "report-only"} and status in {"report-only", "rejected-with-evidence"}:

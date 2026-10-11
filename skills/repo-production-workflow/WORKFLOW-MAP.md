@@ -148,8 +148,8 @@ and later documents preserve append-only history. Until every material finding i
 checkpoint and `complete` refuse; verification, the typed gate, and lead
 review run regardless. Targeted TDD and direct changed-Seam
 probes remain available. Final rejections use one context-matched appeal response:
-omission or same-ID `material:false` concedes, a material re-raise reopens
-the finding for one more lead disposition, which then stands, and new IDs form
+omission or same-ID `material:false` concedes, a material re-raise upholds
+the finding until a fix closes it, and new IDs form
 their own immutable intake.
 
 ## Approval freshness
