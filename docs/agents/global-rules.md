@@ -57,10 +57,10 @@ Repo Context Forge analysis copy. For codex-skills installation, follow
 - **Attack probes first.** Unit tests must themselves probe real production
   behavior. Maximize attack coverage across affected inputs, failures,
   interactions, and preservation. Prove each changed line with a direct N/N+1
-  probe that calls it, and compare the test file named for each changed function
-  whole. Add another existing test only when it calls the changed code directly.
-  Never run other whole files or classes, or the full suite, or duplicate
-  retained probes with a parallel unit-test suite.
+  probe that calls it, and compare whole any test file named exactly for a changed
+  function, such as `test_<name>.py`. Add another existing test only when it calls
+  the changed code directly. Never run any other whole file or class, the full
+  suite, or duplicate retained probes with a parallel unit-test suite.
 - **Imaginary-risk ban.** A theoretical risk with no demonstrated failure is a
   report line, not a system. Build nothing for it.
 - **Root-cause-first.** Use `$diagnose` for bugs, failures, flaky behavior, and
