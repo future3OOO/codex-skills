@@ -335,7 +335,7 @@ class PassLifecycleTests(unittest.TestCase):
             ("record", "advisor-disposition", "--slug", "summary-large-map", "--workflow-id", wid, "--stage", "preflight", "--findings", "none"),
         )
         document = self.preflight_document()
-        template = {"basis": "summary coverage", "seam": "app module", "expected": "same value"}
+        template = {"kind": "preservation", "basis": "summary coverage", "seam": "app module", "expected": "same value"}
         document["behaviorMap"] = document["behaviorMap"] + [
             {**template, "id": f"BM_PRESERVE_OUTCOME_SEMANTICS_{index:02d}", "behavior": f"preserved outcome {index}",
              "expected": f"outcome {index} unchanged"}
@@ -452,26 +452,25 @@ class PassLifecycleTests(unittest.TestCase):
         self.assertFalse(self.checkpoint("final-review")["ready"])
         self.assertEqual(self.cli("checkpoint", "--phase", "final-review", "--reconsult").returncode, 2)
 
+    @unittest.skipUnless(shutil.which("bwrap"), "bwrap unavailable to hide the producer")
     def test_checkpoint_refuses_a_projection_for_an_old_candidate(self) -> None:
+        """A consult never receives a stale projection: it is refreshed, or the checkpoint fails naming why."""
         marker = "INVALID_PROJECTION_REACHED_ADVISOR"
         self.begin_slug("checkpoint-candidate-drift")
         self.advance_to_context_forge()
-        app = self.repo / "app.py"
-        app.write_text("value = 2\n", encoding="utf-8")
-
-        checkpoint = self.checkpoint("preflight-advice")
-        self.assertEqual(
-            (
-                checkpoint.get("ready"), checkpoint.get("advisor-projection"),
-                "advisor projection does not describe the active candidate tree"
-                in checkpoint.get("missing", []),
-            ),
-            (False, None, True),
-            marker + json.dumps(checkpoint, sort_keys=True),
-        )
-        repeated = self.cli("checkpoint", "--phase", "preflight-advice", "--reconsult")
-        self.assertFalse(json.loads(repeated.stdout)["ready"])
-        self.assertIn("advisor projection does not describe the active candidate tree", json.loads(repeated.stdout)["missing"])
+        (self.repo / "app.py").write_text("value = 2\n", encoding="utf-8")
+        draft = self.json_file("drift-draft.json", build_no_change_document("drifted candidate"))
+        channels = self.tmp / "drift-channels"; channels.mkdir()
+        hidden = subprocess.run(
+            ["bwrap", "--dev-bind", "/", "/", "--tmpfs", "/home/prop_/.local/share/repo-context-forge", "--",
+             sys.executable, str(WORKFLOW), "checkpoint", "--repo", str(self.repo), "--phase", "preflight-advice",
+             "--preflight-file", str(draft), "--channel-dir", str(channels)],
+            cwd=self.repo, env=self.env, text=True, capture_output=True, check=False)
+        self.assertEqual((hidden.returncode, "Repo Context Forge refresh failed" in hidden.stderr, list(channels.iterdir())),
+                         (2, True, []), marker + hidden.stdout + hidden.stderr)
+        query = json.loads(self.cli("checkpoint", "--phase", "preflight-advice", "--reconsult", "--preflight-file", str(draft)).stdout)
+        self.assertEqual((query["ready"], "advisor projection does not describe the active candidate tree" in query["missing"]),
+                         (False, True), marker)
 
     def _packet_with_unindexed_entry(self, slug: str, kind: str) -> tuple[str, str]:
         identity = resolve_repo_identity(self.repo)
@@ -655,34 +654,29 @@ class PassLifecycleTests(unittest.TestCase):
             (2, True), marker + result.stdout + result.stderr,
         )
 
-    def test_advisor_result_refuses_a_candidate_newer_than_its_checkpoint(self) -> None:
-        marker = "STALE_ADVISOR_RESULT_RECORDED"
-        slug, wid = "stale-advisor-result", self.begin_slug("stale-advisor-result")
-        self.advance_to_context_forge()
-        checkpoint_candidate = self.checkpoint("preflight-advice")["activeCandidateTree"]
-        envelope = self.tmp / "advisor-envelope.json"
-        envelope.write_text(json.dumps({
-            "schemaVersion": 1, "findings": [], "verdict": "completed",
-        }), encoding="utf-8")
+    def test_a_preflight_result_binds_its_draft_and_a_final_result_its_candidate(self) -> None:
+        marker = "ADVISOR_RESULT_BINDING"
         app = self.repo / "app.py"
+        wid = self.begin_slug("advisor-binding")
+        self.advance_to_context_forge()
+        checked = self.checkpoint("preflight-advice")["activeCandidateTree"]
+        app.write_text(app.read_text(encoding="utf-8") + "# provider race\n", encoding="utf-8")
+        envelope = self.json_file("preflight-envelope.json", {"schemaVersion": 1, "findings": [], "verdict": "completed"})
+        recorded = self.cli("record", "advisor-result", "--slug", "advisor-binding", "--workflow-id", wid, "--stage", "preflight",
+                            "--source", "codex-advisor", "--input", str(envelope), "--expected-candidate-tree", str(checked))
+        self.assertEqual(recorded.returncode, 0, marker + ": a tree change discarded a preflight verdict: " + recorded.stderr)
+        intake = json.loads(self.cli("status").stdout)["advisorPreflight"]["intakeEvidence"]
+        self.assertEqual(self.evidence(intake)["candidateTree"], checked, marker)
+        wid = self.begin_slug("advisor-binding-final")
+        self.advance_to_verification("advisor-binding-final", wid)
+        self.owner_phase("code-review", "passed", findings="none")
+        checked = self.checkpoint("final-review")["activeCandidateTree"]
         app.write_text(app.read_text(encoding="utf-8") + "# provider race\n", encoding="utf-8")
         before = self.ledger_rows()
-
-        result = self.cli(
-            "record", "advisor-result", "--slug", slug, "--workflow-id", wid,
-            "--stage", "preflight", "--source", "codex-advisor",
-            "--input", str(envelope),
-            "--expected-candidate-tree", str(checkpoint_candidate),
-        )
-        self.assertEqual(
-            (
-                result.returncode,
-                "active candidate changed" in result.stderr.lower(),
-                self.ledger_rows(),
-            ),
-            (2, True, before),
-            marker + result.stdout + result.stderr,
-        )
+        refused = self.cli("record", "advisor-result", "--slug", "advisor-binding-final", "--workflow-id", wid, "--stage", "final",
+                           "--source", "codex-advisor", "--input", commit_ready_envelope(self.tmp), "--expected-candidate-tree", str(checked))
+        self.assertEqual((refused.returncode, "active candidate changed" in refused.stderr.lower(), self.ledger_rows()),
+                         (2, True, before), marker + refused.stdout + refused.stderr)
 
     def ledger_rows(self) -> tuple[tuple[object, ...], ...]:
         tables = ("ledger_metadata", "workflows", "evidence", "review_manifests", "workflow_events",
@@ -856,6 +850,7 @@ class PassLifecycleTests(unittest.TestCase):
         # against a still-stale workflow would refuse whether or not completion
         # recomputes after the same-call edit.
         (self.repo / "app.py").write_bytes(reviewed)
+        self.advance_to_context_forge()
         restored = self.checkpoint("final-review")
         self.assertEqual(
             [item for item in restored["missing"] if "stale" in item or "changed" in item],
@@ -956,6 +951,7 @@ class PassLifecycleTests(unittest.TestCase):
         self.assertEqual(self.git("ls-files", "-s", "vendor"), indexed_before,
                          "the probe staged the submodule move, so the index would have shown it")
 
+        self.advance_to_context_forge()
         stale = self.checkpoint("final-review")
         self.assertTrue(
             any("review-manifest-stale" in item and "vendor" in item for item in stale["missing"]),
@@ -993,6 +989,7 @@ class PassLifecycleTests(unittest.TestCase):
         self.assertIn("docs/vendor", self.git("status", "--porcelain"),
                       "the probe did not actually move the excluded submodule")
 
+        self.advance_to_context_forge()
         ready = self.checkpoint("final-review")
         self.assertEqual(
             [item for item in ready["missing"] if "review-manifest" in item], [],
@@ -1016,6 +1013,7 @@ class PassLifecycleTests(unittest.TestCase):
         # A file outside the repository is not part of the reviewed tree, so
         # changing it must not drift the manifest through a symlink.
         outside.write_text("CHANGED OUTSIDE THE REPOSITORY\n", encoding="utf-8")
+        self.advance_to_context_forge()
         unaffected = self.checkpoint("final-review")
         self.assertEqual(
             [item for item in unaffected["missing"] if "review-manifest" in item], [],
@@ -1026,6 +1024,7 @@ class PassLifecycleTests(unittest.TestCase):
         # the new referent happens to hold identical bytes.
         (self.repo / "link.py").unlink()
         (self.repo / "link.py").symlink_to("b.py")
+        self.advance_to_context_forge()
         stale = self.checkpoint("final-review")
         self.assertTrue(
             any("review-manifest-stale" in item and "link.py" in item for item in stale["missing"]),
@@ -1105,14 +1104,7 @@ class PassLifecycleTests(unittest.TestCase):
         self.assertEqual(blocked.returncode, 2, blocked.stdout + blocked.stderr)
         self.assertIn("review-manifest-missing", blocked.stderr, "an unknown tree read as green")
 
-        refused_final = self.cli(
-            "record", "advisor-result", "--slug", "legacy-manifest", "--workflow-id", wid, "--stage", "final",
-            "--source", "codex-advisor", "--input", commit_ready_envelope(self.tmp),
-        )
-        self.assertEqual(refused_final.returncode, 2, refused_final.stdout + refused_final.stderr)
-        self.assertIn("review-manifest-missing", refused_final.stderr)
-
-        self.owner_phase("code-review", "passed", findings="none")
+        # after the first final verdict, the final advisor's re-check binds the tree it judged
         self.finalize("legacy-manifest", wid)
         unblocked = self.cli("complete")
         self.assertEqual(unblocked.returncode, 0, unblocked.stdout + unblocked.stderr)
@@ -1373,6 +1365,7 @@ class PassLifecycleTests(unittest.TestCase):
         )
 
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertTrue(result.stdout.strip().endswith("}"), "GATE_CAPTURE_FAILURE_UNRECORDED: " + result.stdout + result.stderr)
         run = self.evidence(json.loads(result.stdout.splitlines()[-1])["evidenceId"])["runs"][-1]
         self.assertFalse(run["valid"])
         self.assertIsNotNone(
@@ -1710,7 +1703,7 @@ class PassLifecycleTests(unittest.TestCase):
         (self.repo / "app.py").write_text("value = 2\n", encoding="utf-8")
         stale = json.loads(self.cli("status").stdout)
         self.assertEqual((stale["repoContextForge"], stale["gitnexus"]), ("pending", "pending"), marker)
-        self.assertFalse(self.checkpoint("preflight-advice")["ready"], marker)
+        self.assertTrue(self.checkpoint("preflight-advice")["ready"], marker)  # the consult refreshes a stale projection
 
         self.advance_to_context_forge()
         refreshed = json.loads(self.cli("status").stdout)
@@ -1721,10 +1714,12 @@ class PassLifecycleTests(unittest.TestCase):
         self.advance_to_verification(slug, wid)
         self.owner_phase("code-review", "passed", findings="none")
         self.finalize(slug, wid)
+        # after the final advisor a correction needs only tdd and its re-check, not graph revalidation
         (self.repo / "app.py").write_text("value = 3\n", encoding="utf-8")
+        self.advance_to_context_forge()
         blocked = self.cli("complete")
         self.assertEqual(blocked.returncode, 2, marker + blocked.stdout + blocked.stderr)
-        self.assertIn("repoContextForge", blocked.stderr, marker)
+        self.assertIn("changed after the final review", blocked.stderr, marker)
 
     def test_workflow_completion_survives_a_same_tree_review_commit(self) -> None:
         missing = self.cli("status")
@@ -1949,7 +1944,7 @@ class PassLifecycleTests(unittest.TestCase):
                              "--reason", "Documentation observation has no material runtime consequence.")
         self.assertEqual(addressed.returncode, 0, mixed_marker + addressed.stdout + addressed.stderr)
         source_ref = [{"type": "finding", "evidenceId": intake_id, "id": "SPEC-1"}]
-        mapped = {"id": "BM_ADV_1", "basis": "advisor finding",
+        mapped = {"id": "BM_ADV_1", "kind": "contract", "basis": "advisor finding",
             "behavior": "the owned attack closes the finding", "seam": "workflow CLI",
             "expected": "the explicit fixed disposition closes the finding",
             "sourceRefs": source_ref}
@@ -2036,19 +2031,10 @@ class PassLifecycleTests(unittest.TestCase):
         self.assertEqual((self.checkpoint("final-review")["ready"], blocked.returncode, ran.exists(), len(self.history_events()) - events),
                          (True, 0, True, 2), "APPEAL_REVALIDATION_SCOPE_BYPASSED")
         envelope.write_text('{"schemaVersion":1,"findings":[],"verdict":"commit-ready"}', encoding="utf-8")
-        (self.repo / "app.py").write_text("value = 2\n", encoding="utf-8"); events = len(self.history_events())
-        stale = self.cli("record", "advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final",
-                         "--source", "codex-advisor", "--input", str(envelope))
-        self.assertEqual((stale.returncode, len(self.history_events()) - events), (2, 0), "APPEAL_STALE_CANDIDATE_ACCEPTED")
-        generic = self.verify_run(sys.executable, "-c", "pass", gate=False)
-        gate = self.cli("verify", "--slug", slug, "--kind", "quality-gate", "--base-ref", "HEAD")
-        review = self.json_file("shell-drift-review.json", {"findings": []})
-        recorded = self.cli("record", "review", "--slug", slug, "--workflow-id", wid, "--review-context-id", "shell-drift", "--input", str(review))
-        self.assertEqual((generic.returncode, gate.returncode, recorded.returncode), (0, 0, 0), "APPEAL_SHELL_DRIFT_UNRECOVERABLE")
+        # after the final advisor, an edited candidate needs only its re-check: no gate, review or revalidation
+        (self.repo / "app.py").write_text("value = 2\n", encoding="utf-8")
         self.post_edit_hook(slug)
         self.advance_to_context_forge()
-        self.assertEqual(self.verify_run(sys.executable, "-c", "pass").returncode, 0)
-        self.owner_phase("code-review", "passed", findings="none")
         appeal_args = ("record", "advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final",
                        "--source", "codex-advisor", "--input", str(envelope))
         appealed = self.cli(*appeal_args); state = json.loads(self.cli("status").stdout); completed = self.cli("complete")
@@ -2103,9 +2089,6 @@ class PassLifecycleTests(unittest.TestCase):
         stand()
         self.assertTrue(self.checkpoint("final-review")["ready"], marker + str(self.checkpoint("final-review")["missing"]))
         before, events = status(), len(self.history_events())
-        (self.repo / "app.py").write_text("value = 2\n", encoding="utf-8")
-        refused(final("stale-review.json", "commit-ready"), before, events)
-        (self.repo / "app.py").write_text("value = 1\n", encoding="utf-8")
         mismatch = final("mismatch.json", "context-mismatch")
         self.assertEqual((mismatch.returncode, status()["nextAction"], status()["finalReview"]),
                          (0, "re-consult-final-review", before["finalReview"]), marker + mismatch.stderr)
@@ -2117,18 +2100,16 @@ class PassLifecycleTests(unittest.TestCase):
         events = len(self.history_events())
         self.assertEqual((final("repeat.json", "commit-ready").returncode, len(self.history_events()) - events), (0, 1), marker)
         self.assertEqual(final("re-raise.json", "fix-before-commit", spec).returncode, 0, marker)
-        self.assertEqual(status()["nextAction"], "classify-current-findings", marker)
-        before, events = status(), len(self.history_events())
-        refused(final("demotion.json", "commit-ready", {**spec, "material": False}), before, events)
-        stand()
-        before, events = status(), len(self.history_events())
-        refused(final("relabel.json", "fix-before-commit", {**spec, "kind": "nonbehavioral"}), before, events)
-        (self.repo / "app.py").write_text("value = 3\n", encoding="utf-8")
-        self.owner_phase("code-review", "passed", findings="none")
-        before, events = status(), len(self.history_events())
-        refused(final("stale-quality.json", "commit-ready"), before, events)
+        self.assertEqual(status()["nextAction"], "address-review-findings", marker)
+        # the advisor's own downgrade of its pending finding, on its next consult, concedes it; a re-raise reopens it
+        (self.repo / "app.py").write_text("value = 2\n", encoding="utf-8")
+        self.post_edit_hook(slug)
+        demoted = final("demotion.json", "commit-ready", {**spec, "material": False})
+        self.assertEqual((demoted.returncode, status()["nextAction"]), (0, "complete-workflow"), marker + demoted.stdout + demoted.stderr)
         (self.repo / "app.py").write_text("value = 1\n", encoding="utf-8")
-        self.owner_phase("code-review", "passed", findings="none")
+        self.post_edit_hook(slug)
+        self.assertEqual(final("re-raise-2.json", "fix-before-commit", spec).returncode, 0, marker)
+        stand()
         self.assertEqual(final("closing.json", "commit-ready").returncode, 0, marker)
         completed = self.cli("complete")
         self.assertEqual(completed.returncode, 0, marker + completed.stdout + completed.stderr)
@@ -2160,7 +2141,7 @@ class PassLifecycleTests(unittest.TestCase):
         events = len(self.history_events()); duplicate = self.cli("record", "advisor-result", "--slug", slug, "--workflow-id", wid,
             "--stage", "final", "--source", "codex-advisor", "--input", str(envelope))
         self.assertEqual((state["nextAction"], duplicate.returncode, len(self.history_events()) - events),
-                         ("classify-current-findings", 2, 0), "INVALID_FINAL_INTAKE_ADMITTED")
+                         ("address-review-findings", 2, 0), "INVALID_FINAL_INTAKE_ADMITTED")
         ran = self.tmp / "blocked-generic-ran"; review_input = self.json_file("blocked-review.json", {"findings": []})
         generic = self.verify_run(sys.executable, "-c", f"from pathlib import Path; Path({str(ran)!r}).touch()")
         gate = self.cli("verify", "--slug", slug, "--kind", "quality-gate", "--base-ref", "HEAD")
@@ -2177,7 +2158,7 @@ class PassLifecycleTests(unittest.TestCase):
         self.assertEqual((blocked.returncode, len(self.history_events()) - events), (2, 0), appeal_marker)
         ref = [{"type": "finding", "evidenceId": intake, "id": "SPEC-1"}]
         update = self.json_file("correction-map.json", {"items": [
-            {"id": "BM_ADV_1", "basis": "finding", "behavior": "correction closes", "seam": "workflow CLI",
+            {"id": "BM_ADV_1", "kind": "contract", "basis": "finding", "behavior": "correction closes", "seam": "workflow CLI",
              "expected": "app.value is 2", "sourceRefs": ref}]})
         self.run_cli(("record", "tdd-map", "--slug", slug, "--workflow-id", wid, "--input", str(update)))
         (self.repo / "test_correction_gate.py").write_text("import app,unittest\nclass T(unittest.TestCase):\n"
@@ -2219,7 +2200,7 @@ class PassLifecycleTests(unittest.TestCase):
         update = self.tmp / "review-finding-map.json"
         update.write_text(json.dumps({
             "items": [{
-                "id": "BM_ADV_1", "basis": "review finding",
+                "id": "BM_ADV_1", "kind": "contract", "basis": "review finding",
                 "behavior": "the reviewed value is corrected", "seam": "app module",
                 "expected": "app.value is 2",
                 "sourceRefs": [{"type": "finding", "evidenceId": intake_id, "id": "SPEC-1"}]}],
@@ -2451,7 +2432,7 @@ commit_tdd(resolve_repo_identity(sys.argv[1]), 'terminal-state', sys.argv[2],
         self.assertEqual(json.loads(self.cli("status").stdout), state, failure)
         self.assertEqual(self.history_events(), history, failure)
         update = self.tmp / "governance-map.json"
-        update.write_text(json.dumps({"items": [{"id": "BM_NEW", "basis": "frozen map", "behavior": "new obligation", "seam": "app", "expected": "2"}]}))
+        update.write_text(json.dumps({"items": [{"id": "BM_NEW", "kind": "preservation", "basis": "frozen map", "behavior": "new obligation", "seam": "app", "expected": "2"}]}))
         rejected = self.cli("record", "tdd-map", "--slug", "terminal-state", "--workflow-id", wid,
                             "--input", str(update))
         failure = "GOVERNANCE_REVALIDATION_ACCEPTED_TDD_MAP_MUTATION"
@@ -2477,7 +2458,7 @@ commit_tdd(resolve_repo_identity(sys.argv[1]), 'terminal-state', sys.argv[2],
             cwd=ROOT, env=self.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
         )
         self.assertEqual(raced_tdd.returncode, 2, "TDD recording escaped the revalidation window")
-        self.assertIn("revalidation", raced_tdd.stderr)
+        self.assertIn("not in the recorded map", raced_tdd.stderr)  # only mapped items rerun; the map is closed
         self.assertFalse(marker.exists(), "workflow.py tdd launched the command for a closed revalidation window")
         preflight_consult = self.cli(
             "record", "advisor-result", "--slug", "terminal-state", "--workflow-id", wid,

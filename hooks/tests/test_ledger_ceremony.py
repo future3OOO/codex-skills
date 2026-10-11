@@ -80,8 +80,8 @@ print(json.dumps({"schemaVersion": 1, "verdict": "changes-required", "findings":
 
 
 def item(identifier: str, refs=(), **extra) -> dict[str, object]:
-    return {"id": identifier, "basis": "fixture contract", "behavior": f"{identifier} behavior", "seam": "fixture app module",
-            "expected": "app.value is 2",
+    return {"id": identifier, "kind": "contract", "basis": "fixture contract", "behavior": f"{identifier} behavior",
+            "seam": "fixture app module", "expected": "app.value is 2",
             "sourceRefs": list(refs), **extra}
 
 
@@ -141,7 +141,7 @@ class Ceremony(unittest.TestCase):
 
     def begin(self, repo: Path | None = None, slug: str = "ceremony") -> str:
         repo = repo or self.repo
-        begun = self.cli("begin", "--slug", slug, "--intent", "issue 96 fixture intent", cwd=repo)
+        begun = self.cli("begin", "--slug", slug, "--intent", "issue 96 fixture intent.", cwd=repo)
         self.assertEqual(begun.returncode, 0, begun.stderr)
         record_context_forge(repo, self.tmp)
         return str(json.loads(begun.stdout)["workflowId"])
@@ -222,6 +222,7 @@ class PreflightContinuation(Ceremony):
             for required in ("--preflight-file", "--design-file", "--design-absent", "stdin"):
                 self.assertIn(required, operation["input"], marker)
         self.assertIn("preflight-advice", self.ok_raw("summary"), marker)
+        self.assertIn('"authoritativeContract"', self.ok_raw("summary"), marker)
 
     def test_changes_required_guidance_resumes_with_the_recorded_design(self) -> None:
         self.begin()
@@ -237,6 +238,7 @@ class PreflightContinuation(Ceremony):
             self.assertEqual(args[args.index("--design-absent") + 1], "single owner repair", marker)
             self.assertIn("--preflight-file", operation["input"], marker)
         self.assertIn("--reconsult", receipt["next"]["command"], marker)
+        self.assertNotIn('"authoritativeContract"', receipt["next"]["input"], marker)
         self.assertIn(receipt["next"]["command"], self.ok_raw("summary"), marker)
 
     def test_approved_command_records_its_retained_draft_from_scratch(self) -> None:
@@ -258,6 +260,35 @@ class PreflightContinuation(Ceremony):
         self.assertEqual(result["nextAction"], "tdd", marker)
         stored = self.ok("evidence", "--full", "--evidence-id", result["evidenceId"])
         self.assertEqual(stored["document"]["document"], approved["preflightDraft"], marker)
+
+    def test_the_second_consult_is_the_advisors_own_approved_draft(self) -> None:
+        marker = "PREFLIGHT_ROUNDS_UNBOUNDED"
+        self.begin()
+        self.advice("changes-required")
+        record = ("record", "advisor-result", "--stage", "preflight", "--source", "codex-advisor", "--input",
+                  str(self.tmp / "advice.json"), "--preflight-file", str(self.tmp / "draft.json"),
+                  "--design-declaration", str(self.tmp / "design.json"))
+        refused = self.cli(*record)
+        self.assertEqual(refused.returncode, 2, marker + ": a third preflight round was opened: " + refused.stdout)
+        unedited = (self.tmp / "draft.json").read_text()  # the lead's own file, which the advisor does not edit
+        edited = {"authoritativeContract": "the advisor's corrected contract", "behaviorMap": [item("BM_ONE"), item("BM_TWO")]}
+        answer = {"schemaVersion": 1, "verdict": "approved",
+                  "findings": [{"id": "SPEC-1", "claim": "BM_TWO was missing; added to the draft", "material": False}]}
+        (self.tmp / "advice.json").write_text(json.dumps({**answer, "preflightDraft": edited}))
+        self.assertEqual(self.cli(*record).returncode, 2, "FULL_REWRITE_ACCEPTED: the advisor replaced the draft wholesale")
+        (self.tmp / "draft.json").write_text(json.dumps(edited))  # the advisor's in-place edit of the recorded copy
+        (self.tmp / "advice.json").write_text(json.dumps(answer))
+        receipt = self.ok(*record)
+        misled = self.cli("record", "preflight", "--input", "-", input=unedited)
+        guidance = json.loads(misled.stdout)["next"]["command"]
+        self.assertEqual((misled.returncode, "ask-codex-advisor" in guidance, shlex.split(guidance)[-2:]),
+                         (2, False, shlex.split(receipt["next"]["command"])[-2:]),
+                         "PREFLIGHT_RECORD_MISGUIDED: after the last round the refusal must record the approved draft: " + guidance)
+        recorded = subprocess.run(shlex.split(guidance), cwd=self.tmp, env=self.env, capture_output=True, text=True)
+        self.assertEqual(recorded.returncode, 0, marker + recorded.stderr)
+        stored = self.ok("evidence", "--full", "--evidence-id", json.loads(recorded.stdout)["evidenceId"])["document"]["document"]
+        self.assertEqual((stored["authoritativeContract"], [entry["id"] for entry in stored["behaviorMap"]]),
+                         ("the advisor's corrected contract", ["BM_ONE", "BM_TWO"]), marker)
 
     def test_explicit_draft_binding_and_record_atomicity(self) -> None:
         self.begin()
@@ -386,6 +417,7 @@ class AdvisorDiffBounded(Ceremony):
         (self.repo / "evil\n+FORGED").unlink()
         (self.repo / "config").mkdir()
         (self.repo / "config" / "default.yaml").write_text("replaced: 2\n", encoding="utf-8")
+        record_context_forge(self.repo, self.tmp)
         diff = checkpoint_channels(self.repo, self.env, "preflight-advice")["diff"]
         self.assertIn("diff --git a/gone.py b/gone.py\ndeleted file: 50 lines\n", diff, f"{marker}: {diff[:600]}")
         self.assertNotIn("DELETED-BODY", diff, f"{marker}: a deleted file's body was sent")
@@ -450,10 +482,10 @@ class ChannelManifest(Ceremony):
         marker = "CHANNEL_MANIFEST_MISSING"
         (self.repo / "app.py").write_text("value = 3\nother = 1\n", encoding="utf-8")
         self.begin()
-        channels_dir = self.tmp / "channels"
-        channels_dir.mkdir()
-        point = self.cli("checkpoint", "--phase", "preflight-advice", "--channel-dir", str(channels_dir))
-        self.assertEqual(point.returncode, 0, f"{marker}: {point.stderr[-300:]}")
+        channels_dir = self.tmp / "channels" / "missing"
+        for _ in range(2):  # created when missing, reused when present
+            point = self.cli("checkpoint", "--phase", "preflight-advice", "--channel-dir", str(channels_dir))
+            self.assertEqual(point.returncode, 0, f"{marker}: {point.stderr[-300:]}")
         document = json.loads(point.stdout)
         channels = document.get("channels")
         self.assertIsInstance(channels, list, marker)
@@ -673,7 +705,7 @@ class EvidenceParts(Ceremony):
             item("BM_KEEP", behavior="unchanged item"), item("BM_MAP_ITEM_ONE")]}
         evidence_id = self.record_preflight(document)["evidenceId"]
         captured[evidence_id] = evidence_document(identity, evidence_id)
-        self.ok("record", "tdd-map", "--input", "-", input=json.dumps({"items": [item("BM_MAP_ITEM_TWO")]}))
+        self.ok("record", "tdd-map", "--input", "-", input=json.dumps({"items": [item("BM_MAP_ITEM_TWO", kind="preservation")]}))
         evidence_id = self.state()["tddEvidence"]
         captured[evidence_id] = evidence_document(identity, evidence_id)
         self.assertEqual(self.rows_containing("unchanged item"), 1, f"{marker}: a map item is stored per document")
@@ -768,9 +800,9 @@ EXPECTED_MATRIX: list[dict[str, object]] = json.loads(r'''[
  {"next":"verification","blockers":["verification"],"edit":[true,[]],"complete":"workflow incomplete: verification, codeReview, finalReview"},
  {"next":"verification","blockers":["verification"],"edit":[true,[]],"complete":"workflow incomplete: verification, codeReview, finalReview"},
  {"next":"verification","blockers":["verification"],"edit":[true,[]],"complete":"workflow incomplete: verification, codeReview, finalReview, repoContextForge"},
- {"next":"code-review","blockers":[],"edit":[true,[]],"complete":"workflow incomplete: codeReview, finalReview, repoContextForge"},
- {"next":"final-review","blockers":[],"edit":[true,[]],"complete":"workflow incomplete: finalReview, repoContextForge"},
- {"next":"classify-current-findings","blockers":[],"edit":[true,[]],"complete":"workflow incomplete: pending findings: final:F-1, finalReview, repoContextForge"}
+ {"next":"code-review","blockers":[],"edit":[true,[]],"complete":"workflow incomplete: codeReview, finalReview"},
+ {"next":"final-review","blockers":[],"edit":[true,[]],"complete":"workflow incomplete: finalReview"},
+ {"next":"address-review-findings","blockers":[],"edit":[true,[]],"complete":"workflow incomplete: pending findings: final:F-1, finalReview"}
 ]''')
 
 
@@ -867,9 +899,9 @@ class EveryViolation(Ceremony):
             item("BM_HOLD")]})
         stored = self.ok("evidence", "--full", "--evidence-id", str(self.state()["preflightEvidence"]))["document"]
         self.assertEqual(stored["document"]["behaviorMap"][0]["basis"], "fixture contract")
-        lost += self.pairs("tdd-map", {"items": [item("BM_NEW"), item("BM_KEEP")]}, {
+        lost += self.pairs("tdd-map", {"items": [item("BM_NEW", kind="preservation"), item("BM_KEEP")]}, {
             "item": (("items", 0, "behavior"), ""), "item-basis": (("items", 0, "basis"), _DROP),
-            "item-id": (("items", 0, "id"), "BM_KEEP"),
+            "item-id": (("items", 1, "id"), "BM_NEW"),
             "unknown": (("items", 0, "bogus"), 1),
             "refs": (("items", 1, "sourceRefs"), 5)})
         self.assertEqual(lost, [], "VIOLATION_HIDDEN: " + "; ".join(lost))
@@ -1004,7 +1036,7 @@ class ObservedCapture(Ceremony):
         self.assertEqual(observed.returncode, direct.returncode, marker)
         self.assertIn("VALUE_NOT_TWO", observed.stdout + observed.stderr, marker)
         self.assertIn("workflow.py tdd --repo", observed.stderr, "OBSERVATION_BYPASSES_TDD")
-        self.assertIn("--behavior-id and real command after --", observed.stderr, "COMPARISON_INPUTS_HIDDEN")
+        self.assertIn("--behavior-id ID (repeatable; recorded: BM_ONE) -- COMMAND", observed.stderr, "COMPARISON_INPUTS_HIDDEN")
         state = self.state()
         self.assertEqual(state["verification"], verification, f"{marker}: observation changed verification")
         runs = evidence_document(resolve_repo_identity(self.repo), str(state["verificationLatestEvidence"]))["runs"]
@@ -1184,6 +1216,7 @@ class ObservedInWorkflow(Ceremony):
         for index in range(11):
             (self.repo / f"escape{index:02}.py").write_text(f"X = {index}  # TO" + "DO later\n", encoding="utf-8")
         self.env["TMPDIR"] = str(self.tmp)  # where the printed retrieval saves the report
+        record_context_forge(self.repo, self.tmp)
         return self.cli("verify", "--kind", "quality-gate", "--base-ref", "HEAD", *flags)
 
     def retrieval(self, stdout: str, marker: str) -> tuple[dict[str, object], str]:
@@ -1198,13 +1231,14 @@ class ObservedInWorkflow(Ceremony):
     def test_the_typed_gate_summary_stays_bounded(self) -> None:
         marker = "VERIFY_OUTPUT_UNBOUNDED"
         self.begin()
-        printed = self.gate(150).stdout  # 153 duplicated regions: 24,748 bytes printed whole before
+        gated = self.gate(150)
+        printed = gated.stderr  # 153 duplicated regions: 24,748 bytes printed whole before
         self.assertTrue(printed.startswith("Production Code Quality Gate\nverdict: fail")
                         and "- QG54-OWNER-COMPETITION-PRODUCTION [" in printed, f"GATE_SUMMARY_NOT_SHOWN: {printed[:80]}")
         self.assertLessEqual(len(printed.encode()), 6000, marker)
         self.assertIn("- no-quality-escapes: fail (escape00.py:1, escape01.py:1, escape02.py:1, +8 more)", printed, marker)
         self.assertIn(", +150 more", printed, marker)
-        receipt = json.loads(printed.splitlines()[-1])
+        receipt = json.loads(gated.stdout)
         self.assertTrue(receipt["valid"] is False and receipt["next"]["command"], f"{marker}: {receipt}")
         run = evidence_document(resolve_repo_identity(self.repo), str(self.state()["verificationLatestEvidence"]))["runs"][-1]
         self.assertEqual(set(run["gate"]), {"ok", "errors"}, "GATE_WARNINGS_HIDDEN")
@@ -1225,14 +1259,14 @@ class ObservedInWorkflow(Ceremony):
         marker = "VERIFY_OUTPUT_OVER_BYTE_BOUND"
         self.begin()
         self.multibyte(4)
-        printed = self.gate().stdout
+        printed = self.gate().stderr
         self.assertLessEqual(len(printed.encode()), 6000, f"{marker}: {len(printed)} characters")
 
     def test_the_printed_projection_is_bounded_in_bytes(self) -> None:
         marker = "PROJECTION_OVER_BYTE_BOUND"
         self.begin()  # just past each cutoff: 7 locations per check and finding, locations over 100 JSON-escaped bytes
         self.multibyte(7, chr(0x1F9EA) * 10, '"\\\x01' * 12)
-        ran = subprocess.run(self.retrieval(self.gate().stdout, marker)[1], shell=True, env=self.env,
+        ran = subprocess.run(self.retrieval(self.gate().stderr, marker)[1], shell=True, env=self.env,
                              capture_output=True, text=True)
         shown = ran.stdout
         at = [len(json.dumps(item, ensure_ascii=False).encode()) for line in shown.splitlines() for item in json.loads(line)["at"]]
@@ -1241,7 +1275,7 @@ class ObservedInWorkflow(Ceremony):
     def test_the_typed_gate_names_its_complete_retained_report(self) -> None:
         marker = "VERIFY_REPORT_NOT_RETAINED"
         self.begin()
-        printed = self.gate(150).stdout
+        printed = self.gate(150).stderr
         report, projection = self.retrieval(printed, marker)  # the save prints nothing
         shown = subprocess.run(projection, shell=True, env=self.env, capture_output=True, text=True)
         direct = subprocess.run([sys.executable, str(ROOT / "skills/production-code/scripts/code_quality_gate.py"), "check",
@@ -1251,16 +1285,16 @@ class ObservedInWorkflow(Ceremony):
                         and shown.returncode == 0 < len(shown.stdout.encode()) <= 4200
                         and "QG54-DUPLICATE-ADDED-BLOCK" in shown.stdout, marker)
         cut = self.gate(150, "--timeout", "0")  # no verdict, so no report to name
-        self.assertTrue(cut.returncode == 2 and "complete report" not in cut.stdout, f"{marker}: {cut.stdout[-300:]}")
+        self.assertTrue(cut.returncode == 2 and "complete report" not in cut.stderr and json.loads(cut.stdout)["valid"] is False, f"{marker}: {cut.stdout[-300:]}")
         self.git(self.repo, "commit", "--allow-empty", "-qm", "second base")  # overlapping runs over distinct bases
         bases = [subprocess.run(["git", "rev-parse", ref], cwd=self.repo, env=self.env, capture_output=True, text=True).stdout.strip()
                  for ref in ("HEAD", "HEAD~1")]
         racing = [subprocess.Popen([sys.executable, str(WORKFLOW), "verify", "--kind", "quality-gate", "--base-ref", base],
-                                   cwd=self.repo, env=self.env, stdout=subprocess.PIPE, text=True) for base in bases]
-        self.assertEqual([self.retrieval(run.communicate()[0], marker)[0]["evaluation"]["base"]["commit"] for run in racing], bases,
+                                   cwd=self.repo, env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for base in bases]
+        self.assertEqual([self.retrieval(run.communicate()[1], marker)[0]["evaluation"]["base"]["commit"] for run in racing], bases,
                          f"{marker}: overlapping runs")
         (self.repo / "later.py").write_text("LATER = 1\n", encoding="utf-8")
-        later = self.retrieval(self.cli("verify", "--kind", "quality-gate", "--base-ref", "HEAD").stdout, marker)[0]
+        later = self.retrieval(self.cli("verify", "--kind", "quality-gate", "--base-ref", "HEAD").stderr, marker)[0]
         self.assertTrue(later["candidateTree"] != report["candidateTree"] and self.retrieval(printed, marker)[0] == report, f"{marker}: earlier locator moved")
 
 class FlagDisposition(Ceremony):
@@ -1314,7 +1348,7 @@ class FlagDisposition(Ceremony):
         self.assertEqual(disposition["dispositions"][0]["evidenceRefs"], [f"{self.state()['tddEvidence']}:{later.rsplit(':', 1)[1]}"],
                          "FLAG_FIXED_NEEDS_EVIDENCE_REF")
 
-    def test_finding_relink_keeps_proof_for_the_gate_refresh(self) -> None:
+    def test_finding_relink_keeps_proof_after_its_rerun(self) -> None:
         wid = self.begin()
         identity = resolve_repo_identity(self.repo)
         self.record_preflight({"authoritativeContract": "fixture", "behaviorMap": [item("BM_ATTACK", basis="fixture")]})
@@ -1323,6 +1357,7 @@ class FlagDisposition(Ceremony):
         (self.repo / "app.py").write_text("value = 2\nother = 1\n", encoding="utf-8")
         self.comparison(0, "BM_ATTACK")
         self.ok("record", "tdd-map", "--input", "-", input=json.dumps({"items": [item("BM_ATTACK", refs=[ref], basis="fixture")]}))
+        self.comparison(0, "BM_ATTACK")
         self.ok_raw("verify", "--kind", "quality-gate", "--base-ref", "HEAD")
         fixed = self.cli("record", "advisor-disposition", "--finding", "SPEC-1", "--fixed", "--reason", "relinked owner")
         self.assertEqual(fixed.returncode, 0, "RELINK_DROPPED_PROOF: " + fixed.stderr[-400:])
@@ -1333,7 +1368,8 @@ class FlagDisposition(Ceremony):
         (self.repo / "app.py").write_text("value = 2\nother = 1\n", encoding="utf-8")
         self.comparison(0, "BM_ATTACK")
         (self.repo / "app.py").write_text("value = 4\nother = 1\n", encoding="utf-8")
-        for items in ([item("BM_ATTACK", basis="fixture"), item("BM_EXTRA", basis="fixture")], [item("BM_ATTACK", basis="fixture")]):
+        for items in ([item("BM_ATTACK", basis="fixture"), item("BM_EXTRA", basis="issue 96 fixture intent.", boundaryInputs=["test_value"])],
+                      [item("BM_ATTACK", basis="issue 96 fixture intent.", boundaryInputs=["test_value"])]):
             self.ok("record", "tdd-map", "--input", "-", input=json.dumps({"items": items}))
         (self.repo / "app.py").write_text("value = 2\nother = 1\n", encoding="utf-8")
         self.ok_raw("verify", "--kind", "quality-gate", "--base-ref", "HEAD")
@@ -1346,13 +1382,15 @@ class FlagDisposition(Ceremony):
         self.record_preflight({"authoritativeContract": "Create keeps its suppression", "behaviorMap": [item("BM_ATTACK", basis="fixture")]})
         (self.repo / "app.py").write_text("value = 2\nother = 1\n", encoding="utf-8")
         self.comparison(0, "BM_ATTACK")
-        self.ok_raw("verify", "--kind", "quality-gate", "--base-ref", "HEAD")
+        gate = self.cli("verify", "--kind", "quality-gate", "--base-ref", "HEAD")
+        handoff = json.loads(gate.stdout)["next"]  # a passing gate's stdout is its receipt alone
+        self.assertTrue(gate.returncode == 0 and '{"findings":' in handoff["input"] and "help" not in handoff and "complete report" not in gate.stderr)
         package = self.cli("checkpoint", "--phase", "code-review", "--channel-dir", str(self.tmp))
         self.assertEqual(package.returncode, 0, "REVIEW_PACKAGE_MISSING: " + package.stderr[-300:])
         channels = {channel["name"]: Path(channel["contentPath"]).read_text() for channel in json.loads(package.stdout)["channels"]}
         self.assertLessEqual({"behavior-map", "diff", "intent"}, set(channels), "REVIEW_PACKAGE_MISSING")
         work = json.loads(channels["behavior-map"])
-        self.assertEqual((work["authoritativeContract"], [arm["outcome"] for arm in work["items"][0]["comparison"]["arms"]]),
+        self.assertEqual((work["preflightInterpretation"], [arm["outcome"] for arm in work["items"][0]["comparison"]["arms"]]),
                          ("Create keeps its suppression", ["failed", "passed"]), "REVIEW_PACKAGE_MISSING")
 
 
@@ -1414,17 +1452,41 @@ class MinimalDocuments(Ceremony):
         self.ok("verify", "--kind", "quality-gate", "--base-ref", "HEAD")
         review = {"findings": [{"id": "R-1", "claim": "a real claim", "material": True,
                                 "axis": "Spec", "location": "extra context is dropped"}]}
-        intake = self.ok("record", "review", "--input", "-", input=json.dumps(review))
-        self.assertIn("record advisor-disposition", intake["next"]["command"], marker)
-        self.assertNotIn("--input", intake["next"]["command"], marker)
-        self.assertIn("--finding R-1", intake["next"]["command"], marker)
+        self.ok("record", "review", "--input", "-", input=json.dumps(review))
         self.assertEqual(self.state()["codeReview"]["findings"], "pending", marker)
         self.ok("record", "advisor-disposition", "--finding", "R-1", "--report-only",
                 "--reason", "The measured condition has no material consequence on this task.")
         self.assertEqual(self.state()["findingStates"][-1]["status"], "report-only", marker)
 
-        self.ok("record", "tdd-map", "--input", "-", input=json.dumps({"items": [item("BM_TWO")]}))
+        self.ok("record", "tdd-map", "--input", "-", input=json.dumps({"items": [item("BM_TWO", kind="preservation")]}))
         self.assertEqual(self.state()["tdd"], "in-progress", marker)
+
+    def test_a_map_update_names_only_what_changes(self) -> None:
+        marker = "PARTIAL_MAP_UPDATE"
+        self.begin()
+        self.record_preflight({"authoritativeContract": "fixture", "behaviorMap": [
+            item("BM_ONE", interpretations=["a", "b"], interpretation="a", authority="spec", boundaryInputs=["test_old"])]})
+        current = lambda: evidence_document(resolve_repo_identity(self.repo), self.state()["tddEvidence"])["behaviorMap"]
+        self.ok("record", "tdd-map", "--input", "-", input=json.dumps({"items": [{"id": "BM_ONE", "boundaryInputs": ["test_y"]}]}))
+        [one] = current()
+        self.assertEqual((one["boundaryInputs"], one["interpretations"], one["behavior"]), (["test_y"], ["a", "b"], "BM_ONE behavior"), marker)
+        self.ok("record", "tdd-map", "--input", "-", input=json.dumps({"items": [{"id": "BM_ONE", "interpretations": ["c", "d"]}]}))
+        self.assertNotIn("interpretation", current()[0], marker + ": new readings kept the old choice")
+        self.ok("record", "tdd-map", "--input", "-", input=json.dumps({"items": [{"id": "BM_ONE", "interpretations": None}]}))
+        self.assertNotIn("interpretations", current()[0], marker)
+        added = self.cli("record", "tdd-map", "--input", "-", input=json.dumps({"items": [{"id": "BM_NEW", "boundaryInputs": ["test_z"]}]}))
+        self.assertEqual(added.returncode, 2, marker + ": a new partial item was recorded")
+
+    def test_the_dry_run_refuses_a_description_as_a_case_name(self) -> None:
+        marker = "DESCRIPTION_RECORDED_AS_CASE"
+        self.begin()
+        draft, envelope = self.tmp / "draft.json", json.dumps({"schemaVersion": 1, "verdict": "approved", "findings": []})
+        for names, code in ((["test_kept: kept stays one"], 2), (["t.py::test_kept: kept stays one"], 2), (["t.py::test_kept[a: b]", "kept"], 0)):
+            draft.write_text(json.dumps({"authoritativeContract": "c", "behaviorMap": [item("BM_ONE", boundaryInputs=names)]}))
+            checked = self.cli("record", "advisor-result", "--check", "--stage", "preflight", "--input", "-",
+                               "--preflight-file", str(draft), input=envelope)
+            self.assertEqual(checked.returncode, code, f"{marker}: {names}: {checked.stderr[-300:]}")
+            self.assertEqual("into expected" in checked.stderr, code == 2, marker)
 
 
 class DerivedIdentity(Ceremony):

@@ -96,7 +96,8 @@ class MappedTddRepairTests(unittest.TestCase):
         )
 
     def begin_with_map(
-        self, items: list[dict[str, object]], slug: str = "mapped-repair"
+        self, items: list[dict[str, object]], slug: str = "mapped-repair",
+        intent: str = "exercise mapped TDD behavior",
     ) -> tuple[str, str]:
         begun = self.cli(
             "begin",
@@ -105,7 +106,7 @@ class MappedTddRepairTests(unittest.TestCase):
             "--slug",
             slug,
             "--intent",
-            "exercise mapped TDD behavior",
+            intent,
         )
         self.assertEqual(begun.returncode, 0, begun.stdout + begun.stderr)
         workflow_id = str(json.loads(begun.stdout)["workflowId"])

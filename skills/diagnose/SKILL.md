@@ -6,7 +6,7 @@ description: Disciplined diagnosis loop for hard bugs and performance regression
 # Diagnose
 
 For recurring behavioral findings, apply the workflow's
-[repair contract](../repo-production-workflow/SKILL.md#recurring-behavioral-repairs).
+[repair contract](../repo-production-workflow/WORKFLOW-MAP.md#recurring-behavioral-repairs).
 
 A discipline for hard bugs. Skip phases only when explicitly justified.
 

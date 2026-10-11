@@ -52,7 +52,7 @@ jobs:
           CODEX_HOME: ${{ runner.temp }}
         run: |
           pip install pytest==8.4.1
-          python3 -m unittest hooks.tests.test_review_summary.ReviewSummaryTests.test_shape_table_is_generated_and_referenced_by_author_skills
+          python3 -m unittest hooks.tests.test_review_summary.SkillTextTests
           python3 -m pytest -q skills/production-code/scripts/test_code_quality_gate.py -k calibration_is_reproducible
       # Anything but a decided documentation lane runs the production lane, so a
       # missing or unexpected scope output can never skip the suite.

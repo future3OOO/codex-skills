@@ -48,7 +48,7 @@ class ReviewSummaryHarness(unittest.TestCase):
         (self.repo / "app.py").write_text("value = 1\n", encoding="utf-8")
         subprocess.run(["git", "add", "app.py"], cwd=self.repo, env=self.env, check=True)
         subprocess.run(["git", "commit", "-q", "-m", "base"], cwd=self.repo, env=self.env, check=True)
-        begun = self.run_script(WORKFLOW, "begin", "--slug", "review-summary")
+        begun = self.run_script(WORKFLOW, "begin", "--slug", "review-summary", "--intent", "Make the application value two.")
         self.assertEqual(begun.returncode, 0, begun.stdout + begun.stderr)
         identity = record_context_forge(self.repo, self.tmp)
         self.wid = read_workflow(identity)["workflowId"]
@@ -148,7 +148,7 @@ class ReviewSummaryTests(ReviewSummaryHarness):
                       "--stage", "final", "--source", "codex-advisor", "--input", str(path),
                       "--design-declaration", str(design))
         update = self.tmp / "reassessment.json"
-        update.write_text(json.dumps({"items": [{"id": "BM_CURRENT", "basis": "newly requested read",
+        update.write_text(json.dumps({"items": [{"id": "BM_CURRENT", "kind": "preservation", "basis": "newly requested read",
                        "behavior": "Current application value remains readable", "seam": "Python import",
                        "expected": "value is 1"}]}))
         mapped = self.run_script(WORKFLOW, "record", "tdd-map", "--slug", "review-summary",
@@ -157,7 +157,7 @@ class ReviewSummaryTests(ReviewSummaryHarness):
         self.assertEqual(self.run_script(WORKFLOW, *final_args).returncode, 2, "REASSESSED_MAP_ADMITTED_FINAL_RESULT")
         baseline = subprocess.run([sys.executable, str(WORKFLOW), "tdd", "--repo", str(self.repo),
             "--slug", "review-summary", "--behavior-id", "BM_CURRENT", "--",
-            sys.executable, "-c", "import app; assert app.value == 1; print('current application value is 1')"],
+            sys.executable, "-c", "import app; assert app.value == 1; print('current application value:', app.value)"],
             cwd=self.repo, env=self.env, capture_output=True, text=True)
         self.assertEqual(baseline.returncode, 0, baseline.stdout + baseline.stderr)
         (self.repo / "app.py").write_text("value = 2\n")
@@ -281,7 +281,7 @@ class ReviewSummaryTests(ReviewSummaryHarness):
         self.assertEqual(self.dispose("SPEC-2").returncode, 0)
         update = self.tmp / "reopened-map.json"
         update.write_text(json.dumps({"items": [{
-            "id": "BM_VALUE", "basis": "application contract",
+            "id": "BM_VALUE", "kind": "contract", "basis": "Make the application value two.",
             "behavior": "app.value is two", "seam": "import app", "expected": "value equals two",
         }]}), encoding="utf-8")
         mapped = self.run_script(WORKFLOW, "record", "tdd-map", "--slug", "review-summary", "--workflow-id", self.wid,
@@ -333,26 +333,33 @@ class ReviewSummaryTests(ReviewSummaryHarness):
         self.assertEqual(json.loads(ready.stdout)["status"], "passed", marker)
         self.assertEqual(read_workflow(resolve_repo_identity(self.repo))["findingStates"], list(states.values()), marker)
 
-    def test_pending_review_refreshes_binding_without_closing_findings(self) -> None:
-        path = self.tmp / "pending-review.json"
-        previous = None
-        for findings in ([self.review_finding()], []):
-            if previous is not None:
-                (self.repo / "app.py").write_text("value = 2\n")
-                verified = self.run_script(WORKFLOW, "verify", "--slug", "review-summary", "--kind", "quality-gate", "--base-ref", "HEAD")
-                self.assertEqual(verified.returncode, 0, verified.stdout + verified.stderr)
-            path.write_text(json.dumps({"findings": findings}))
-            recorded = self.record_review(path, "current-pending-review")
-            self.assertEqual(recorded.returncode, 0, recorded.stdout + recorded.stderr)
-            state = json.loads(self.run_script(WORKFLOW, "status").stdout)
-            self.assertEqual(state["codeReview"]["status"], "pending")
-            self.assertEqual(state["findingStates"][0]["status"], "pending")
-            self.assertIsNotNone(state.get("reviewManifestId"), "PENDING_REVIEW_BINDING_STALE")
-            self.assertNotEqual(state["reviewManifestId"], previous, "PENDING_REVIEW_BINDING_STALE")
-            checkpoint = json.loads(self.run_script(WORKFLOW, "checkpoint", "--phase", "final-review").stdout)
-            self.assertFalse(any("review-manifest" in reason for reason in checkpoint["missing"]),
-                             "PENDING_REVIEW_BINDING_STALE")
-            previous = state["reviewManifestId"]
+    def test_a_clean_rereview_settles_its_findings_and_refreshes_the_binding(self) -> None:
+        marker, path = "PENDING_REVIEW_BINDING_STALE", self.tmp / "pending-review.json"
+        status = lambda: json.loads(self.run_script(WORKFLOW, "status").stdout)
+        findings = [self.review_finding(), {**self.review_finding(), "id": "SPEC-2", "kind": "behavioral", "claim": "value must stay two"}]
+        path.write_text(json.dumps({"findings": findings}))
+        self.assertEqual(self.record_review(path, "current-pending-review").returncode, 0, marker)
+        first = status()
+        self.assertEqual((first["findingStates"][0]["status"], first["nextAction"]), ("pending", "code-review"), marker)
+        (self.repo / "app.py").write_text("value = 2\n")
+        verified = self.run_script(WORKFLOW, "verify", "--slug", "review-summary", "--kind", "quality-gate", "--base-ref", "HEAD")
+        self.assertEqual(verified.returncode, 0, verified.stdout + verified.stderr)
+        path.write_text(json.dumps({"findings": [{"id": "R-2", "material": False, "kind": "nonbehavioral", "claim": "a note"}]}))
+        self.assertEqual(self.record_review(path, "current-pending-review").returncode, 0, marker)
+        state = status()
+        self.assertEqual(({e["findingId"]: e["status"] for e in state["findingStates"]}["SPEC-1"], state["codeReview"]["status"]),
+                         ("resolved", "passed"), marker + ": the clean re-review left its finding open")
+        self.assertNotIn(state.get("reviewManifestId"), (None, first["reviewManifestId"]), marker)
+        path.write_text(json.dumps({"findings": findings}))
+        self.assertEqual(self.record_review(path, "current-pending-review").returncode, 0, marker)
+        self.assertEqual({e["findingId"]: e.get("recurrence") for e in status()["findingStates"][-2:]},
+                         {"SPEC-1": None, "SPEC-2": 1}, "SETTLED_FINDING_RECURRENCE_LOST")
+        clean, again = json.dumps({"findings": []}), json.dumps({"findings": findings[1:]})
+        for document in (clean, again, clean):  # recurrence two: an uncertified clean review settles nothing
+            path.write_text(document)
+            self.assertEqual(self.record_review(path, "current-pending-review").returncode, 0, marker)
+        self.assertEqual((status()["findingStates"][-1].get("recurrence"), status()["findingStates"][-1]["status"]),
+                         (2, "pending"), "UNCERTIFIED_REPAIR_SETTLED")
 
     def test_legacy_empty_document_is_a_no_finding_intake(self) -> None:
         path = self.tmp / "legacy-empty.json"
@@ -420,6 +427,55 @@ class ReviewSummaryTests(ReviewSummaryHarness):
         )
         self.assertEqual(premature.returncode, 2, "a premature recorder call was accepted before verification")
         self.assertEqual(self.event_count(), before_events, "a rejected recorder call appended an event")
+
+
+class SkillTextTests(unittest.TestCase):
+    """The skills describe the workflow that exists: every link resolves and no removed feature is named."""
+
+    def test_skill_links_resolve_and_name_only_live_features(self) -> None:
+        import re
+        marker = "SKILL_TEXT_STALE"
+        roots = [ROOT / "docs" / "agents", *(ROOT / "skills" / name for name in (
+            "tdd", "production-preflight", "production-code", "code-review", "codex-advisor",
+            "repo-production-workflow", "diagnose", "repo-context-forge"))]
+        documents = [path for root in roots for path in root.rglob("*.md")]
+        self.assertTrue(documents, marker)
+        removed = re.compile(r"RED/GREEN|redFailure|retainedEffect|hooks/lib/mcdc|Behavior Map requirements|#task-boundary-and-seams"
+                             r"|\breleased\b|request sentence|quoting, verbatim|what-a-slice-must-prove|mcdc-decisive-contexts")
+        for path in documents:
+            text = path.read_text(encoding="utf-8")
+            self.assertIsNone(removed.search(text), f"{marker}: {path.relative_to(ROOT)} names a removed feature")
+            for target in re.findall(r"\[[^\]]*\]\(([^)\s]+)\)", text):
+                if target.startswith(("http://", "https://", "mailto:")):
+                    continue
+                relative, _, anchor = target.partition("#")
+                destination = (path.parent / relative).resolve() if relative else path
+                self.assertTrue(destination.exists(), f"{marker}: {path.relative_to(ROOT)} -> {target}")
+                if anchor and destination.suffix == ".md":
+                    headings = {re.sub(r"\s+", "-", re.sub(r"[^\w\s-]", "", re.sub(r"[`*_]", "", line.lstrip("#").strip().lower())).strip())
+                                for line in destination.read_text(encoding="utf-8").splitlines() if line.startswith("#")}
+                    self.assertIn(anchor, headings, f"{marker}: {path.relative_to(ROOT)} -> {target}")
+        # one authoritative MC/DC procedure, in the test reference the loop points at
+        tdd = {name: (ROOT / "skills" / "tdd" / name).read_text(encoding="utf-8") for name in ("SKILL.md", "tests.md", "recorder.md")}
+        self.assertIn("\n## MC/DC\n", tdd["tests.md"], marker)
+        for element in ("EQUALS", "the formula that computes it", "masked", "repeated", "infeasible",
+                        "Do not use tests for a requested change as evidence"):
+            self.assertIn(element, tdd["tests.md"].split("\n## MC/DC\n", 1)[-1], f"{marker}: MC/DC section lacks {element}")
+        # an added condition has no original decision to flip: its pair flips the edited one
+        added = "ADDED_CONDITION_UNSATISFIABLE"
+        mcdc = tdd["tests.md"].split("\n## MC/DC\n", 1)[-1]
+        self.assertIn("change the original decision, or the edited decision for a condition the edit adds", mcdc, added)
+        self.assertIn("decision flip (the edited decision for an added condition)", mcdc, added)
+        holders = [path.relative_to(ROOT) for path in documents if "independence pair" in path.read_text(encoding="utf-8")]
+        self.assertEqual(holders, [Path("skills/tdd/tests.md")], marker)
+        self.assertIn("tests.md#mcdc", tdd["SKILL.md"], marker)
+        self.assertIn("mocking.md", tdd["SKILL.md"], marker)
+        self.assertNotIn("\n## Behavior Map", tdd["SKILL.md"], marker)
+        self.assertIn("\n## Behavior Map\n", tdd["recorder.md"], marker)
+        shown = subprocess.run([sys.executable, str(WORKFLOW), "record", "tdd-map", "--help"], capture_output=True, text=True)
+        self.assertEqual(shown.returncode, 0, shown.stderr)
+        self.assertIn('"kind"', shown.stdout, marker + ": tdd-map help omits kind")
+        self.assertNotIn("released", shown.stdout, marker + ": tdd-map help names a removed field")
 
 
 if __name__ == "__main__":

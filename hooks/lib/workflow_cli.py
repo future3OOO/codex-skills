@@ -6,7 +6,7 @@ import json
 import os
 import shlex
 import sqlite3
-from contextlib import closing
+from contextlib import closing, nullcontext, redirect_stdout
 import subprocess
 import sys
 import tempfile
@@ -19,6 +19,7 @@ from .state_prune import prune
 from .state_store import _active_candidate_tree, analysis_unchanged, repo_state_dir, state_root, tree_manifest, utc_timestamp
 from .tdd_surface import identify
 from .workflow_documents import (
+    RECORD_SHAPES,
     advisor_envelope,
     design_declaration,
     load_json,
@@ -43,6 +44,7 @@ from .workflow_state import (
     operation_receipt as _receipt,
     pause,
     public_status,
+    refresh_context,
     read_workflow,
     record_advisor_result,
     set_phase,
@@ -50,19 +52,6 @@ from .workflow_state import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
-ITEM_SHAPE = ('{"id":"BM_X","basis":"original request or preservation",'
-              '"behavior":"...","seam":"...","expected":"...",'
-              '"sourceRefs":[{"type":"finding","evidenceId":"<intake>","id":"SPEC-1"}]}')
-RECORD_SHAPES = {
-    "preflight": f'{{"authoritativeContract":"text","behaviorMap":[{ITEM_SHAPE}]}}',
-    "review": '{"findings":[{"id":"R-1","claim":"...","material":true}]}',
-    "advisor-result": ('the advisor envelope {"schemaVersion":1,"findings":[{"id":"SPEC-1","claim":"...",'
-                       '"material":true}],"verdict":"approved|changes-required|completed|commit-ready|'
-                       'fix-before-commit|context-mismatch"}, or --verdict unavailable --reason TEXT'),
-    "advisor-disposition": ("--finding F --fixed [--behavior-id BM]; or --finding F "
-                            "--rejected|--report-only|--follow-up REF --reason TEXT; or --findings none"),
-    "tdd-map": f'{{"items":[{ITEM_SHAPE}]}}',
-}
 DISPOSITION_FLAGS = {"fixed": "fixed", "rejected": "rejected-with-evidence", "report_only": "report-only"}
 # Failing checks' first five locations, then the first six active findings with three each. Each location
 # prints as at most 100 bytes of JSON, escapes included (file:line tail kept), so the whole stays under 4,200.
@@ -291,6 +280,9 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
         binding_error = str(exc)
 
     if args.kind == "quality-gate":
+        if binding_error is None:  # the gate binds the recorded graph evidence to the candidate it checks
+            refresh_context(identity)
+            state = bound_state(identity, slug, workflow_id)
         args.base_ref = args.base_ref or state.get("baseOid")
         if not args.base_ref:
             raise ValueError("quality-gate verification needs the recorded base or --base-ref")
@@ -375,7 +367,7 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
         run["bindingError"] = binding_error
     state, evidence_id, recorded = commit_verification(identity, slug, workflow_id, run, tree_before=tree_before,
                                                        report=report if gate is not None else None)
-    if recorded.get("reportEvidenceId"):
+    if recorded.get("reportEvidenceId") and recorded["valid"] is not True:
         # Retrieval stays outside chat: the save prints nothing, and the example projection is bounded.
         location = shlex.quote(str(Path(tempfile.gettempdir()) / f"{recorded['reportEvidenceId']}.json"))
         shown += (f"complete report: {len(report['findings'])} findings "
@@ -384,31 +376,24 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
                   + shlex.join([sys.executable, str(ROOT / "skills" / "repo-production-workflow" / "scripts" / "workflow.py"),
                                 "evidence", "--repo", str(identity.root), "--evidence-id", str(recorded["reportEvidenceId"]),
                                 "--full"]) + f" > {location}\n  jq -c {shlex.quote(REPORT_PROJECTION)} {location}\n").encode()
-    _print_output(shown)
-    refreshed = True
-    try:
-        if recorded["valid"] is True and args.kind == "quality-gate" and not state.get("revalidation"):
-            from .tdd_workflow import refresh_comparisons
-            # Refreshed comparisons print their own receipts; the gate's receipt comes last, from the refreshed state.
-            refreshed = refresh_comparisons(identity, state)
-            state = read_workflow(identity) or state
-    finally:
-        state = read_workflow(identity) or state
-        _emit_json(_receipt(state, identity, **{
-            "evidenceId": evidence_id,
-            "exitCode": exit_code,
-            "kind": args.kind,
-            "verification": state["verification"],
-            "valid": recorded["valid"],
-            "runIndex": recorded["runIndex"],
-            "workflowId": workflow_id,
-            "treeManifestId": recorded.get("treeManifestId"),
-        }))
+    with redirect_stdout(sys.stderr) if args.kind == "quality-gate" else nullcontext():  # stdout carries only the receipt
+        _print_output(shown)
+    state = read_workflow(identity) or state
+    _emit_json(_receipt(state, identity, **{
+        "evidenceId": evidence_id,
+        "exitCode": exit_code,
+        "kind": args.kind,
+        "verification": state["verification"],
+        "valid": recorded["valid"],
+        "runIndex": recorded["runIndex"],
+        "workflowId": workflow_id,
+        "treeManifestId": recorded.get("treeManifestId"),
+    }))
     if recorded["valid"] is not True:
         reason = recorded.get("bindingError") or ("verification command failed" if exit_code else "the runner reported no executed test")
         print(f"{reason}; verification stays pending until its rerun is green", file=sys.stderr)
         return 2
-    return 0 if refreshed else 2
+    return 0
 
 
 def _document(args: argparse.Namespace, label: str) -> dict[str, object]:
@@ -467,7 +452,7 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
         elif verdict is None:
             raise ValueError("record advisor-result requires --input or --verdict unavailable --reason")
         expected = args.expected_candidate_tree
-        if expected is not None and expected != candidate:
+        if args.stage != "preflight" and expected not in (None, candidate):  # a preflight verdict judges its draft
             raise WorkflowError("active candidate changed after the advisor checkpoint")
         state = record_advisor_result(
             identity, slug, workflow_id, args.stage, args.source, verdict, reason=args.reason,
@@ -547,6 +532,8 @@ def _dispatch(args: argparse.Namespace) -> int:
         _emit_json(_receipt(pause(identity, args.slug, args.workflow_id, args.reason,
                                   expected_candidate_tree=_active_candidate_tree(identity)), identity))
     elif args.command == "checkpoint":
+        if args.channel_dir:  # a consult is about to read the projection
+            refresh_context(identity)
         _emit_json(checkpoint(identity, args.phase, reconsult=args.reconsult, channel_dir=args.channel_dir,
                               preflight_draft=preflight_document(args.preflight_file) if args.preflight_file else None))
     elif args.command == "complete":

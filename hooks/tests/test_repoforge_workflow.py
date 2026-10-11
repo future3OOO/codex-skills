@@ -27,7 +27,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from hooks.lib.workflow_documents import graph_evidence_document  # noqa: E402
-from hooks.tests.support import approve_preflight, build_no_change_document, checkpoint_channels, fixture_env, graph_packet  # noqa: E402
+from hooks.tests.support import approve_preflight, build_no_change_document, checkpoint_channels, fixture_env, graph_packet, run_post_edit  # noqa: E402
 
 
 @unittest.skipUnless(CANONICAL_BOOTSTRAP.is_file(), "real Repo Context Forge source is unavailable")
@@ -514,14 +514,13 @@ class RepoForgeWorkflowTests(unittest.TestCase):
         self.assertIn("- QG54-OWNER-COMPETITION-PRODUCTION: pass", verified.stdout, "VERIFY_SUMMARY_WITHOUT_GRAPH")
         self.assertNotIn("graph evidence", verified.stdout, "VERIFY_SUMMARY_WITHOUT_GRAPH")
 
-    @unittest.skipUnless(GITNEXUS, "the real GitNexus CLI is unavailable")
-    def test_evidence_bound_to_a_different_snapshot_keeps_the_owner_rules_incomplete(self) -> None:
-        """Falsification: an edit after the recorded analysis is named as staleness.
+    def refreshes(self) -> int:
+        return self.pass_state("history").stdout.count("record-repo-context-forge")
 
-        The gate captures the moved tree, the recorded evidence still names the
-        analyzed one, and its own binding check must report the stale gap —
-        never silently accept, never rebind.
-        """
+    @unittest.skipUnless(GITNEXUS, "the real GitNexus CLI is unavailable")
+    def test_the_typed_gate_refreshes_a_stale_projection_once(self) -> None:
+        """An edit after the recorded analysis is re-analyzed by the gate's own verify, once."""
+        marker = "STALE_PROJECTION_NOT_REFRESHED"
         self.git("branch", "-M", "main")
         forged = self.graph_bootstrap()
         self.assertEqual(forged.returncode, 0, forged.stdout + forged.stderr)
@@ -529,16 +528,55 @@ class RepoForgeWorkflowTests(unittest.TestCase):
         (self.repo / "caller.py").write_text(
             "from app import compute\n\n\ndef run():\n    return compute(3)\n", encoding="utf-8"
         )
-
+        before = self.refreshes()
         verified, run = self.typed_quality_gate_run("main")
         self.assertEqual(verified.returncode, 0, verified.stdout + verified.stderr)
+        self.assertEqual(self.refreshes(), before + 1, marker + ": the gate ran on a stale projection")
         for rule_id, finding in sorted(self.owner_states(run).items()):
-            self.assertEqual(finding["status"], "incomplete", f"{rule_id}: {finding}")
-            self.assertIn(
-                "external graph evidence is stale: it does not name the evaluated snapshot",
-                finding["completeness"]["gaps"],
-                f"{rule_id} did not name the stale binding",
-            )
+            self.assertTrue(finding["completeness"]["complete"], f"{marker}: {rule_id}: {finding}")
+        again, _ = self.typed_quality_gate_run("main")
+        self.assertEqual((again.returncode, self.refreshes()), (0, before + 1), marker + ": a current projection was refreshed again")
+        self.assertNotIn("--revalidate", self.pass_state("summary").stdout, marker + ": recovery still routes to a manual refresh")
+
+    @unittest.skipUnless(GITNEXUS, "the real GitNexus CLI is unavailable")
+    def test_the_final_recheck_receives_the_current_projection(self) -> None:
+        """After the first final verdict, a corrected tree reaches the advisor with its own projection."""
+        marker = "STALE_PROJECTION_NOT_REFRESHED"
+        self.git("branch", "-M", "main")
+        self.assertEqual(self.graph_bootstrap().returncode, 0)
+        self.advance_to_typed_verification()
+        verified, _ = self.typed_quality_gate_run("main")
+        self.assertEqual(verified.returncode, 0, verified.stdout + verified.stderr)
+        state = self.status()
+        slug, wid = str(state["slug"]), str(state["workflowId"])
+        envelope = self.tmp / "final.json"
+        envelope.write_text(json.dumps({"schemaVersion": 1, "verdict": "fix-before-commit", "findings": [
+            {"id": "SPEC-1", "claim": "run must pass three", "material": True, "kind": "behavioral"}]}), encoding="utf-8")
+        for step in (("set-phase", "--phase", "code-review", "--status", "not-required", "--findings", "none"),
+                     ("record", "advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final",
+                      "--source", "codex-advisor", "--input", str(envelope))):
+            result = self.pass_state(*step)
+            self.assertEqual(result.returncode, 0, " ".join(step) + "\n" + result.stdout + result.stderr)
+        (self.repo / "caller.py").write_text(
+            "from app import compute\n\n\ndef run():\n    return compute(4)\n", encoding="utf-8"
+        )
+        self.assertEqual(run_post_edit(self.repo, self.env, "caller.py", session=None).returncode, 0)
+        channels = self.tmp / "channels"
+        channels.mkdir()
+        checked = self.pass_state("checkpoint", "--phase", "final-review", "--channel-dir", str(channels))
+        self.assertEqual(checked.returncode, 0, checked.stdout + checked.stderr)
+        result = json.loads(checked.stdout)
+        projection = json.loads(Path(next(channel["contentPath"] for channel in result["channels"]
+                                          if channel["name"] == "advisor-projection")).read_text())
+        self.assertEqual((result["ready"], projection["expectedCandidateTree"]), (True, result["activeCandidateTree"]),
+                         f"{marker}: the re-check was sent the first final's projection: {result['missing']}")
+        (self.repo / "caller.py").write_text("from app import compute\n\n\ndef run():\n    return compute(5)\n", encoding="utf-8")
+        failed = subprocess.run(["bwrap", "--dev-bind", "/", "/", "--tmpfs", "/home/prop_/.local/share/repo-context-forge", "--",
+                                 sys.executable, str(WORKFLOW), "checkpoint", "--repo", str(self.repo), "--phase", "final-review",
+                                 "--channel-dir", str(channels)], cwd=self.repo, env=self.env, text=True,
+                                capture_output=True, check=False)
+        self.assertEqual((failed.returncode != 0, "refresh failed" in failed.stdout + failed.stderr), (True, True),
+                         f"{marker}: a failed refresh read as ready: " + failed.stdout + failed.stderr)
 
     @unittest.skipUnless(GITNEXUS, "the real GitNexus CLI is unavailable")
     def test_bootstrap_records_the_producer_graph_result_as_workflow_evidence(self) -> None:
@@ -598,7 +636,7 @@ class RepoForgeWorkflowTests(unittest.TestCase):
         mutation, status = json.loads(paused.stdout), self.status()
         self.assertEqual(
             (mutation["nextAction"], status["repoContextForge"], status["gitnexus"]),
-            ("repo-context-forge", "pending", "pending"),
+            ("preflight", "pending", "pending"),  # the preflight consult refreshes the projection itself
             marker + json.dumps({"mutation": mutation, "status": status}, sort_keys=True),
         )
 

@@ -96,8 +96,7 @@ class AttackHarness(unittest.TestCase):
         state = self.status()
         evidence = state.get("tddEvidence") or state["preflightEvidence"]
         document = self.ok("evidence", "--full", "--evidence-id", evidence)["document"]
-        return [{k: v for k, v in item.items() if k in {"id", "basis", "behavior", "seam", "expected", "sourceRefs"}}
-                for item in document["behaviorMap"]]
+        return [{k: v for k, v in item.items() if k != "comparison"} for item in document["behaviorMap"]]
 
     def json_file(self, name: str, value: object) -> Path:
         self.documents += 1
@@ -122,7 +121,7 @@ class AttackHarness(unittest.TestCase):
 
     def owned_map(self, intake_id: str, *, marker: str) -> list[dict[str, object]]:
         return [{
-            "id": "BM_ATTACK", "basis": "advisor finding attack",
+            "id": "BM_ATTACK", "kind": "contract", "basis": "advisor finding attack",
             "behavior": "the reviewed value is corrected", "seam": "fixture app module",
             "expected": "app.value is 2",
             "sourceRefs": [{"type": "finding", "evidenceId": intake_id, "id": "SPEC-1"}],
@@ -160,7 +159,7 @@ class AttackHarness(unittest.TestCase):
         self.ok("record", "advisor-disposition", "--slug", slug, "--workflow-id", wid,
                 "--stage", "preflight", "--findings", "none")
         owned = self.record_preflight(slug, wid, [{
-            "id": "BM_ATTACK", "basis": "requested behavior",
+            "id": "BM_ATTACK", "kind": "contract", "basis": "requested behavior",
             "behavior": "the reviewed value is corrected", "seam": "fixture app module",
             "expected": "app.value is 2",
             "sourceRefs": [],
@@ -440,9 +439,11 @@ class PendingAdvisorRetries(AttackHarness):
         state = self.recur_twice(wid, {**self.CAPTURED, "id": "SPEC-1"})
         self.assertNotIn("repairOwner", state["findingStates"][-1], marker)
         record_context_forge(self.repo, self.tmp)
-        # The gate passes; its refresh truthfully reports the recurring defect's failing comparison.
+        # The gate passes and runs no comparison; the lead's rerun reports the recurring defect's failing comparison.
         gate = self.cli("verify", "--slug", "pending-retry", "--kind", "quality-gate", "--base-ref", "HEAD")
-        self.assertEqual((gate.returncode, self.status()["verification"]), (2, "passed"), marker + gate.stderr)
+        self.assertEqual((gate.returncode, self.status()["verification"]), (0, "passed"), marker + gate.stderr)
+        probe = [sys.executable, "-m", "unittest", "test_attack_probe"]
+        self.assertEqual(self.mapped_tdd("pending-retry", "green", probe).returncode, 2, marker)
         def dispatch(tool: str, target: str | None = None) -> str:
             return subprocess.run([sys.executable, str(ROOT / "hooks/rcf-intake-gate.py")], env=self.env, text=True,
                 capture_output=True, input=json.dumps({"tool_name": tool, "session_id": self.env["CODEX_THREAD_ID"],
@@ -457,8 +458,9 @@ class PendingAdvisorRetries(AttackHarness):
         # obs6: the lead continues its reviewer by the relative name spawn_agent returned beside the canonical one
         for target, denied in (("retry-fixture", False), ("/root/retry-fixture", False), ("fixture", True)):
             self.assertEqual('"deny"' in dispatch("followup_task", target), denied, f"{marker}: {target}")
-        # The retained reviewer's repair turns the refreshed comparison green; the lead then certifies it.
+        # The retained reviewer's repair turns the rerun comparison green; the lead then certifies it.
         (self.repo / "app.py").write_text("value = 2\n")
+        self.assertEqual(self.mapped_tdd("pending-retry", "green", probe).returncode, 0, marker)
         self.ok("verify", "--slug", "pending-retry", "--kind", "quality-gate", "--base-ref", "HEAD")
         # R-25: the lead's review names the implementer as it continued it, relatively
         review = self.json_file("lead-review.json", {"findings": [], "implementationContextId": "retry-fixture"})
@@ -602,6 +604,7 @@ class PendingAdvisorRetries(AttackHarness):
         note = {**self.CAPTURED, "material": False, "kind": "nonbehavioral"}
         self.accept(final_wid, [note], stage="final")
         (self.repo / "note.txt").write_text("new candidate\n")
+        self.drive_attack_green("pending-retry", "VALUE_NOT_TWO")
         self.ready(final_wid)
         changed_verdict = self.accept(final_wid, [note, {**note, "id": "NEW", "material": True}], stage="final")
         self.assertEqual(len(changed_verdict["findingStates"]), 2, marker)
@@ -757,7 +760,7 @@ class UnownedFindingBlocks(AttackHarness):
         wid = self.begin("finding-ownership")
         intake_id = self.behavioral_intake("finding-ownership", wid, "the reviewed value is wrong")
         unowned = self.record_preflight("finding-ownership", wid, [{
-            "id": "BM_ATTACK", "basis": "unrelated behavior",
+            "id": "BM_ATTACK", "kind": "contract", "basis": "unrelated behavior",
             "behavior": "the reviewed value is corrected", "seam": "fixture app module",
             "expected": "app.value is 2",
             "sourceRefs": [],
@@ -843,10 +846,9 @@ class SamePassAttack(AttackHarness):
                 "--stage", "preflight", "--findings", "none")
         main_marker = "MAIN_VALUE_NOT_TWO"
         owned = self.record_preflight(slug, wid, [{
-            "id": "BM_MAIN", "basis": "requested behavior",
+            "id": "BM_MAIN", "kind": "contract", "basis": "requested behavior",
             "behavior": "the value becomes two", "seam": "fixture app module",
-            "expected": "app.value is 2", "redFailure": main_marker, "status": "pending",
-            "sourceRefs": [],
+            "expected": "app.value is 2", "sourceRefs": [],
         }])
         self.assertEqual(owned.returncode, 0, marker + ": " + owned.stdout + owned.stderr)
         self.drive_attack_green(slug, main_marker, "BM_MAIN")
@@ -872,7 +874,7 @@ class SamePassAttack(AttackHarness):
         added = self.cli("record", "tdd-map", "--slug", slug, "--workflow-id", wid, "--input",
                          str(self.json_file("late-attack.json", {
                              "items": [*self.items(), {
-                                 "id": "BM_NOTE", "basis": "review finding attack",
+                                 "id": "BM_NOTE", "kind": "contract", "basis": "review finding attack",
                                  "behavior": "the note is exposed", "seam": "fixture app module",
                                  "expected": "app.note is present",
                                  "sourceRefs": [{"type": "finding", "evidenceId": intake_id,
@@ -1219,7 +1221,7 @@ class WorkflowRecovery(AttackHarness):
 
     def add_claim(self, slug: str, wid: str, identifier: str) -> None:
         item = self.owned_map("unused", marker="SECOND_OPERATION_WRONG")[0]
-        item.update(id=identifier, sourceRefs=[])
+        item.update(id=identifier, kind="preservation", sourceRefs=[])
         document = self.json_file("add.json", {
             "items": [*self.items(), item],
         })
@@ -1251,7 +1253,7 @@ class WorkflowRecovery(AttackHarness):
         self.assertEqual(executed.returncode, 0, executed.stderr)
         self.ok("verify", "--slug", slug, "--kind", "quality-gate", "--base-ref", "HEAD")
         item = self.owned_map("unused", marker="MISSING")[0]
-        item.update(id="BM_ADDITIONAL", sourceRefs=[])
+        item.update(id="BM_ADDITIONAL", kind="preservation", sourceRefs=[])
         addition = self.json_file("add.json", {"items": [*self.items(), item]})
         commands = [
             ["record", "tdd-map", "--slug", slug, "--workflow-id", wid, "--input", str(addition)],
@@ -1349,11 +1351,11 @@ class WorkflowRecovery(AttackHarness):
         (self.repo / "app.py").write_text("value = 3\n")
         summary = self.ok_text("summary")
         self.assertIn("verification=pending", summary, "STALE_RECOVERY_ADVERTISED_SUCCESS")
-        self.assertIn("next=repo-context-forge", summary, "STALE_RECOVERY_ADVERTISED_SUCCESS")
+        self.assertIn("next=tdd", summary, "STALE_RECOVERY_MISROUTED")  # stale comparisons route to tdd
         self.assertIn("quality-gate-tree-stale", summary, "STALE_RECOVERY_ADVERTISED_SUCCESS")
         receipt = self.ok("pause", "--slug", slug, "--workflow-id", self.status()["workflowId"],
                           "--reason", "Inspect current recovery")
-        self.assertEqual(receipt["nextAction"], "repo-context-forge", "STALE_RECOVERY_ADVERTISED_SUCCESS")
+        self.assertEqual(receipt["nextAction"], "tdd", "STALE_RECOVERY_MISROUTED")
 
 
 

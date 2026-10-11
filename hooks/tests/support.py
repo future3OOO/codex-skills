@@ -95,14 +95,18 @@ def pending_behavior(
     behavior: str = "value becomes two",
     seam: str = "public application behavior",
     expected: str = "value is two",
+    kind: str = "contract",
+    **fields: object,
 ) -> dict[str, object]:
     return {
         "id": identifier,
+        "kind": kind,
         "basis": "test fixture behavior",
         "behavior": behavior,
         "seam": seam,
         "expected": expected,
         "sourceRefs": [],
+        **fields,
     }
 
 
@@ -113,7 +117,7 @@ def build_document(
 ) -> dict[str, object]:
     """A structurally valid preflight document with explicit TDD scope."""
     return {"authoritativeContract": f"contract: {fill}",
-            "behaviorMap": [{key: value for key, value in item.items() if key in {"id", "basis", "behavior", "seam", "expected", "sourceRefs"}} for item in behavior_map]}
+            "behaviorMap": [{key: value for key, value in item.items() if key not in {"status", "comparison"}} for item in behavior_map]}
 
 
 def build_no_change_document(fill: str) -> dict[str, object]:
