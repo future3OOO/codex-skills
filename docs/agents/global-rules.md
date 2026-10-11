@@ -57,8 +57,10 @@ Repo Context Forge analysis copy. For codex-skills installation, follow
 - **Attack probes first.** Unit tests must themselves probe real production
   behavior. Maximize attack coverage across affected inputs, failures,
   interactions, and preservation. Prove each changed line with a direct N/N+1
-  probe that calls it. Add an existing test only when it calls the changed code
-  directly; never run whole classes, modules or suites. Never duplicate retained probes with a parallel unit-test suite.
+  probe that calls it, and compare the test file named for each changed function
+  whole. Add another existing test only when it calls the changed code directly.
+  Never run other whole files or classes, or the full suite, or duplicate
+  retained probes with a parallel unit-test suite.
 - **Imaginary-risk ban.** A theoretical risk with no demonstrated failure is a
   report line, not a system. Build nothing for it.
 - **Root-cause-first.** Use `$diagnose` for bugs, failures, flaky behavior, and
@@ -70,6 +72,8 @@ Repo Context Forge analysis copy. For codex-skills installation, follow
 - State assumptions before implementing; surface materially different readings
   of the request and simpler approaches. Code is truth: wording about behavior the
   request keeps summarizes the original code, so the original's result stands.
+  For new behavior, the code or engine that already defines a term is its
+  authority: probe the new code against that owner's result.
 - If a material unknown cannot be safely discovered, ask the smallest question
   needed to resolve it before dependent work.
 

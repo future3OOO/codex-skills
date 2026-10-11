@@ -101,7 +101,7 @@ Record the approved contract and probe list with `record preflight` (no input: i
 ### 6. Select the probe batch
 
 Invoke `tdd` before editing, then select the direct batch each map item will run through under
-AGENTS.md's Real-Seam proof invariant and step 9's test selection. The comparison runs after the edit (step 8).
+AGENTS.md's Real-Seam proof and Attack probes first invariants. The comparison runs after the edit (step 8).
 
 ### 7. Production code
 
@@ -118,16 +118,12 @@ The receipt's `open` lines are the questions the comparison leaves: answer each 
 repairing the code or the probe and rerunning the same batch. Readiness is that one
 result; `summary`, `verify`, reviewer dispatch and `complete` report it identically.
 
-Source and probe edits invalidate affected proof and reopen required verification/review.
-
 ### 9. Verification
 
 After coherent repair and cleanup, assess the intended outcome against the
 verification derived in step 2. Run the typed quality gate; it runs no comparison. A
 source edit leaves recorded comparisons stale, and every reader then routes to `tdd`
-until the lead reruns them on the current candidate. Prove each changed line with a direct N/N+1
-probe that calls it. Add an existing test only when it calls the changed code directly; never run
-whole classes, modules or suites.
+until the lead reruns them on the current candidate.
 Reuse current comparisons; use generic verification for required lint/typecheck/build,
 with graph reanalysis when required. CI's `contracts` job owns the full runner here and step 12 waits for it.
 Verification records only through the unified CLI runner, which executes the command it records and derives status
