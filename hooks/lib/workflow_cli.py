@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shlex
 import sqlite3
 from contextlib import closing, nullcontext, redirect_stdout
@@ -16,7 +17,7 @@ from ._workflow_db import CHECK_ONLY, LedgerError, _canonical, history, read_evi
 from .command_runner import _tail, emit_json as _emit_json, print_output as _print_output, run as _run, run_entry as _run_entry
 from .repo_identity import RepoIdentity, RepoIdentityError, resolve_repo_identity, try_resolve_repo_identity
 from .state_prune import prune
-from .state_store import _active_candidate_tree, analysis_unchanged, repo_state_dir, state_root, tree_manifest, utc_timestamp
+from .state_store import _active_candidate_tree, analysis_unchanged, codex_home, repo_state_dir, state_root, tree_manifest, utc_timestamp
 from .tdd_surface import identify
 from .workflow_documents import (
     RECORD_SHAPES,
@@ -155,13 +156,48 @@ def parser() -> argparse.ArgumentParser:
     return result
 
 
+def _opening_message() -> str | None:
+    """In a fresh Codex session, the user's one message so far; else None. The rollout log named for
+    CODEX_THREAD_ID records the user's own words as UserMessage items (instructions, skills and
+    environment context are other items). Relocation's own note after a successful codex-relocate is
+    not the user's; a second message or a session that already began a pass is deep."""
+    thread = os.environ.get("CODEX_THREAD_ID")
+    logs = sorted((codex_home() / "sessions").glob(f"*/*/*/rollout-*-{thread}.jsonl")) if thread else []
+    opening, relocated = None, None
+    try:
+        with open(logs[0], encoding="utf-8") if logs else open(os.devnull, encoding="utf-8") as lines:
+            for line in lines:
+                record = json.loads(line)  # a corrupt line makes the log unreadable
+                if '"item_completed"' not in line:
+                    continue
+                item = record.get("payload", {}).get("item") or {}
+                text = "".join(str(part.get("text", "")) for part in item.get("content") or [] if part.get("type") == "text")
+                command = " ".join(map(str, item.get("command") or []))
+                if item.get("type") == "UserMessage":
+                    if text != relocated and opening is not None:
+                        return None
+                    opening, relocated = opening if text == relocated else text, None
+                elif item.get("type") == "CommandExecution":
+                    relocation = re.search(r"codex-relocate\S*\s+\"?(/\S+?)\"?(?:\s|$)", command)
+                    relocated = f"continue from {relocation.group(1)}" if relocation and item.get("exit_code") == 0 else None
+                    if (item.get("exit_code") == 0 and re.search(r"workflow\.py\S*\s+begin\b", command)
+                            and not re.search(r"\s(?:--help|-h)\b", command)):
+                        return None
+    except (OSError, UnicodeError, ValueError, AttributeError):
+        return None
+    return opening
+
+
 def _intent(args: argparse.Namespace) -> str:
-    """The task text exactly as the caller sent it: raw UTF-8, no newline translation;
-    U+0000 is refused because the consult payload cannot carry it."""
+    """The task text exactly as sent: in a fresh Codex session the opening message, then any
+    supplied text; otherwise the supplied text. Raw UTF-8, no newline translation; U+0000 is
+    refused because the consult payload cannot carry it."""
     if args.intent_file is not None:
         text = Path(args.intent_file).read_bytes().decode("utf-8")
     else:
         text = sys.stdin.buffer.read().decode("utf-8") if args.intent == "-" else args.intent
+    if (opening := _opening_message()) is not None:
+        text = opening + ("\n\n" + text if text else "")
     if "\0" in text:
         raise ValueError("intent text cannot contain U+0000; the consult payload cannot carry it")
     return text

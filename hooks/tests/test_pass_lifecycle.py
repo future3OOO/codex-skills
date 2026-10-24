@@ -120,7 +120,7 @@ class PassLifecycleTests(unittest.TestCase):
         self.previous_state_root = os.environ.get("CODEX_WORKFLOW_STATE_ROOT")
         os.environ["CODEX_WORKFLOW_STATE_ROOT"] = str(self.tmp / "state")
         self.env = os.environ.copy()
-        for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"):
+        for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "CODEX_THREAD_ID"):
             self.env.pop(name, None)
         self.env.update({
             "CODEX_WORKFLOW_STATE_ROOT": str(self.tmp / "state"),
@@ -396,6 +396,78 @@ class PassLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(crlf_stdin.returncode, 0, crlf_stdin.stderr.decode())
         self.assertEqual(self.recorded_intent(), crlf, "the two intakes disagree on line endings")
+
+    OPENING = "Make the importer safe.\n\nKeep CSV inference | exit codes.\r\n"
+
+    def session_log(self, *messages: str, commands: tuple[tuple[str, int], ...] = (), after: tuple[str, ...] = (),
+                    corrupt: bool = False) -> None:
+        """A rollout log of the shapes a Codex session writes: context user-role messages, the user's own
+        UserMessage items, completed commands, and the running begin's own function call."""
+        home = self.tmp / "codex-home"
+        log = home / "sessions/2026/10/24/rollout-2026-10-24T14-22-55-lifecycle-thread.jsonl"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        records = [{"type": "response_item", "payload": {"type": "message", "role": "user",
+                                                         "content": [{"type": "input_text", "text": "# AGENTS.md instructions"}]}}]
+        message = lambda text: {"type": "event_msg", "payload": {"type": "item_completed", "item": {
+            "type": "UserMessage", "content": [{"type": "text", "text": text},
+                                               {"type": "skill", "name": "repo-production-workflow", "path": "/x/SKILL.md"}]}}}
+        records += [message(text) for text in messages]
+        records += [{"type": "event_msg", "payload": {"type": "item_completed", "item": {
+            "type": "CommandExecution", "command": ["/bin/bash", "-lc", command], "exit_code": exit_code}}}
+            for command, exit_code in commands]
+        records += [message(text) for text in after]
+        records.append({"type": "response_item", "payload": {"type": "function_call", "name": "exec_command",
+                                                             "arguments": json.dumps({"cmd": "python3 workflow.py begin --slug x"})}})
+        log.write_text("".join(json.dumps(record) + "\n" for record in records) + ("{corrupt\n" if corrupt else ""), encoding="utf-8")
+        self.env.update(CODEX_HOME=str(home), CODEX_THREAD_ID="lifecycle-thread")
+
+    def test_fresh_session_begin_records_the_opening_message(self) -> None:
+        self.session_log(self.OPENING)
+        self.assertEqual(self.cli("begin", "--slug", "fresh").returncode, 0)
+        self.assertEqual(self.recorded_intent(), self.OPENING, "OPENING_MESSAGE_NOT_RECORDED")
+
+    def test_fresh_session_begin_appends_the_named_document(self) -> None:
+        self.session_log(self.OPENING)
+        source = self.tmp / "spec.md"
+        source.write_text("# Spec\nbody\n", encoding="utf-8")
+        for args, appended in ((("--intent-file", str(source)), "# Spec\nbody\n"), (("--intent", " literal "), " literal ")):
+            self.assertEqual(self.cli("begin", "--slug", "fresh-doc", *args).returncode, 0)
+            self.assertEqual(self.recorded_intent(), self.OPENING + "\n\n" + appended, "NAMED_DOCUMENT_NOT_APPENDED")
+        stdin = subprocess.run([sys.executable, str(WORKFLOW), "begin", "--slug", "fresh-stdin", "--intent", "-", "--repo", str(self.repo)],
+                               cwd=ROOT, env=self.env, text=True, input="piped", capture_output=True)
+        self.assertEqual((stdin.returncode, self.recorded_intent()), (0, self.OPENING + "\n\npiped"), "NAMED_DOCUMENT_NOT_APPENDED")
+
+    def test_fresh_session_begin_after_a_refused_or_help_begin_records_the_opening_message(self) -> None:
+        self.session_log(self.OPENING, commands=(("python3 scripts/workflow.py begin --repo . --slug x --intent a --intent-file b", 2),
+                                                 ("python3 scripts/workflow.py begin --help", 0)))
+        self.assertEqual(self.cli("begin", "--slug", "after-refusal").returncode, 0)
+        self.assertEqual(self.recorded_intent(), self.OPENING, "REFUSED_BEGIN_MADE_THE_SESSION_DEEP")
+        relocate = 'python3 "$HOME/.codex/skills/repo-production-workflow/scripts/codex-relocate" /work/tree'
+        for notes, expected in ((("continue from /work/tree",), self.OPENING), (("continue from /other",), ""),
+                                (("continue from /work/tree", "continue from /work/tree"), "")):
+            self.session_log(self.OPENING, commands=((relocate, 0),), after=notes)
+            self.assertEqual(self.cli("begin", "--slug", "relocated").returncode, 0)
+            self.assertEqual(self.recorded_intent(), expected, f"RELOCATION_NOTE_MISREAD: {notes}")
+
+    def test_deep_session_begin_records_the_lead_intent(self) -> None:
+        for messages, commands in (((self.OPENING, "a later reply"), ()), ((self.OPENING,), (("python3 workflow.py begin --slug y", 0),)),
+                                   ((), ())):
+            self.session_log(*messages, commands=commands)
+            self.assertEqual(self.cli("begin", "--slug", "deep", "--intent", "the lead's task").returncode, 0)
+            self.assertEqual(self.recorded_intent(), "the lead's task", f"DEEP_SESSION_BACKFILLED: {len(messages)} {commands}")
+
+    def test_begin_without_a_readable_session_log_records_the_lead_intent(self) -> None:
+        self.session_log(self.OPENING, corrupt=True)
+        cases = [("corrupt", {}), ("unknown thread", {"CODEX_THREAD_ID": "no-such-thread"}), ("no thread", {"CODEX_THREAD_ID": None})]
+        for label, change in cases:
+            for key, value in change.items():
+                self.env.pop(key) if value is None else self.env.update({key: value})
+            self.assertEqual(self.cli("begin", "--slug", "no-log", "--intent", "the lead's task").returncode, 0)
+            self.assertEqual(self.recorded_intent(), "the lead's task", f"UNREADABLE_LOG_CHANGED_INTENT: {label}")
+        (self.tmp / "codex-home/sessions/2026/10/24/rollout-2026-10-24T14-22-55-lifecycle-thread.jsonl").write_bytes(b"\xff\n")
+        self.env["CODEX_THREAD_ID"] = "lifecycle-thread"
+        self.assertEqual(self.cli("begin", "--slug", "no-log", "--intent", "the lead's task").returncode, 0)
+        self.assertEqual(self.recorded_intent(), "the lead's task", "UNREADABLE_LOG_CHANGED_INTENT: undecodable")
 
     def test_begin_binds_pass_start_and_candidate_identity_to_content(self) -> None:
         marker = "PASS_CANDIDATE_IDENTITY_DIVERGED"

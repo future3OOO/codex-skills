@@ -36,20 +36,12 @@ For a new task, choose one short slug; `begin` creates and activates its state
 for that worktree before bootstrap:
 
 ```bash
-printf '%s' "$request_text" | python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" begin \
-  --repo "$PWD" --slug "<task>" --intent -
-# or, when the caller already has the request in a file:
-#   ... begin --repo "$PWD" --slug "<task>" --intent-file "<path>"
+python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" begin --repo "$PWD" --slug "<task>"
 ```
 
-Pass the request text, not a summary: build `$request_text` in a file from the
-message, append the verbatim body of any issue or spec it names, and feed that
-file — shell quoting mangles a long request passed inline. The recorded intent
-is the contract the rest of the pass is answerable to, so it is stored exactly as
-given (valid UTF-8; U+0000 refused) and read back at the plan-commit gate and in
-every advisor consult; a paraphrase written here is the paraphrase those steps
-will enforce. `--intent "<text>"` still takes a literal argument, and
-`--intent`/`--intent-file` are mutually exclusive.
+In a fresh session `begin` records the opening message verbatim; add `--intent-file`
+with the verbatim body of a document it names. Deep in a session, or outside Codex,
+pass the task's exact requirements, in the user's words, with `--intent-file`.
 
 The repository-scoped SQLite event ledger remembers accepted transitions, logical evidence, phase, and next action across process restarts. Its disposable active projection is repaired from that history. It is agent-writable workflow continuity, not an attestation, approval, audit credential, or Git boundary.
 
