@@ -2240,8 +2240,6 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
                     command += ["--design-file", str(design)]
                 elif declaration.get("status") == "absent":
                     command += ["--design-absent", str(declaration["reason"])]
-                else:
-                    needed.append("--design-file <path> or --design-absent <reason>")
             if preflight:
                 if isinstance(draft, dict):
                     command += ["--reconsult"]

@@ -62,8 +62,7 @@ if [[ -n "$design_file" && -n "$design_absent" ]]; then
 fi
 if [[ -n "$phase" ]]; then
   if [[ "$phase" == preflight-advice && -z "$design_file" && -z "$design_absent" ]]; then
-    printf 'error: %s requires a governing-design declaration: --design-file or --design-absent\n' "$phase" >&2
-    exit 2
+    design_absent="single-PR pass: the preflight contract is the plan"
   fi
   if [[ -n "$design_file" && ! ( -f "$design_file" && -r "$design_file" && -s "$design_file" ) ]]; then
     printf 'error: --design-file is not a readable non-empty regular file: %s\n' "$design_file" >&2

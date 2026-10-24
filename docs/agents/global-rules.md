@@ -27,8 +27,7 @@ handoff.
   after compaction; reuse applicable evidence and rerun only invalidated gates.
   Start a new pass for separate work, never merely for another edit or review.
 - Escalate to `$repo-large-implementation` before coding when work needs a new
-  tracked plan, branch strategy, remediation map, multi-PR coordination, or is
-  likely to exceed the review budget.
+  tracked plan, branch strategy, remediation map, or multi-PR coordination.
 - Target ~500 net lines of human-authored code per PR. `$delivery-governance`
   owns measurement and the 1,000-net-line split threshold; shrink, split, or
   consolidate oversized scope before coding.

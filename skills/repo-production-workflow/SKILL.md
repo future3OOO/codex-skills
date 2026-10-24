@@ -83,8 +83,8 @@ Its map follows TDD's [Behavior Map](../tdd/recorder.md#behavior-map): each item
 `codebase-design` when changing a Module, public Interface or Seam. The draft owns
 the contract and planned attacks.
 
-Submit the exact draft through [Codex Advisor's preflight loop](../codex-advisor/SKILL.md#preflight-advice),
-with the governing-design declaration. Continue to recording only after `approved`.
+Submit the exact draft through [Codex Advisor's preflight loop](../codex-advisor/SKILL.md#preflight-advice).
+Continue to recording only after `approved`.
 
 ### 5. Record approved preflight once
 

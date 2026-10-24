@@ -1,6 +1,6 @@
 ---
 name: repo-large-implementation
-description: Govern large planned repo work — anything spanning multiple PRs, needing a durable governing design, or exceeding the review budget. Begins repo-production-workflow and Repo Context Forge before delivery-governance and execution-planning, continues that pass for first implementation, and uses new passes for later slices. Use before broad plans, PR restructuring, or stacked-branch recovery.
+description: Govern large planned repo work — anything spanning multiple PRs or needing a durable governing design. Begins repo-production-workflow and Repo Context Forge before delivery-governance and execution-planning, continues that pass for first implementation, and uses new passes for later slices. Use before broad plans, PR restructuring, or stacked-branch recovery.
 ---
 
 # Repo Large Implementation

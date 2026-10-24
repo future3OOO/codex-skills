@@ -161,8 +161,8 @@ class Ceremony(unittest.TestCase):
             tables = [row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")]
             return {table: connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] for table in tables}
 
-    def wrapper(self, mode: str, *extra: str, phase: str = "preflight-advice",
-                trace: bool = False) -> tuple[subprocess.CompletedProcess[str], str]:
+    def wrapper(self, mode: str, *extra: str, phase: str = "preflight-advice", trace: bool = False,
+                design: tuple[str, ...] = ("--design-absent", "fixture has no design")) -> tuple[subprocess.CompletedProcess[str], str]:
         bin_dir = self.tmp / "bin"
         bin_dir.mkdir(exist_ok=True)
         stub = bin_dir / "codex"
@@ -176,7 +176,7 @@ class Ceremony(unittest.TestCase):
             draft.write_text(json.dumps({"authoritativeContract": "fixture", "behaviorMap": [item("BM_ONE")]}))
             draft_args = ["--preflight-file", str(draft)]
         result = subprocess.run(["bash", *(["-x"] if trace else []), str(WRAPPER), "--slug", "ceremony", "--phase", phase,
-                                 "--cwd", str(self.repo), "--design-absent", "fixture has no design", *draft_args, *extra,
+                                 "--cwd", str(self.repo), *design, *draft_args, *extra,
                                  "--", "scope question"], env=env, capture_output=True, text=True)
         return result, prompt.read_text(encoding="utf-8") if prompt.exists() else ""
 
@@ -226,8 +226,9 @@ class PreflightContinuation(Ceremony):
             self.assertEqual(args[args.index("--cwd") + 1], str(self.repo), marker)
             self.assertEqual(args[args.index("--slug") + 1], "ceremony", marker)
             self.assertNotIn("--reconsult", args, marker)
-            for required in ("--preflight-file", "--design-file", "--design-absent", "stdin"):
+            for required in ("--preflight-file", "stdin"):
                 self.assertIn(required, operation["input"], marker)
+            self.assertNotIn("--design-", operation["input"] + operation["command"], marker)
         self.assertIn("preflight-advice", self.ok_raw("summary"), marker)
         self.assertIn('"authoritativeContract"', self.ok_raw("summary"), marker)
 
@@ -349,6 +350,43 @@ class PreflightContinuation(Ceremony):
         stored = self.ok("evidence", "--full", "--evidence-id", recorded["evidenceId"])["document"]["document"]
         self.assertEqual(("draftEdits" in recorded, stored["authoritativeContract"]), (False, "fixture"), marker)
         self.assertEqual(self.state()["intent"], "issue 96 fixture intent.", marker)
+
+    def test_preflight_consult_defaults_an_absent_design(self) -> None:
+        marker = "SINGLE_PR_CONSULT_NEEDS_DESIGN"
+        self.begin()
+        result, _ = self.wrapper("approved", design=())
+        self.assertEqual(result.returncode, 0, f"{marker}: {result.stderr[-400:]}")
+        declared = evidence_document(resolve_repo_identity(self.repo), self.state()["governedDesignEvidence"])
+        self.assertEqual(declared, {"schemaVersion": 1, "status": "absent",
+                                    "reason": "single-PR pass: the preflight contract is the plan"}, marker)
+
+    def test_explicit_design_paths_and_final_inheritance_are_preserved(self) -> None:
+        marker = "EXPLICIT_DESIGN_CHANGED"
+        self.begin()
+        design = self.tmp / "design.md"
+        design.write_text("# design\n", encoding="utf-8")
+        for flags, expected in (((), "requires --phase"), (("--design-file", str(design), "--design-absent", "x"), "exactly one"),
+                                (("--design-file", str(self.tmp / "missing.md")), "not a readable"),
+                                (("--design-absent", " "), "non-whitespace")):
+            phase = "final-review" if not flags else "preflight-advice"
+            refused = subprocess.run(["bash", str(WRAPPER), "--slug", "ceremony", *(["--design-absent", "x"] if not flags else
+                                      ["--phase", phase, *flags]), "--cwd", str(self.repo), "--", "q"],
+                                     env=self.env, capture_output=True, text=True)
+            self.assertEqual(refused.returncode, 2, f"{marker}: {flags}")
+            self.assertIn(expected, refused.stderr, f"{marker}: {flags}")
+        result, _ = self.wrapper("approved", design=("--design-file", str(design)))
+        self.assertEqual(result.returncode, 0, f"{marker}: {result.stderr[-400:]}")
+        identity = resolve_repo_identity(self.repo)
+        declared = evidence_document(identity, self.state()["governedDesignEvidence"])
+        self.assertEqual(declared["status"], "present", marker)
+        advisor_disposition(identity, "ceremony", self.state()["workflowId"], "preflight", "none")
+        self.record_preflight({"authoritativeContract": "c", "behaviorMap": []})
+        record_context_forge(self.repo, self.tmp)
+        self.ok("verify", "--kind", "quality-gate", "--base-ref", "HEAD")
+        set_phase(identity, "code-review", "passed", findings="none")
+        final, prompt = self.wrapper("commit-ready", phase="final-review", design=())
+        self.assertEqual(final.returncode, 0, f"{marker}: {final.stderr[-400:]}")
+        self.assertIn(declared["sha256"], prompt, f"{marker}: the final review lost the recorded declaration")
 
     def test_explicit_draft_binding_and_record_atomicity(self) -> None:
         self.begin()

@@ -110,7 +110,7 @@ open(sys.argv[1], "w").write(json.dumps(build_no_change_document("argument diagn
 PYDRAFT
 
 out=$("$WRAPPER" --slug t --phase preflight-advice --preflight-file "$argtmp/draft.json" --cwd "$argtmp/repo" -- q 2>&1); status=$?
-check_status "phased consult requires design declaration" 2 "$status"; check "design requirement named" "--design-file or --design-absent" "$out"
+check_absent "an omitted design declares absence" "--design-file or --design-absent" "$out"
 out=$("$WRAPPER" --slug t --phase preflight-advice --preflight-file "$argtmp/draft.json" --design-file "$argtmp/missing" --cwd "$argtmp/repo" -- q 2>&1); status=$?
 check_status "missing design refused" 2 "$status"
 out=$("$WRAPPER" --slug t --phase preflight-advice --preflight-file "$argtmp/draft.json" --design-file "$argtmp/design.md" --design-absent no --cwd "$argtmp/repo" -- q 2>&1); status=$?

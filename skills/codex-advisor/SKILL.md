@@ -36,7 +36,8 @@ approval gates the single `record preflight`, without runtime finding dispositio
 After recording, initial preflight consultation is closed.
 
 Preflight records the governing-design declaration: `--design-file` with the
-durable design artifact, or `--design-absent` with the specific reason none exists.
+durable design artifact of a planned stack, or `--design-absent` with a reason; a
+single-PR pass passes neither and records absence.
 Final review uses that recorded declaration and resumes the existing consult;
 there is no need to repeat the declaration or supply `--reconsult`. Do not manufacture a
 design document for a trivial pass — declare its absence; the declaration
@@ -155,8 +156,7 @@ alias env (`ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`,
 recording contract. Session files are per-provider: a codex session never
 resumes through Claude and vice versa.
 
-Substitute `--design-absent "<specific reason>"` when the pass genuinely has
-no design artifact. The operator-selected default budget is 600 words, and
+The operator-selected default budget is 600 words, and
 budgets above 1,200 are refused. Phased consults refuse `--fresh`; the workflow
 checkpoint owns payload anchors and session mode.
 
