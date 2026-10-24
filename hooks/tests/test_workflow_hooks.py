@@ -186,13 +186,6 @@ class HookHarness(unittest.TestCase):
         self.assertEqual(recorded.returncode, 0, recorded.stdout + recorded.stderr)
 
     def run_verification(self, slug: str) -> None:
-        verified = subprocess.run(
-            [sys.executable, str(WORKFLOW), "verify", "--repo", str(self.repo), "--slug", slug,
-             "--", sys.executable, "-c", "pass"],
-            cwd=ROOT, env=self.env, text=True,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
-        )
-        self.assertEqual(verified.returncode, 0, verified.stdout + verified.stderr)
         quality = subprocess.run(
             [sys.executable, str(WORKFLOW), "verify", "--repo", str(self.repo), "--slug", slug,
              "--kind", "quality-gate", "--base-ref", "HEAD"],
@@ -286,12 +279,12 @@ class WorkflowHookTests(HookHarness):
     def test_begin_and_verify_do_not_write_routing_state(self) -> None:
         self.env["CODEX_THREAD_ID"] = SESSION
         self.assertEqual(self.state("begin", "--slug", "task").returncode, 0)
-        for code in ("print('executed')", "raise SystemExit(1)"):
+        for base in ("HEAD", "does-not-exist"):
             result = subprocess.run(
                 [sys.executable, str(WORKFLOW), "verify", "--repo", str(self.repo), "--slug", "task",
-                 "--", sys.executable, "-c", code], env=self.env, capture_output=True, text=True, timeout=15,
+                 "--base-ref", base], env=self.env, capture_output=True, text=True, timeout=60,
             )
-            self.assertEqual(result.returncode == 0, code.startswith("print"), result.stderr)
+            self.assertEqual(result.returncode == 0, base == "HEAD", result.stderr)
         self.assertFalse(list((self.tmp / "state").rglob("active-worktree.json")), "CLI_CREATED_ROUTING_STATE")
 
     def test_failed_verification_keeps_task_pending(self) -> None:
@@ -299,8 +292,8 @@ class WorkflowHookTests(HookHarness):
         self.complete_workflow("task", finish=False)
         failed = subprocess.run(
             [sys.executable, str(WORKFLOW), "verify", "--repo", str(self.repo), "--slug", "task",
-             "--", sys.executable, "-c", "raise SystemExit(1)"],
-            env=self.env, capture_output=True, text=True, timeout=15,
+             "--base-ref", "does-not-exist"],
+            env=self.env, capture_output=True, text=True, timeout=60,
         )
         self.assertNotEqual(failed.returncode, 0)
         result = self.hook_output(INTAKE, self.repo)
@@ -1290,8 +1283,6 @@ class TollDeletionTests(HookHarness):
         green = self.tdd(slug, "green")
         self.assertEqual(green.returncode, 0, marker + ": " + green.stdout + green.stderr)
         record_context_forge(self.repo, self.tmp)  # the post-edit graph revalidation
-        verified = self.verify(slug, "--", "git", "diff", "--check")
-        self.assertEqual(verified.returncode, 0, marker + ": " + verified.stdout + verified.stderr)
         gate = self.verify(slug, "--kind", "quality-gate", "--base-ref", "HEAD")
         self.assertEqual(gate.returncode, 0, marker + ": " + gate.stdout + gate.stderr)
         self.owner_phase("code-review", "not-required", findings="none")
@@ -1312,8 +1303,6 @@ class TollDeletionTests(HookHarness):
         green = self.tdd(slug, "green")
         self.assertEqual(green.returncode, 0, green.stdout + green.stderr)
         record_context_forge(self.repo, self.tmp)
-        verified = self.verify(slug, "--", "git", "diff", "--check")
-        self.assertEqual(verified.returncode, 0, verified.stdout + verified.stderr)
         gate = self.verify(slug, "--kind", "quality-gate", "--base-ref", "HEAD")
         self.assertEqual(gate.returncode, 0, gate.stdout + gate.stderr)
         self.owner_phase("code-review", "not-required", findings="none")
@@ -1348,8 +1337,6 @@ class TollDeletionTests(HookHarness):
         (self.repo / "app.py").write_text("value = 2\n", encoding="utf-8")
         green = self.tdd(slug, "green")
         self.assertEqual(green.returncode, 0, green.stdout + green.stderr)
-        verified = self.verify(slug, "--", "git", "diff", "--check")
-        self.assertEqual(verified.returncode, 0, marker + ": " + verified.stdout + verified.stderr)
         gate = self.verify(slug, "--kind", "quality-gate", "--base-ref", "HEAD")
         self.assertEqual(gate.returncode, 0, marker + ": " + gate.stdout + gate.stderr)
         completed = self.state("complete")
@@ -1374,7 +1361,6 @@ class TollDeletionTests(HookHarness):
         (self.repo / "app.py").write_text("value = 2\n", encoding="utf-8")
         green = self.tdd(slug, "green")
         self.assertEqual(green.returncode, 0, green.stdout + green.stderr)
-        self.assertEqual(self.verify(slug, "--", "git", "diff", "--check").returncode, 0)
         self.assertEqual(self.verify(slug, "--kind", "quality-gate", "--base-ref", "HEAD").returncode, 0)
         review_input = self.tmp / "pending-review.json"
         review_input.write_text('{"findings": []}', encoding="utf-8")

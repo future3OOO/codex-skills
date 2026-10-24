@@ -116,22 +116,16 @@ After coherent repair and cleanup, assess the intended outcome against the
 verification derived in step 2. Run the typed quality gate; it runs no comparison. A
 source edit leaves recorded comparisons stale, and every reader then routes to `tdd`
 until the lead reruns them on the current candidate.
-Reuse current comparisons; use generic verification for required lint/typecheck/build,
-with graph reanalysis when required. CI's `contracts` job owns the full runner here and step 12 waits for it.
-Verification records only through the unified CLI runner, which executes the command it records and derives status
-per-command-latest for explicit verification. Overlapping runs record in completion order; a run whose
-reviewable tree drifts stays invalid and names the changed paths:
+Reuse current comparisons; run lint, type checks and tests directly.
+CI's `contracts` job owns the full runner here and step 12 waits for it. A gate run whose
+reviewable tree drifts stays invalid and names the changed paths; on an unchanged tree
+and base, `verify` returns the passed receipt:
 
 ```bash
-python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" verify --kind quality-gate
-python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" verify -- <verification command>
+python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" verify
 ```
 
-Typed verification needs no generic acknowledgement or dummy command. Correct a
-failed generic invocation with `verify --replaces <evidenceId>:<runIndex> --reason
-"<correction>" -- <command>`; only a valid current success retires that particular
-active failure. Other failures, stale/concurrent results and drift stay effective.
-Which commands suffice remains review judgment. Completion requires the typed `quality-gate` run over the current reviewable tree.
+Completion requires the typed `quality-gate` run over the current reviewable tree.
 
 ### 10. Delegate code review
 

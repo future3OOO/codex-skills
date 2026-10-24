@@ -302,10 +302,9 @@ sys.path.insert(0, sys.argv[1])
 from hooks.tests.support import record_context_forge
 record_context_forge(Path(sys.argv[2]), Path(sys.argv[2]).parent)
 PY
-selected_receipt=$(PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" verify --repo "$rigtmp/repo" --slug scoped-rig -- python3 -c "import app; print(app.value)" 2>"$rigtmp/measurement.err"); status=$?
-check_status "selected public comparison operation verifies through the real runner" 0 "$status"
+selected_receipt=$(CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" verify --repo "$rigtmp/repo" --slug scoped-rig --kind quality-gate --base-ref HEAD 2>"$rigtmp/measurement.err"); status=$?
+check_status "selected typed-gate receipt verifies through the real runner" 0 "$status"
 printf '%s\n' "$selected_receipt" | tee "$rigtmp/selected-receipt.txt"
-CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" verify --repo "$rigtmp/repo" --slug scoped-rig --kind quality-gate --base-ref HEAD >/dev/null
 CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" set-phase --repo "$rigtmp/repo" --phase code-review --status not-required --findings none >/dev/null
 
 FAIL_PROVIDER=1 run_wrapper --slug scoped-rig --phase final-review --design-file "$rigtmp/design.md" -- 'final question' >/dev/null 2>"$rigtmp/resume-fail.err"; status=$?

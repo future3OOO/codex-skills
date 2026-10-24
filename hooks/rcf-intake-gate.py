@@ -3,16 +3,10 @@
 
 For edits, it names what the pass has not recorded yet and lets the edit
 through; comparisons run on recorded source trees, so edit order needs no gate.
-A shell command that is exactly one pytest/unittest invocation is rewritten to
-run through `workflow verify --observed`, which keeps its receipt in the
-checkout where it runs and returns its exit code; while it keeps a receipt,
-the command's stderr is merged into stdout.
 """
 from __future__ import annotations
 
 import os
-import re
-import shlex
 import sqlite3
 import sys
 from pathlib import Path
@@ -25,7 +19,6 @@ from hooks.lib._workflow_db import LedgerError  # noqa: E402
 from hooks.lib.hook_input import advise, edited_path, emit, is_explorer_continuation, read_hook_payload, working_directory  # noqa: E402
 from hooks.lib.repo_identity import RepoIdentityError, resolve_repo_identity, try_resolve_repo_identity  # noqa: E402
 from hooks.lib.state_store import is_reviewable_path, is_test_path  # noqa: E402
-from hooks.lib.tdd_surface import identify  # noqa: E402
 from hooks.lib.tdd_workflow import edit_blockers  # noqa: E402
 from hooks.lib.workflow_state import (  # noqa: E402
     WorkflowError,
@@ -37,35 +30,11 @@ from hooks.lib.workflow_state import (  # noqa: E402
 )
 
 
-WORKFLOW = ROOT / "skills" / "repo-production-workflow" / "scripts" / "workflow.py"
-SHELL_SYNTAX = re.compile(r"[;&|<>`$()\n\r\\]")
-# Unquoted, these the shell would expand or drop; quoted, they reach the runner verbatim.
-SHELL_EXPANSION = re.compile(r"[*?\[\]{}~#]")
-def observed(command: object) -> str | None:
-    """The receipt-keeping form of a lone pytest/unittest command, else None."""
-    if not isinstance(command, str) or SHELL_SYNTAX.search(command):
-        return None
-    try:
-        tokens = shlex.split(command)
-        bare = shlex.split(re.sub(r"'[^']*'|\"[^\"]*\"", "''", command))
-    except ValueError:
-        return None
-    if any(SHELL_EXPANSION.search(token) for token in bare):
-        return None
-    if identify(tokens).get("runner") not in {"pytest", "unittest"}:
-        return None
-    return shlex.join([sys.executable, str(WORKFLOW), "verify", "--observed", "--", *tokens])
-
-
 def main() -> int:
     payload = read_hook_payload()
     tool_name = payload.get("tool_name")
     tool_name = tool_name.removeprefix("collaboration") if isinstance(tool_name, str) else ""
     inputs = payload.get("tool_input")
-    if tool_name == "Bash" and isinstance(inputs, dict):
-        if rewritten := observed(inputs.get("command")):
-            emit("PreToolUse", permissionDecision="allow", updatedInput={**inputs, "command": rewritten})
-            return 0
     if tool_name in {"Agent", "spawn_agent", "followup_task", "send_input", "resume_agent"}:
         missing: list[str] = []
         try:

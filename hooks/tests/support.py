@@ -14,12 +14,10 @@ from hooks.lib.repo_identity import RepoIdentity, resolve_repo_identity
 from hooks.lib.state_store import _active_candidate_tree
 from hooks.lib.workflow_documents import graph_evidence_document
 from hooks.lib.workflow_state import (
-    advisor_disposition,
     commit_evidence_phase,
     instance_id,
     read_workflow,
     record_advisor_result,
-    set_phase,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -200,52 +198,6 @@ def approve_preflight(repo: Path, document: dict[str, object]) -> None:
               "producer": "codex-advisor", "stage": "preflight", "verdict": "approved", "findings": []}
     record_advisor_result(identity, state["slug"], state["workflowId"], "preflight", "codex-advisor",
                           "approved", intake=intake, preflight_draft=document)
-
-
-def advance_to_final_review(repo: Path, tmp: Path, design=None) -> RepoIdentity:
-    """Drive one pass from intake to a ready final-review checkpoint.
-
-    Producer-owned steps go through the real recorders because that is the only way
-    to obtain their evidence; lead-owned phases advance through the library, the way
-    these suites already advance steps they are not testing.
-    """
-    identity = record_context_forge(repo, tmp)
-    state = read_workflow(identity)
-    slug, workflow_id = str(state["slug"]), str(instance_id(state))
-
-    record_advisor_result(
-        identity, slug, workflow_id, "preflight", "codex-advisor", "completed", design=design
-    )
-    advisor_disposition(identity, slug, workflow_id, "preflight", "none")
-    approve_preflight(repo, build_no_change_document("advance to final review"))
-    recorded = subprocess.run(
-        [sys.executable, str(WORKFLOW), "record", "preflight", "--repo", str(repo), "--input", "-"],
-        input=json.dumps(build_no_change_document("advance to final review")),
-        capture_output=True, text=True, check=False,
-    )
-    assert recorded.returncode == 0, recorded.stdout + recorded.stderr
-    set_phase(identity, "tdd", "not-required")
-    for extra in (
-        ("--", sys.executable, "-c", "pass"),
-        ("--kind", "quality-gate", "--base-ref", "HEAD"),
-    ):
-        subprocess.run(
-            [
-                sys.executable,
-                str(WORKFLOW),
-                "verify",
-                "--repo",
-                str(repo),
-                "--slug",
-                slug,
-                *extra,
-            ],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-    set_phase(identity, "code-review", "passed", findings="none")
-    return identity
 
 
 COMMIT_READY = {"schemaVersion": 1, "findings": [], "verdict": "commit-ready"}

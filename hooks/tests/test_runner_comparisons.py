@@ -59,10 +59,6 @@ class RunnerComparisonTests(unittest.TestCase):
         self.assertIn('"comparison": "preserved"', result.stdout)
         self.assertIn("post-edit loop", json.loads(result.stdout)["next"].get("input", ""))
         self.assertIsNone(json.loads(result.stdout)["next"]["command"], "COMPARISON_SKIPS_LEAD_INVESTIGATION")
-        receipt = json.loads(result.stdout)
-        verified = self.case.cli("verify", "--repo", str(self.case.repo), "--from-evidence",
-                                 f"{receipt['summaryId']}:{receipt['runIndex']}")
-        self.assertEqual(verified.returncode, 0, "EXISTING_TEST_REFUSED: " + verified.stdout + verified.stderr)
         resume = ("tdd", "--repo", str(self.case.repo), "--behavior-id", "BM_VALUE")
         retained = self.case.cli(*resume)
         self.assertEqual(retained.returncode, 0, "RECORDED_BATCH_UNAVAILABLE: " + retained.stdout + retained.stderr)
@@ -73,20 +69,6 @@ class RunnerComparisonTests(unittest.TestCase):
         extended = json.loads(self.case.cli(*resume).stdout)
         self.assertEqual([arm["outcome"] for arm in extended["arms"]], ["failed", "passed"],
                          "EXTENDED_BATCH_NOT_COMPARED_ON_BOTH_SOURCES")
-
-    def test_verify_executes_when_the_recorded_environment_changes(self):
-        self.case.begin_with_map([self.item()])
-        for first in ("tdd", "verify"):
-            with self.subTest(receipt=first):
-                command = [sys.executable, "-c", f"import os; print({first!r}, os.environ['RESULT_MODE']); assert os.environ['RESULT_MODE'] == 'old'"]
-                self.case.env["RESULT_MODE"] = "old"
-                initial = self.case.cli(first, "--repo", str(self.case.repo),
-                                        *(["--behavior-id", "BM_VALUE"] if first == "tdd" else []), "--", *command)
-                self.assertEqual(initial.returncode, 0, initial.stdout + initial.stderr)
-                self.case.env["RESULT_MODE"] = "new"
-                changed = self.case.cli("verify", "--repo", str(self.case.repo), "--", *command)
-                self.assertNotEqual(changed.returncode, 0, "CHANGED_ENVIRONMENT_REUSED_A_PASS")
-                self.assertIn("AssertionError", changed.stdout + changed.stderr)
 
     def test_current_test_environment_is_retained_and_bound(self):
         case = self.case
@@ -1240,8 +1222,7 @@ class ReadinessTests(unittest.TestCase):
         self.tdd("BM_CHANGE")
 
         def close_out():
-            for command in (("verify", "--", sys.executable, "-c", "pass"), ("verify", "--kind", "quality-gate", "--base-ref", "HEAD")):
-                self.case.cli(*command, "--repo", str(self.repo))
+            self.case.cli("verify", "--kind", "quality-gate", "--base-ref", "HEAD", "--repo", str(self.repo))
             record_context_forge(self.repo, self.case.tmp)
             set_phase(resolve_repo_identity(self.repo), "code-review", "passed", findings="none")
             for command in (("record", "advisor-result", "--slug", "mapped-repair", "--workflow-id", wid, "--stage", "final",
@@ -1256,7 +1237,7 @@ class ReadinessTests(unittest.TestCase):
             (self.repo / path).parent.mkdir(parents=True, exist_ok=True)
             (self.repo / path).write_text(f"# governance edit {path}\n")
             invalidate_after_edit(resolve_repo_identity(self.repo), path)
-            self.case.cli("verify", "--repo", str(self.repo), "--", sys.executable, "-c", "pass")
+            self.case.cli("verify", "--repo", str(self.repo), "--base-ref", "HEAD")
             self.assertEqual(self.status()["nextAction"], "tdd", f"{marker}: {path}")
             rerun = self.case.cli("tdd", "--repo", str(self.repo), "--behavior-id", "BM_CHANGE")
             self.assertEqual(rerun.returncode, 0, f"{marker}: {path}: " + rerun.stdout + rerun.stderr)
@@ -1288,8 +1269,7 @@ class ReadinessTests(unittest.TestCase):
 
         (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
         self.tdd("BM_CHANGE")
-        for command in (("verify", "--", sys.executable, "-c", "pass"), ("verify", "--kind", "quality-gate", "--base-ref", "HEAD")):
-            self.case.cli(*command, "--repo", str(self.repo))
+        self.case.cli("verify", "--kind", "quality-gate", "--base-ref", "HEAD", "--repo", str(self.repo))
         record_context_forge(self.repo, self.case.tmp)
         set_phase(identity, "code-review", "passed", findings="none")
         self.assertEqual(final("fix-before-commit", "SPEC-1", "SPEC-2").returncode, 0, marker)
@@ -1300,11 +1280,6 @@ class ReadinessTests(unittest.TestCase):
         statuses = lambda: {e["findingId"]: e["status"] for e in self.status()["findingStates"]}
         self.assertEqual(statuses(), {"SPEC-1": "pending", "SPEC-2": "pending"}, marker + ": a fix-before-commit settled a finding")
         correct(4)
-        gate = lambda: {k: self.status().get(k) for k in ("verification", "qualityGateManifestId", "nextAction")}
-        bound = gate()
-        for exit_code in (0, 1):  # an observed run is a receipt only, passing or failing
-            self.case.cli("verify", "--observed", "--", sys.executable, "-c", f"raise SystemExit({exit_code})")
-            self.assertEqual(gate(), bound, f"OBSERVED_RUN_DROPPED_GATE: exit {exit_code}")
         self.assertEqual(final("commit-ready").returncode, 0, marker)
         self.assertEqual((statuses(), self.status()["finalReview"]["findings"]),
                          ({"SPEC-1": "resolved", "SPEC-2": "resolved"}, "none"), marker + ": the commit-ready re-check left findings open")
@@ -1693,8 +1668,7 @@ class ReadinessTests(unittest.TestCase):
         receipt = self.tdd("BM_CHANGE")
         self.assertEqual(len(self.open_lines(receipt)), 1, marker + ": " + json.dumps(receipt))
         [line] = self.open_lines(receipt)
-        verify = self.case.cli("verify", "--repo", str(self.repo), "--", sys.executable, "-c", "print('checked')")
-        self.assertEqual(verify.returncode, 0, verify.stdout + verify.stderr)
+        verify = self.case.cli("verify", "--repo", str(self.repo), "--base-ref", "HEAD")
         self.assertIn(line, json.loads(verify.stdout.splitlines()[-1])["next"]["input"], marker + ": " + verify.stdout)
         self.assertIn(line, self.summary(), marker)
         complete = self.case.cli("complete", "--repo", str(self.repo))
@@ -1726,7 +1700,7 @@ class ReadinessTests(unittest.TestCase):
         self.assertEqual(reopened.returncode, 0, reopened.stdout + reopened.stderr)
         self.assertEqual(self.status()["tdd"], "in-progress", marker + ": " + self.summary())
         self.assertIn("test_missing", self.summary(), marker)
-        verify = json.loads(self.case.cli("verify", "--repo", str(self.repo), "--", sys.executable, "-c", "print('checked')").stdout.splitlines()[-1])
+        verify = json.loads(self.case.cli("verify", "--repo", str(self.repo), "--base-ref", "HEAD").stdout.splitlines()[-1])
         self.assertIn("test_missing", verify["next"]["input"], marker + ": " + json.dumps(verify))
 
     def test_subtests_attribute_to_their_method(self):

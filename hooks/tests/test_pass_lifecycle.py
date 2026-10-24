@@ -257,7 +257,7 @@ class PassLifecycleTests(unittest.TestCase):
     def advance_to_verification(self, slug: str, wid: str) -> None:
         self.advance_to_preflight(slug, wid)
         self.owner_phase("tdd", "not-required")
-        verified = self.verify_run(sys.executable, "-c", "pass")
+        verified = self.verify_run()
         self.assertEqual(verified.returncode, 0, verified.stdout + verified.stderr)
 
     def complete_slug(self, slug: str) -> str:
@@ -325,9 +325,9 @@ class PassLifecycleTests(unittest.TestCase):
                           "policyVersion", "activatesWorkflow", "evidenceIds", "manifestIds"},
                          set(events[0]), "HISTORY_REPLAYS_STATE")
 
-    def test_summary_keeps_a_large_map_and_the_verification_command(self) -> None:
+    def test_summary_keeps_a_large_map(self) -> None:
         # The biggest recorded maps (38 items in live ledgers) still fit with every open
-        # item named, settled items omitted, the closing invariant and the verification command.
+        # item named, settled items omitted and the closing invariant.
         wid = self.begin_slug("summary-large-map")
         self.advance_to_context_forge()
         self.run_cli(
@@ -344,8 +344,6 @@ class PassLifecycleTests(unittest.TestCase):
         recorded = self.record_preflight(wid, document)
         self.assertEqual(recorded.returncode, 0, recorded.stdout + recorded.stderr)
         self.owner_phase("tdd", "not-required")
-        verified = self.verify_run(sys.executable, "-c", "print('verified-marker')", gate=False)
-        self.assertEqual(verified.returncode, 0, verified.stdout + verified.stderr)
         summary = self.cli("summary").stdout
         self.assertLessEqual(len(summary.rstrip("\n")), 3000, "SUMMARY_OMITS_MAP")
         groups = {group.split(": ", 1)[0]: set(group.split(": ", 1)[1].split(", "))
@@ -353,8 +351,6 @@ class PassLifecycleTests(unittest.TestCase):
         for item in document["behaviorMap"]:
             self.assertIn(item["id"], groups.get("pending", set()), "SUMMARY_OMITS_MAP")
         self.assertIn("Missing state is pending, never success.", summary, "SUMMARY_OMITS_MAP")
-        self.assertIn("Verified by: ", summary, "SUMMARY_OMITS_MAP")
-        self.assertIn("verified-marker", summary, "SUMMARY_OMITS_MAP")
 
     def test_begin_records_the_task_text_verbatim_from_a_file_or_stdin(self) -> None:
         source = self.tmp / "intent.txt"
@@ -1193,7 +1189,7 @@ class PassLifecycleTests(unittest.TestCase):
 
         # Re-verifying and re-reviewing refreshes the manifest; the verdict from
         # the old tree must not survive that refresh.
-        reverified = self.verify_run(sys.executable, "-c", "pass")
+        reverified = self.verify_run()
         self.assertEqual(reverified.returncode, 0, reverified.stdout + reverified.stderr)
         self.owner_phase("code-review", "passed", findings="none")
         self.assertEqual(
@@ -1216,7 +1212,7 @@ class PassLifecycleTests(unittest.TestCase):
         invalidate_after_edit(identity, "skills/diagnose/SKILL.md")
         self.shell("import pathlib; pathlib.Path('app.py').write_text('value = 7\\n')")
 
-        reverified = self.verify_run(sys.executable, "-c", "pass")
+        reverified = self.verify_run()
         self.assertEqual(reverified.returncode, 0, reverified.stdout + reverified.stderr)
         stale = self.checkpoint("final-review")
         self.assertTrue(
@@ -1287,23 +1283,14 @@ class PassLifecycleTests(unittest.TestCase):
         evidence = self.evidence(json.loads(recorded.stdout)["evidenceId"])
         self.assertEqual(evidence["workflowId"], wid, "evidence is not bound to the workflow instance")
 
-    def verify_run(self, *command: str, gate: bool = True) -> subprocess.CompletedProcess[str]:
+    def verify_run(self) -> subprocess.CompletedProcess[str]:
         slug = json.loads(self.cli("status").stdout)["slug"]
-        result = subprocess.run(
+        return subprocess.run(
             [sys.executable, str(WORKFLOW), "verify", "--repo", str(self.repo),
-             "--slug", slug, "--", *command],
+             "--slug", slug, "--base-ref", "HEAD"],
             cwd=ROOT, env=self.env, text=True,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
         )
-        if result.returncode == 0 and gate:
-            gate_result = subprocess.run(
-                [sys.executable, str(WORKFLOW), "verify", "--repo", str(self.repo),
-                 "--slug", slug, "--kind", "quality-gate", "--base-ref", "HEAD"],
-                cwd=ROOT, env=self.env, text=True,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
-            )
-            self.assertEqual(gate_result.returncode, 0, gate_result.stdout + gate_result.stderr)
-        return result
 
     def test_quality_gate_refuses_a_tree_that_changed_during_the_run(self) -> None:
         # The persisted manifest must be the tree the gate actually checked. A
@@ -1312,8 +1299,6 @@ class PassLifecycleTests(unittest.TestCase):
         wid = self.begin_slug(slug)
         self.advance_to_preflight(slug, wid)
         self.owner_phase("tdd", "not-required")
-        generic = self.verify_run(sys.executable, "-c", "pass")
-        self.assertEqual(generic.returncode, 0, generic.stdout + generic.stderr)
 
         # The mutation has to land between the two manifests the runner samples
         # around the gate child. A thread spraying writes only makes that likely:
@@ -1423,7 +1408,7 @@ class PassLifecycleTests(unittest.TestCase):
         wid = self.begin_slug(slug)
         self.advance_to_preflight(slug, wid)
         self.owner_phase("tdd", "not-required")
-        self.assertEqual(self.verify_run(sys.executable, "-c", "pass").returncode, 0)
+        self.assertEqual(self.verify_run().returncode, 0)
 
         self.git("config", "filter.boom.clean", "exit 1")
         self.git("config", "filter.boom.required", "true")
@@ -1463,7 +1448,7 @@ class PassLifecycleTests(unittest.TestCase):
         try:
             result = subprocess.run(
                 [sys.executable, "-u", str(WORKFLOW), "verify", "--repo", str(self.repo),
-                 "--slug", slug, "--", sys.executable, "-c", "print('x' * 200)"],
+                 "--slug", slug, "--kind", "quality-gate", "--base-ref", "HEAD"],
                 cwd=ROOT, env={**self.env, "PYTHONUNBUFFERED": "1"}, text=True,
                 stdout=write_fd, stderr=subprocess.PIPE, check=False,
             )
@@ -1474,87 +1459,22 @@ class PassLifecycleTests(unittest.TestCase):
         self.assertEqual(json.loads(self.cli("status").stdout)["verification"], "passed")
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_verification_records_only_through_the_runner_per_command_latest(self) -> None:
+    def test_verification_records_only_through_the_runner(self) -> None:
         wid = self.begin_slug("evidence-verification")
         self.advance_to_preflight("evidence-verification", wid)
-        retained = self.verify_run(sys.executable, "-c", "print('VERIFICATION_RESULT_RETAINED')")
+        retained = self.verify_run()
         self.assertEqual(retained.returncode, 0, retained.stdout + retained.stderr)
-        pending = json.loads(self.cli("status").stdout)
-        self.assertEqual(pending["tdd"], "passed")
-        self.assertEqual(pending["nextAction"], "code-review")
-        self.assertIn("VERIFICATION_RESULT_RETAINED", self.evidence(pending["verificationLatestEvidence"])["runs"][0]["outputTail"])
-        review = self.json_file("review.json", {"findings": []})
-        before_bare = json.loads(self.cli("status").stdout)
+        state = json.loads(self.cli("status").stdout)
+        self.assertEqual((state["tdd"], state["nextAction"]), ("passed", "code-review"))
+        self.assertEqual(self.evidence(state["verificationLatestEvidence"])["workflowId"], wid)
         bare = self.cli("set-phase", "--phase", "verification", "--status", "passed")
         self.assertEqual(bare.returncode, 2, "a bare verification claim was accepted: " + bare.stdout + bare.stderr)
         self.assertIn("producers record every other step", bare.stderr, "the refusal did not name the producers")
-        self.assertEqual(json.loads(self.cli("status").stdout), before_bare)
-
-        # Command A fails until the flag file exists — the same command text later passes.
-        flag = self.repo / "flag"
-        command_a = "import sys, pathlib; sys.exit(0 if pathlib.Path('flag').exists() else 1)"
-        a_red = self.verify_run(sys.executable, "-c", command_a)
-        self.assertNotEqual(a_red.returncode, 0, "the runner reported success for a failing command")
-        red_state = json.loads(self.cli("status").stdout)
-        self.assertEqual(red_state["verification"], "pending")
-        self.assertEqual(red_state["nextAction"], "verification", "a red run advertised progress it had not made")
-
-        # An unrelated green command must not mask A's latest red result.
-        b_ok = self.verify_run(sys.executable, "-c", "print('ok')")
-        self.assertEqual(b_ok.returncode, 0, b_ok.stdout + b_ok.stderr)
-        self.assertEqual(
-            json.loads(self.cli("status").stdout)["verification"], "pending",
-            "an unrelated green command masked a failing one",
-        )
-
-        # Rerunning the SAME command green clears it: every distinct command's latest run is green.
-        flag.write_text("", encoding="utf-8")
-        a_green = self.verify_run(sys.executable, "-c", command_a)
-        self.assertEqual(a_green.returncode, 0, a_green.stdout + a_green.stderr)
-        state = json.loads(self.cli("status").stdout)
-        self.assertEqual(state["verification"], "passed")
-        self.assertEqual(state["nextAction"], "code-review", "a recorded phase was named as the next action")
-
-        state = json.loads(self.cli("status").stdout)
-        evidence = self.evidence(state["verificationLatestEvidence"])
-        self.assertEqual(evidence["workflowId"], wid)
-        generic = [run for run in evidence["runs"] if run.get("kind") == "generic"]
-        self.assertEqual(len(generic), 4, "the runner did not persist every executed command")
-        self.assertEqual([run["exitCode"] for run in generic], [0, 1, 0, 0])
+        self.assertEqual(json.loads(self.cli("status").stdout), state)
+        review = self.json_file("review.json", {"findings": []})
         accepted_review = self.cli("record", "review", "--slug", "evidence-verification", "--workflow-id", wid,
-                                   "--review-context-id", "recorder-fixture",
-                                   "--input", str(review))
+                                   "--review-context-id", "recorder-fixture", "--input", str(review))
         self.assertEqual(accepted_review.returncode, 0, accepted_review.stdout + accepted_review.stderr)
-
-    def test_generic_verification_keeps_next_action_at_verification_until_quality_gate(self) -> None:
-        wid = self.begin_slug("typed-verification-next-action")
-        self.advance_to_preflight("typed-verification-next-action", wid)
-        self.owner_phase("tdd", "not-required")
-
-        generic = subprocess.run(
-            [sys.executable, str(WORKFLOW), "verify", "--repo", str(self.repo),
-             "--slug", "typed-verification-next-action", "--", sys.executable, "-c", "pass"],
-            cwd=ROOT, env=self.env, text=True,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
-        )
-        self.assertEqual(generic.returncode, 0, generic.stdout + generic.stderr)
-        generic_state = json.loads(self.cli("status").stdout)
-        self.assertEqual(generic_state["verification"], "passed")
-        self.assertNotIn("qualityGateEvidence", generic_state)
-        self.assertEqual(
-            generic_state["nextAction"], "verification",
-            "generic verification advertised code review before the typed quality gate existed",
-        )
-
-        quality = subprocess.run(
-            [sys.executable, str(WORKFLOW), "verify", "--repo", str(self.repo),
-             "--slug", "typed-verification-next-action", "--kind", "quality-gate",
-             "--base-ref", "HEAD"],
-            cwd=ROOT, env=self.env, text=True,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
-        )
-        self.assertEqual(quality.returncode, 0, quality.stdout + quality.stderr)
-        self.assertEqual(json.loads(self.cli("status").stdout)["nextAction"], "code-review")
 
     def test_edit_requires_fresh_verification_without_a_dummy_generic(self) -> None:
         """A new tree drops prior receipts; a fresh typed gate needs no dummy generic."""
@@ -1619,7 +1539,7 @@ class PassLifecycleTests(unittest.TestCase):
         # Re-recording through the real producers writes the evidence and unblocks.
         recorded = self.record_preflight(wid, self.preflight_document())
         self.assertEqual(recorded.returncode, 0, recorded.stdout + recorded.stderr)
-        verified = self.verify_run(sys.executable, "-c", "pass")
+        verified = self.verify_run()
         self.assertEqual(verified.returncode, 0, verified.stdout + verified.stderr)
         self.owner_phase("code-review", "passed", findings="none")
         self.finalize("legacy-evidence", wid)
@@ -1690,7 +1610,7 @@ class PassLifecycleTests(unittest.TestCase):
         self.assertIn("verification", str(blocked.exception))
 
         # The real runner re-records and completion proceeds.
-        verified = self.verify_run(sys.executable, "-c", "pass")
+        verified = self.verify_run()
         self.assertEqual(verified.returncode, 0, verified.stdout + verified.stderr)
         self.owner_phase("code-review", "passed", findings="none")
         self.finalize("ref-replay", wid)
@@ -1761,7 +1681,7 @@ class PassLifecycleTests(unittest.TestCase):
         self.assertTrue(any("verification" in item for item in ready["missing"]), ready["missing"])
 
         # The real runner restores readiness.
-        verified = self.verify_run(sys.executable, "-c", "pass")
+        verified = self.verify_run()
         self.assertEqual(verified.returncode, 0, verified.stdout + verified.stderr)
         self.owner_phase("code-review", "passed", findings="none")
         self.assertTrue(self.checkpoint("final-review")["ready"])
@@ -1847,7 +1767,7 @@ class PassLifecycleTests(unittest.TestCase):
         begun = self.cli("begin", "--slug", "ordered-workflow")
         self.assertEqual(begun.returncode, 0, begun.stdout + begun.stderr)
 
-        out_of_order = self.verify_run(sys.executable, "-c", "pass")
+        out_of_order = self.verify_run()
         self.assertEqual(out_of_order.returncode, 0, out_of_order.stdout + out_of_order.stderr)
         state = json.loads(self.cli("status").stdout)
         self.assertEqual(state["nextAction"], "repo-context-forge", "EARLY_VERIFICATION_CONTRACT_BROKEN")
@@ -1910,7 +1830,7 @@ class PassLifecycleTests(unittest.TestCase):
         self.advance_to_preflight("tdd-gates", wid)
 
         self.owner_phase("tdd", "in-progress")
-        early_verify = self.verify_run(sys.executable, "-c", "pass")
+        early_verify = self.verify_run()
         self.assertEqual(early_verify.returncode, 0, early_verify.stdout + early_verify.stderr)
         retained = json.loads(self.cli("status").stdout)
         self.assertEqual(retained["tdd"], "in-progress", "EARLY_VERIFICATION_CONTRACT_BROKEN")
@@ -2043,7 +1963,7 @@ class PassLifecycleTests(unittest.TestCase):
         self.assertEqual({entry["findingId"]: entry["status"] for entry in closed["findingStates"]},
                          {"SPEC-1": "fixed", "SPEC-2": "report-only"}, marker)
         self.advance_to_context_forge()
-        self.assertEqual(self.verify_run(sys.executable, "-c", "pass").returncode, 0, marker)
+        self.assertEqual(self.verify_run().returncode, 0, marker)
         self.owner_phase("code-review", "passed", findings="none")
         self.finalize(slug, wid)
         self.assertEqual(self.cli("complete").returncode, 0, marker)
@@ -2098,10 +2018,10 @@ class PassLifecycleTests(unittest.TestCase):
             return wid, envelope
 
         slug = "appeal-stale-gates"; wid, envelope = reject(slug, ("SPEC-1",))
-        events, ran = len(self.history_events()), self.tmp / "ordinary-appeal-generic-ran"
-        blocked = self.verify_run(sys.executable, "-c", f"from pathlib import Path; Path({str(ran)!r}).touch()")
-        self.assertEqual((self.checkpoint("final-review")["ready"], blocked.returncode, ran.exists(), len(self.history_events()) - events),
-                         (True, 0, True, 2), "APPEAL_REVALIDATION_SCOPE_BYPASSED")
+        events = len(self.history_events())
+        blocked = self.verify_run()
+        self.assertEqual((self.checkpoint("final-review")["ready"], blocked.returncode, len(self.history_events()) - events),
+                         (True, 0, 0), "APPEAL_REVALIDATION_SCOPE_BYPASSED")
         envelope.write_text('{"schemaVersion":1,"findings":[],"verdict":"commit-ready"}', encoding="utf-8")
         # after the final advisor, an edited candidate needs only its re-check: no gate, review or revalidation
         (self.repo / "app.py").write_text("value = 2\n", encoding="utf-8")
@@ -2214,12 +2134,10 @@ class PassLifecycleTests(unittest.TestCase):
             "--stage", "final", "--source", "codex-advisor", "--input", str(envelope))
         self.assertEqual((state["nextAction"], duplicate.returncode, len(self.history_events()) - events),
                          ("address-review-findings", 2, 0), "INVALID_FINAL_INTAKE_ADMITTED")
-        ran = self.tmp / "blocked-generic-ran"; review_input = self.json_file("blocked-review.json", {"findings": []})
-        generic = self.verify_run(sys.executable, "-c", f"from pathlib import Path; Path({str(ran)!r}).touch()")
+        review_input = self.json_file("blocked-review.json", {"findings": []})
         gate = self.cli("verify", "--slug", slug, "--kind", "quality-gate", "--base-ref", "HEAD")
         review = self.cli("record", "review", "--slug", slug, "--workflow-id", wid, "--review-context-id", "blocked-correction", "--input", str(review_input))
-        self.assertEqual((self.cli("complete").returncode, generic.returncode, ran.exists(), gate.returncode, review.returncode),
-                         (2, 0, True, 0, 0), marker)
+        self.assertEqual((self.cli("complete").returncode, gate.returncode, review.returncode), (2, 0, 0), marker)
         intake = state["finalReview"]["intakeEvidence"]
         self.run_cli(("record", "advisor-disposition", "--finding", "SPEC-2", "--rejected",
                       "--reason", "The measured current result disproves the second claim."))
@@ -2243,7 +2161,7 @@ class PassLifecycleTests(unittest.TestCase):
         fixed = self.dispose(slug, wid, "final", "addressed", *self.disposition_args("fixed"))
         self.assertEqual(fixed.returncode, 0, fixed.stdout + fixed.stderr)
         self.assertEqual(json.loads(fixed.stdout)["nextAction"], "appeal-final-review", marker)
-        self.assertEqual(self.verify_run(sys.executable, "-c", "pass").returncode, 0)
+        self.assertEqual(self.verify_run().returncode, 0)
         self.owner_phase("code-review", "passed", findings="none")
         appealed = self.cli("record", "advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final",
                             "--source", "codex-advisor", "--input", str(appeal))
@@ -2300,7 +2218,7 @@ class PassLifecycleTests(unittest.TestCase):
         fixed = self.cli("record", "advisor-disposition", *self.disposition_args("fixed"))
         self.assertEqual(fixed.returncode, 0, marker + fixed.stdout + fixed.stderr)
         self.assertEqual(json.loads(self.cli("status").stdout)["findingStates"][-1]["status"], "fixed", marker)
-        self.assertEqual(self.verify_run(sys.executable, "-c", "pass").returncode, 0, marker)
+        self.assertEqual(self.verify_run().returncode, 0, marker)
         review.write_text(json.dumps({"findings": [], "dispositions": []}), encoding="utf-8")
         refreshed = self.cli(*review_args, str(review))
         self.assertEqual(refreshed.returncode, 0, marker + refreshed.stdout + refreshed.stderr)
@@ -2325,7 +2243,7 @@ class PassLifecycleTests(unittest.TestCase):
 
         self.record_preflight(wid, self.preflight_document())
         self.owner_phase("tdd", "not-required")
-        self.assertEqual(self.verify_run(sys.executable, "-c", "pass").returncode, 0)
+        self.assertEqual(self.verify_run().returncode, 0)
         self.owner_phase("code-review", "passed", findings="none")
         envelope = self.tmp / "report-only.json"
         envelope.write_text('{"schemaVersion":1,"findings":[{"id":"SPEC-1","claim":"harmless","material":true,"kind":"nonbehavioral"}],"verdict":"fix-before-commit"}', encoding="utf-8")
@@ -2444,7 +2362,7 @@ class PassLifecycleTests(unittest.TestCase):
         self.assertFalse(terminal["ready"], "a completed workflow was reported consult-ready")
         self.assertIn("open-workflow", terminal["missing"])
 
-        terminal_verify = self.verify_run(sys.executable, "-c", "pass")
+        terminal_verify = self.verify_run()
         self.assertEqual(terminal_verify.returncode, 2, terminal_verify.stdout + terminal_verify.stderr)
         self.assertIn("terminal", terminal_verify.stderr)
 
@@ -2545,7 +2463,7 @@ commit_tdd(resolve_repo_identity(sys.argv[1]), 'terminal-state', sys.argv[2],
         self.assertFalse(closed["ready"], "preflight advice was reported consult-ready during revalidation")
         self.assertIn("open-workflow", closed["missing"])
 
-        reverified = self.verify_run(sys.executable, "-c", "pass")
+        reverified = self.verify_run()
         self.assertEqual(reverified.returncode, 0, reverified.stdout + reverified.stderr)
 
         from hooks.lib.workflow_state import ready_for_edit
@@ -2566,7 +2484,7 @@ commit_tdd(resolve_repo_identity(sys.argv[1]), 'terminal-state', sys.argv[2],
         self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
         self.assertNotIn("revalidation", json.loads(completed.stdout))
 
-        again = self.verify_run(sys.executable, "-c", "pass")
+        again = self.verify_run()
         self.assertEqual(again.returncode, 2, "completion did not restore the terminal state")
 
     def test_optional_lead_identity_is_validated_against_the_active_instance(self) -> None:

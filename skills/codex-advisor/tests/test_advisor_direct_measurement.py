@@ -401,10 +401,6 @@ class AdvisorSecurityBoundaryTest(unittest.TestCase):
                 cwd=repo, env=env,
             )
             run_workflow(
-                "verify", "--repo", str(repo), "--slug", slug, "--",
-                sys.executable, "-c", "pass", cwd=repo, env=env,
-            )
-            run_workflow(
                 "verify", "--repo", str(repo), "--slug", slug, "--kind", "quality-gate",
                 "--base-ref", "HEAD", cwd=repo, env=env,
             )

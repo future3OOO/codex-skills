@@ -49,15 +49,13 @@ workflow record <kind> [--check] [--input -|path]
                                # preflight|review|advisor-result|tdd-map
 workflow record advisor-disposition --finding ID --fixed|--rejected|--report-only|--follow-up REFERENCE --reason TEXT
 workflow tdd                   # compare probes on original, reviewed and candidate sources
-workflow verify                # generic commands, typed quality gate, --observed, --from-evidence
+workflow verify                # the typed quality gate; an unchanged tree and base reuse its receipt
 workflow pause|checkpoint|complete|prune
 ```
 
 Mutation receipts include identity, the operation result and `next`: its bound
 `command`, any authored `input` and finding bindings.
-Summary derives recovery guidance from the current checkout. Observed execution identifies its kind and
-supplies a ready verification-binding command on success; a failed observation
-leaves verification unchanged. Dry-run recording publishes no continuation or
+Summary derives recovery guidance from the current checkout. Dry-run recording publishes no continuation or
 committed reference. `status` returns full state. Identity defaults to the active workflow; an explicit
 `--slug`/`--workflow-id` that disagrees refuses. Every refusal names all of a
 document's violations at once and mutates nothing.
@@ -197,7 +195,6 @@ session and defers the rest here.
 | Hook | Role |
 |---|---|
 | `PreToolUse(Edit\|Write\|apply_patch)` | Advise, never refuse: name what the pass has not recorded and admit the edit; docs, scratch, and non-repository paths are silent; test-like paths skip only the comparison advice |
-| `PreToolUse(Bash)` | Rewrite a lone pytest/unittest command to `workflow.py verify --observed -- <command>`: the same exit code, plus a receipt in the checkout of the command's own working directory; while it records, the command's stderr is merged into stdout |
 | `PostToolUse(Edit\|Write\|apply_patch\|Bash)` | Observe explicit edit paths and actual Git changes, invalidate downstream readiness, then return batched lint |
 | `PostCompact` | Forget which advisories this session has heard, so each returns once after compaction |
 | `SessionStart(compact)` | Restore the discipline line and the pass's open work from committed SQLite state |

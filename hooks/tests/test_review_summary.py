@@ -64,12 +64,6 @@ class ReviewSummaryHarness(unittest.TestCase):
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
         assert recorded.returncode == 0, recorded.stdout + recorded.stderr
         set_phase(identity, "tdd", "not-required")
-        verified = subprocess.run(
-            [sys.executable, str(WORKFLOW), "verify", "--repo", str(self.repo), "--slug", "review-summary",
-             "--", sys.executable, "-c", "pass"],
-            cwd=str(ROOT), env=self.env, text=True,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-        assert verified.returncode == 0, verified.stdout + verified.stderr
         quality = subprocess.run(
             [sys.executable, str(WORKFLOW), "verify", "--repo", str(self.repo), "--slug", "review-summary",
              "--kind", "quality-gate", "--base-ref", "HEAD"],

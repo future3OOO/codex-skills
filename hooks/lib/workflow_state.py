@@ -773,11 +773,6 @@ def record_base_oid(identity: RepoIdentity, slug: str, workflow_id: str | None, 
         return _commit(transaction, state, "record-base-oid")
 
 
-def _verification_key(run: JsonObject) -> str:
-    kind = run.get("kind") if run.get("kind") in {"quality-gate", "observed"} else "generic"
-    return "quality-gate" if kind == "quality-gate" else f"{kind}:{run.get('command')}"
-
-
 def execution_digest(run: object) -> str | None:
     """Stable identity of a stored execution across reference spellings and
     cumulative evidence-document copies: the canonical run record."""
@@ -790,7 +785,7 @@ def execution_digest(run: object) -> str | None:
 
 def execution_receipt(identity: RepoIdentity, state: JsonObject, reference: str,
                       transaction: LedgerMutation | None = None) -> tuple[JsonObject, dict[str, str]]:
-    """Resolve an actual execution at its original target; references never execute."""
+    """Resolve a recorded comparison at its original target; references never execute."""
     evidence_id, separator, index = reference.rpartition(":")
     document = (transaction.evidence(evidence_id) if transaction is not None
                 else evidence_document(identity, evidence_id)) if separator else None
@@ -804,12 +799,8 @@ def execution_receipt(identity: RepoIdentity, state: JsonObject, reference: str,
     except RuntimeError as exc:
         raise WorkflowError(f"execution reference could not be sampled: {exc}") from exc
     compared = isinstance(run.get("arms"), list) and bool(run["arms"])
-    if (manifest is None or manifest != current_tree or run.get("bindingError")
-            or run.get("timedOut") or ("outputTail" not in run
-                and not compared and not (isinstance(run.get("sourceReference"), str) and run["sourceReference"]))):
+    if manifest is None or manifest != current_tree or run.get("bindingError") or run.get("timedOut") or not compared:
         raise WorkflowError("execution reference is stale, unbound, incomplete or not an executed receipt")
-    if "outputTail" not in run and not run.get("testId") and not compared:
-        return execution_receipt(identity, state, run["sourceReference"], transaction)
     return run, manifest
 
 
@@ -822,7 +813,7 @@ def commit_verification(
     tree_before: dict[str, str] | None,
     report: JsonObject | None = None,
 ) -> tuple[JsonObject, str, JsonObject]:
-    """Merge one completed run with the verification evidence current at commit.
+    """Merge one completed typed-gate run with the verification evidence current at commit.
 
     The runner hands over its finished run and the reviewable-tree manifest it
     sampled before the command started; nothing is read ahead of execution, so
@@ -831,11 +822,7 @@ def commit_verification(
     differs at commit is retained invalid, naming the drift: its result
     describes another tree. `tree_before` is None only when the runner could
     not sample it, and that run already carries its reason as invalid.
-    Readiness and the typed-gate binding derive from the merged runs, so a
-    generic completion can neither drop a valid binding nor revive one a later
-    typed run invalidated. The binding is kept only while its manifest still
-    describes the tree: a valid run measures one tree and reports no drift, so
-    run results alone never notice that the gate's tree has since moved on.
+    Readiness and the gate binding follow the latest completion.
     """
     with mutation(identity) as transaction:
         state = _bound_instance_state(transaction.state, slug, workflow_id)
@@ -846,23 +833,17 @@ def commit_verification(
             and isinstance(prior.get("runs"), list)
             else []
         )
-        prior_manifest_id = state.get("qualityGateManifestId")
         run = dict(run)
         kept = [evidence_write(str(state["workflowId"]), "quality-gate-report", {"report": [report]})] if report is not None else []
         if kept:
             run["reportEvidenceId"] = kept[0].evidence_id
-        typed = run.get("kind") == "quality-gate"
-        observed = run.get("kind") == "observed"
         try:
             current: dict[str, str] | None = tree_manifest(identity)
         except RuntimeError as exc:
             current, sampling_error = None, f"the reviewable tree could not be sampled at commit: {exc}"
-        if tree_before is not None and (run.get("valid") is True or observed):
+        if tree_before is not None and run.get("valid") is True:
             drift = (
-                _manifest_drift(
-                    tree_before, current,
-                    stale=f"reviewable tree changed during the {'quality-gate' if typed else 'verification'} run",
-                )
+                _manifest_drift(tree_before, current, stale="reviewable tree changed during the quality-gate run")
                 if current is not None else sampling_error
             )
             if drift is not None:
@@ -875,47 +856,13 @@ def commit_verification(
             measured = manifest_write(str(state["workflowId"]), "verification-tree", tree_before)
             manifests.append(measured)
             run["treeManifestId"] = measured.manifest_id
-        replacement = run.get("replaces")
-        if replacement is not None:
-            ref, separator, index_text = str(replacement).rpartition(":")
-            referenced = transaction.evidence(ref) if separator else None
-            if (not isinstance(referenced, dict) or referenced.get("workflowId") != state["workflowId"]
-                    or not index_text.isdecimal() or typed):
-                raise WorkflowError("replacement requires a current failed generic evidence-id:run-index")
-            source_runs = referenced.get("runs", [])
-            index = int(index_text)
-            if index >= len(source_runs) or source_runs != prior_runs[:len(source_runs)]:
-                raise WorkflowError("replacement evidence is stale or outside current verification history")
-            failed = source_runs[index]
-            key = _verification_key(failed)
-            latest_index = max(i for i, item in enumerate(prior_runs) if _verification_key(item) == key)
-            if (failed.get("kind") != "generic" or failed.get("valid") is True or index != latest_index
-                    or any(item.get("replacedKey") == key and item.get("valid") is True for item in prior_runs[index + 1:])):
-                raise WorkflowError("replacement no longer names its active failed generic invocation")
-            if (not failed.get("treeManifestId") or tree_before is None
-                    or transaction.manifest(failed["treeManifestId"]) != tree_before):
-                raise WorkflowError("replacement target does not match the failed invocation")
-            if run.get("valid") is True:
-                run["replacedKey"] = key
-        latest: dict[str, bool] = {}
-        # Observed runs are receipts only; `verify --from-evidence` binds one.
-        for item in (run for run in runs if run.get("kind") != "observed"):
-            if item.get("valid") is True and isinstance(item.get("replacedKey"), str):
-                latest.pop(item["replacedKey"], None)
-            latest[_verification_key(item)] = item.get("valid") is True
-        status = "passed" if latest and all(latest.values()) else "pending"
-        if not observed:
-            _apply_step(identity, state, "verification", status)
-        if typed and run["valid"] is True:
+        status = "passed" if run["valid"] is True else "pending"
+        _apply_step(identity, state, "verification", status)
+        quality_manifest_id: str | None = None
+        if status == "passed":
             manifest = manifest_write(str(state["workflowId"]), "quality-gate-tree", tree_before)
             manifests.append(manifest)
-            quality_manifest_id: str | None = manifest.manifest_id
-        elif isinstance(prior_manifest_id, str) and (observed or (  # an observed run is a receipt only
-                latest.get("quality-gate") is True and current is not None
-                and transaction.manifest(prior_manifest_id) == current)):
-            quality_manifest_id = prior_manifest_id
-        else:
-            quality_manifest_id = None
+            quality_manifest_id = manifest.manifest_id
         document: JsonObject = {
             "schemaVersion": 1,
             "slug": state["slug"],
@@ -2221,22 +2168,6 @@ def _readiness_lines(identity: RepoIdentity, state: JsonObject, items: list[Json
             "contractChanges": behavior_map.contract_changes(items, recorded)}
 
 
-def _latest_verification_command(identity: RepoIdentity, state: JsonObject) -> str:
-    """The command behind the latest verification run, so a resumed lead knows how
-    verification was driven without a second evidence lookup."""
-    try:
-        document = evidence_document(identity, state.get("verificationLatestEvidence"))
-    except (WorkflowError, LedgerError, ValueError):
-        return ""
-    runs = document.get("runs") if isinstance(document, dict) else []
-    commands = [str(run.get("command")) for run in runs
-                if isinstance(run, dict) and run.get("kind") == "generic" and run.get("valid") and run.get("command")]
-    if not commands:
-        return ""
-    command = commands[-1]
-    return f" Verified by: {command[:120] + ' […]' if len(command) > 120 else command}."
-
-
 def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObject | None = None, *,
                    preflight_draft: JsonObject | None = None, preflight_file: str | None = None,
                    obligations: bool = True) -> JsonObject:
@@ -2262,11 +2193,6 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
         if incomplete:
             return {"command": None, "input": "Comparison execution incomplete: " + "; ".join(dict.fromkeys(incomplete))
                     + ("\n" + questions if questions else ""), "action": "tdd"}
-    if receipt is not None and receipt.get("kind") == "observed" and action not in {"tdd", "run-mapped-tdd"}:
-        if receipt.get("valid") is True:
-            return {"command": shlex.join([*cli, "verify", *bound, "--from-evidence",
-                                          f"{receipt['evidenceId']}:{receipt['runIndex']}"])}
-        return {"command": None, "input": "correct the failed operation; observation leaves verification unchanged"}
     if state.get("phase") == "complete" and not state.get("revalidation"):
         return {"command": None}
     if action == "repo-context-forge":
@@ -2418,7 +2344,6 @@ def summary(identity: RepoIdentity, limit: int = 3000, *, labels: bool = True) -
         )
         + " Missing state is pending, never success."
         + mechanisms
-        + _latest_verification_command(identity, state)
         + _map_listing(identity, state)
     )
     suffix = " … Details: workflow status --repo <checkout>; workflow evidence --repo <checkout> --evidence-id <id>."

@@ -6,19 +6,17 @@ import json
 import os
 import re
 import shlex
-import sqlite3
-from contextlib import closing, nullcontext, redirect_stdout
+from contextlib import redirect_stdout
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
 from ._workflow_db import CHECK_ONLY, LedgerError, _canonical, history, read_evidence
-from .command_runner import _tail, emit_json as _emit_json, print_output as _print_output, run as _run, run_entry as _run_entry
-from .repo_identity import RepoIdentity, RepoIdentityError, resolve_repo_identity, try_resolve_repo_identity
+from .command_runner import emit_json as _emit_json, print_output as _print_output, run as _run, run_entry as _run_entry
+from .repo_identity import RepoIdentity, RepoIdentityError, resolve_repo_identity
 from .state_prune import prune
 from .state_store import _active_candidate_tree, analysis_unchanged, codex_home, repo_state_dir, state_root, tree_manifest, utc_timestamp
-from .tdd_surface import identify
 from .workflow_documents import (
     RECORD_SHAPES,
     advisor_envelope,
@@ -31,6 +29,7 @@ from .workflow_documents import (
 from .workflow_state import (
     WorkflowError,
     _require_instance,
+    _tree_drift,
     advisor_disposition,
     begin,
     bound_state,
@@ -40,7 +39,6 @@ from .workflow_state import (
     commit_verification,
     complete,
     evidence_document,
-    execution_receipt,
     next_operation,
     operation_receipt as _receipt,
     pause,
@@ -110,14 +108,9 @@ def parser() -> argparse.ArgumentParser:
     commands.add_parser("tdd", help="compare a probe on recorded sources, reusing its recorded batch when no command is given")
 
     command = _repo(commands.add_parser("verify", help="execute and record typed verification"), instance=True)
-    command.add_argument("--kind", choices=("generic", "quality-gate"), default="generic")
+    command.add_argument("--kind", choices=("quality-gate",), default="quality-gate")
     command.add_argument("--base-ref")
-    command.add_argument("--replaces", help="failed generic evidence-id:zero-based-run-index")
-    command.add_argument("--reason")
     command.add_argument("--timeout", type=int, default=900)
-    command.add_argument("--observed", action="store_true", help="run a command transparently, keeping its receipt")
-    command.add_argument("--from-evidence", help="bind an executed receipt evidence-id:run-index as verification")
-    command.add_argument("runner_command", nargs=argparse.REMAINDER)
 
     record = commands.add_parser("record", help="validate and record one document; --check records nothing")
     kinds = record.add_subparsers(dest="kind", required=True)
@@ -203,106 +196,22 @@ def _intent(args: argparse.Namespace) -> str:
     return text
 
 
-def _command(values: list[str]) -> list[str]:
-    command = values[1:] if values and values[0] == "--" else values
-    if not command:
-        raise ValueError("a command is required after --")
-    return command
-
-
-def _passed(command: str, exit_code: object, output: str) -> bool:
-    """Exit 0, and for a pytest/unittest command a runner-reported executed passing
-    test: a run that executed none (collect-only, --fixtures, an empty discover), or
-    reported no count (-qq), verifies nothing. The runner is TDD's (`identify`), which
-    recognises bare invocations only."""
-    from .tdd_workflow import _pass_proof
-    surface = identify(shlex.split(command))
-    return exit_code == 0 and (surface.get("runner") not in {"pytest", "unittest"} or _pass_proof(surface, output)[0] is not None)
-
-
-def _lead(state: dict) -> bool:
-    """Whether this session leads the pass; reviewers' runs neither refuse nor record."""
-    current = os.environ.get("CODEX_THREAD_ID")
-    if state.get("leadContextId") in {None, current}:
-        return True
-    database = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "state_5.sqlite"
-    if not database.is_file():
-        return False
-    try:
-        with closing(sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True, timeout=0)) as connection:
-            row = connection.execute("SELECT source FROM threads WHERE id = ?", (current,)).fetchone()
-    except sqlite3.Error as exc:
-        print(f"workflow receipt not recorded: identity lookup unavailable: {exc}", file=sys.stderr)
-        return False
-    return row is not None and row[0] in {"cli", "exec", "vscode"}
-
-
-def _observed(command: list[str]) -> int:
-    """Run a hook-rewritten test command as asked; at the root of a checkout with an
-    open workflow, also keep its receipt. The exit code is the command's; while a
-    receipt is kept, its stderr is merged into stdout."""
-    identity = try_resolve_repo_identity(os.getcwd())
-    state = None
-    if identity is not None and str(Path.cwd().resolve()) == identity.root:
-        try:
-            state = read_workflow(identity)
-        except LedgerError as exc:  # an unreadable ledger never stops the command
-            print(f"workflow receipt not recorded: {exc}", file=sys.stderr)
-    if state is None or state.get("phase") == "complete" and not state.get("revalidation") or not _lead(state):
-        return subprocess.run(command, check=False).returncode
-    binding_error = None
-    try:
-        tree_before: dict[str, str] | None = tree_manifest(identity)
-    except RuntimeError as exc:
-        tree_before, binding_error = None, str(exc)
-    # In the caller's process group, streaming as it runs: a kill of the tool call
-    # stops the command, and the output arrives when it would have directly.
-    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    chunks: list[bytes] = []
-    for chunk in iter(lambda: process.stdout.read1(65536), b""):
-        chunks.append(chunk)
-        sys.stdout.buffer.write(chunk)
-        sys.stdout.flush()
-    raw, exit_code, timed_out = b"".join(chunks), process.wait(), False
-    run = _run_entry(raw, exit_code, timed_out, kind="observed", command=shlex.join(command), outputBytes=len(raw),
-                     **({"bindingError": binding_error} if binding_error else {}))
-    run["valid"] = binding_error is None and _passed(run["command"], exit_code, run["outputTail"])
-    try:
-        state, evidence_id, recorded = commit_verification(identity, state["slug"], state["workflowId"], run,
-                                                           tree_before=tree_before)
-        receipt = _receipt(state, identity, kind="observed", evidenceId=evidence_id,
-                           runIndex=recorded["runIndex"], valid=recorded["valid"])
-        print(f"workflow observed receipt {evidence_id}:{recorded['runIndex']}; verification={state['verification']}", file=sys.stderr)
-        if receipt["next"]["command"]:
-            print("Next invocation: " + receipt["next"]["command"], file=sys.stderr)
-        if receipt["next"].get("input"):
-            print(receipt["next"]["input"], file=sys.stderr)
-    except (LedgerError, ValueError, OSError) as exc:
-        print(f"workflow receipt not recorded: {exc}", file=sys.stderr)
-    return exit_code
-
-
 def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
-    if bool(args.replaces) != bool(args.reason and args.reason.strip()):
-        raise ValueError("--replaces and a non-empty --reason are required together")
-    if args.replaces and args.kind != "generic":
-        raise ValueError("only generic verification can replace a failed invocation")
     state = bound_state(identity, args.slug, args.workflow_id)
     slug, workflow_id = str(state["slug"]), str(state["workflowId"])
-    if args.from_evidence:
-        if args.runner_command or args.kind != "generic":
-            raise ValueError("--from-evidence binds a recorded receipt and takes no command")
-        receipt, manifest = execution_receipt(identity, state, args.from_evidence)
-        run = {key: receipt[key] for key in ("command", "exitCode", "timedOut", "outputBytes") if key in receipt}
-        run.update(kind="generic", sourceReference=args.from_evidence,
-                   valid=(receipt.get("valid") is True if receipt.get("arms") else
-                          _passed(str(receipt.get("command", "")), receipt.get("exitCode"), str(receipt.get("outputTail", "")))) ,
-                   at=utc_timestamp(), **({"replaces": args.replaces, "replacementReason": args.reason.strip()}
-                                          if args.replaces else {}))
-        state, evidence_id, recorded = commit_verification(identity, slug, workflow_id, run, tree_before=manifest)
-        _emit_json(_receipt(state, identity, evidenceId=evidence_id, runIndex=recorded["runIndex"],
-                           valid=recorded["valid"], kind="generic", verification=state["verification"]))
-        return 0 if recorded["valid"] is True else 2
+    args.base_ref = args.base_ref or state.get("baseOid")
+    if not args.base_ref:
+        raise ValueError("quality-gate verification needs the recorded base or --base-ref")
+    base = subprocess.run(["git", "-C", str(identity.root), "rev-parse", "--verify", "--quiet", "--end-of-options",
+                           f"{args.base_ref}^{{commit}}"], capture_output=True, text=True, check=False).stdout.strip()
+    passed = evidence_document(identity, state.get("qualityGateEvidence")) if state.get("verification") == "passed" else None
+    last = (passed or {}).get("runs", [{}])[-1]
+    if base and last.get("valid") is True and last.get("baseCommit") == base and _tree_drift(
+            identity, state, field="qualityGateManifestId", missing="missing", stale="stale") is None:
+        # The same gate on the same tree and base already passed: its receipt is the result.
+        _emit_json(_receipt(state, identity, evidenceId=state["qualityGateEvidence"], kind="quality-gate", reused=True,
+                            verification="passed", valid=True, runIndex=last["runIndex"], workflowId=workflow_id))
+        return 0
 
     # The tree this run's result will describe. The recorder compares it with
     # the tree at commit; a run that could not sample it is recorded invalid.
@@ -314,93 +223,77 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
         tree_before = tree_manifest(identity)
     except RuntimeError as exc:
         binding_error = str(exc)
-
-    if args.kind == "quality-gate":
-        if binding_error is None:  # the gate binds the recorded graph evidence to the candidate it checks
-            refresh_context(identity)
-            state = bound_state(identity, slug, workflow_id)
-        args.base_ref = args.base_ref or state.get("baseOid")
-        if not args.base_ref:
-            raise ValueError("quality-gate verification needs the recorded base or --base-ref")
-        if args.runner_command:
-            raise ValueError("quality-gate verification runs the bundled gate and accepts no command")
-        command = [sys.executable, str(ROOT / "skills" / "production-code" / "scripts" / "code_quality_gate.py"),
-                   "check", "--repo", str(identity.root), "--base-ref", args.base_ref]
-        # The pass's recorded Repo Context Forge evidence, handed to the gate
-        # unchanged when it carries the producer's snapshot-bound gate context;
-        # the gate's own binding check adjudicates match, stale, or absent.
-        recorded = state.get("repoContextForgeEvidence")
-        graph_document = evidence_document(identity, recorded if isinstance(recorded, str) else None)
-        graph_context = (
-            graph_document.get("gateContext")
-            if isinstance(graph_document, dict) and graph_document.get("workflowId") == workflow_id
-            else None
+    if binding_error is None:  # the gate binds the recorded graph evidence to the candidate it checks
+        refresh_context(identity)
+        state = bound_state(identity, slug, workflow_id)
+    command = [sys.executable, str(ROOT / "skills" / "production-code" / "scripts" / "code_quality_gate.py"),
+               "check", "--repo", str(identity.root), "--base-ref", base or args.base_ref]
+    # The pass's recorded Repo Context Forge evidence, handed to the gate
+    # unchanged when it carries the producer's snapshot-bound gate context;
+    # the gate's own binding check adjudicates match, stale, or absent.
+    recorded = state.get("repoContextForgeEvidence")
+    graph_document = evidence_document(identity, recorded if isinstance(recorded, str) else None)
+    graph_context = (
+        graph_document.get("gateContext")
+        if isinstance(graph_document, dict) and graph_document.get("workflowId") == workflow_id
+        else None
+    )
+    if isinstance(graph_context, dict):
+        candidate = _active_candidate_tree(identity)
+        indexed = str(graph_context.get("candidate", ""))
+        if indexed != candidate and analysis_unchanged(identity, indexed, candidate):
+            graph_context = {**graph_context, "candidate": candidate, "reusedFromCandidate": indexed}
+        graph_evidence_id = str(recorded)
+        handle = tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", prefix="quality-gate-graph-", suffix=".json", delete=False,
         )
-        if isinstance(graph_context, dict):
-            candidate = _active_candidate_tree(identity)
-            indexed = str(graph_context.get("candidate", ""))
-            if indexed != candidate and analysis_unchanged(identity, indexed, candidate):
-                graph_context = {**graph_context, "candidate": candidate, "reusedFromCandidate": indexed}
-            graph_evidence_id = str(recorded)
-            handle = tempfile.NamedTemporaryFile(
-                "w", encoding="utf-8", prefix="quality-gate-graph-", suffix=".json", delete=False,
-            )
-            with handle:
-                json.dump(graph_context, handle)
-            graph_context_path = handle.name
-            command += ["--gitnexus-context-json", graph_context_path]
-    else:
-        if args.base_ref:
-            raise ValueError("--base-ref belongs to --kind quality-gate")
-        command = _command(args.runner_command)
+        with handle:
+            json.dump(graph_context, handle)
+        graph_context_path = handle.name
+        command += ["--gitnexus-context-json", graph_context_path]
 
     try:
         raw, exit_code, timed_out = _run(command, identity, args.timeout)
     finally:
         if graph_context_path is not None:
             os.unlink(graph_context_path)
-    valid = binding_error is None and not timed_out and _passed(shlex.join(command), exit_code, _tail(raw))
+    valid = binding_error is None and not timed_out and exit_code == 0
     gate: dict[str, object] | None = None
     report: dict[str, object] | None = None
     shown = raw
-    if args.kind == "quality-gate":
-        try:
-            # Text mode: the bounded summary for the lead, then the complete report the ledger keeps.
-            summary, _, line = raw.rstrip(b"\n").rpartition(b"\n")
-            report = json.loads(line.decode("utf-8"))
-            gate = validate_gate_result(report)
-            shown, raw = summary.rstrip(b"\n") + b"\n", (json.dumps(gate, sort_keys=True) + "\n").encode()
-            valid = valid and gate.get("ok") is True
-            errors = gate.get("errors")
-            capture = next(
-                (
-                    error for error in (errors if isinstance(errors, list) else ())
-                    if isinstance(error, str) and error.startswith("candidate capture ")
-                ),
-                None,
+    try:
+        # Text mode: the bounded summary for the lead, then the complete report the ledger keeps.
+        summary, _, line = raw.rstrip(b"\n").rpartition(b"\n")
+        report = json.loads(line.decode("utf-8"))
+        gate = validate_gate_result(report)
+        shown, raw = summary.rstrip(b"\n") + b"\n", (json.dumps(gate, sort_keys=True) + "\n").encode()
+        valid = valid and gate.get("ok") is True
+        errors = gate.get("errors")
+        capture = next(
+            (
+                error for error in (errors if isinstance(errors, list) else ())
+                if isinstance(error, str) and error.startswith("candidate capture ")
+            ),
+            None,
+        )
+        if binding_error is None and capture is not None:
+            # Drift and outright capture failure are one condition here: the gate
+            # never held a tree still, so nothing it reports binds to one.
+            binding_error = (
+                "reviewable tree changed during the quality-gate run"
+                if capture.startswith("candidate capture drift:")
+                else f"the quality gate could not capture the reviewable tree: {capture}"
             )
-            if binding_error is None and capture is not None:
-                # Drift and outright capture failure are one condition here: the gate
-                # never held a tree still, so nothing it reports binds to one.
-                binding_error = (
-                    "reviewable tree changed during the quality-gate run"
-                    if capture.startswith("candidate capture drift:")
-                    else f"the quality gate could not capture the reviewable tree: {capture}"
-                )
-        except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
-            valid = False
-            binding_error = str(exc)
+    except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        valid = False
+        binding_error = str(exc)
 
     run = _run_entry(
         raw, exit_code, timed_out,
         kind=args.kind, command=shlex.join(command), valid=valid, outputBytes=len(raw),
+        baseRef=args.base_ref, baseCommit=base or None, gate=gate, bindingError=binding_error,
+        graphEvidenceId=graph_evidence_id,
     )
-    if args.replaces:
-        run.update(replaces=args.replaces, replacementReason=args.reason.strip())
-    if args.kind == "quality-gate":
-        run.update(baseRef=args.base_ref, gate=gate, bindingError=binding_error, graphEvidenceId=graph_evidence_id)
-    elif binding_error is not None:
-        run["bindingError"] = binding_error
     state, evidence_id, recorded = commit_verification(identity, slug, workflow_id, run, tree_before=tree_before,
                                                        report=report if gate is not None else None)
     if recorded.get("reportEvidenceId") and recorded["valid"] is not True:
@@ -412,7 +305,7 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
                   + shlex.join([sys.executable, str(ROOT / "skills" / "repo-production-workflow" / "scripts" / "workflow.py"),
                                 "evidence", "--repo", str(identity.root), "--evidence-id", str(recorded["reportEvidenceId"]),
                                 "--full"]) + f" > {location}\n  jq -c {shlex.quote(REPORT_PROJECTION)} {location}\n").encode()
-    with redirect_stdout(sys.stderr) if args.kind == "quality-gate" else nullcontext():  # stdout carries only the receipt
+    with redirect_stdout(sys.stderr):  # stdout carries only the receipt
         _print_output(shown)
     state = read_workflow(identity) or state
     _emit_json(_receipt(state, identity, **{
@@ -426,7 +319,7 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
         "treeManifestId": recorded.get("treeManifestId"),
     }))
     if recorded["valid"] is not True:
-        reason = recorded.get("bindingError") or ("verification command failed" if exit_code else "the runner reported no executed test")
+        reason = recorded.get("bindingError") or "the quality gate failed"
         print(f"{reason}; verification stays pending until its rerun is green", file=sys.stderr)
         return 2
     return 0
@@ -520,13 +413,6 @@ def _dispatch(args: argparse.Namespace) -> int:
     if args.command == "prune":
         _emit_json(prune(apply=args.apply))
         return 0
-    if args.command == "verify" and args.observed:
-        defaults = {"repo": ".", "slug": None, "workflow_id": None, "kind": "generic", "base_ref": None,
-                    "replaces": None, "reason": None, "timeout": 900, "from_evidence": None}
-        if given := [name for name, value in defaults.items() if getattr(args, name) != value]:
-            raise ValueError("--observed takes only a command; drop " + ", ".join(f"--{n.replace('_', '-')}" for n in given))
-        return _observed(_command(args.runner_command))
-
     identity = resolve_repo_identity(args.repo)
     if args.command == "begin":
         _emit_json(_receipt(begin(identity, args.slug, _intent(args)), identity))

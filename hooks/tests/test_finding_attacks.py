@@ -339,7 +339,6 @@ class PendingAdvisorRetries(AttackHarness):
             self.assertEqual(hook.returncode, 0, hook.stderr)
             self.assertEqual('"deny"' in hook.stdout, expected_denial, marker)
         record_context_forge(self.repo, self.tmp)
-        self.ok("verify", "--slug", "pending-retry", "--", "git", "diff", "--check")
         self.ok("verify", "--slug", "pending-retry", "--kind", "quality-gate", "--base-ref", "HEAD")
         assessment = self.json_file("ordinary-review.json", {"findings": []})
         self.ok("record", "review", "--slug", "pending-retry", "--workflow-id", wid,
@@ -385,7 +384,6 @@ class PendingAdvisorRetries(AttackHarness):
 
     def ready(self, wid: str, *context: str) -> None:
         record_context_forge(self.repo, self.tmp)
-        self.ok("verify", "--slug", "pending-retry", "--", "git", "diff", "--check")
         self.ok("verify", "--slug", "pending-retry", "--kind", "quality-gate", "--base-ref", "HEAD")
         self.ok("record", "review", "--slug", "pending-retry", "--workflow-id", wid,
                 *(context or ("--review-context-id", "retry-fixture")),
@@ -852,10 +850,8 @@ class SamePassAttack(AttackHarness):
         }])
         self.assertEqual(owned.returncode, 0, marker + ": " + owned.stdout + owned.stderr)
         self.drive_attack_green(slug, main_marker, "BM_MAIN")
-        for extra in (("--", sys.executable, "-c", "pass"),
-                      ("--kind", "quality-gate", "--base-ref", "HEAD")):
-            verified = self.cli("verify", "--slug", slug, *extra)
-            self.assertEqual(verified.returncode, 0, verified.stdout + verified.stderr)
+        verified = self.cli("verify", "--slug", slug, "--kind", "quality-gate", "--base-ref", "HEAD")
+        self.assertEqual(verified.returncode, 0, verified.stdout + verified.stderr)
 
         # The late-discovered behavioral finding arrives through the lead review.
         intake = self.review(slug, wid, self.json_file("review-intake.json", {"findings": [{
@@ -923,10 +919,8 @@ class SamePassAttack(AttackHarness):
         # Post-edit revalidation for the production fix itself - the ordinary
         # rule for changed trees, not a metadata-only rerun.
         record_context_forge(self.repo, self.tmp)
-        for extra in (("--", sys.executable, "-c", "pass"),
-                      ("--kind", "quality-gate", "--base-ref", "HEAD")):
-            verified = self.cli("verify", "--slug", slug, *extra)
-            self.assertEqual(verified.returncode, 0, marker + ": " + verified.stdout + verified.stderr)
+        verified = self.cli("verify", "--slug", slug, "--kind", "quality-gate", "--base-ref", "HEAD")
+        self.assertEqual(verified.returncode, 0, marker + ": " + verified.stdout + verified.stderr)
         cleared = self.review(slug, wid, self.json_file("review-clear.json",
                                                         {"findings": [], "dispositions": []}))
         self.assertEqual(cleared.returncode, 0, marker + ": " + cleared.stdout + cleared.stderr)
@@ -1230,7 +1224,6 @@ class WorkflowRecovery(AttackHarness):
     def test_new_obligation_retains_measurements_and_blocks_closure(self) -> None:
         marker = "OBLIGATION_DISCARDED_RECEIPTS"
         slug, wid = self.settled()
-        self.ok("verify", "--slug", slug, "--", "git", "diff", "--check")
         self.ok("verify", "--slug", slug, "--kind", "quality-gate", "--base-ref", "HEAD")
         before = self.status()
         self.add_claim(slug, wid, "BM_SECOND")
@@ -1249,8 +1242,6 @@ class WorkflowRecovery(AttackHarness):
         intake = self.behavioral_intake(slug, wid, "app.value must be two")
         self.assertEqual(self.record_preflight(slug, wid, self.owned_map(intake, marker="VALUE_WRONG")).returncode, 0)
         self.drive_attack_green(slug, "VALUE_WRONG")
-        executed = self.cli("verify", "--slug", slug, "--", "git", "diff", "--check")
-        self.assertEqual(executed.returncode, 0, executed.stderr)
         self.ok("verify", "--slug", slug, "--kind", "quality-gate", "--base-ref", "HEAD")
         item = self.owned_map("unused", marker="MISSING")[0]
         item.update(id="BM_ADDITIONAL", kind="preservation", sourceRefs=[])
@@ -1274,25 +1265,6 @@ class WorkflowRecovery(AttackHarness):
             expected = "index file smaller than expected" if command[1] == "tdd-map" else "no current comparison"
             self.assertIn(expected, refused.stderr)
             self.assertNotIn("Traceback", refused.stderr)
-
-    def test_typed_only_and_explicit_failed_command_replacement(self) -> None:
-        marker = "VERIFICATION_CORRECTION_REFUSED"
-        slug, _ = self.settled()
-        self.ok("verify", "--slug", slug, "--kind", "quality-gate", "--base-ref", "HEAD")
-        self.assertEqual(self.status()["verification"], "passed", marker)
-        failed = self.cli("verify", "--slug", slug, "--", sys.executable, "-c", "import missing_module")
-        self.assertEqual(failed.returncode, 2)
-        receipt = json.loads(failed.stdout.splitlines()[-1])
-        reference = receipt["evidenceId"] + ":1"
-        fixed = self.cli("verify", "--slug", slug, "--replaces", reference,
-                         "--reason", "Correct the misspelled test module",
-                         "--", sys.executable, "-c", "import app")
-        self.assertEqual(fixed.returncode, 0, marker + fixed.stderr)
-        self.assertEqual(self.status()["verification"], "passed")
-        self.assertIn("qualityGateManifestId", self.status())
-        self.assertEqual(self.cli("verify", "--slug", slug, "--replaces", reference,
-                                 "--reason", "A stale correction", "--", sys.executable,
-                                 "-m", "unittest", "test_attack_probe").returncode, 2)
 
     def test_failed_settled_recheck_does_not_leave_green_proof(self) -> None:
         slug, _ = self.settled()

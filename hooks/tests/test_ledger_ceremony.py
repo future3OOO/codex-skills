@@ -8,7 +8,6 @@ those cases assert only what the wrapper itself emits and records.
 from __future__ import annotations
 
 import copy
-from contextlib import closing
 import io
 import itertools
 import json
@@ -369,9 +368,6 @@ class PreflightContinuation(Ceremony):
             self.assertNotIn("--design-absent", command, marker)
             self.assertNotIn("--reconsult", command, marker)
         self.assertIsNone(next_operation(identity, {**state, "phase": "complete"})["command"], marker)
-        observed = {"kind": "observed", "valid": True, "evidenceId": "observed-proof", "runIndex": 0}
-        self.assertIn("--from-evidence observed-proof:0", next_operation(identity, state, observed)["command"], marker)
-        self.assertIsNone(next_operation(identity, state, {**observed, "valid": False})["command"], marker)
 
 
 class AdvisorBounded(Ceremony):
@@ -435,7 +431,6 @@ class AdvisorDiffBounded(Ceremony):
             (self.repo / "test_app.py").write_text(TEST_APP + change, encoding="utf-8")
             invalidate_after_edit(identity, "test_app.py")
             record_context_forge(self.repo, self.tmp)
-            self.ok("verify", "--", sys.executable, "-c", "pass")
             self.ok("verify", "--kind", "quality-gate", "--base-ref", "HEAD")
             set_phase(identity, "code-review", "passed", findings="none")
             result, prompt = self.wrapper(mode, phase="final-review")
@@ -580,7 +575,7 @@ class NoEventSnapshots(Ceremony):
                                    cwd=legs[-1][0], env=self.env, capture_output=True, text=True)
             self.assertEqual(begun.returncode, 0, begun.stderr)
         for self.repo, old in legs:
-            evidence_id = self.ok("verify", "--", sys.executable, "-c", "pass")["evidenceId"]
+            evidence_id = self.ok("verify", "--base-ref", "HEAD")["evidenceId"]
             stored = self.ok("evidence", "--full", "--evidence-id", evidence_id)
             for args in (("status",), ("history",), ("summary",), ("evidence", "--evidence-id", evidence_id),
                          ("begin", "--slug", "again", "--intent", "n")):
@@ -667,8 +662,12 @@ class NoEventSnapshots(Ceremony):
 
 
 class EvidenceParts(Ceremony):
-    def verify(self, text: str, repo: Path | None = None) -> str:
-        result = self.cli("verify", "--", sys.executable, "-c", f"print({text!r})", cwd=repo)
+    def verify(self, text: str, *, touch: bool = True) -> str:
+        """A gate run naming `text` as its base; a touched tree keeps it from reusing the last run."""
+        if touch:
+            (self.repo / f"{text}.txt").write_text(text, encoding="utf-8")
+        self.git(self.repo, "tag", text)
+        result = self.cli("verify", "--base-ref", text)
         self.assertEqual(result.returncode, 0, result.stderr)
         return str(json.loads(result.stdout.strip().splitlines()[-1])["evidenceId"])
 
@@ -709,7 +708,8 @@ class EvidenceParts(Ceremony):
         evidence_id = self.state()["tddEvidence"]
         captured[evidence_id] = evidence_document(identity, evidence_id)
         self.assertEqual(self.rows_containing("unchanged item"), 1, f"{marker}: a map item is stored per document")
-        threads = [threading.Thread(target=self.verify, args=(f"CONCURRENT_{n}",)) for n in range(2)]
+        (self.repo / "concurrent.txt").write_text("both runs measure this tree", encoding="utf-8")
+        threads = [threading.Thread(target=self.verify, args=(f"CONCURRENT_{n}",), kwargs={"touch": False}) for n in range(2)]
         for thread in threads:
             thread.start()
         for thread in threads:
@@ -762,16 +762,11 @@ class StepRegistry(Ceremony):
         observed.append(self.snapshot())
         set_phase(identity, "tdd", "not-required")
         observed.append(self.snapshot())
-        self.cli("verify", "--slug", "ceremony", "--", sys.executable, "-c", "raise SystemExit(1)")
-        observed.append(self.snapshot())
-        self.ok("verify", "--slug", "ceremony", "--", sys.executable, "-c", "raise SystemExit(0)")
-        observed.append(self.snapshot())
         self.cli("verify", "--slug", "ceremony", "--kind", "quality-gate", "--base-ref", "HEAD")
         observed.append(self.snapshot())
         (self.repo / "app.py").write_text("value = 2\n", encoding="utf-8")
         invalidate_after_edit(identity, "app.py")
         observed.append(self.snapshot())
-        self.cli("verify", "--slug", "ceremony", "--", sys.executable, "-c", "raise SystemExit(0)")
         self.cli("verify", "--slug", "ceremony", "--kind", "quality-gate", "--base-ref", "HEAD")
         observed.append(self.snapshot())
         set_phase(identity, "code-review", "passed", findings="none")
@@ -796,9 +791,7 @@ EXPECTED_MATRIX: list[dict[str, object]] = json.loads(r'''[
  {"next":"preflight","blockers":["preflight","tdd","verification"],"edit":[false,["production preflight"]],"complete":"workflow incomplete: preflight, verification, tdd, codeReview, finalReview"},
  {"next":"verification","blockers":["verification"],"edit":[true,[]],"complete":"workflow incomplete: verification, codeReview, finalReview"},
  {"next":"verification","blockers":["verification"],"edit":[true,[]],"complete":"workflow incomplete: verification, codeReview, finalReview"},
- {"next":"verification","blockers":["verification"],"edit":[true,[]],"complete":"workflow incomplete: verification, codeReview, finalReview"},
- {"next":"verification","blockers":["verification"],"edit":[true,[]],"complete":"workflow incomplete: verification, codeReview, finalReview"},
- {"next":"verification","blockers":["verification"],"edit":[true,[]],"complete":"workflow incomplete: verification, codeReview, finalReview"},
+ {"next":"code-review","blockers":[],"edit":[true,[]],"complete":"workflow incomplete: codeReview, finalReview"},
  {"next":"verification","blockers":["verification"],"edit":[true,[]],"complete":"workflow incomplete: verification, codeReview, finalReview, repoContextForge"},
  {"next":"code-review","blockers":[],"edit":[true,[]],"complete":"workflow incomplete: codeReview, finalReview"},
  {"next":"final-review","blockers":[],"edit":[true,[]],"complete":"workflow incomplete: finalReview"},
@@ -1011,202 +1004,58 @@ class AdvisoryDedup(Ceremony):
         self.assertEqual((proc.returncode, "BrokenPipeError" in err), (0, False), "EDIT_FAILS_ON_CLOSED_STDOUT: " + err[-200:])
 
 
-class ObservedCapture(Ceremony):
-    def hook(self, command: str, cwd: Path, session: str = "ceremony-lead") -> dict[str, object]:
-        result = subprocess.run([sys.executable, str(PRE_TOOL)], env=self.env, capture_output=True, text=True,
-                                input=json.dumps({"tool_name": "Bash", "session_id": session, "cwd": str(cwd),
-                                                  "tool_input": {"command": command}}))
-        self.assertEqual(result.returncode, 0, result.stderr)
-        return json.loads(result.stdout).get("hookSpecificOutput", {}) if result.stdout.strip() else {}
-
-    def test_lone_test_command_becomes_a_receipt_in_its_own_checkout(self) -> None:
-        marker = "OBSERVED_RECEIPT_MISSING"
-        command = f"{sys.executable} -m unittest -v test_app"
-        session_root = self.make_repo("session-root")
-        self.begin(session_root, slug="session")
-        session_rows = self.rows(session_root)
+class TypedGate(Ceremony):
+    def test_verify_records_only_the_typed_gate(self) -> None:
+        marker = "VERIFY_RECORDS_A_REMOVED_FORM"
         self.begin()
-        self.record_preflight({"authoritativeContract": "c", "behaviorMap": [item("BM_ONE")]})
-        spec = self.hook(command, session_root)
-        self.assertEqual(spec.get("permissionDecision"), "allow", f"{marker}: {spec}")
-        rewritten = str(spec["updatedInput"]["command"])
-        verification = self.state()["verification"]
-        observed = subprocess.run(["bash", "-c", rewritten], cwd=self.repo, env=self.env, capture_output=True, text=True)
-        direct = subprocess.run(["bash", "-c", command], cwd=self.repo, env=self.env, capture_output=True, text=True)
-        self.assertEqual(observed.returncode, direct.returncode, marker)
-        self.assertIn("VALUE_NOT_TWO", observed.stdout + observed.stderr, marker)
-        self.assertIn("workflow.py tdd --repo", observed.stderr, "OBSERVATION_BYPASSES_TDD")
-        self.assertIn("--behavior-id ID (repeatable; recorded: BM_ONE) -- COMMAND", observed.stderr, "COMPARISON_INPUTS_HIDDEN")
-        state = self.state()
-        self.assertEqual(state["verification"], verification, f"{marker}: observation changed verification")
-        runs = evidence_document(resolve_repo_identity(self.repo), str(state["verificationLatestEvidence"]))["runs"]
-        self.assertEqual((runs[-1]["kind"], runs[-1]["command"]), ("observed", command), marker)
-        self.assertTrue(runs[-1].get("treeManifestId"), marker)
-        self.assertEqual(self.rows(session_root), session_rows, f"{marker}: receipt landed in the session root")
-        codex_home = self.tmp / "codex"
-        codex_home.mkdir()
-        with sqlite3.connect(codex_home / "state_5.sqlite") as connection:
-            connection.execute("CREATE TABLE threads (id TEXT PRIMARY KEY, source TEXT)")
-            connection.executemany("INSERT INTO threads VALUES (?, ?)", [
-                ("resumed-lead", "cli"), ("reviewer", '{"subagent":"review"}')])
-        self.env["CODEX_HOME"] = str(codex_home)
-        resumed = subprocess.run(["bash", "-c", rewritten], cwd=self.repo, capture_output=True, text=True,
-                                 env={**self.env, "CODEX_THREAD_ID": "resumed-lead"})
-        self.assertIn("VALUE_NOT_TWO", resumed.stdout + resumed.stderr, marker)
-        self.assertIn("workflow observed receipt", resumed.stderr, "RESUMED_LEAD_RECEIPT_LOST")
-        rows = self.rows()
-        reviewer = subprocess.run(["bash", "-c", rewritten], cwd=self.repo, capture_output=True, text=True,
-                                  env={**self.env, "CODEX_THREAD_ID": "reviewer"})
-        self.assertIn("VALUE_NOT_TWO", reviewer.stdout + reviewer.stderr, f"{marker}: reviewer run refused")
-        self.assertEqual(self.rows(), rows, f"{marker}: reviewer run recorded in the lead's ledger")
-        with closing(sqlite3.connect(codex_home / "state_5.sqlite")) as connection:
-            connection.execute("BEGIN EXCLUSIVE")
-            locked = subprocess.run(["bash", "-c", rewritten], cwd=self.repo, capture_output=True, text=True,
-                                    env={**self.env, "CODEX_THREAD_ID": "resumed-lead"})
-            self.assertEqual(locked.returncode, direct.returncode)
-            self.assertIn("VALUE_NOT_TWO", locked.stdout + locked.stderr, "IDENTITY_LOOKUP_BLOCKED_COMMAND")
-            self.assertEqual(self.rows(), rows, "UNAVAILABLE_IDENTITY_RECORDED_A_RECEIPT")
-        self.assertNotIn("permissionDecision", self.hook(f"git status; {command}", self.repo),
-                         f"{marker}: composed test command refused")
-        reference = f"{state['verificationLatestEvidence']}:{runs[-1]['runIndex']}"
-        (self.repo / "app.py").write_text("value = 2\nother = 1\n", encoding="utf-8")
-        passing = subprocess.run(["bash", "-c", rewritten], cwd=self.repo, env=self.env, capture_output=True, text=True)
-        self.assertEqual(passing.returncode, 0, passing.stdout + passing.stderr)
-        self.assertIn("workflow.py tdd --repo", passing.stderr, "OBSERVATION_BYPASSES_TDD")
-        state = self.state()
-        latest = evidence_document(resolve_repo_identity(self.repo), str(state["verificationLatestEvidence"]))["runs"][-1]
-        self.ok("verify", "--from-evidence", f"{state['verificationLatestEvidence']}:{latest['runIndex']}")
-        self.assertEqual(self.state()["verification"], "passed", marker)
-        refused = self.cli("verify", "--from-evidence", reference)
-        self.assertNotEqual(refused.returncode, 0, f"{marker}: a receipt of another tree was bound")
-        for unchanged in (f"cd {self.repo} && {command}", rewritten, f"{sys.executable} {WORKFLOW} tdd -- {command}",
-                          f"{command} test_*.py", f"{command} # note", f"{command} ~/tests", f"{command} test_{{a,b}}"):
-            self.assertNotIn("updatedInput", self.hook(unchanged, self.repo), f"{marker}: rewrote {unchanged!r}")
+        passing, failing = (sys.executable, "-c", "pass"), (sys.executable, "-c", "raise SystemExit(1)")
 
-    def test_a_carriage_return_stays_with_the_shell(self) -> None:
-        # bash passes `-q\rtests` to pytest as one argument; split, it would select tests
-        self.assertNotIn("updatedInput", self.hook("pytest -q\rtests", self.repo), "CARRIAGE_RETURN_REWRITTEN")
+        def latest() -> str:  # the latest recorded run, as the binding forms name it
+            evidence = self.state().get("verificationLatestEvidence")
+            runs = evidence_document(resolve_repo_identity(self.repo), str(evidence))["runs"] if evidence else []
+            return f"{evidence}:{len(runs) - 1}"
+        for form in (lambda: ("--", *passing), lambda: ("--observed", "--", *failing), lambda: ("--kind", "generic", "--", *passing),
+                     lambda: ("--replaces", "e:0", "--reason", "r", "--", *passing), lambda: ("--from-evidence", latest()),
+                     lambda: ("--from-evidence", latest())):
+            args = form()
+            with self.subTest(form=args[0]):
+                rows = self.rows()
+                refused = self.cli("verify", *args)
+                self.assertEqual((refused.returncode, self.rows()), (2, rows), marker)
+        gated = self.ok("verify", "--base-ref", "HEAD")
+        runs = evidence_document(resolve_repo_identity(self.repo), str(gated["evidenceId"]))["runs"]
+        self.assertEqual(([run["kind"] for run in runs], self.state()["verification"]), (["quality-gate"], "passed"), marker)
 
-class ObservedDrift(Ceremony):
-    def test_a_run_spanning_an_edit_binds_nothing(self) -> None:
-        marker = "OBSERVED_DRIFT_BOUND"
+    def test_verify_reuses_a_passed_gate_only_for_the_same_inputs(self) -> None:
+        marker = "GATE_REUSE_WRONG"
         self.begin()
-        edit = "open('app.py', 'a').write('# drift\\n')"
-        observed = self.cli("verify", "--observed", "--", sys.executable, "-c", edit)
-        self.assertEqual(observed.returncode, 0, f"{marker}: {observed.stderr[-300:]}")
-        state = self.state()
-        run = evidence_document(resolve_repo_identity(self.repo), str(state["verificationLatestEvidence"]))["runs"][-1]
-        self.assertTrue(run.get("bindingError"), f"{marker}: {run}")
-        bound = self.cli("verify", "--from-evidence", f"{state['verificationLatestEvidence']}:{run['runIndex']}")
-        self.assertNotEqual(bound.returncode, 0, marker)
-        self.assertEqual(self.state()["verification"], "pending", marker)
+        runs = lambda: evidence_document(resolve_repo_identity(self.repo), str(self.state()["verificationLatestEvidence"]))["runs"]
+        first = self.ok("verify", "--base-ref", "HEAD")
+        again = self.ok("verify", "--base-ref", "HEAD")
+        self.assertEqual((again.get("reused"), again["evidenceId"], len(runs())), (True, first["evidenceId"], 1), marker)
+        invalid = self.cli("verify", "--base-ref", "does-not-exist")
+        self.assertEqual((invalid.returncode, len(runs())), (2, 2), marker)
+        self.ok("verify", "--base-ref", "HEAD")
+        self.git(self.repo, "branch", "moving")
+        self.assertTrue(self.ok("verify", "--base-ref", "moving").get("reused"), marker)
+        self.git(self.repo, "commit", "-q", "--allow-empty", "-m", "moved")
+        self.git(self.repo, "branch", "-f", "moving", "HEAD")
+        moved = self.ok("verify", "--base-ref", "moving")
+        self.assertEqual((moved.get("reused"), len(runs())), (None, 4), f"{marker}: a moved base reused the gate")
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.repo, capture_output=True, text=True).stdout.strip()
+        self.assertEqual(shlex.split(runs()[-1]["command"])[-1], head, f"{marker}: the gate checked a mutable base spelling")
+        (self.repo / "app.py").write_text("value = 3\nother = 1\n", encoding="utf-8")
+        edited = self.ok("verify", "--base-ref", "moving")
+        self.assertEqual((edited.get("reused"), len(runs())), (None, 5), f"{marker}: an edited tree reused the gate")
 
-    def test_a_run_that_executed_no_tests_binds_nothing(self) -> None:
-        marker = "ZERO_TEST_RUN_PROMOTED"
+    def test_intake_hook_leaves_test_commands_unchanged(self) -> None:
+        marker = "TEST_COMMAND_REWRITTEN"
         self.begin()
-        (self.repo / ".git" / "info" / "exclude").write_text(".pytest_cache/\n", encoding="utf-8")
-        (self.tmp / "empty").mkdir()
-        pytest = (sys.executable, "-m", "pytest")
-        for command in ((*pytest, "--collect-only", "-q"), (*pytest, "--co"), (*pytest, "--collectonly"),
-                        (*pytest, "--cache-show"), (*pytest, "--fixtures"), (*pytest, "-VV"),
-                        (sys.executable, "-m", "unittest", "discover", "-s", str(self.tmp / "empty"))):
-            direct = self.cli("verify", "--", *command)
-            self.cli("verify", "--observed", "--", *command)
-            receipt = str(self.state()["verificationLatestEvidence"])
-            run = evidence_document(resolve_repo_identity(self.repo), receipt)["runs"][-1]
-            self.assertNotIn("bindingError", run, f"fixture drift: {run.get('bindingError')}")
-            bound = self.cli("verify", "--from-evidence", f"{receipt}:{run['runIndex']}")
-            self.assertEqual((run["valid"], bound.returncode, direct.returncode), (False, 2, 2),
-                             f"{marker}: {' '.join(command[1:])} exit {run['exitCode']}")
-            self.assertNotEqual(self.state()["verification"], "passed", marker)
-
-    def test_a_command_naming_a_runner_is_not_a_runner_run(self) -> None:
-        self.begin()
-        for command in (("echo", "pytest"), ("echo", sys.executable, "-m", "unittest"), ("env", "echo", "pytest"),
-                        ("timeout", "5", "echo", "pytest"), (sys.executable, "-c", "print('ok')", "pytest")):
-            self.assertEqual(self.cli("verify", "--", *command).returncode, 0, f"RUNNER_ARGUMENT_REFUSED: {command}")
-
-    def test_a_run_binds_to_the_pass_it_names_or_ran_under(self) -> None:
-        marker = "RUN_CREDITED_TO_ANOTHER_PASS"
-        self.begin()
-        before = self.rows()
-        named = self.cli("verify", "--workflow-id", "another-pass", "--", sys.executable, "-c", "pass")
-        self.assertEqual(named.returncode, 2, f"{marker}: {named.stdout[-300:]}")
-        self.assertIn("--workflow-id does not match", named.stderr, marker)
-        self.assertEqual(self.rows(), before, marker)
-        observed = self.cli("verify", "--observed", "--", sys.executable, str(WORKFLOW), "begin", "--slug", "later",
-                            "--intent", "n")
-        self.assertEqual(observed.returncode, 0, observed.stderr)
-        state = self.state()
-        self.assertEqual(state["slug"], "later", marker)
-        self.assertIsNone(state.get("verificationLatestEvidence"), f"{marker}: the new pass got the earlier run")
-
-    def test_a_bound_receipt_replaces_its_failed_invocation(self) -> None:
-        marker = "BOUND_REPLACEMENT_DROPPED"
-        self.begin()
-        failed = self.cli("verify", "--", sys.executable, "-c", "raise SystemExit(1)")
-        failure = json.loads(failed.stdout.strip().splitlines()[-1])
-        self.cli("verify", "--observed", "--", sys.executable, "-c", "pass")
-        receipt = str(self.state()["verificationLatestEvidence"])
-        index = evidence_document(resolve_repo_identity(self.repo), receipt)["runs"][-1]["runIndex"]
-        self.ok("verify", "--from-evidence", f"{receipt}:{index}", "--replaces",
-                f"{failure['evidenceId']}:{failure['runIndex']}", "--reason", "the rerun passes")
-        state = self.state()
-        run = evidence_document(resolve_repo_identity(self.repo), str(state["verificationLatestEvidence"]))["runs"][-1]
-        self.assertEqual(run.get("replaces"), f"{failure['evidenceId']}:{failure['runIndex']}", marker)
-        self.assertEqual(state["verification"], "passed", marker)
-
-
-class ObservedPassthrough(Ceremony):
-    def test_without_a_readable_workflow_the_command_is_transparent(self) -> None:
-        marker = "OBSERVED_NOT_TRANSPARENT"
-        probe = "import sys; print('out'); print('err', file=sys.stderr); sys.exit(3)"
-        for cwd in (self.repo, self.tmp):
-            result = self.cli("verify", "--observed", "--", sys.executable, "-c", probe, cwd=cwd)
-            self.assertEqual((result.returncode, result.stdout, result.stderr), (3, "out\n", "err\n"), f"{marker}: {result}")
-        self.assertFalse((self.tmp / "state").exists(), f"{marker}: recorded outside a workflow")
-        self.begin()
-        with sqlite3.connect(database_path(resolve_repo_identity(self.repo))) as connection:
-            connection.execute("UPDATE workflows SET state_json = json_set(state_json, '$.schemaVersion', 99)")
-        result = self.cli("verify", "--observed", "--", sys.executable, "-c", probe)
-        self.assertEqual((result.returncode, result.stdout), (3, "out\n"), f"{marker}: unreadable ledger {result}")
-
-    def test_other_flags_are_refused_beside_observed(self) -> None:
-        marker = "OBSERVED_FLAG_OVERRIDDEN"
-        self.begin()
-        before = self.rows()
-        for flags in (("--workflow-id", "another-pass"), ("--slug", "other"), ("--repo", str(self.tmp)),
-                      ("--timeout", "1"), ("--kind", "quality-gate")):
-            refused = self.cli("verify", "--observed", *flags, "--", sys.executable, "-c", "pass")
-            self.assertEqual(refused.returncode, 2, f"{marker}: {flags} {refused.stderr[-300:]}")
-            self.assertIn("--observed", refused.stderr, f"{marker}: {flags}")
-        self.assertEqual(self.rows(), before, f"{marker}: a refused observed run recorded")
-
-
-class ObservedInWorkflow(Ceremony):
-    def test_observed_runs_stream_die_with_their_group_and_leave_replacement_intact(self) -> None:
-        marker = "OBSERVED_RUN_DIVERGES_FROM_DIRECT"
-        self.begin()
-        done = self.tmp / "survived"
-        slow = f"import time; print('early', flush=True); time.sleep(3); open({str(done)!r}, 'w').close()"
-        process = subprocess.Popen([sys.executable, str(WORKFLOW), "verify", "--observed", "--", sys.executable, "-c", slow],
-                                   cwd=self.repo, env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                   start_new_session=True)
-        early, streamed = process.stdout.readline(), not done.exists()
-        os.killpg(process.pid, 9)  # Codex stops a command by killing its process group
-        process.wait()
-        time.sleep(4)
-        self.assertEqual((early, streamed, done.exists()), (b"early\n", True, False),
-                         f"{marker}: {early!r} streamed={streamed} survived={done.exists()}")
-        failing = [sys.executable, "-c", "import sys; sys.exit(1)"]
-        failed = self.cli("verify", "--", *failing)
-        self.assertEqual(failed.returncode, 2, marker)
-        reference = json.loads(failed.stdout.strip().splitlines()[-1])
-        self.cli("verify", "--observed", "--", *failing)
-        replaced = self.cli("verify", "--replaces", f"{reference['evidenceId']}:{reference['runIndex']}",
-                            "--reason", "corrected command", "--", sys.executable, "-c", "pass")
-        self.assertEqual(replaced.returncode, 0, f"{marker}: {replaced.stderr[-300:]}")
-        self.assertEqual(self.state()["verification"], "passed", marker)
+        for command in (f"{sys.executable} -m unittest -v test_app", "pytest -q test_app.py"):
+            hooked = subprocess.run([sys.executable, str(PRE_TOOL)], env=self.env, capture_output=True, text=True,
+                                    input=json.dumps({"tool_name": "Bash", "session_id": "ceremony-lead", "cwd": str(self.repo),
+                                                      "tool_input": {"command": command}}))
+            self.assertEqual((hooked.returncode, "updatedInput" in hooked.stdout), (0, False), f"{marker}: {command}")
 
     def gate(self, copies: int = 0, *flags: str) -> subprocess.CompletedProcess[str]:
         """Typed verify over three duplicated sources, eleven escapes and `copies` long-named copies."""
@@ -1448,7 +1297,6 @@ class MinimalDocuments(Ceremony):
         recorded = self.cli("record", "preflight", "--input", "-", input=json.dumps(document))
         self.assertEqual(recorded.returncode, 0, f"{marker}: {recorded.stderr[-300:]}")
         self.assertNotIn("intent", recorded.stdout, f"{marker}: the preflight receipt echoes the intent")
-        self.ok("verify", "--", sys.executable, "-c", "pass")
         self.ok("verify", "--kind", "quality-gate", "--base-ref", "HEAD")
         review = {"findings": [{"id": "R-1", "claim": "a real claim", "material": True,
                                 "axis": "Spec", "location": "extra context is dropped"}]}
@@ -1500,7 +1348,7 @@ class DerivedIdentity(Ceremony):
         paused = self.cli("pause", "--reason", "waiting")
         self.assertEqual(paused.returncode, 0, f"{marker}: {paused.stderr[-300:]}")
         self.assertEqual(self.cli("pause", "--slug", "another", "--reason", "x").returncode, 2, marker)
-        self.ok("verify", "--", sys.executable, "-c", "pass")
+        self.ok("verify", "--base-ref", "HEAD")
         self.ok("record", "advisor-result", "--stage", "preflight", "--source", "codex-advisor", "--input", "-",
                 input=json.dumps({"schemaVersion": 1, "verdict": "completed", "findings": []}))
         self.assertEqual(self.state()["advisorPreflight"]["status"], "completed", marker)
