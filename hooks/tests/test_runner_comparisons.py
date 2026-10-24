@@ -1591,7 +1591,7 @@ class ReadinessTests(unittest.TestCase):
             self.assertEqual(len(self.open_lines(receipt)), 1, marker + ": " + body + json.dumps(receipt))
             [line] = self.open_lines(receipt)
             self.assertIn("BM_EDGE (preservation)", line, marker)
-            self.assertIn("test_edge", line.split(";", 1)[1], marker + ": " + line)
+            self.assertIn("test_edge", line.split(": ", 1)[1], marker + ": " + line)
         self.probe("def test_edge(self): self.assertEqual(app.value, 1)")
         receipt = self.tdd("BM_EDGE")
         self.assertEqual((self.open_lines(receipt), self.status()["tdd"]), ([], "passed"), marker + ": " + json.dumps(receipt))
@@ -1893,7 +1893,7 @@ class ReadinessTests(unittest.TestCase):
         receipt = self.tdd("BM_CHANGE", "BM_KEEP")
         lines = self.open_lines(receipt)
         self.assertEqual([line.split(" ")[0] for line in lines], ["BM_CHANGE", "BM_KEEP"], marker + ": " + json.dumps(receipt))
-        self.assertTrue(all(" => " not in line and ";" in line for line in lines), marker + ": " + json.dumps(lines))
+        self.assertTrue(all(" => " not in line for line in lines), marker + ": " + json.dumps(lines))
         self.assertIn("test_kept missing on original, current", lines[1], marker)
         self.assertNotIn("MC/DC contexts", json.dumps(receipt), marker)
         status = json.loads(self.case.cli("status", "--repo", str(self.repo), "--fields", "nextAction,tdd").stdout)
@@ -2011,6 +2011,7 @@ class ChangedCodeTests(unittest.TestCase):
                 self.assertIn(line, receipt["open"], marker + json.dumps(receipt))
                 status = json.loads(self.case.cli("status", "--repo", str(self.repo), "--fields", "tdd").stdout)
                 self.assertEqual(status["tdd"], "in-progress", marker)
+                self.assertIn("workflow incomplete: " + line + ",", self.case.cli("complete", "--repo", str(self.repo)).stderr, marker)
                 update = self.case.tmp / "named.json"
                 update.write_text(json.dumps({"items": [{"id": "BM_VALUE", "boundaryInputs": ["test_value"]}]}))
                 self.case.cli("record", "tdd-map", "--repo", str(self.repo), "--input", str(update))
@@ -2172,6 +2173,10 @@ class ChangedCodeTests(unittest.TestCase):
         repeated = "def admit(a, b, c):\n    if a.pop() or a.pop():\n        return 1\n    return 0\n"
         popped = self.condition_setup(repeated, repeated.replace("a.pop() or a.pop()", "a.pop()"), [("pops", "([True, False], None, None)")])
         self.assertIn("removed conditions not measured: `a.pop()` (app.py:2)", popped["limitations"], marker + json.dumps(popped))
+        self.setUp()
+        chain = "def admit(a, b, c):\n    if b or 0 < a < 10:\n        return 1\n    return 0\n"
+        chained = self.condition_setup(chain, chain.replace("b or 0 < a < 10", "b"), [("outside", "(20, False, None)")])
+        self.assertIn("removed conditions not measured: `0 < a < 10` (app.py:2)", chained["limitations"], marker + json.dumps(chained))
         for expression, declaration in (("a.ready", "    @property\n    def ready(self):"), ("a[0]", "    def __getitem__(self, key):"),
                                         ("a", "    def __bool__(self):")):
             self.setUp()

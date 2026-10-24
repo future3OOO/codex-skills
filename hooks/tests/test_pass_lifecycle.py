@@ -1287,7 +1287,7 @@ class PassLifecycleTests(unittest.TestCase):
         slug = json.loads(self.cli("status").stdout)["slug"]
         return subprocess.run(
             [sys.executable, str(WORKFLOW), "verify", "--repo", str(self.repo),
-             "--slug", slug, "--base-ref", "HEAD"],
+             "--slug", slug, "--kind", "quality-gate", "--base-ref", "HEAD"],
             cwd=ROOT, env=self.env, text=True,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
         )

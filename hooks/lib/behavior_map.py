@@ -403,7 +403,8 @@ def producer_proved(entry: JsonObject) -> bool:
 
 
 def unresolved(items: list[JsonObject]) -> list[str]:
-    return [line.split(" ", 1)[0] for line in open_obligations(items)]
+    ids = {str(entry["id"]) for entry in items}
+    return [head if (head := line.split(" ", 1)[0]) in ids else line for line in open_obligations(items)]
 
 
 def never_compared(items: list[JsonObject]) -> list[str]:

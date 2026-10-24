@@ -178,8 +178,9 @@ def _truth(node: ast.expr, known: dict[str, bool]) -> bool | None:
 def judge(decisions: list[JsonObject], traced: dict[str, list[JsonObject]] | None) -> list[JsonObject]:
     """Each removed operand: decided True when some traced evaluation showed it at its deciding value while
     the original and paired candidate decisions differ; False when every evaluation shows it did not (or
-    none reached it); None when unmeasured: no trace, no paired decision, an unpaired repeated operand, or
-    a truth left unknown, including a repeated operand's whose occurrences the trace cannot tell apart."""
+    none reached it); None when unmeasured: no trace, no paired decision, an unpaired repeated operand, a
+    chained comparison (its jumps share one position), or a truth left unknown, including a repeated
+    operand's whose occurrences the trace cannot tell apart."""
     results = []
     for index, decision in enumerate(decisions):
         test = ast.parse(str(decision["test"]), mode="eval").body
@@ -187,7 +188,7 @@ def judge(decisions: list[JsonObject], traced: dict[str, list[JsonObject]] | Non
         spans = {tuple(node[:4]): (node[4], node[5]) for node in decision["nodes"]}
         evaluations = (traced or {}).get(str(index), [])
         for removed in decision["removed"]:
-            if removed["unpaired"]:
+            if removed["unpaired"] or any(isinstance(node, ast.Compare) and len(node.ops) > 1 for node in ast.walk(test)):
                 results.append({"label": removed["label"], "decided": None})
                 continue
             operand = ast.parse(str(removed["operand"]), mode="eval").body

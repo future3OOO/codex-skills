@@ -379,6 +379,8 @@ class PreflightContinuation(Ceremony):
         identity = resolve_repo_identity(self.repo)
         declared = evidence_document(identity, self.state()["governedDesignEvidence"])
         self.assertEqual(declared["status"], "present", marker)
+        self.wrapper("approved", "--reconsult", design=())  # refused or inheriting, never a replacement
+        self.assertEqual(evidence_document(identity, self.state()["governedDesignEvidence"]), declared, f"{marker}: reconsult dropped the design")
         advisor_disposition(identity, "ceremony", self.state()["workflowId"], "preflight", "none")
         self.record_preflight({"authoritativeContract": "c", "behaviorMap": []})
         record_context_forge(self.repo, self.tmp)
@@ -764,9 +766,9 @@ class EvidenceParts(Ceremony):
     def verify(self, text: str, *, touch: bool = True) -> str:
         """A gate run naming `text` as its base; a touched tree keeps it from reusing the last run."""
         if touch:
-            (self.repo / f"{text}.txt").write_text(text, encoding="utf-8")
+            (self.repo / "touched.txt").write_text(text, encoding="utf-8")
         self.git(self.repo, "tag", text)
-        result = self.cli("verify", "--base-ref", text)
+        result = self.cli("verify", "--kind", "quality-gate", "--base-ref", text)
         self.assertEqual(result.returncode, 0, result.stderr)
         return str(json.loads(result.stdout.strip().splitlines()[-1])["evidenceId"])
 

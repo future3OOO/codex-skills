@@ -28,6 +28,7 @@ from .workflow_documents import (
 )
 from .workflow_state import (
     WorkflowError,
+    _evidence_ready,
     _require_instance,
     _tree_drift,
     advisor_disposition,
@@ -205,7 +206,7 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
         raise ValueError("quality-gate verification needs the recorded base or --base-ref")
     base = subprocess.run(["git", "-C", str(identity.root), "rev-parse", "--verify", "--quiet", "--end-of-options",
                            f"{args.base_ref}^{{commit}}"], capture_output=True, text=True, check=False).stdout.strip()
-    passed = evidence_document(identity, state.get("qualityGateEvidence")) if state.get("verification") == "passed" else None
+    passed = evidence_document(identity, state.get("qualityGateEvidence")) if _evidence_ready(state, "verification") else None
     last = (passed or {}).get("runs", [{}])[-1]
     if base and last.get("valid") is True and last.get("baseCommit") == base and _tree_drift(
             identity, state, field="qualityGateManifestId", missing="missing", stale="stale") is None:

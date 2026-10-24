@@ -61,7 +61,7 @@ if [[ -n "$design_file" && -n "$design_absent" ]]; then
   exit 2
 fi
 if [[ -n "$phase" ]]; then
-  if [[ "$phase" == preflight-advice && -z "$design_file" && -z "$design_absent" ]]; then
+  if [[ "$phase" == preflight-advice && -z "$design_file" && -z "$design_absent" && ${#reconsult_args[@]} -eq 0 ]]; then
     design_absent="single-PR pass: the preflight contract is the plan"
   fi
   if [[ -n "$design_file" && ! ( -f "$design_file" && -r "$design_file" && -s "$design_file" ) ]]; then
