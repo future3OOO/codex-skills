@@ -17,7 +17,7 @@ if [[ -n "${CODEX_ADVISOR_ACTIVE:-}${ADVISOR_ACTIVE:-}" ]]; then
 fi
 
 slug=""; phase=""; cwd="$PWD"; design_file=""; design_absent=""; budget=600; fresh=0; question=""
-reconsult_args=(); preflight_file=""; draft_args=()
+reconsult_args=(); preflight_file=""; draft_args=(); submitted_args=()
 provider="${CODEX_ADVISOR_PROVIDER:-${ADVISOR_PROVIDER:-codex}}"
 codex_model="${CODEX_ADVISOR_MODEL:-gpt-6-astra}"
 codex_effort="${CODEX_ADVISOR_EFFORT:-xhigh}"
@@ -139,7 +139,8 @@ fi
 if [[ "$phase" == preflight-advice ]]; then
   [[ -n "$preflight_file" ]] || { printf 'error: preflight-advice requires --preflight-file\n' >&2; exit 2; }
   snapshot_file "$preflight_file" "$transport_dir/preflight.json" "preflight draft"
-  draft_args=(--preflight-file "$transport_dir/preflight.json")
+  cp "$transport_dir/preflight.json" "$transport_dir/submitted.json"
+  draft_args=(--preflight-file "$transport_dir/preflight.json"); submitted_args=(--submitted-draft "$transport_dir/submitted.json")
 elif [[ -n "$preflight_file" ]]; then
   printf 'error: --preflight-file requires preflight-advice\n' >&2; exit 2
 fi
@@ -401,7 +402,7 @@ else
   if ! python3 "$workflow_cli" record advisor-result --repo "$repo_root" --slug "$producer_slug" \
       --workflow-id "$active_wid" --stage "$record_stage" --source codex-advisor \
       --input "$output_file" --design-declaration "$design_declaration_file" \
-      --expected-candidate-tree "$candidate" "${draft_args[@]}" >"$transport_dir/receipt.json"; then
+      --expected-candidate-tree "$candidate" "${draft_args[@]}" "${submitted_args[@]}" >"$transport_dir/receipt.json"; then
     cat "$output_file"
     exit 2
   fi

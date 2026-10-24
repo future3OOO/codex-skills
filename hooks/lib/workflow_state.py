@@ -1080,6 +1080,12 @@ def _register_finding_intake(
     return reference
 
 
+def draft_diff(before: JsonObject, after: JsonObject, source: str, target: str) -> str:
+    return "".join(difflib.unified_diff(json.dumps(before, sort_keys=True, indent=2).splitlines(keepends=True),
+                                        json.dumps(after, sort_keys=True, indent=2).splitlines(keepends=True),
+                                        fromfile=source, tofile=target))
+
+
 def record_advisor_result(
     identity: RepoIdentity,
     slug: str,
@@ -1094,6 +1100,7 @@ def record_advisor_result(
     intake: JsonObject | None = None,
     expected_candidate_tree: str | None = None,
     preflight_draft: JsonObject | None = None,
+    submitted_draft: JsonObject | None = None,
 ) -> JsonObject:
     if source not in REVIEW_SOURCES:
         raise ValueError(f"unsupported reviewer source: {source}")
@@ -1143,6 +1150,8 @@ def record_advisor_result(
                     raise WorkflowError("the second preflight consult is the last: the advisor edits the draft "
                                         "in place and returns approved")
                 intake["preflightDraft"] = preflight_draft
+                if submitted_draft not in (None, preflight_draft):  # the last round's in-place edits
+                    intake["draftEdits"] = draft_diff(submitted_draft, preflight_draft, "submitted-draft", "approved-draft")
                 state["preflightRounds"] = int(state.get("preflightRounds", 0)) + 1
             measured_reason = str(reason or "").strip() or None
             if verdict == "unavailable" and not measured_reason:
@@ -1928,10 +1937,7 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
         if prior is not None:
             map_content = {"digest": draft_id,
                            "baseDigest": evidence_write(str(workflow_id), "preflight-draft", prior).evidence_id,
-                           "delta": "".join(difflib.unified_diff(
-                               json.dumps(prior, sort_keys=True, indent=2).splitlines(keepends=True),
-                               json.dumps(preflight_draft, sort_keys=True, indent=2).splitlines(keepends=True),
-                               fromfile="last-recorded-draft", tofile="current-draft"))}
+                           "delta": draft_diff(prior, preflight_draft, "last-recorded-draft", "current-draft")}
     since = state.get("judgedBase" if state.get("nextAction") == "appeal-final-review" else "judgedTree") \
         if phase == "final-review" else None
     values: dict[str, tuple[object, object]] = {

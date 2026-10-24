@@ -352,17 +352,17 @@ def open_obligations(items: list[JsonObject]) -> list[str]:
     lines: list[str] = []
     folded: dict[object, dict[str, dict[str, JsonObject]]] = {}
     for entry in items:
-        head = f"{entry['id']} ({entry.get('kind') or 'kind?'}): {entry['behavior']} => {entry['expected']}; "
+        head = f"{entry['id']} ({entry.get('kind') or 'kind?'}): "
         comparison = entry.get("comparison") or {}
         if comparison.get("arms") and comparison.get("runIndex") not in folded:
             folded[comparison.get("runIndex")] = folded_cases(comparison)[0]
         cases = folded.get(comparison.get("runIndex"), {}) if comparison.get("arms") else {}
         if entry.get("kind") not in KINDS:
-            lines.append(head + "declare kind (contract or preservation) through record tdd-map")
+            reason = "declare kind (contract or preservation) through record tdd-map"
         elif entry.get("boundaryInputs") == []:
-            lines.append(head + "recorded boundary inputs are not executed case names: map them through record tdd-map")
+            reason = "recorded boundary inputs are not executed case names: map them through record tdd-map"
         elif readings_unsettled(entry):
-            lines.append(head + "readings unsettled: " + " | ".join(entry["interpretations"]) + " - record interpretation and authority")
+            reason = "readings unsettled: " + " | ".join(entry["interpretations"]) + " - record interpretation and authority"
         elif not producer_proved(entry):
             reason = ("comparison stale (production, probe or obligation changed): rerun it" if comparison.get("valid")
                       else "no current valid comparison")
@@ -371,11 +371,14 @@ def open_obligations(items: list[JsonObject]) -> list[str]:
                     f"{name} " + ", ".join(f"{_state(cases.get(case, {}).get(label))} on {label}" for label in ("original", "current"))
                     for name in entry["boundaryInputs"]
                     for case in [next(iter(_matched(name, cases)[0]), None)])
-            elif entry.get("boundaryInputs"):
-                reason += "; its cases: " + ", ".join(map(str, entry["boundaryInputs"]))
-            lines.append(head + reason)
         elif reasons := _judge(entry, items, cases):
-            lines.append(head + "; ".join(reasons))
+            reason = "; ".join(reasons)
+        else:
+            continue
+        # The item's own text stays in the map; the line keeps every case it names.
+        unnamed = [str(name) for name in entry.get("boundaryInputs") or []
+                   if not re.search(rf"(?:^|[\s,;(]){re.escape(str(name))}(?=$|[\s,;)])", reason)]
+        lines.append(head + reason + ("; its cases: " + ", ".join(unnamed) if unnamed else ""))
     current = [entry["comparison"] for entry in items if producer_proved(entry)]
     whole = {path for run in current for path in run.get("wholeFiles", [])}
     named = {path: function for entry in items if (entry.get("comparison") or {}).get("fresh")

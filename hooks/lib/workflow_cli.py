@@ -131,6 +131,7 @@ def parser() -> argparse.ArgumentParser:
             command.add_argument("--design-declaration")
             command.add_argument("--expected-candidate-tree")
             command.add_argument("--preflight-file")
+            command.add_argument("--submitted-draft", help="the draft as submitted, before the advisor's in-place edits")
         elif kind == "advisor-disposition":
             command.add_argument("--stage", choices=("preflight", "final"),
                                  type=lambda value: {"preflight-advice": "preflight", "final-review": "final"}.get(value, value),
@@ -354,7 +355,8 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
                 identity, bound_state(identity, slug, workflow_id), preflight_draft=document,
                 preflight_file=str(Path(args.input).resolve()) if args.input and args.input != "-" else None)})
             return 2
-        emit(_receipt(state, identity, evidenceId=evidence_id, status="passed"))
+        emit(_receipt(state, identity, evidenceId=evidence_id, status="passed",
+                      **({"draftEdits": intake["draftEdits"]} if intake.get("draftEdits") else {})))
         return 0
     if args.kind == "review":
         if not args.input:
@@ -387,7 +389,8 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
             identity, slug, workflow_id, args.stage, args.source, verdict, reason=args.reason,
             design=design_declaration(args.design_declaration) if args.design_declaration else None,
             intake=intake, expected_candidate_tree=expected or candidate,
-            preflight_draft=preflight_document(args.preflight_file) if args.preflight_file else None)
+            preflight_draft=preflight_document(args.preflight_file) if args.preflight_file else None,
+            submitted_draft=preflight_document(args.submitted_draft) if args.submitted_draft else None)
     else:
         flag = None
         if args.finding is not None:

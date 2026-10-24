@@ -848,7 +848,7 @@ class ReadinessTests(unittest.TestCase):
         self.assertEqual(receipt["comparison"], "preserved", receipt)
         self.assertEqual(self.status()["tdd"], "in-progress", marker + ": " + json.dumps(receipt))
         [line] = self.open_lines(receipt)
-        self.assertIn("BM_CHANGE (contract): value becomes two => value is two", line, marker)
+        self.assertTrue(line.startswith("BM_CHANGE (contract): "), marker + ": " + line)
         self.assertIn("no attributable case differs between original and current", line, marker)
         self.assertIn("BM_CHANGE", self.summary(), marker)
         (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
@@ -1799,7 +1799,7 @@ class ReadinessTests(unittest.TestCase):
         receipt = self.tdd("BM_KEEP")
         self.assertEqual(receipt["cases"], ["test_kept (test_value.Value.test_kept): original=failed (stopped): 1 != 2 : KEPT_WRONG; "
                                             "current=failed (stopped): 3 != 2 : KEPT_WRONG"], marker + ": " + json.dumps(receipt))
-        self.assertIn("BM_KEEP (preservation): kept stays one => kept is one; no current valid comparison; test_kept failed on original, failed on current",
+        self.assertIn("BM_KEEP (preservation): no current valid comparison; test_kept failed on original, failed on current",
                       self.summary(), "READINESS_NOT_SHARED: " + self.summary())
 
     def test_legacy_items_without_kind_ask_for_one(self):
@@ -1893,11 +1893,53 @@ class ReadinessTests(unittest.TestCase):
         receipt = self.tdd("BM_CHANGE", "BM_KEEP")
         lines = self.open_lines(receipt)
         self.assertEqual([line.split(" ")[0] for line in lines], ["BM_CHANGE", "BM_KEEP"], marker + ": " + json.dumps(receipt))
-        self.assertTrue(all(" => " in line and ";" in line for line in lines), marker + ": " + json.dumps(lines))
+        self.assertTrue(all(" => " not in line and ";" in line for line in lines), marker + ": " + json.dumps(lines))
         self.assertIn("test_kept missing on original, current", lines[1], marker)
         self.assertNotIn("MC/DC contexts", json.dumps(receipt), marker)
         status = json.loads(self.case.cli("status", "--repo", str(self.repo), "--fields", "nextAction,tdd").stdout)
         self.assertEqual(status, {"nextAction": "tdd", "tdd": "in-progress"}, marker)
+
+
+    OPEN_ITEMS = (pending_behavior("BM_MISSING", behavior="MISSING_BEHAVIOR_TEXT", expected="MISSING_EXPECTED_TEXT",
+                              boundaryInputs=["test_a", "test_ab"]),
+             pending_behavior("BM_READ", kind="preservation", behavior="READ_BEHAVIOR_TEXT", expected="READ_EXPECTED_TEXT",
+                              boundaryInputs=["test_kept"], interpretations=["reading a", "reading b"]),
+             pending_behavior("BM_FAIL", kind="preservation", behavior="FAIL_BEHAVIOR_TEXT", expected="FAIL_EXPECTED_TEXT",
+                              boundaryInputs=["test_ab", "test_kept"]))
+
+    def test_open_lines_name_cases_without_restating_the_item(self):
+        marker = "OPEN_LINE_RESTATES_OR_DROPS"
+        self.begin(*self.OPEN_ITEMS)
+        self.probe("def test_ab(self): self.assertEqual(app.value, 2)", "def test_kept(self): self.assertEqual(app.kept, 1)")
+        receipt = self.tdd("BM_FAIL")
+        lines = {line.split(" ", 1)[0]: line for line in receipt["open"]}
+        self.assertEqual(sorted(lines), ["BM_FAIL", "BM_MISSING", "BM_READ"], marker + json.dumps(receipt))
+        for item in self.OPEN_ITEMS:
+            line = lines[item["id"]]
+            self.assertTrue(line.startswith(f"{item['id']} ({item['kind']}): "), marker + line)
+            self.assertNotIn(item["behavior"], line, marker)
+            self.assertNotIn(item["expected"], line, marker)
+            for name in item["boundaryInputs"]:
+                self.assertRegex(line, rf"(?:^|[\s,;(]){name}(?=$|[\s,;)])", f"{marker}: {name} in {line}")
+        self.update({"id": "BM_READ", "interpretation": "reading a", "authority": "the recorded request"})
+        self.probe("def test_ab(self): self.assertEqual(app.value, 1)", "def test_kept(self): self.assertEqual(app.kept, 1)")
+        self.tdd("BM_FAIL", "BM_READ")
+        (self.repo / "app.py").write_text("value = 1\nkept = 1\n# edited\n")
+        stale = json.loads(self.case.cli("verify", "--repo", str(self.repo), "--base-ref", "HEAD").stdout.splitlines()[-1])["next"]["input"]
+        [read] = [line for line in stale.splitlines() if line.startswith("BM_READ ")]
+        self.assertTrue(read.startswith("BM_READ (preservation): comparison stale") and "test_kept" in read, marker + read)
+
+    def test_shorter_open_lines_preserve_readiness_and_advisor_items(self):
+        marker = "READINESS_CHANGED_WITH_THE_TEXT"
+        self.begin(*self.OPEN_ITEMS)
+        self.probe("def test_ab(self): self.assertEqual(app.value, 2)", "def test_kept(self): self.assertEqual(app.kept, 1)")
+        receipt = self.tdd("BM_FAIL")
+        status = json.loads(self.case.cli("status", "--repo", str(self.repo), "--fields", "nextAction,tdd").stdout)
+        self.assertEqual((receipt["openCount"], status), (3, {"nextAction": "tdd", "tdd": "in-progress"}), marker)
+        packet = checkpoint_channels(self.repo, self.case.env, "code-review")["behavior-map"]
+        self.assertEqual(packet["open"], receipt["open"], marker)
+        self.assertEqual({item["id"]: (item["behavior"], item["expected"], item["boundaryInputs"]) for item in packet["items"]},
+                         {item["id"]: (item["behavior"], item["expected"], item["boundaryInputs"]) for item in self.OPEN_ITEMS}, marker)
 
 TOTAL = "def total(items):\n    return sum(items)\n"
 TOTAL_TEST = ("import unittest, app\nclass Total(unittest.TestCase):\n"

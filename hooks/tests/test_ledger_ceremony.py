@@ -59,9 +59,16 @@ TEST_OTHER = (
     "    def test_other(self):\n        self.assertEqual(app.other, 2, 'OTHER_NOT_TWO')\n"
 )
 STUB_CODEX = r'''#!/usr/bin/env python3
-import json, os, sys
-open(os.environ["STUB_PROMPT"], "w").write(sys.stdin.read())
+import json, os, re, sys
+prompt = sys.stdin.read()
+open(os.environ["STUB_PROMPT"], "w").write(prompt)
 mode = os.environ.get("STUB_MODE", "big")
+if mode == "edit":  # the last round edits its draft copy in place, as the prompt instructs
+    path = re.search(r"Edit (\S+/preflight\.json) in place", prompt).group(1)
+    draft = json.load(open(path))
+    draft["behaviorMap"].append({**draft["behaviorMap"][0], "id": "BM_ADVISOR_EDIT"})
+    json.dump(draft, open(path, "w"))
+    mode = "approved"
 sys.stderr.write("session id: 11111111-2222-3333-4444-555555555555\n" + "provider noise line\n" * 4000)
 if mode == "fail":
     sys.exit(1)
@@ -154,7 +161,8 @@ class Ceremony(unittest.TestCase):
             tables = [row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")]
             return {table: connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] for table in tables}
 
-    def wrapper(self, mode: str, *extra: str, phase: str = "preflight-advice") -> tuple[subprocess.CompletedProcess[str], str]:
+    def wrapper(self, mode: str, *extra: str, phase: str = "preflight-advice",
+                trace: bool = False) -> tuple[subprocess.CompletedProcess[str], str]:
         bin_dir = self.tmp / "bin"
         bin_dir.mkdir(exist_ok=True)
         stub = bin_dir / "codex"
@@ -167,7 +175,7 @@ class Ceremony(unittest.TestCase):
             draft = self.tmp / "draft.json"
             draft.write_text(json.dumps({"authoritativeContract": "fixture", "behaviorMap": [item("BM_ONE")]}))
             draft_args = ["--preflight-file", str(draft)]
-        result = subprocess.run(["bash", str(WRAPPER), "--slug", "ceremony", "--phase", phase,
+        result = subprocess.run(["bash", *(["-x"] if trace else []), str(WRAPPER), "--slug", "ceremony", "--phase", phase,
                                  "--cwd", str(self.repo), "--design-absent", "fixture has no design", *draft_args, *extra,
                                  "--", "scope question"], env=env, capture_output=True, text=True)
         return result, prompt.read_text(encoding="utf-8") if prompt.exists() else ""
@@ -288,6 +296,59 @@ class PreflightContinuation(Ceremony):
         stored = self.ok("evidence", "--full", "--evidence-id", json.loads(recorded.stdout)["evidenceId"])["document"]["document"]
         self.assertEqual((stored["authoritativeContract"], [entry["id"] for entry in stored["behaviorMap"]]),
                          ("the advisor's corrected contract", ["BM_ONE", "BM_TWO"]), marker)
+
+    def round_two(self, submitted: dict[str, object], approved: dict[str, object], *extra: str) -> subprocess.CompletedProcess[str]:
+        """The last round as the wrapper records it: the submitted snapshot and the advisor's edited copy."""
+        (self.tmp / "submitted.json").write_text(json.dumps(submitted))
+        (self.tmp / "draft.json").write_text(json.dumps(approved))
+        (self.tmp / "advice.json").write_text(json.dumps({"schemaVersion": 1, "verdict": "approved", "findings": []}))
+        return self.cli("record", "advisor-result", "--stage", "preflight", "--source", "codex-advisor", "--input",
+                        str(self.tmp / "advice.json"), "--preflight-file", str(self.tmp / "draft.json"),
+                        "--submitted-draft", str(self.tmp / "submitted.json"),
+                        "--design-declaration", str(self.tmp / "design.json"), *extra)
+
+    def test_record_preflight_returns_the_advisor_edits(self) -> None:
+        marker = "ADVISOR_EDITS_NOT_RETURNED"
+        self.begin()
+        self.advice("changes-required", contract="round one draft A")
+        resubmitted = {"authoritativeContract": "lead resubmission B", "behaviorMap": [item("BM_ONE")]}
+        edited = {"authoritativeContract": "lead resubmission B", "behaviorMap": [item("BM_ONE"), item("BM_ADVISOR_EDIT")]}
+        self.assertEqual(self.round_two(resubmitted, edited).returncode, 0, marker)
+        recorded = self.ok("record", "preflight")
+        edits = str(recorded.get("draftEdits"))
+        self.assertIn('+      "id": "BM_ADVISOR_EDIT"', edits, marker)
+        self.assertNotIn("round one draft A", edits, f"{marker}: diffed against round one")
+        self.assertTrue(edits.startswith("--- submitted-draft\n+++ approved-draft\n"), marker)
+
+    def test_round_two_records_the_submitted_draft(self) -> None:
+        marker = "WRAPPER_DROPS_SUBMITTED_DRAFT"
+        self.begin()
+        self.assertEqual(self.wrapper("big")[0].returncode, 0, marker)
+        result, _ = self.wrapper("approved", "--reconsult", trace=True)
+        self.assertEqual(result.returncode, 0, f"{marker}: {result.stderr[-400:]}")
+        trace = result.stderr.splitlines()
+        [copied] = [shlex.split(line.lstrip("+ "))[1:] for line in trace if line.lstrip("+ ").startswith("cp ")]
+        [record] = [shlex.split(line.lstrip("+ ")) for line in trace if " record advisor-result " in line and " --check " not in line]
+        snapshot = record[record.index("--submitted-draft") + 1]
+        self.assertEqual(copied, [record[record.index("--preflight-file") + 1], snapshot], marker)
+        self.assertNotEqual(snapshot, copied[0], marker)
+
+    def test_unedited_preflight_and_recording_bindings_are_preserved(self) -> None:
+        marker = "PREFLIGHT_BINDING_CHANGED_BY_DIFF"
+        self.begin()
+        self.assertEqual(self.wrapper("big")[0].returncode, 0, marker)
+        (self.tmp / "design.json").write_text(json.dumps({"schemaVersion": 1, "status": "absent", "reason": "fixture has no design"}))
+        (self.tmp / "advice.json").write_text(json.dumps({"schemaVersion": 1, "verdict": "approved", "findings": []}))
+        before = self.rows(), self.state()
+        checked = self.cli("record", "advisor-result", "--check", "--stage", "preflight", "--source", "codex-advisor", "--input",
+                           str(self.tmp / "advice.json"), "--preflight-file", str(self.tmp / "draft.json"),
+                           "--design-declaration", str(self.tmp / "design.json"))
+        self.assertEqual((checked.returncode, (self.rows(), self.state())), (0, before), f"{marker}: --check committed")
+        self.assertEqual(self.wrapper("approved", "--reconsult")[0].returncode, 0, marker)
+        recorded = self.ok("record", "preflight")
+        stored = self.ok("evidence", "--full", "--evidence-id", recorded["evidenceId"])["document"]["document"]
+        self.assertEqual(("draftEdits" in recorded, stored["authoritativeContract"]), (False, "fixture"), marker)
+        self.assertEqual(self.state()["intent"], "issue 96 fixture intent.", marker)
 
     def test_explicit_draft_binding_and_record_atomicity(self) -> None:
         self.begin()
