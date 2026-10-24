@@ -13,7 +13,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from . import behavior_map, tdd_surface
+from . import behavior_map, changed_code, tdd_surface
 from .command_runner import emit_json as _emit_json, interruptible, run as _run, run_entry as _run_entry
 from .repo_identity import RepoIdentity, resolve_repo_identity
 from .state_store import _active_candidate_tree, _git, is_test_path, tree_manifest, utc_timestamp
@@ -130,8 +130,8 @@ def _probe_files(surface: JsonObject, root: Path, support: list[str]) -> list[st
 
 
 def _environment() -> dict[str, str]:
-    owned = {"SHLVL", "_", "PWD", "OLDPWD", "PYTHONHOME", "TMPDIR",
-             "CODEX_WORKFLOW_STATE_ROOT", "PYTHONDONTWRITEBYTECODE", "PYTEST_ADDOPTS"}
+    owned = {"SHLVL", "_", "PWD", "OLDPWD", "PYTHONHOME", "TMPDIR", "CODEX_WORKFLOW_STATE_ROOT", "PYTHONDONTWRITEBYTECODE",
+             "PYTEST_ADDOPTS", "WORKFLOW_CONDITION_PROBES", "WORKFLOW_CONDITION_RESULTS"}
     return {**{key: value for key, value in os.environ.items() if key not in owned},
             "SHLVL": "0", "PYTHONDONTWRITEBYTECODE": "1", "PYTEST_ADDOPTS": ""}
 
@@ -154,8 +154,9 @@ def _execution_key(identity: RepoIdentity, source: str, probe: str, files: list[
     executable_state = os.stat(execution["executable"])
     config = json.dumps([command, timeout, execution,
                          executable_state.st_size, executable_state.st_mtime_ns], sort_keys=True).encode()
-    producer = b"".join(Path(__file__).with_name(name).read_bytes()
-                       for name in ("tdd_workflow.py", "tdd_surface.py", "command_runner.py"))
+    producer = b"".join((Path(__file__).parent / name).read_bytes()
+                       for name in ("tdd_workflow.py", "tdd_surface.py", "command_runner.py", "changed_code.py",
+                                    "condition_trace/sitecustomize.py"))
     return hashlib.sha256(b"\0".join(production) + support + config + producer).hexdigest()
 
 
@@ -191,7 +192,8 @@ def _reviewed_sources(identity: RepoIdentity, state: JsonObject, mapped: JsonObj
 
 
 def _execute_tree(identity: RepoIdentity, source_tree: str, candidate_tree: str, files: list[str],
-                  command: list[str], surface: JsonObject, timeout: float) -> JsonObject:
+                  command: list[str], surface: JsonObject, timeout: float, named: dict[str, str],
+                  decisions: list[JsonObject]) -> JsonObject:
     started = time.perf_counter()
     with tempfile.TemporaryDirectory(prefix="workflow-proof-") as temporary:
         root = Path(temporary) / "source"
@@ -213,6 +215,13 @@ def _execute_tree(identity: RepoIdentity, source_tree: str, candidate_tree: str,
         env = _environment()
         env.update(PYTHONPATH=os.pathsep.join(filter(None, (identity.root, env.get("PYTHONPATH")))), PWD=identity.root,
                    TMPDIR=temporary, CODEX_WORKFLOW_STATE_ROOT=str(Path(temporary) / "state"))
+        traced = Path(temporary) / "conditions.jsonl"
+        if decisions:  # the original arm records which removed conditions its cases decide
+            (Path(temporary) / "conditions.json").write_text(json.dumps(decisions), encoding="utf-8")
+            trace = shutil.copytree(Path(__file__).with_name("condition_trace"), Path(temporary) / "trace")
+            env.update(PYTHONPATH=os.pathsep.join([str(trace), env["PYTHONPATH"]]),
+                       WORKFLOW_CONDITION_PROBES=str(Path(temporary) / "conditions.json"),
+                       WORKFLOW_CONDITION_RESULTS=str(traced))
         actual = [_executable(identity, command[0]), *command[1:]]
         binding = ["bwrap", "--die-with-parent", "--dev-bind", "/", "/", "--bind", str(root), identity.root]
         runtime = Path(actual[0]).parent.parent
@@ -230,18 +239,48 @@ def _execute_tree(identity: RepoIdentity, source_tree: str, candidate_tree: str,
         except OSError as exc:
             raw, code, timed_out = str(exc).encode(), 127, False
         output = raw.decode("utf-8", errors="replace")
+        evaluations: dict[str, list[JsonObject]] | None = None
+        if traced.is_file():
+            evaluations = {}
+            for line in traced.read_text(encoding="utf-8").splitlines():
+                for index, found in json.loads(line).items():
+                    evaluations.setdefault(index, []).extend(found)
         timing = {"totalSeconds": time.perf_counter() - started,
                   "executionSeconds": time.perf_counter() - process_started}
         proof, error = None, "command timed out" if timed_out else ""
         if not timed_out:
             if code == 0:
-                proof, error = _pass_proof(surface, output)
+                proof, error = _pass_proof(surface, output, named)
             else:
                 proof, error = tdd_surface.evaluate_red(surface, output)
         outcome = ("passed" if code == 0 else "failed") if proof else "incomplete"
         return _run_entry(raw, code, timed_out, sourceTree=source_tree, outcome=outcome, proof=proof, error=error,
                           output=output, loadedRoot=identity.root, cases=tdd_surface.case_results(surface, output),
-                          executedCommand=actual, timing=timing)
+                          executedCommand=actual, timing=timing,
+                          **({"conditions": changed_code.judge(decisions, evaluations)} if decisions else {}))
+
+
+def _from_file(case: str, path: str) -> bool:
+    """Whether a runner-reported case belongs to the test file at `path`."""
+    return case.startswith(path + "::") or f"({path[:-3].replace('/', '.')}." in case
+
+
+def _named_command(surface: JsonObject, command: list[str], named: dict[str, str], root: str) -> tuple[list[str], list[str]]:
+    """A pytest or unittest batch extended by each named Python test file it does not already target
+    whole, and the named files it then targets whole. Another command is compared as given; only
+    `go test` or `node --test` given test files and at most verbosity or a reporter runs each whole."""
+    if surface.get("runner") not in {"pytest", "unittest"}:
+        program, args = os.path.basename(command[0]), command[1:]
+        whole = (program == "go" and args[:1] == ["test"] and all(arg == "-v" or not arg.startswith("-") for arg in args[1:])
+                 or program in {"node", "nodejs"} and args[:1] == ["--test"]
+                 and all(arg.startswith("--test-reporter=") or not arg.startswith("-") for arg in args[1:]))
+        return command, [path for path in named if whole and path in {os.path.normpath(arg) for arg in args}]
+    targets, discover, ambiguous, selections = tdd_surface.proof_targets(surface, root)
+    if discover or ambiguous or selections or not targets:
+        return command, []
+    whole = {os.path.normpath(target) for target in targets} | {target.replace(".", "/") + ".py" for target in targets}
+    added = [path for path in named if path.endswith(".py") and path not in whole]
+    return [*command, *added], [path for path in named if path in whole or path in added]
 
 
 def _source_delta(identity: RepoIdentity, original: str, candidate: str) -> JsonObject:
@@ -291,6 +330,10 @@ def _run_tdd(values: list[str]) -> int:
     before = tree_manifest(identity)
     candidate = _active_candidate_tree(identity)
     original = _git(identity, "rev-parse", f"{state['passStartOid']}^{{tree}}").decode().strip()
+    named, decisions = changed_code.analyse(identity, original, candidate)
+    extended, whole = _named_command(surface, command, named, identity.root)
+    added, command = {path: named[path] for path in extended[len(command):]}, extended
+    surface = tdd_surface.identify(command)
     owner_sources = {item["id"]: _reviewed_sources(identity, state, item) for item in mapped}
     reviewed = {reference: tree for sources in owner_sources.values() for reference, tree in sources.items()}
     previous = [item.get("comparison") for item in mapped]
@@ -310,6 +353,8 @@ def _run_tdd(values: list[str]) -> int:
     # An earlier tree with the original's or the current production adds no column.
     sources, keys = map(list, zip(*[(source, key) for index, (source, key) in enumerate(zip(sources, keys))
                                      if index in (0, len(sources) - 1) or key not in (keys[0], keys[-1])]))
+    if decisions:  # the traced original answers for the conditions this candidate removes
+        keys[0] = hashlib.sha256((keys[0] + json.dumps(decisions, sort_keys=True)).encode()).hexdigest()
     if (all(proof and proof.get("valid") and proof.get("fresh") and proof.get("candidateKey") == keys[-1] for proof in previous)
             and all(behavior_map.producer_proved(item) for item in mapped)
             and len({proof["runIndex"] for proof in previous}) == 1
@@ -327,9 +372,13 @@ def _run_tdd(values: list[str]) -> int:
         arm = cache.get((key, source))
         if arm is None:
             if key not in held:
-                held[key] = {**_execute_tree(identity, source, candidate, files, command, surface, args.timeout), "key": key}
+                held[key] = {**_execute_tree(identity, source, candidate, files, command, surface, args.timeout, named,
+                                             decisions if source == original else []), "key": key}
             arm = held[key]
         arms.append({**arm, "requestedTree": source})
+    ran = lambda arm, path: frozenset(case for case in arm.get("cases") or {} if _from_file(case, path))
+    if surface.get("runner") in {"pytest", "unittest"}:  # a whole file ran the same cases on every tree
+        whole = [path for path in whole if ran(arms[0], path) and all(ran(arm, path) == ran(arms[0], path) for arm in arms)]
     outcomes = [arm["outcome"] for arm in arms]
     valid = outcomes[-1] == "passed" and all(outcome in {"passed", "failed"} for outcome in outcomes[:-1])
     preserved = all(outcome == "passed" for outcome in outcomes)
@@ -338,7 +387,7 @@ def _run_tdd(values: list[str]) -> int:
     comparison = "incomplete" if not valid else "preserved" if preserved else "changed"
     run = {"runIndex": len(runs), "command": shlex.join(command), "candidateTree": candidate, "originalTree": original,
            "probeFiles": files, "support": args.support, "timeout": args.timeout, "candidateKey": keys[-1],
-           "probeKey": probe_key, "reviewSources": reviewed,
+           "probeKey": probe_key, "reviewSources": reviewed, "named": named, "wholeFiles": whole, "added": added,
            "sourceDelta": _source_delta(identity, original, candidate),
            "comparison": comparison, "arms": arms, "valid": valid, "execution": execution,
            "exitCode": 0 if valid else 1, "timedOut": any(arm["timedOut"] for arm in arms)}
@@ -391,8 +440,9 @@ def map_update(identity: RepoIdentity, state: JsonObject, value: JsonObject) -> 
     return operation_receipt(state, identity, summaryId=evidence, pending=behavior_map.unresolved(items))
 
 
-def _pass_proof(surface: JsonObject, output: str) -> tuple[JsonObject | None, str]:
-    """A successful exit must report an executed check or observable operation."""
+def _pass_proof(surface: JsonObject, output: str, named: dict[str, str]) -> tuple[JsonObject | None, str]:
+    """A successful exit must report an executed check or observable operation. Skips and expected
+    failures void it, except each one the runner names inside a test file named for a changed function."""
     runner = surface.get("runner")
     output = tdd_surface.ANSI_ESCAPE.sub("", output)
     if runner not in {"unittest", "pytest"}:
@@ -401,15 +451,18 @@ def _pass_proof(surface: JsonObject, output: str) -> tuple[JsonObject | None, st
             return None, "the operation emitted nothing to observe"
         return {"quality": "operation-succeeded", "reach": "unresolved", "runner": runner,
                 "observation": [observed], "site": shlex.join(surface.get("arguments") or [])}, ""
+    excused = sum(case["outcome"] == "skipped" and any(_from_file(name, path) for path in named)
+                  for name, case in tdd_surface.case_results(surface, output).items())
     if runner == "unittest":
         runs = list(tdd_surface.UNITTEST_RAN.finditer(output))
         result = re.search(r"(?m)^OK(?: \((.*)\))?$", output[runs[-1].end():]) if runs else None
-        if result and result.group(1):
+        if result and result.group(1) and result.group(1) != f"skipped={excused}":
             return None, "selected unittest probes include skipped or expected failures"
-        executed = int(runs[-1].group(1)) if result else 0
+        executed = int(runs[-1].group(1)) - (excused if result and result.group(1) else 0) if result else 0
     else:
         summaries = tdd_surface.PYTEST_SUMMARY.findall(output)
-        if summaries and re.search(r"\b(?:skipped|xfailed|xpassed)\b", summaries[-1]):
+        unexecuted = sum(int(count) for count in re.findall(r"(\d+) (?:skipped|xfailed|xpassed)\b", summaries[-1])) if summaries else 0
+        if unexecuted and unexecuted != excused:
             return None, "selected pytest probes did not all execute passing assertions"
         passed = re.search(r"(?<!\d)(\d+) passed\b", summaries[-1]) if summaries else None
         executed = int(passed.group(1)) if passed else 0

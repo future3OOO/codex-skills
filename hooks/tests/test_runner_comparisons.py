@@ -1898,3 +1898,259 @@ class ReadinessTests(unittest.TestCase):
         self.assertNotIn("MC/DC contexts", json.dumps(receipt), marker)
         status = json.loads(self.case.cli("status", "--repo", str(self.repo), "--fields", "nextAction,tdd").stdout)
         self.assertEqual(status, {"nextAction": "tdd", "tdd": "in-progress"}, marker)
+
+TOTAL = "def total(items):\n    return sum(items)\n"
+TOTAL_TEST = ("import unittest, app\nclass Total(unittest.TestCase):\n"
+              "    def test_sum(self): self.assertEqual(app.total([1, 2]), 3)\n"
+              "    @unittest.skip('incidental')\n    def test_skipped(self): pass\n")
+
+
+class ChangedCodeTests(unittest.TestCase):
+    """The runner answers for the test files named for changed functions and the conditions a candidate removes."""
+
+    def setUp(self):
+        self.case = harness.MappedTddRepairTests()
+        self.case.setUp()
+        self.addCleanup(self.case.tearDown)
+        self.repo = self.case.repo
+
+    def commit(self, files):
+        for name, text in files.items():
+            (self.repo / name).parent.mkdir(parents=True, exist_ok=True)
+            (self.repo / name).write_text(text)
+        self.case.git("add", ".")
+        self.case.git("commit", "-qm", "base")
+
+    def tdd(self, *ids, command):
+        result = self.case.cli("tdd", "--repo", str(self.repo),
+                               *[value for identifier in ids for value in ("--behavior-id", identifier)], "--", *command)
+        self.assertTrue(result.stdout.startswith("{"), result.stdout + result.stderr)
+        return json.loads(result.stdout)
+
+    def named_setup(self, cases=("test_value",)):
+        self.commit({"app.py": "value = 1\n" + TOTAL, "test_total.py": TOTAL_TEST, "pkg/__init__.py": "", "pkg/test_total_more.py": ""})
+        self.case.begin_with_map([pending_behavior("BM_VALUE", kind="preservation", behavior="value stays", expected="value is 1",
+                                                   boundaryInputs=list(cases))])
+        (self.repo / "test_value.py").write_text(UNITTEST_PROBE + "    def test_value(self): self.assertEqual(app.value, 1)\n")
+        (self.repo / "app.py").write_text("value = 1\n" + TOTAL.replace("sum(items)", "sum(item for item in items)"))
+
+    def test_recognised_runner_compares_named_files_whole(self):
+        marker = "NAMED_FILE_NOT_COMPARED"
+        self.named_setup()
+        for command in ((sys.executable, "-m", "unittest", "test_value"), (sys.executable, "-m", "pytest", "test_value.py"),
+                        (sys.executable, "-m", "pytest", "test_value.py", "test_total.py::Total::test_sum")):
+            with self.subTest(command=command[2:]):
+                receipt = self.tdd("BM_VALUE", command=command)
+                self.assertEqual(receipt["added"], ["test_total.py, named for changed `total`"], marker + json.dumps(receipt))
+                self.assertTrue(receipt["command"].endswith(" test_total.py"), marker)
+                self.assertEqual(([arm["outcome"] for arm in receipt["arms"]], self.case.cli("status", "--repo", str(self.repo))
+                                  .stdout.count('"tdd": "passed"')), (["passed", "passed"], 1), marker + json.dumps(receipt))
+        whole = self.tdd("BM_VALUE", command=(sys.executable, "-m", "unittest", "test_value", "test_total"))
+        self.assertEqual((whole.get("added"), whole["command"].endswith("test_value test_total")), (None, True), marker)
+
+    def test_unextended_commands_leave_named_files_open(self):
+        marker = "NAMED_FILE_LEFT_SILENT"
+        self.named_setup()
+        line = "`test_total.py` is named for changed `total`; compare it whole"
+        for command in ((sys.executable, "-c", "import app; print('value:', app.value)"),
+                        (sys.executable, "-m", "pytest", "test_value.py", "-k", "test_value"),
+                        (sys.executable, "-m", "pytest", "test_value.py", "-m", "not slow"),
+                        (sys.executable, "-m", "pytest", "test_value.py", "--deselect", "test_value.py::Value::test_none"),
+                        (sys.executable, "-m", "unittest", "discover", "-p", "test_value.py")):
+            with self.subTest(command=command[2:]):
+                receipt = self.tdd("BM_VALUE", command=command) if command[1] != "-c" else None
+                if receipt is None:
+                    self.case.cli("record", "tdd-map", "--repo", str(self.repo), "--input", "-")
+                    update = self.case.tmp / "printed.json"
+                    update.write_text(json.dumps({"items": [{"id": "BM_VALUE", "boundaryInputs": ["value"]}]}))
+                    self.case.cli("record", "tdd-map", "--repo", str(self.repo), "--input", str(update))
+                    receipt = self.tdd("BM_VALUE", command=command)
+                self.assertEqual(receipt.get("added"), None, marker)
+                self.assertIn(line, receipt["open"], marker + json.dumps(receipt))
+                status = json.loads(self.case.cli("status", "--repo", str(self.repo), "--fields", "tdd").stdout)
+                self.assertEqual(status["tdd"], "in-progress", marker)
+                update = self.case.tmp / "named.json"
+                update.write_text(json.dumps({"items": [{"id": "BM_VALUE", "boundaryInputs": ["test_value"]}]}))
+                self.case.cli("record", "tdd-map", "--repo", str(self.repo), "--input", str(update))
+
+    def test_named_file_skips_keep_a_passing_arm(self):
+        marker = "NAMED_FILE_SKIP_VOIDED_THE_ARM"
+        self.named_setup()
+        receipt = self.tdd("BM_VALUE", command=(sys.executable, "-m", "pytest", "test_value.py"))
+        self.assertEqual(([arm["outcome"] for arm in receipt["arms"]], receipt["open"]), (["passed", "passed"], []), marker)
+        (self.repo / "test_value.py").write_text(UNITTEST_PROBE + "    def test_value(self): self.assertEqual(app.value, 1)\n"
+                                                 "    @unittest.skip('selected')\n    def test_off(self): pass\n")
+        skipped = self.tdd("BM_VALUE", command=(sys.executable, "-m", "unittest", "test_value"))
+        self.assertEqual([arm["outcome"] for arm in skipped["arms"]], ["incomplete", "incomplete"],
+                         "SELECTED_SKIP_EXCUSED: " + json.dumps(skipped))
+
+    def test_named_file_skip_exceptions_preserve_required_case_proof(self):
+        marker = "OWNED_SKIP_PROVED"
+        self.named_setup(("test_value", "test_skipped"))
+        receipt = self.tdd("BM_VALUE", command=(sys.executable, "-m", "unittest", "test_value"))
+        self.assertTrue(any("test_skipped" in line for line in receipt["open"]), marker + json.dumps(receipt))
+        (self.repo / "test_total.py").write_text("import unittest\nclass Total(unittest.TestCase):\n"
+                                                 "    @unittest.skip('all')\n    def test_sum(self): pass\n")
+        only = self.tdd("BM_VALUE", command=(sys.executable, "-m", "pytest", "test_total.py"))
+        self.assertEqual([arm["outcome"] for arm in only["arms"]], ["incomplete", "incomplete"], "ALL_SKIPPED_ARM_PROVED")
+
+    def test_other_language_named_files_remain_open_until_compared_whole(self):
+        marker = "OTHER_LANGUAGE_NAMED_FILE_DROPPED"
+        self.commit({"app.py": "value = 1\n", "calc.go": "package calc\n\nfunc Total(a int) int {\n\treturn a\n}\n",
+                     "Total_test.go": "package calc\n",
+                     "web/total.ts": "export function total(a: number[]) {\n  let sum = 0;\n  for (const i of a) {\n    if (i) {\n      sum += i;\n    }\n  }\n  return sum;\n}\n",
+                     "web/total.test.ts": "import { test } from 'node:test';\nimport assert from 'node:assert';\nimport { total } from './total.ts';\n"
+                                          "test('sums', () => { assert.strictEqual(total([1, 2]), 3); });\n",
+                     "web/report.test.mjs": "export default async function* (events) {\n  for await (const event of events) {\n"
+                                            "    if (event.type === 'test:pass' || event.type === 'test:fail') yield `${event.data.name}: ${event.type.slice(5)}\\n`;\n  }\n}\n",
+                     "web/inc.ts": "export const inc = x => x + 1;\n", "web/inc.test.ts": "",
+                     "web/dec.ts": "export const dec = async x => x - 1;\n", "web/dec.test.ts": "",
+                     "web/absent.ts": "export function absent() {\n  return 1;\n}\n"})
+        self.case.begin_with_map([pending_behavior("BM_VALUE", kind="preservation", behavior="value stays", expected="value is 1",
+                                                   boundaryInputs=["test_value"]),
+                                  pending_behavior("BM_TOTAL", kind="preservation", behavior="total stays", expected="sums",
+                                                   boundaryInputs=["sums"])])
+        (self.repo / "test_value.py").write_text(UNITTEST_PROBE + "    def test_value(self): self.assertEqual(app.value, 1)\n")
+        (self.repo / "calc.go").write_text("package calc\n\nfunc Total(a int) int {\n\treturn a + 0\n}\n")
+        (self.repo / "web/total.ts").write_text((self.repo / "web/total.ts").read_text().replace("sum += i;", "sum = sum + i;"))
+        (self.repo / "web/inc.ts").write_text("export const inc = x => x + 2;\n")
+        (self.repo / "web/dec.ts").write_text("export const dec = async x => x - 2;\n")
+        (self.repo / "web/absent.ts").write_text("export function absent() {\n  return 2;\n}\n")
+        receipt = self.tdd("BM_VALUE", command=(sys.executable, "-m", "unittest", "test_value"))
+        self.assertEqual(receipt.get("added"), None, marker)
+        named = lambda receipt: sorted(line for line in receipt["open"] if "is named for" in line)
+        self.assertEqual(named(receipt), ["`Total_test.go` is named for changed `Total`; compare it whole",
+                                          "`web/dec.test.ts` is named for changed `dec`; compare it whole",
+                                          "`web/inc.test.ts` is named for changed `inc`; compare it whole",
+                                          "`web/total.test.ts` is named for changed `total`; compare it whole"], marker + json.dumps(receipt))
+        node = ("node", "--test", "--test-reporter=./web/report.test.mjs")
+        (self.repo / "test_probe.py").write_text("import app\nprint('test_value:', app.value)\n")
+        ignored = self.tdd("BM_VALUE", command=(sys.executable, "test_probe.py", "web/total.test.ts"))
+        self.assertIn("`web/total.test.ts` is named for changed `total`; compare it whole", ignored["open"], marker)
+        filtered = self.tdd("BM_TOTAL", command=(*node, "--test-name-pattern=sums", "web/total.test.ts"))
+        self.assertIn("`web/total.test.ts` is named for changed `total`; compare it whole", filtered["open"], marker)
+        whole = self.tdd("BM_TOTAL", command=(*node, "web/total.test.ts"))
+        self.assertEqual(([arm["outcome"] for arm in whole["arms"]], len(named(whole))), (["passed", "passed"], 3),
+                         marker + json.dumps(whole))
+        self.assertNotIn("`web/total.test.ts` is named for changed `total`; compare it whole", whole["open"], marker)
+
+    def test_named_file_comparison_requires_current_valid_whole_file_coverage(self):
+        marker = "STALE_WHOLE_FILE_COVERAGE_KEPT"
+        self.commit({"app.py": "value = 0\n" + TOTAL, "test_total.py": TOTAL_TEST})
+        self.case.begin_with_map([pending_behavior("BM_VALUE", behavior="value becomes 1", expected="value is 1",
+                                                   boundaryInputs=["test_value"])])
+        (self.repo / "test_value.py").write_text(UNITTEST_PROBE + "    def test_value(self): self.assertEqual(app.value, 1)\n")
+        (self.repo / "app.py").write_text("value = 1\n" + TOTAL.replace("sum(items)", "sum(item for item in items)"))
+        failfast = self.tdd("BM_VALUE", command=(sys.executable, "-m", "unittest", "-f", "test_value"))
+        self.assertEqual([arm["outcome"] for arm in failfast["arms"]], ["failed", "passed"], marker + json.dumps(failfast))
+        self.assertIn("`test_total.py` is named for changed `total`; compare it whole", failfast["open"], "FAIL_FAST_DISCHARGED_THE_FILE")
+        self.setUp()
+        self.named_setup()
+        command = (sys.executable, "-m", "unittest", "test_value")
+        self.assertEqual(self.tdd("BM_VALUE", command=command)["open"], [], marker)
+        (self.repo / "app.py").write_text("value = 1\n" + TOTAL.replace("sum(items)", "sum(list(items))"))
+        stale = json.loads(self.case.cli("status", "--repo", str(self.repo), "--fields", "tdd").stdout)
+        self.assertEqual(stale["tdd"], "in-progress", marker)
+        summary = self.case.cli("summary", "--repo", str(self.repo)).stdout
+        self.assertNotIn("is named for changed", summary, "NAMED_LINE_FROM_A_STALE_RUN")
+        (self.repo / "test_total.py").write_text(TOTAL_TEST.replace("3)", "4)"))
+        failed = self.tdd("BM_VALUE", command=(sys.executable, "-m", "unittest", "-f", "test_value"))
+        self.assertIn("failed", [arm["outcome"] for arm in failed["arms"]], marker + json.dumps(failed))
+        self.assertIn("`test_total.py` is named for changed `total`; compare it whole",
+                      self.case.cli("summary", "--repo", str(self.repo)).stdout, "FAILED_RUN_DISCHARGED_THE_FILE")
+
+    CONDITION = ("def admit(enabled, name, created):\n    if enabled and name not in created:\n        return 'gap'\n"
+                 "    return 'none'\n")
+
+    def condition_setup(self, original, candidate, cases, kind="preservation"):
+        self.commit({"app.py": original})
+        self.case.begin_with_map([pending_behavior("BM_GUARD", kind=kind, behavior="admit results stay",
+                                                   expected="same results", boundaryInputs=[name for name, _ in cases])])
+        (self.repo / "app.py").write_text(candidate)
+        (self.repo / "test_probe.py").write_text(
+            "import app\ndef run(call):\n    try:\n        return call()\n    except Exception as error:\n        return type(error).__name__\n"
+            + "".join(f"print({name!r} + ':', run(lambda: app.admit{args}))\n" for name, args in cases))
+        return self.tdd("BM_GUARD", command=(sys.executable, "test_probe.py"))
+
+    def test_removed_condition_without_a_deciding_case_stays_open(self):
+        marker = "UNDECIDED_REMOVAL_SILENT"
+        receipt = self.condition_setup(self.CONDITION, self.CONDITION.replace(" and name not in created", ""),
+                                       [("absent", "(True, 'x', set())"), ("disabled", "(False, 'x', {'x'})")])
+        self.assertIn("removed condition `name not in created` (app.py:2) never decided a compared case", receipt["open"],
+                      marker + json.dumps(receipt))
+
+    def test_removed_condition_decided_by_a_compared_case_closes(self):
+        marker = "DECIDED_REMOVAL_OPEN"
+        receipt = self.condition_setup(self.CONDITION, self.CONDITION.replace(" and name not in created", ""),
+                                       [("absent", "(True, 'x', set())"), ("present", "(True, 'x', {'x'})")])
+        self.assertFalse([line for line in receipt["open"] if "removed condition" in line], marker + json.dumps(receipt))
+
+    def test_removed_condition_detection_is_per_decision(self):
+        marker = "REMOVAL_MISSED"
+        original = "def admit(a, b, c):\n    if a and b:\n        return 1\n    if b:\n        return 2\n    return 0\n"
+        receipt = self.condition_setup(original, original.replace("if a and b:", "if a:"), [("first", "(True, True, None)")])
+        self.assertIn("removed condition `b` (app.py:2) never decided a compared case", receipt["open"], marker + json.dumps(receipt))
+        widened = "def admit(a, b, c):\n    if a and not (b or c):\n        return 1\n    return 0\n"
+        self.setUp()
+        quiet = self.condition_setup(widened, widened.replace("(b or c)", "(b or c or a is None)"), [("one", "(True, False, False)")])
+        self.assertFalse([line for line in quiet["open"] if "removed condition" in line], "WIDENED_GROUP_OPENED: " + json.dumps(quiet))
+
+    def test_removed_condition_contexts_and_unmeasured_runs(self):
+        marker = "CONDITION_CONTEXT_MISJUDGED"
+        either = "def admit(a, b, c):\n    if a or b:\n        return 1\n    return 0\n"
+        receipt = self.condition_setup(either, either.replace("a or b", "a"), [("a_only", "(True, True, None)"), ("none", "(False, False, None)")])
+        self.assertIn("removed condition `b` (app.py:2) never decided a compared case", receipt["open"], marker)
+        self.setUp()
+        decided = self.condition_setup(either, either.replace("a or b", "a"), [("b_only", "(False, True, None)")])
+        self.assertFalse([line for line in decided["open"] if "removed condition" in line], marker + json.dumps(decided))
+        self.setUp()
+        negated = "def admit(a, b, c):\n    if not (a and b):\n        return 1\n    return 0\n"
+        decided = self.condition_setup(negated, negated.replace("(a and b)", "a"), [("a_not_b", "(True, False, None)")])
+        self.assertFalse([line for line in decided["open"] if "removed condition" in line], marker + json.dumps(decided))
+        self.setUp()
+        loop = ("def admit(a, b, c):\n    found = [x for x in a if x and b]\n    while b and c:\n        c = c[1:]\n"
+                "    assert c is not None and b\n    return found, ternary(a)\n\ndef ternary(a):\n    return 1 if a and a[0] else 0\n")
+        candidate = loop.replace("x and b", "x").replace("b and c", "c").replace("a and a[0]", "a").replace(" and b\n", "\n")
+        receipt = self.condition_setup(loop, candidate, [("loops", "([1, 0], True, [1, 2])")])
+        self.assertEqual(sorted(line for line in receipt["open"] if "removed condition" in line),
+                         ["removed condition `a[0]` (app.py:9) never decided a compared case",
+                          "removed condition `b` (app.py:2) never decided a compared case",
+                          "removed condition `b` (app.py:3) never decided a compared case",
+                          "removed condition `b` (app.py:5) never decided a compared case"], marker + json.dumps(receipt))
+        self.setUp()
+        raising = "def explode():\n    raise ValueError\n\ndef admit(a, b, c):\n    if a and explode():\n        return 1\n    return 0\n"
+        raised = self.condition_setup(raising, raising.replace(" and explode()", ""), [("boom", "(True, None, None)")], kind="contract")
+        self.assertIn("removed conditions not measured: `explode()` (app.py:5)", raised["limitations"], marker + json.dumps(raised))
+        self.assertFalse([line for line in raised["open"] if "removed condition" in line], marker + json.dumps(raised))
+        self.setUp()
+        whole = self.condition_setup(either, "def admit(a, b, c):\n    return 0\n", [("none", "(False, False, None)")])
+        self.assertIn("removed conditions not measured: `a` (app.py:2), `b` (app.py:2)", whole["limitations"], marker + json.dumps(whole))
+        self.assertFalse([line for line in whole["open"] if "removed condition" in line], marker)
+        self.setUp()
+        repeated = "def admit(a, b, c):\n    if a.pop() or a.pop():\n        return 1\n    return 0\n"
+        popped = self.condition_setup(repeated, repeated.replace("a.pop() or a.pop()", "a.pop()"), [("pops", "([True, False], None, None)")])
+        self.assertIn("removed conditions not measured: `a.pop()` (app.py:2)", popped["limitations"], marker + json.dumps(popped))
+        for expression, declaration in (("a.ready", "    @property\n    def ready(self):"), ("a[0]", "    def __getitem__(self, key):"),
+                                        ("a", "    def __bool__(self):")):
+            self.setUp()
+            implicit = ("class Source:\n    def __init__(self): self.values = [True, False]\n" + declaration
+                        + " return self.values.pop()\n" + f"def admit(a, b, c):\n    if {expression} or {expression}:\n        return 1\n    return 0\n")
+            receipt = self.condition_setup(implicit, implicit.replace(f"{expression} or {expression}", expression),
+                                           [("implicit", "(app.Source(), None, None)")], kind="contract")
+            line = implicit.splitlines().index(f"    if {expression} or {expression}:") + 1
+            self.assertIn(f"removed conditions not measured: `{expression}` (app.py:{line})", receipt["limitations"], marker + json.dumps(receipt))
+        self.setUp()
+        shared = "def admit(a, b, c, d, e):\n    if a and b and (c or d) and (c or e):\n        return 1\n    return 0\n"
+        kept = self.condition_setup(shared, shared.replace("a and b and (c or d) and", "a and"), [("kept_b", "(True, True, True, True, True)")])
+        self.assertIn("removed condition `b` (app.py:2) never decided a compared case", kept["open"], marker + json.dumps(kept))
+
+    def test_tracing_the_original_leaves_its_operation_unchanged(self):
+        marker = "TRACE_CHANGED_THE_OPERATION"
+        original = ("def admit(enabled, pending, c):\n    if enabled and pending.pop():\n        return len(pending), pending\n"
+                    "    return 0, pending\n")
+        receipt = self.condition_setup(original, original.replace(" and pending.pop()", ""), [("pop", "(True, [False, True], None)")])
+        original_arm = receipt["arms"][0]
+        self.assertEqual(original_arm["outcome"], "passed", marker + json.dumps(receipt))
+        evidence = json.loads(self.case.cli("evidence", "--repo", str(self.repo), "--evidence-id", receipt["summaryId"], "--full").stdout)
+        output = evidence["document"]["runs"][receipt["runIndex"]]["arms"][0]["output"]
+        self.assertIn("pop: (1, [False])", output, marker + ": " + output)

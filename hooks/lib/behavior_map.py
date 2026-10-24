@@ -347,7 +347,8 @@ def _claimed(entry: JsonObject, items: list[JsonObject], cases: dict[str, dict[s
 
 def open_obligations(items: list[JsonObject]) -> list[str]:
     """The single readiness result: one question per item whose required proof is missing.
-    Items sharing one comparison fold its cases once."""
+    Items sharing one comparison fold its cases once. The current comparisons then answer for the
+    test files named for changed functions and the conditions the candidate removes."""
     lines: list[str] = []
     folded: dict[object, dict[str, dict[str, JsonObject]]] = {}
     for entry in items:
@@ -375,7 +376,17 @@ def open_obligations(items: list[JsonObject]) -> list[str]:
             lines.append(head + reason)
         elif reasons := _judge(entry, items, cases):
             lines.append(head + "; ".join(reasons))
-    return lines
+    current = [entry["comparison"] for entry in items if producer_proved(entry)]
+    whole = {path for run in current for path in run.get("wholeFiles", [])}
+    named = {path: function for entry in items if (entry.get("comparison") or {}).get("fresh")
+             for path, function in entry["comparison"].get("named", {}).items()}
+    lines += [f"`{path}` is named for changed `{function}`; compare it whole" for path, function in named.items() if path not in whole]
+    decided: dict[str, set[bool | None]] = {}
+    for run in current:
+        for condition in run["arms"][0].get("conditions", []):
+            decided.setdefault(condition["label"], set()).add(condition["decided"])
+    return lines + [f"removed condition {label} never decided a compared case"
+                    for label, seen in decided.items() if False in seen and True not in seen]
 
 
 def obligation(entry: JsonObject) -> list[object]:
@@ -495,12 +506,17 @@ def comparison_view(run: JsonObject) -> JsonObject:
         limitations.append(STOPPED_NOTE)
     limitations.extend(f"sensitivity lost on {arm['requestedTree'][:12]}: a tree that failed before passes the revised probe"
                        for label, arm in zip(labels, run["arms"]) if label.startswith("earlier") and arm["outcome"] == "passed")
+    if unmeasured := [condition["label"] for condition in run["arms"][0].get("conditions", []) if condition["decided"] is None]:
+        limitations.append("removed conditions not measured: " + ", ".join(unmeasured[:8])
+                           + (f" +{len(unmeasured) - 8} more in evidence" if len(unmeasured) > 8 else ""))
     return {**{key: run[key] for key in ("comparison", "valid", "fresh", "runIndex", "command") if key in run},
             "arms": [{"source": label, "tree": arm["requestedTree"], "outcome": arm["outcome"],
                       "testsExecuted": (arm.get("proof") or {}).get("testsExecuted"), "unnamed": unnamed[label],
                       **({"error": arm["error"][:500]} if arm.get("error") else {})}
                      for label, arm in zip(labels, run["arms"])],
-            "cases": lines, "limitations": limitations}
+            "cases": lines, "limitations": limitations,
+            **({"added": [f"{path}, named for changed `{function}`" for path, function in run["added"].items()]}
+               if run.get("added") else {})}
 
 
 def _unnamed_lines(arm: JsonObject, report: bool = False) -> list[str] | None:
