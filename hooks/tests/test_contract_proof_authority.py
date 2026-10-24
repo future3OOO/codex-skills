@@ -801,6 +801,79 @@ class ContractProofAuthorityTests(unittest.TestCase):
         self.assertEqual(baseline.returncode, 0, baseline.stdout + baseline.stderr)
         self.assertIn("Late RED: BM_KEEP", self.h.cli("summary").stdout, marker + ": " + self.h.cli("summary").stdout)
 
+    def test_a_red_preservation_can_reopen_without_claiming_proof(self) -> None:
+        marker = "RED_PRESERVATION_REOPEN_REFUSED"
+        slug, workflow_id = self.h.begin_to_preflight([
+            contract("BM_C", red_failure="VALUE_NOT_TWO_P"),
+            preservation("BM_P", red_failure="VALUE_NOT_TWO_P"),
+        ])
+        script = "import app; assert app.value == 2, 'VALUE_NOT_TWO_P'"
+        red = self.h.tdd(slug, "red", "BM_P", script)
+        self.assertEqual(red.returncode, 0, red.stdout + red.stderr)
+        evidence_id = str(read_workflow(self.identity)["tddEvidence"])
+        historical = self.h.cli("evidence", "--full", "--evidence-id", evidence_id).stdout
+        original = self.item("BM_P")
+        reopened = self.h.update_map(slug, workflow_id, {"dispositions": [
+            {"id": "BM_P", "status": "pending", "evidence": "governing acceptance changed"}]})
+        self.assertEqual(reopened.returncode, 0, marker + ": " + reopened.stderr)
+        expected = {key: value for key, value in original.items() if key != "redCommand"}
+        expected["status"] = "pending"
+        self.assertEqual(self.item("BM_P"), expected, marker)
+        self.assertIsNone(self.item_document()["activeBehaviorId"], marker)
+        self.assertEqual(self.h.cli("evidence", "--full", "--evidence-id", evidence_id).stdout,
+                         historical, marker)
+        self.assertIn("BM_P", self.h.cli("complete").stderr, marker)
+        # The same observed failure now belongs to the other attack, not history.
+        admitted = self.h.tdd(slug, "red", "BM_C", script)
+        self.assertEqual(admitted.returncode, 0, marker + ": " + admitted.stderr)
+        self.assertEqual(self.item_status("BM_C"), "red", marker)
+
+    def test_red_preservation_reopen_refusals_are_atomic(self) -> None:
+        marker = "RED_PRESERVATION_REFUSAL_MUTATED_STATE"
+        slug, workflow_id = self.h.begin_to_preflight([
+            contract("BM_C"), preservation("BM_P", red_failure="VALUE_NOT_THREE_P")])
+        self.green(slug, "BM_C", 2, "VALUE_NOT_TWO")
+        red = self.h.tdd(slug, "red", "BM_P", "import app; assert app.value == 3, 'VALUE_NOT_THREE_P'")
+        self.assertEqual(red.returncode, 0, red.stdout + red.stderr)
+        valid = {"id": "BM_P", "status": "pending", "evidence": "governing acceptance changed"}
+        before = {command: self.h.cli(command).stdout for command in ("status", "history")}
+        original = self.item_document()
+        for dispositions in (
+            [{**valid, "evidence": ""}],
+            [valid, {"id": "BM_C", "status": "superseded", "supersededBy": "BM_MISSING",
+                     "evidence": "invalid replacement"}],
+        ):
+            with self.subTest(dispositions=dispositions):
+                refused = self.h.update_map(slug, workflow_id, {"dispositions": dispositions})
+                self.assertEqual(refused.returncode, 2, marker + ": " + refused.stderr)
+                self.assertEqual(self.item_document(), original, marker)
+                for command, previous in before.items():
+                    self.assertEqual(self.h.cli(command).stdout, previous, marker)
+
+    def test_red_preservation_requires_explicit_pending(self) -> None:
+        marker = "RED_PRESERVATION_REFUSAL_MUTATED_STATE"
+        slug, workflow_id = self.h.begin_to_preflight([
+            contract("BM_C"), preservation("BM_P", red_failure="VALUE_NOT_TWO_P")])
+        red = self.h.tdd(slug, "red", "BM_P", "import app; assert app.value == 2, 'VALUE_NOT_TWO_P'")
+        self.assertEqual(red.returncode, 0, red.stdout + red.stderr)
+        for directive in ({"revalidate": True}, {"status": "omitted"}):
+            self.assert_map_refused(slug, workflow_id, {"dispositions": [
+                {"id": "BM_P", **directive, "evidence": "not an explicit pending request"}]}, "BM_P", marker)
+
+    def test_kindless_legacy_red_does_not_gain_reopening_authority(self) -> None:
+        marker = "LEGACY_KINDLESS_REOPEN_ADMITTED"
+        slug, _ = self.h.begin_to_preflight([
+            contract("BM_C"), preservation("BM_P", red_failure="VALUE_NOT_TWO_P")])
+        red = self.h.tdd(slug, "red", "BM_P", "import app; assert app.value == 2, 'VALUE_NOT_TWO_P'")
+        self.assertEqual(red.returncode, 0, red.stdout + red.stderr)
+        legacy = self.item("BM_P")
+        legacy.pop("kind")  # Supported representation from before kind was recorded.
+        items = behavior_map.runtime_items([legacy])
+        with self.assertRaises(ValueError, msg=marker):
+            behavior_map.apply_dispositions(items, [
+                {"id": "BM_P", "status": "pending", "evidence": "no declared kind"}])
+        self.assertEqual(items, [legacy], marker)
+
     def test_a_reopened_items_retained_red_is_not_ownership(self) -> None:
         # Final review SPEC-5: reopening an item to pending keeps its RED history
         # as evidence; another item's initial probe at the same failure is its own.
