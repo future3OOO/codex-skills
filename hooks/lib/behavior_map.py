@@ -439,7 +439,10 @@ def apply_dispositions(
         # Only the reopen-a-proved-item path keeps a reason; plain dispositions carry no mandated text.
         previous = mapped.get("status")
         if revalidate or status == "pending":
-            if status == "pending" and mapped.get("kind") == "contract" and previous in {"red", "green"}:
+            if status == "pending" and (
+                (mapped.get("kind") == "contract" and previous in {"red", "green"})
+                or (mapped.get("kind") == "preservation" and previous == "red")
+            ):
                 mapped["status"] = "pending"
                 for field in ("redCommand", "proofCommand", "proofBinding"):
                     mapped.pop(field, None)
@@ -451,7 +454,7 @@ def apply_dispositions(
                 revalidate and previous == "pending" and not mapped.get("revalidationRequired")
             ):
                 raise ValueError(f"behavior {identifier} is a {mapped.get('kind')} item at {previous}; "
-                                 "only a RED contract or settled preservation can be reopened, or preservation revalidated")
+                                 "only a RED item or settled preservation can be reopened, or preservation revalidated")
             if revalidate and mapped.get("revalidationRequired"):
                 continue
             mapped["revalidationRequired"] = True

@@ -113,9 +113,9 @@ source/governance edits. Historical proof remains; omission retains the flag and
 requires governing evidence. Missing binding needs valid omission or a currently
 GREEN replacement, never an invented execution.
 
-Correct a RED contract's command with
+Correct a RED item's command or reassess its acceptance criterion with
 `{"id":"BM_ATTACK","status":"pending","evidence":"Wrong occurrence selected."}`.
-This releases its command and active cycle while preserving the contract, finding
+This releases its command and active cycle while preserving the obligation, finding
 ownership, history and other receipts. Resume ordinary proof; the item remains
 pending and its historical RED still forbids withdrawal.
 
