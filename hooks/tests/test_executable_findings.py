@@ -23,6 +23,9 @@ BATCH = ("import app, unittest\nclass B(unittest.TestCase):\n"
          "    def test_total(self): self.assertEqual(app.total(1, 2), 3)\n")
 
 
+STILL_FAILS = {"id": "F", "claim": "still fails", "material": True, "kind": "behavioral"}
+
+
 class Repo(unittest.TestCase):
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory()
@@ -80,6 +83,15 @@ class FinalEnvelope(unittest.TestCase):
         self.assertEqual([sorted(finding) for finding in document["findings"]],
                          [["claim", "id", "kind", "material", "probe"], ["change", "claim", "id", "kind", "material"]])
 
+    def test_the_advisor_result_shape_names_each_stage_finding_and_verdicts(self) -> None:
+        for part in ("at preflight FINDING is", "VERDICT approved|changes-required|completed", "at final FINDING is "
+                     + workflow_documents.EXECUTABLE, "VERDICT commit-ready|fix-before-commit|context-mismatch"):
+            self.assertIn(part, workflow_documents.RECORD_SHAPES["advisor-result"])
+
+    def test_advisor_result_help_keeps_preflight_and_unavailable_forms(self) -> None:
+        for part in ('{"id":"SPEC-1","claim":"...","material":true}', "--verdict unavailable --reason TEXT"):
+            self.assertIn(part, workflow_documents.RECORD_SHAPES["advisor-result"])
+
 
 class NamedSelection(unittest.TestCase):
     """_named_command adds only the tests, in a file named for a changed function, that name the function."""
@@ -89,7 +101,7 @@ class NamedSelection(unittest.TestCase):
         self.addCleanup(root.cleanup)
         for name, text in files.items():
             Path(root.name, name).parent.mkdir(parents=True, exist_ok=True)
-            Path(root.name, name).write_text(text, encoding="utf-8")
+            Path(root.name, name).write_bytes(text if isinstance(text, bytes) else text.encode())
         command = [sys.executable, "-m", *runner]
         return tdd_workflow._named_command(tdd_workflow.tdd_surface.identify(command), command, named, root.name)
 
@@ -100,6 +112,15 @@ class NamedSelection(unittest.TestCase):
         unit = "import unittest\nfrom app import total\nclass T(unittest.TestCase):\n    def test_sum(self): total(1, 2)\n    def test_other(self): pass\n"
         self.assertEqual(self.selected(command, {**files, "test_total.py": unit}, {"test_total.py": "total"}),
                          ([sys.executable, "-m", *command, "test_total.T.test_sum"], {"test_total.T.test_sum": "total"}))
+
+    def test_a_named_file_that_does_not_parse_is_a_workflow_error(self) -> None:
+        for broken in ("def test_sum(:\n", b"\xff\n"):
+            with self.subTest(broken=broken):
+                with self.assertRaises(Exception) as caught:
+                    self.selected(["unittest", "test_batch.B.test_value"], {"test_batch.py": BATCH, "test_total.py": broken},
+                                  {"test_total.py": "total"})
+                self.assertIsInstance(caught.exception, workflow_state.WorkflowError)
+                self.assertRegex(str(caught.exception), "test_total.py.*does not parse")
 
 
 class RunProbe(Repo):
@@ -226,7 +247,8 @@ class Ledger(Repo):
     def test_removed_appeal_condition_no_longer_admits_a_prose_rejection(self) -> None:
         self.dispose({"status": "pending"}, "rejected-with-evidence")
 
-    def final_over(self, record: dict[str, object], findings: list[dict[str, object]], **state_fields: object) -> dict[str, object]:
+    def final_over(self, record: dict[str, object], findings: list[dict[str, object]], raised: tuple[dict[str, object], ...] = (),
+                   **state_fields: object) -> dict[str, object]:
         """record_advisor_result over a recorded final result, the way the removed appeal guard saw it."""
         with workflow_state.mutation(self.identity) as transaction:
             state = transaction.state
@@ -236,12 +258,30 @@ class Ledger(Repo):
                                                             for finding in findings], **state_fields)
             transaction.append(state, "advisor-result", manifests=[gate])
         intake = {"schemaVersion": 1, "workflowId": state["workflowId"], "stage": "final", "producer": "codex-advisor",
-                  "verdict": "commit-ready", "findings": []}
-        executed = {"measuredTree": None, "measuredEvidence": None, "findings": [], "reexecuted": []}
+                  "verdict": "fix-before-commit" if raised else "commit-ready", "findings": list(raised)}
+        executed = {"measuredTree": None, "measuredEvidence": None, "findings": list(raised), "reexecuted": []}
         accepted = inspect.signature(workflow_state.record_advisor_result).parameters
         return workflow_state.record_advisor_result(self.identity, "direct", state["workflowId"], "final", "codex-advisor",
-                                                    "commit-ready", intake=intake,
+                                                    intake["verdict"], intake=intake,
                                                     **({"execution": executed} if "execution" in accepted else {}))
+
+    def round_claims(self, *raised: dict[str, object]) -> tuple[list[object], dict[str, object]]:
+        """The claims of the intake finalReview names after a final round over one pending final finding F."""
+        recorded = self.final_over({"status": "pending", "source": None, "findings": "pending"},
+                                   [{"findingId": "F", "status": "pending", "kind": "behavioral", "material": True,
+                                     "stage": "final", "producer": "codex-advisor"}], tuple(map(dict, raised)))
+        intake = workflow_state.evidence_document(self.identity, recorded["finalReview"]["intakeEvidence"])
+        return [finding["claim"] for finding in intake["findings"]], recorded["findingStates"][0]
+
+    def test_a_final_round_records_its_own_executed_intake(self) -> None:
+        self.assertEqual(self.round_claims(STILL_FAILS)[0], ["still fails"], "DIGEST_SHOWS_AN_EARLIER_ROUND")
+
+    def test_a_reraised_finding_keeps_its_canonical_identity(self) -> None:
+        kept = self.round_claims(STILL_FAILS)[1]
+        self.assertEqual((kept["status"], kept["observations"][-1]["evidenceId"] != kept["intakeEvidenceId"]), ("pending", True))
+
+    def test_a_clean_final_round_records_empty_current_intake(self) -> None:
+        self.assertEqual(self.round_claims()[0], [])
 
     def test_removed_appeal_bypass_no_longer_rerecords_a_final_result(self) -> None:
         with self.assertRaisesRegex(workflow_state.WorkflowError, "final review result already recorded"):

@@ -1111,7 +1111,7 @@ def record_advisor_result(
                 )
                 _settle_executed(transaction, state, execution, intake_reference, verdict == "fix-before-commit")
                 state["finalReview"] = {
-                    "source": source, "status": verdict, "intakeEvidence": intake_reference,
+                    "source": source, "status": verdict, "intakeEvidence": intake_write.evidence_id,  # this round's executed intake
                     "findings": "pending" if _stage_unresolved(state, stage, source) else "none",
                 }
                 # A later final is sent only the change since the tree this verdict judged.

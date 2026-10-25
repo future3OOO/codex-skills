@@ -132,9 +132,10 @@ EXECUTABLE = ('{"id":"R-1","claim":"...","probe":{"path":"tests/test_r1.py","con
 RECORD_SHAPES = {
     "preflight": f'{{"authoritativeContract":"text","behaviorMap":[{ITEM_SHAPE}]}}',
     "review": '{"findings":[FINDING]} where FINDING is ' + EXECUTABLE,
-    "advisor-result": ('the advisor envelope {"schemaVersion":1,"findings":[{"id":"SPEC-1","claim":"...",'
-                       '"material":true}],"verdict":"approved|changes-required|completed|commit-ready|'
-                       'fix-before-commit|context-mismatch"}, or --verdict unavailable --reason TEXT'),
+    "advisor-result": ('the advisor envelope {"schemaVersion":1,"findings":[FINDING],"verdict":VERDICT}: at preflight '
+                       'FINDING is {"id":"SPEC-1","claim":"...","material":true} and VERDICT approved|changes-required|'
+                       'completed, or --verdict unavailable --reason TEXT; at final FINDING is ' + EXECUTABLE +
+                       ' and VERDICT commit-ready|fix-before-commit|context-mismatch'),
     "advisor-disposition": ("--finding F --fixed [--behavior-id BM]; a preflight finding also "
                             "--rejected|--report-only|--follow-up REF --reason TEXT; or --findings none"),
     "tdd-map": f'{{"items":[{ITEM_SHAPE}]}}; a recorded item needs only id and the changed fields, null removes an optional one',

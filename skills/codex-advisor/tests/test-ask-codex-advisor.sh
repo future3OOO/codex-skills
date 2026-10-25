@@ -206,7 +206,12 @@ printf 'CLAUDE_CODE_MAX_CONTEXT_TOKENS=%s\nCLAUDE_CODE_AUTO_COMPACT_WINDOW=%s\nC
   "${CLAUDE_AUTOCOMPACT_PCT_OVERRIDE:-unset}" >"$CAPTURE_DIR/env-$count"
 cat >"$CAPTURE_DIR/payload-$count"
 if [[ "${FAIL_PROVIDER:-0}" == 1 ]]; then exit 7; fi
-if [[ " $* " == *" --resume "* ]]; then
+if [[ -n "${LEAD_WRITE:-}" ]]; then
+  for target in "$LEAD_WRITE" "$CODEX_WORKFLOW_STATE_ROOT/STATE_WRITE" "$PWD/COPY_WRITE" ${TMPDIR:+"$TMPDIR/TMP_WRITE"}; do
+    if { : >"$target"; } 2>/dev/null; then printf 'WROTE %s\n' "$target" >&2; else printf 'REFUSED %s\n' "$target" >&2; fi
+  done
+  printf '%s\n' '{"schemaVersion":1,"findings":[],"verdict":"commit-ready"}'
+elif [[ " $* " == *" --resume "* ]]; then
   printf '%s\n' '{"schemaVersion":1,"findings":[],"verdict":"commit-ready"}'
 else
   printf '%s\n' '{"schemaVersion":1,"findings":[{"id":"SPEC-1","claim":"the public reader returns the wrong value","kind":"behavioral","material":true}],"verdict":"completed"}'
@@ -351,6 +356,10 @@ check_status "final has one current-pass diff section" 1 "$(count_exact "$rigtmp
 check "final design telemetry emitted" "codex_advisor_evidence name=governing-design" "$(cat "$rigtmp/final.err")"
 check "projection telemetry emitted" "codex_advisor_evidence name=advisor-projection" "$(cat "$rigtmp/final.err")"
 check "diff telemetry emitted" "codex_advisor_evidence name=diff " "$(cat "$rigtmp/final.err")"
+check "DIGEST_KEPT final clean completion receipt" "nextAction=complete-workflow next:" "$final_out"
+check "DIGEST_KEPT preflight receipt" "nextAction=preflight next:" "$preflight_out"
+check "PATH_CHANNEL_LOGGED the map sent by path still logs its size and digest" "framing=path" \
+  "$(grep -E 'codex_advisor_evidence name=behavior-map shown=0 total=[1-9][0-9]* truncated=no sha256=[0-9a-f]{64} framing=path' "$rigtmp/final.err")"
 check "completion marker emitted" "codex_advisor_complete status=0 provider=codex" "$(cat "$rigtmp/final.err")"
 check "outgoing final payload retains selected receipt" "$selected_receipt" "$(cat "$rigtmp/capture/payload-4")"
 final_payload=$(cat "$rigtmp/capture/payload-4")
@@ -445,6 +454,13 @@ run_wrapper --slug scoped-rig --phase final-review --design-file "$rigtmp/design
 no_venv="$rigtmp/capture/env-$(cat "$rigtmp/capture/count")"
 check "FINAL_RUNS_CODE a non-venv comparison sets no VIRTUAL_ENV" "VIRTUAL_ENV=" "$(grep -x 'VIRTUAL_ENV=' "$no_venv")"
 check_absent "FINAL_RUNS_CODE a non-venv comparison adds no venv to PATH" "PATH=$rigtmp/venv/bin:" "$(cat "$no_venv")"
+LEAD_WRITE="$rigtmp/repo/LEAD_WRITE" ADVISOR_PROVIDER=claude run_wrapper --slug scoped-rig --phase final-review \
+  --design-file "$rigtmp/design.md" -- 'reassess through claude' >/dev/null 2>"$rigtmp/claude-final.err"; status=$?
+check_status "CLAUDE_FINAL_CONFINED a claude final review completes" 0 "$status"
+check "CLAUDE_FINAL_CONFINED a claude final review cannot write the lead checkout" "REFUSED $rigtmp/repo/LEAD_WRITE" "$(cat "$rigtmp/claude-final.err")"
+check "CLAUDE_FINAL_CONFINED a claude final review cannot write workflow state" "REFUSED $rigstate/STATE_WRITE" "$(cat "$rigtmp/claude-final.err")"
+check "CLAUDE_FINAL_CONFINED a claude final review writes its copy" "/candidate/COPY_WRITE" "$(grep '^WROTE ' "$rigtmp/claude-final.err")"
+check "CLAUDE_FINAL_CONFINED a claude final review writes temporary files" "/TMP_WRITE" "$(grep '^WROTE ' "$rigtmp/claude-final.err")"
 rm -rf "$rigtmp"
 
 if [[ "${LIVE:-0}" == 1 ]]; then

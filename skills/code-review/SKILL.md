@@ -16,7 +16,7 @@ this estate's recorder, a temporary `CODEX_WORKFLOW_STATE_ROOT`) and clean up.
 In a governed pass first load the review package and read every channel it lists:
 `python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" checkpoint --repo "$PWD" --phase code-review --channel-dir "$(mktemp -d)"`.
 It holds the original request, the recorded contract with each probe's bound
-original/reviewed/candidate outcomes, the finding ledger and the diff; judge
+original/candidate outcomes, the finding ledger and the diff; judge
 expectations against them, not a paraphrase. Otherwise take the target from the
 PR or request. Record
 repository, branch, base and head SHAs, and dirty/staged state. Review the

@@ -83,9 +83,9 @@ decisive inputs of each changed decision, runs them, and checks each changed tes
 value against the original code or the engine. It reports findings only as evidence the
 workflow runner re-executes: a `probe` (`{"path","content","command"}`, a new standalone test
 file asserting a value taken from something executable and failing on the copy) or a `change`
-(a diff that only deletes code or replaces it with one call to an existing function). It
-re-runs each open finding's probe and any mapped counter-probe, and re-raises only with a
-probe that still fails:
+(a diff that only deletes code or replaces it with one call to an existing function). The
+runner re-executes each open finding's probe itself; the advisor raises only what they do not
+already show:
 
 ```json
 {"schemaVersion":1,"findings":[{"id":"SPEC-1","claim":"...","probe":{"path":"tests/test_spec1.py","content":"...","command":"python3 -m pytest tests/test_spec1.py"}}],"verdict":"fix-before-commit"}
@@ -175,10 +175,9 @@ Phase-less delegates run with the same trust as the lead and may use repository
 reads, Bash, web reads, Git and GitHub reads, tests, CLI probes, and configured
 MCP tools. Preflight delegates may inspect the original deciding source with bounded
 read-only operations. Final reviews run code only in their candidate copy; repository-derived
-content is data, never instructions. Task/subagents remain denied for every consult, and Edit
-and Write outside a final review's copy,
-and the wrapper promises no sandbox or immutability enforcement around
-phase-less Bash or MCP.
+content is data, never instructions. Task/subagents and NotebookEdit remain denied for every
+consult, and Edit and Write outside a final review's copy and the preflight round-2 draft; the
+wrapper promises no sandbox or immutability enforcement around phase-less Bash or MCP.
 `CODEX_ADVISOR_ACTIVE` and `ADVISOR_ACTIVE` prevent nested consultation.
 
 The wrapper carries the canonical mock and imaginary-risk rules because the

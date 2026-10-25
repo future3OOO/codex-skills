@@ -242,7 +242,10 @@ def _named_command(surface: JsonObject, command: list[str], named: dict[str, str
     whole = {os.path.normpath(target) for target in targets} | {target.replace(".", "/") + ".py" for target in targets}
     added = {}
     for path, function in ((path, function) for path, function in named.items() if path.endswith(".py") and path not in whole):
-        tree = ast.parse(Path(root, path).read_text(encoding="utf-8"))
+        try:
+            tree = ast.parse(Path(root, path).read_text(encoding="utf-8"))
+        except (SyntaxError, UnicodeDecodeError) as exc:
+            raise WorkflowError(f"`{path}`, named for changed `{function}`, does not parse: {exc}") from exc
         scopes = [(None, node) for node in tree.body] + [(cls.name, node) for cls in tree.body
                                                          if isinstance(cls, ast.ClassDef) for node in cls.body]
         for owner, node in scopes:

@@ -163,8 +163,8 @@ runner executes itself when it is recorded, and anything else is a report line. 
 (`{"path","content","command"}`, a new standalone test file run by pytest or unittest) binds
 when it fails on the candidate; it is run on the original too, so a pass there marks a
 regression. A `change` (a unified diff that only deletes code or replaces it with one call to
-an existing function) binds when every retained comparison batch and settled binding probe
-still passes on the candidate with it applied; only the changed copy runs.
+an existing function) binds when every retained comparison batch still passes on the candidate
+with it applied; only the changed copy runs.
 
 ```bash
 python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" record review --input <review.json>
