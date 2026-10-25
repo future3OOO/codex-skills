@@ -29,7 +29,7 @@ collaborators. Verify loaded sources, equivalent inputs and isolated mutable sta
 cover the actual changed code, affected cases and interactions. Follow
 [production-code's comparison rules](../production-code/SKILL.md#minimum-implementation-decision).
 Require the CLI for CLI claims and real agents for agent/workflow claims; compare
-artifacts for non-behavioral changes. Neither artifact nor component checks prove
+actual artifacts for non-behavioral changes. Neither artifact nor component checks prove
 workflow speed.
 
 Reuse evidence; add no harnesses, metadata or tests per bullet. Historical examples
