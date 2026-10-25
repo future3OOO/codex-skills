@@ -1,6 +1,6 @@
 """First on a traced comparison arm's PYTHONPATH: for each evaluation of a probed decision, the
-conditional jumps it took and the truth of its bare names holding builtin values. It evaluates no
-expression and calls no code of the traced program."""
+conditional jumps it took, the truth of its bare names holding builtin values and the running test as
+its runner reports it. It evaluates no expression and calls no code of the traced program."""
 import json
 import os
 import sys
@@ -23,8 +23,23 @@ def _install(probe_path: str, out_path: str) -> None:
     seen: dict = {index: set() for index in range(len(decisions))}
 
     def close(key) -> None:
-        names, jumps = evaluating.pop(key)
-        seen[key[0]].add((tuple(sorted(names.items())), tuple(sorted(jumps.items()))))
+        names, jumps, test = evaluating.pop(key)
+        seen[key[0]].add((tuple(sorted(names.items())), tuple(sorted(jumps.items())), test))
+
+    def running_test(frame) -> str | None:
+        """The outermost pytest item's node id, else the outermost unittest TestCase.run's test id."""
+        item = case = None
+        while frame is not None:
+            code = frame.f_code
+            if code.co_name == "runtest" and f"{os.sep}_pytest{os.sep}" in code.co_filename:
+                item = frame.f_locals.get("self")
+            elif code.co_name == "run" and code.co_filename.endswith(os.path.join("unittest", "case.py")):
+                case = frame.f_locals.get("self")
+            frame = frame.f_back
+        if item is not None:
+            return getattr(item, "nodeid", None)
+        name = getattr(case, "_testMethodName", None)
+        return name and f"{type(case).__module__}.{type(case).__qualname__}.{name}"
 
     def branch(code, offset, destination):
         owned = next((value for (path, name), value in owners.items()
@@ -48,7 +63,8 @@ def _install(probe_path: str, out_path: str) -> None:
                 if key not in evaluating:
                     scope = {**frame.f_globals, **frame.f_locals}
                     values = {name: scope[name] for name in decision["names"] if name in scope}
-                    evaluating[key] = ({name: bool(value) for name, value in values.items() if type(value) in SAMPLED}, {})
+                    evaluating[key] = ({name: bool(value) for name, value in values.items() if type(value) in SAMPLED}, {},
+                                       running_test(frame))
                 evaluating[key][1][where] = (JUMPS[item.opname], destination == item.argval)
         return None
 
@@ -56,8 +72,8 @@ def _install(probe_path: str, out_path: str) -> None:
         for key in list(evaluating):
             close(key)
         with open(out_path, "a", encoding="utf-8") as handle:
-            handle.write(json.dumps({index: [{"names": dict(names), "jumps": [[*span, *jump] for span, jump in jumps]}
-                                             for names, jumps in evaluations] for index, evaluations in seen.items()}) + "\n")
+            handle.write(json.dumps({index: [{"names": dict(names), "jumps": [[*span, *jump] for span, jump in jumps], "test": test}
+                                             for names, jumps, test in evaluations] for index, evaluations in seen.items()}) + "\n")
 
     sys.monitoring.use_tool_id(4, "workflow-conditions")
     sys.monitoring.register_callback(4, sys.monitoring.events.BRANCH, branch)

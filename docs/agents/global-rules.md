@@ -57,8 +57,8 @@ Repo Context Forge analysis copy. For codex-skills installation, follow
   behavior. Maximize attack coverage across affected inputs, failures,
   interactions, and preservation. Prove each changed line with a direct N/N+1
   probe that calls it. Add another existing test only when it calls the changed
-  code directly. Never run whole files or classes that readiness does not name,
-  the full suite, or duplicate retained probes with a parallel unit-test suite.
+  code directly. Never run whole files or classes, the full suite, or duplicate
+  retained probes with a parallel unit-test suite.
 - **Imaginary-risk ban.** A theoretical risk with no demonstrated failure is a
   report line, not a system. Build nothing for it.
 - **Root-cause-first.** Use `$diagnose` for bugs, failures, flaky behavior, and

@@ -463,7 +463,7 @@ class PreflightContinuation(Ceremony):
             command = next_operation(identity, {**state, "nextAction": action})["command"]
             self.assertIn(expected, command, marker)
             self.assertIn(str(self.repo), command, marker)
-        for action in ("final-review", "re-consult-final-review", "appeal-final-review"):
+        for action in ("final-review", "re-consult-final-review"):
             command = next_operation(identity, {**state, "nextAction": action})["command"]
             self.assertIn("--phase final-review", command, marker)
             self.assertNotIn("--design-absent", command, marker)
@@ -545,8 +545,6 @@ class AdvisorDiffBounded(Ceremony):
                 "behaviorMap": []})
         set_phase(identity, "tdd", "not-required")
         self.assertIn("JUDGED = 1", final("fix-before-commit", "# FIRST\n"), f"{marker}: a preflight advanced the judged tree")
-        self.ok("record", "advisor-disposition", "--finding", "F-1", "--report-only",
-                "--reason", "The finding has no runnable behavior claim.")
         mismatch = final("context-mismatch", "# SECOND\n")
         self.assertNotIn("JUDGED = 1", mismatch, f"REJUDGED_WHOLE_PASS: {mismatch[:600]}")
         self.assertIn("diff> 1\t0\tapp.py\n", mismatch, f"RESUMED_PASS_UNLISTED: {mismatch[:600]}")
@@ -559,9 +557,6 @@ class AdvisorDiffBounded(Ceremony):
         self.assertNotIn("JUDGED = 1", fresh, f"APPROVAL_NOT_FROM_LEDGER: {fresh[:600]}")
         self.assertIn("+# THIRD", fresh, "APPROVAL_NOT_FROM_LEDGER")
         self.assertIn("+# FLAGGED", final("fix-before-commit", "# FLAGGED\n"), marker)
-        self.ok("record", "advisor-disposition", "--finding", "F-1", "--rejected", "--reason", "r")
-        appeal = self.wrapper("commit-ready", phase="final-review")[1]
-        self.assertIn("diff> +# FLAGGED", appeal, f"APPEAL_WITHOUT_DISPUTED_CODE: {appeal[-600:]}")
 
     def test_an_oversized_prompt_is_refused_before_the_provider(self) -> None:
         marker = "OVERSIZED_PROMPT_SENT"
@@ -874,9 +869,12 @@ class StepRegistry(Ceremony):
         observed.append(self.snapshot())
         envelope = self.tmp / "final.json"
         envelope.write_text(json.dumps({"schemaVersion": 1, "verdict": "fix-before-commit", "findings": [
-            {"id": "F-1", "claim": "matrix finding", "material": True, "kind": "nonbehavioral"}]}), encoding="utf-8")
-        intake, verdict = advisor_envelope(str(envelope), slug="ceremony", workflow_id=wid, stage="final", producer="codex-advisor")
-        record_advisor_result(identity, "ceremony", wid, "final", "codex-advisor", verdict, intake=intake)
+            {"id": "F-1", "claim": "matrix finding", "kind": "nonbehavioral", "probe": {
+                "path": "test_matrix.py", "command": f"{sys.executable} -m unittest test_matrix",
+                "content": "import app, unittest\nclass M(unittest.TestCase):\n    def test_value(self): self.assertEqual(app.value, 3)\n"}}]}),
+            encoding="utf-8")
+        self.cli("record", "advisor-result", "--slug", "ceremony", "--workflow-id", wid, "--stage", "final",
+                 "--source", "codex-advisor", "--input", str(envelope))
         observed.append(self.snapshot())
         if os.environ.get("CEREMONY_CAPTURE_MATRIX"):
             print(json.dumps(observed))
@@ -962,8 +960,6 @@ class EveryViolation(Ceremony):
         self.begin()
         self.ok("record", "advisor-result", "--stage", "preflight", "--input", "-", input=json.dumps({"schemaVersion": 1,
                 "verdict": "completed", "findings": [{"id": "S-1", "claim": "c", "material": True, "kind": "nonbehavioral"}]}))
-        state = self.ok("status", "--fields", "workflowId,activeCandidateTree")
-        context = {"workflowId": state["workflowId"], "candidateTree": state["activeCandidateTree"]}
         design = {"type": "design", "evidenceId": "e", "id": "D"}
         lost = self.pairs("preflight", {"authoritativeContract": "c", "behaviorMap": [
             item("BM_ONE", refs=[design]), item("BM_TWO"), item("BM_THREE")]}, {
@@ -973,20 +969,9 @@ class EveryViolation(Ceremony):
             "status": (("behaviorMap", 0, "status"), "sideways"), "ref": (("behaviorMap", 0, "sourceRefs", 0), 5),
             "field": (("behaviorMap", 0, "bogus"), 1), "id": (("behaviorMap", 2, "id"), "bad id"),
             "duplicate": (("behaviorMap", 1, "id"), "BM_ONE"), "seam": (("behaviorMap", 1, "seam"), "")})
-        finding = {"id": "R-1", "claim": "c", "material": True, "kind": "behavioral"}
-        succession = {"context": dict(context), "findings": [{"evidenceId": "e", "id": "R-1"}], "evidence": "e",
-                      "previousOwner": {"implementerContextId": "a", "reviewerContextId": "b"}}
-        lost += self.pairs("review", {"findings": [dict(finding), {**finding, "id": "R-2"}],
-                                      "implementationContextId": "impl", "repairSuccession": succession}, {
-            "extra": (("extra",), 1), "implementer": (("implementationContextId",), ""),
-            "no-implementer": (("implementationContextId",), _DROP),
-            "succession-evidence": (("repairSuccession", "evidence"), ""),
-            "succession-owner": (("repairSuccession", "previousOwner", "reviewerContextId"), ""),
-            "succession-refs": (("repairSuccession", "findings", 0, "id"), ""),
-            "succession-tree": (("repairSuccession", "context", "candidateTree"), "bad"),
-            "succession-context-extra": (("repairSuccession", "context", "extra"), 1),
-            "claim": (("findings", 0, "claim"), ""),
-            "material": (("findings", 0, "material"), "yes"), "prior": (("findings", 0, "priorFinding"), 5),
+        finding = {"id": "R-1", "claim": "c", "kind": "behavioral"}
+        lost += self.pairs("review", {"findings": [dict(finding), {**finding, "id": "R-2"}]}, {
+            "extra": (("extra",), 1), "claim": (("findings", 0, "claim"), ""), "prior": (("findings", 0, "priorFinding"), 5),
             "duplicate": (("findings", 1, "id"), "R-1"), "second": (("findings", 1, "claim"), 7)})
         self.record_preflight({"authoritativeContract": "c", "behaviorMap": [
             item("BM_ONE"), item("BM_KEEP"),
@@ -1402,10 +1387,8 @@ class MinimalDocuments(Ceremony):
         review = {"findings": [{"id": "R-1", "claim": "a real claim", "material": True,
                                 "axis": "Spec", "location": "extra context is dropped"}]}
         self.ok("record", "review", "--input", "-", input=json.dumps(review))
-        self.assertEqual(self.state()["codeReview"]["findings"], "pending", marker)
-        self.ok("record", "advisor-disposition", "--finding", "R-1", "--report-only",
-                "--reason", "The measured condition has no material consequence on this task.")
-        self.assertEqual(self.state()["findingStates"][-1]["status"], "report-only", marker)
+        self.assertEqual((self.state()["codeReview"]["findings"], self.state()["findingStates"][-1]["material"]),
+                         ("none", False), marker + ": an unexecuted claim bound")
 
         self.ok("record", "tdd-map", "--input", "-", input=json.dumps({"items": [item("BM_TWO", kind="preservation")]}))
         self.assertEqual(self.state()["tdd"], "in-progress", marker)

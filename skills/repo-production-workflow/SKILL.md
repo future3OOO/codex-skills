@@ -143,9 +143,7 @@ delegate (`spawn_agent`, `agent_type=default`, `fork_turns="none"`, normal nativ
 model selection) in the lead's native task checkout. Supply the target and correction delta; instruct it to apply `code-review`,
 which loads the request, contract, comparison outcomes and diff itself.
 Wait without editing the candidate. It returns a
-Standards/Spec review and a findings intake. Verify every finding; fix it or
-dispute it with a disposition. A disposition is invalid
-without its measurement; advisor agreement is not authorization; historical behavior
+Standards/Spec review and a findings intake. Historical behavior
 is contextual evidence only — a current Interface claim needs current documentation,
 callers, tests, or another active authority. In this governed workflow `workflow.py record review` is the required producer for non-trivial review state; outside the governed
 workflow it stays optional. For a genuinely trivial change, record
@@ -155,33 +153,32 @@ Retain its agent and intake IDs. Resume it via `followup_task` with the correcti
 delta, finding IDs and changed/missing evidence.
 Do not reload unchanged skills or repeat execution solely for handoff. Keep the
 reviewer read-only and assign each needed operation once; the lead owns repairs,
-TDD/verification recording and dispositions. Use a fresh reviewer when context is
+TDD and verification recording. Use a fresh reviewer when context is
 unavailable or changed scope/architecture makes it unusable, naming that reason.
 Historical receipts retain their original identity. Every review must describe
 the current candidate.
 
-Record the delegate's JSON intake (`{"findings":[{"id","claim","material","kind"}]}`),
-then, for a disputed finding, a disposition against the returned `summaryId`:
-`{"intakeEvidenceId":"<summaryId>","dispositions":[{"finding_id":"R-1","status":"report-only","reason":"..."}]}`.
-A document carrying both refuses.
-Pass `--review-context-id <agent-id>` with the delegate's review: a second
-recurrence hands its repair to the first reviewer a review names, under the
-[recurring repair contract](WORKFLOW-MAP.md#recurring-behavioral-repairs).
+Record the delegate's intake. Code is proof: a finding binds only through evidence the
+runner executes itself when it is recorded, and anything else is a report line. A `probe`
+(`{"path","content","command"}`, a new standalone test file run by pytest or unittest) binds
+when it fails on the candidate; it is run on the original too, so a pass there marks a
+regression. A `change` (a unified diff that only deletes code or replaces it with one call to
+an existing function) binds when every retained comparison batch and settled binding probe
+still passes on the candidate with it applied; only the changed copy runs.
 
 ```bash
-python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" record review --input <review.json> --review-context-id <agent-id>
+python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" record review --input <review.json>
 ```
 
-A no-finding intake binds the reviewed tree and passes immediately. A finding
-is answered by the fix, `tdd` and a re-review: a re-review with no material finding
-settles the reviewer's open findings. A final advisor finding is answered by the fix,
-`tdd` and the advisor's re-check: its commit-ready settles the finding. Only a
-disputed finding takes a disposition: a false premise records
-normalized `result` exactly `false`; otherwise rejection requires zero occurrence on a
-complete domain; `report-only` resolves completion without authorizing an edit.
-Verification, the typed gate, and a new review all run while findings are open; open
-findings block completion only. A later map update that would leave a fixed finding
-without its owning attack refuses.
+A no-finding intake binds the reviewed tree and passes immediately. Each later review intake
+and final re-check re-executes the stage's open binding findings on the current candidate: a
+finding settles when its evidence no longer binds. Answer a finding only by fixing the code,
+or by an executed counter-probe mapped to it (`record tdd-map` `sourceRefs`): one that fails
+with a change applied settles that change, and one proving a both-trees-failing probe's
+expectation wrong settles it beside a re-check with no binding finding. A regression is never
+countered. Prose dispositions of review and final findings refuse. Verification, the typed
+gate, and a new review all run while findings are open; open findings block completion only.
+A later map update that would leave a fixed finding without its owning attack refuses.
 
 ### 11. Final Codex Advisor review
 
@@ -189,17 +186,14 @@ Before the consult, reconcile known material obligations using step 2's verifica
 and the delegate's findings. Reference the applicable observations and unresolved
 acceptance gaps; load only missing evidence, not the verification history.
 
-The final Codex Advisor judges readiness to push/open the PR from the candidate,
-the delegate review, and the lead's dispositions. Invoke it against the live diff
-with wrapper phase `final-review` and the same slug; the checkpoint supplies the
-diff anchors. It applies
-[Production Code's outcome verification](../production-code/SKILL.md#minimum-implementation-decision)
-to the original objective before judging implementation and dispositions. Missing material
-acceptance evidence forbids `commit-ready`. The wrapper records the result and returns each
-finding's materiality with the recorded `next`; follow it. After the first final verdict, a correction
+The final Codex Advisor verifies the candidate by running code in a disposable copy of it,
+with the project's interpreter. Invoke it against the live diff with wrapper phase
+`final-review` and the same slug; the checkpoint supplies the diff anchors. It returns findings
+in the same executable forms; the runner executes them and derives the verdict, and the wrapper
+returns each finding's execution with the recorded `next`; follow it. After the first final verdict, a correction
 needs only the `tdd` rerun of its items and the final advisor's re-check: code review,
 verification and context revalidation are not repeated. Reuse applicable evidence. Once every
-final finding is dispositioned (`nextAction` `complete-workflow`), a requested
+final finding is settled (`nextAction` `complete-workflow`), a requested
 reassessment of the unchanged candidate runs the same `final-review` phase and records
 as a fresh final result.
 
@@ -221,7 +215,7 @@ python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" \
   complete --repo "$PWD"
 ```
 
-`complete` refuses, from inside its transaction, unless every current probe has fresh successful comparison evidence and no proof gap remains, required phases are ready, material code-review findings are dispositioned, and the context-matched final `codex-advisor` intake has only effective terminal findings. The immutable raw verdict remains evidence but is not an indefinite veto after closure; `context-mismatch` or a pending one-response rejection appeal still blocks; a material re-raise upholds the finding as pending until a fix closes it. The reviewable working tree must match the manifest recorded by the lead review, and every evidence phase must carry its producer's evidence reference — a passed phase without one is a bare claim and reads pending, including legacy in-flight state at upgrade time. It changes workflow state only. It does not inspect, intercept, authorize, or execute Git.
+`complete` refuses, from inside its transaction, unless every current probe has fresh successful comparison evidence and no proof gap remains, required phases are ready, and no binding code-review or final finding is open. The immutable raw verdict remains evidence; `context-mismatch` still blocks. The reviewable working tree must match the manifest recorded by the lead review, and every evidence phase must carry its producer's evidence reference — a passed phase without one is a bare claim and reads pending, including legacy in-flight state at upgrade time. It changes workflow state only. It does not inspect, intercept, authorize, or execute Git.
 
 When the completed work is intentionally not delivered as a PR — local-only
 config, an estate sync, or work the user told you not to push — the no-PR

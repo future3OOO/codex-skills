@@ -187,18 +187,8 @@ def short_ids(name: str) -> set[str]:
 
 
 def _arm_labels(run: JsonObject) -> list[str]:
-    reviewed = set((run.get("reviewSources") or {}).values())
-    labels, counts = [], {"reviewed": 0, "earlier": 0}
-    for index, arm in enumerate(run["arms"]):
-        if index == 0:
-            labels.append("original")
-        elif index == len(run["arms"]) - 1:
-            labels.append("current")
-        else:
-            kind = "reviewed" if arm["requestedTree"] in reviewed else "earlier"
-            counts[kind] += 1
-            labels.append(kind if counts[kind] == 1 else f"{kind} {counts[kind]}")
-    return labels
+    """A comparison runs the original and the current candidate; a legacy run's middle arms are numbered."""
+    return ["original", *(f"earlier {index}" for index in range(1, len(run["arms"]) - 1)), "current"]
 
 
 def folded_cases(run: JsonObject) -> tuple[dict[str, dict[str, JsonObject]], dict[str, int]]:
@@ -267,6 +257,12 @@ def _matched(name: str, cases: dict[str, dict[str, JsonObject]]) -> tuple[list[s
     if len({case.split("[")[0] for case in aliases}) > 1:
         return [], f"{name} matches several tests ({', '.join(sorted(aliases))}): name the full case id"
     return aliases, None
+
+
+def _ran(case: str, test: str) -> bool:
+    """Whether a runner-reported case is the traced test: pytest's node id, or the id unittest reports."""
+    match = UNITTEST_CASE.match(case)
+    return (match.group(1).split(" (", 1)[1][:-1] if match else case) == test
 
 
 def _judge(entry: JsonObject, items: list[JsonObject], cases: dict[str, dict[str, JsonObject]]) -> list[str]:
@@ -348,7 +344,7 @@ def _claimed(entry: JsonObject, items: list[JsonObject], cases: dict[str, dict[s
 def open_obligations(items: list[JsonObject]) -> list[str]:
     """The single readiness result: one question per item whose required proof is missing.
     Items sharing one comparison fold its cases once. The current comparisons then answer for the
-    test files named for changed functions and the conditions the candidate removes."""
+    existing test ids the candidate renames and the conditions it removes."""
     lines: list[str] = []
     folded: dict[object, dict[str, dict[str, JsonObject]]] = {}
     for entry in items:
@@ -380,10 +376,6 @@ def open_obligations(items: list[JsonObject]) -> list[str]:
                    if not re.search(rf"(?:^|[\s,;(]){re.escape(str(name))}(?=$|[\s,;)])", reason)]
         lines.append(head + reason + ("; its cases: " + ", ".join(unnamed) if unnamed else ""))
     current = [entry["comparison"] for entry in items if producer_proved(entry)]
-    whole = {path for run in current for path in run.get("wholeFiles", [])}
-    named = {path: function for entry in items if (entry.get("comparison") or {}).get("fresh")
-             for path, function in entry["comparison"].get("named", {}).items()}
-    lines += [f"`{path}` is named for changed `{function}`; compare it whole" for path, function in named.items() if path not in whole]
     expected = [str(entry.get("expected", "")) for entry in items if entry.get("kind") == "contract"]
     lines += [f"existing test `{case}` is missing on the candidate: restore it, or name it in the expected result "
               "of a contract item whose request removes it"
@@ -393,8 +385,20 @@ def open_obligations(items: list[JsonObject]) -> list[str]:
     for run in current:
         for condition in run["arms"][0].get("conditions", []):
             decided.setdefault(condition["label"], set()).add(condition["decided"])
+    # A removal a contract item names closes on one of its own cases whose result changed and whose test
+    # evaluated the condition at its deciding value on the original, not shown to keep the decision.
+    claimed = set()
+    for entry in items:
+        if entry.get("kind") == "contract" and producer_proved(entry):
+            cases = folded[entry["comparison"].get("runIndex")]
+            own = {case for name in entry.get("boundaryInputs") or [] for case in _matched(name, cases)[0]
+                   if _state(cases[case].get("original")) != _state(cases[case].get("current"))}
+            for condition in entry["comparison"]["arms"][0].get("conditions", []):
+                if condition["label"] in str(entry.get("expected", "")) and any(
+                        possible and _ran(case, test) for test, possible in (condition.get("reached") or {}).items() for case in own):
+                    claimed.add(condition["label"])
     return lines + [f"removed condition {label} never decided a compared case"
-                    for label, seen in decided.items() if False in seen and True not in seen]
+                    for label, seen in decided.items() if False in seen and True not in seen and label not in claimed]
 
 
 def obligation(entry: JsonObject) -> list[object]:
@@ -513,8 +517,6 @@ def comparison_view(run: JsonObject) -> JsonObject:
         limitations.append(f"narrowed selection: {narrowed}; tests outside it are not compared")
     if any(entry.get("execution") == "stopped" for by_tree in cases.values() for entry in by_tree.values()):
         limitations.append(STOPPED_NOTE)
-    limitations.extend(f"sensitivity lost on {arm['requestedTree'][:12]}: a tree that failed before passes the revised probe"
-                       for label, arm in zip(labels, run["arms"]) if label.startswith("earlier") and arm["outcome"] == "passed")
     if unmeasured := [condition["label"] for condition in run["arms"][0].get("conditions", []) if condition["decided"] is None]:
         limitations.append("removed conditions not measured: " + ", ".join(unmeasured[:8])
                            + (f" +{len(unmeasured) - 8} more in evidence" if len(unmeasured) > 8 else ""))
@@ -526,7 +528,7 @@ def comparison_view(run: JsonObject) -> JsonObject:
                       **({"error": arm["error"][:500]} if arm.get("error") else {})}
                      for label, arm in zip(labels, run["arms"])],
             "cases": lines, "limitations": limitations,
-            **({"added": [f"{path}, named for changed `{function}`" for path, function in run["added"].items()]}
+            **({"added": [f"{selector}, which names changed `{function}`" for selector, function in run["added"].items()]}
                if run.get("added") else {})}
 
 

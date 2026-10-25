@@ -82,11 +82,8 @@ grep -Fq 'provider_tools="Read,Grep,Glob,Skill,Bash,WebSearch,WebFetch"' "$WRAPP
 grep -Fq 'phase_args=(--safe-mode --strict-mcp-config)' "$WRAPPER" \
   && { printf 'PASS  phased customizations and MCP config are disabled\n'; pass=$((pass + 1)); } \
   || { printf 'FAIL  phased startup isolation missing\n'; fail=$((fail + 1)); }
-grep -Fq 'provider_tools=""' "$WRAPPER" \
-  && { printf 'PASS  phased tool allowlist is empty\n'; pass=$((pass + 1)); } \
-  || { printf 'FAIL  phased tool allowlist is not empty\n'; fail=$((fail + 1)); }
-grep -Fq 'disallowed_tools="Read Grep Glob Skill Bash WebSearch WebFetch Edit Write NotebookEdit Task mcp__gitnexus__*"' "$WRAPPER" \
-  && { printf 'PASS  phased built-ins and GitNexus remain blocked\n'; pass=$((pass + 1)); } \
+grep -Fq 'disallowed_tools="Skill WebSearch WebFetch NotebookEdit Task mcp__gitnexus__*"' "$WRAPPER" \
+  && { printf 'PASS  phased skills, network and GitNexus remain blocked\n'; pass=$((pass + 1)); } \
   || { printf 'FAIL  phased process-boundary deny changed\n'; fail=$((fail + 1)); }
 grep -q -- '--expected-candidate-tree "$candidate"' "$WRAPPER" \
   && { printf 'PASS  checkpoint candidate reaches advisor-result\n'; pass=$((pass + 1)); } \
@@ -178,6 +175,8 @@ count_file="$CAPTURE_DIR/count"
 count=0; [[ -f "$count_file" ]] && count=$(cat "$count_file")
 count=$((count + 1)); printf '%s\n' "$count" >"$count_file"
 printf '%s\n' "$PWD" >"$CAPTURE_DIR/pwd-$count"
+printf 'PATH=%s\nPYTHONPATH=%s\nVIRTUAL_ENV=%s\n' "$PATH" "${PYTHONPATH:-}" "${VIRTUAL_ENV:-}" >"$CAPTURE_DIR/env-$count"
+python3 -c 'import venv_only, app; print(venv_only.ORIGIN, app.note)' >"$CAPTURE_DIR/import-$count" 2>&1
 printf '%s\n' "$*" >"$CAPTURE_DIR/args-$count"
 cat >"$CAPTURE_DIR/payload-$count"
 if [[ "${FAIL_PROVIDER:-0}" == 1 ]]; then exit 7; fi
@@ -279,7 +278,7 @@ for root in "$ROOT" ${UNUSED_SKILL_ESTATES:-}; do
     "$(grep -rl --exclude-dir=.git "$setup_skill" "$root/skills" "$root/docs" "$root/hooks" "$root/README.md" "$root/AGENTS.md" 2>/dev/null)"
 done
 check_absent "MANUAL_DISPOSITION_GUIDED skills route no manual final disposition" "--fixed --behavior-id <BM_ID>" "$(cat "$ROOT/skills/repo-production-workflow/SKILL.md" "$ROOT/skills/codex-advisor/SKILL.md")"
-check "MANUAL_DISPOSITION_GUIDED the re-check settles a final finding" "its commit-ready settles the finding" "$(cat "$ROOT/skills/repo-production-workflow/SKILL.md")"
+check "MANUAL_DISPOSITION_GUIDED the re-check settles a final finding" "settles when its evidence no longer binds" "$(cat "$ROOT/skills/repo-production-workflow/SKILL.md")"
 check "ADDED_CONDITION_UNSATISFIABLE preflight takes an added condition's contexts from the edited decision" "the edited decision for a condition the plan adds" "$(cat "$rigtmp/capture/payload-1")"
 check "OWNER_BATCHED preflight batches map items by owning Interface" "one contract and one preservation item per owning Interface" "$(cat "$rigtmp/capture/payload-1")"
 check "OWNER_BATCHED preflight batches findings by owner and invariant" "one finding per owning Module and violated invariant" "$(cat "$rigtmp/capture/payload-1")"
@@ -293,7 +292,10 @@ done
 wid=$(CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" status --repo "$rigtmp/repo" | python3 -c 'import json,sys; print(json.load(sys.stdin)["workflowId"])')
 CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" record preflight --repo "$rigtmp/repo" --slug scoped-rig --workflow-id "$wid" --input "$rigtmp/preflight.json" >/dev/null
 printf 'value = 2\nnote = "ready"\n' >"$rigtmp/repo/app.py"
-out=$(CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" tdd --repo "$rigtmp/repo" --slug scoped-rig --behavior-id BM_READER -- python3 -m unittest test_transport_probe 2>&1); status=$?
+# The recorded comparison runs on a project venv the lead's PATH does not select; final review must use it.
+python3 -m venv --without-pip "$rigtmp/venv"
+printf 'ORIGIN = "project-venv"\n' >"$("$rigtmp/venv/bin/python" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')/venv_only.py"
+out=$(PATH="$rigtmp/venv/bin:$PATH" CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 "$WORKFLOW" tdd --repo "$rigtmp/repo" --slug scoped-rig --behavior-id BM_READER -- python3 -m unittest test_transport_probe 2>&1); status=$?
 check_status "BM_READER compares recorded source versions" 0 "$status"
 CODEX_WORKFLOW_STATE_ROOT="$rigstate" python3 - "$ROOT" "$rigtmp/repo" <<'PY'
 import sys
@@ -311,7 +313,8 @@ FAIL_PROVIDER=1 run_wrapper --slug scoped-rig --phase final-review --design-file
 check_status "resume provider failure propagates" 7 "$status"
 resume_args=$(cat "$rigtmp/capture/args-2")
 check "final resumes same session" "exec resume $preflight_sid" "$resume_args"
-check "RESUME_INHERITS_WRITE final resume is explicitly read-only" 'sandbox_mode="read-only"' "$resume_args"
+check "FINAL_RUNS_CODE final resume writes its copy" 'sandbox_mode="workspace-write"' "$resume_args"
+check "FINAL_RUNS_CODE final resume admits its non-git copy" "--skip-git-repo-check" "$resume_args"
 check_absent "resume failure has no cold-start fallback" "exec --sandbox" "$resume_args"
 check_status "resume failure does not re-invoke the provider" 2 "$(cat "$rigtmp/capture/count")"
 
@@ -321,13 +324,23 @@ FAIL_PROVIDER=1 run_wrapper --slug scoped-rig --phase final-review --design-file
 check_status "missing SID starts a session and the provider failure propagates" 7 "$status"
 check_status "failed create persists no session id" 0 "$(ls "$rigstate/_advisor-sessions"/*-scoped-rig-"$wid".codex.sid 2>/dev/null | wc -l)"
 missing_args=$(cat "$rigtmp/capture/args-3")
-check "missing SID runs create transport" "exec --sandbox read-only" "$missing_args"
+check "missing SID runs create transport" "exec --sandbox workspace-write" "$missing_args"
 check_absent "missing SID does not resume" " resume " "$missing_args"
 
 final_out=$(run_wrapper --slug scoped-rig --phase final-review --design-file "$rigtmp/design.md" -- "Reconcile ownership and preservation with this selected verification receipt only: $selected_receipt" 2>"$rigtmp/final.err"); status=$?
 check_status "controlled final composition exits 0" 0 "$status"
 final_args=$(cat "$rigtmp/capture/args-4")
-check "successful final creates a fresh workflow-bound session" "exec --sandbox read-only" "$final_args"
+check "successful final creates a fresh workflow-bound session" "exec --sandbox workspace-write" "$final_args"
+check "FINAL_RUNS_CODE final 4 admits its non-git copy" "--skip-git-repo-check" "$final_args"
+for n in 2 4; do
+  final_dir=$(cat "$rigtmp/capture/pwd-$n")
+  check_absent "FINAL_RUNS_CODE final $n runs outside the lead checkout" "$rigtmp/repo" "$final_dir"
+  check "FINAL_RUNS_CODE final $n imports the venv dependency and the candidate" "project-venv ready" "$(cat "$rigtmp/capture/import-$n")"
+  check "FINAL_RUNS_CODE final $n imports candidate code from the copy" "PYTHONPATH=$final_dir" "$(cat "$rigtmp/capture/env-$n")"
+  check "FINAL_RUNS_CODE final $n uses the comparison venv" "PATH=$rigtmp/venv/bin:" "$(cat "$rigtmp/capture/env-$n")"
+  check "FINAL_RUNS_CODE final $n names the venv" "VIRTUAL_ENV=$rigtmp/venv" "$(cat "$rigtmp/capture/env-$n")"
+done
+check "FINAL_RUNS_CODE preflight keeps the lead checkout" "$rigtmp/repo" "$(cat "$rigtmp/capture/pwd-1")"
 check_absent "final after failed create does not resume" " resume " "$final_args"
 check "final pins xhigh reasoning" "model_reasoning_effort=xhigh" "$final_args"
 check_status "final persists the new codex session id" 36 "$(cat "$rigstate/_advisor-sessions"/*-scoped-rig-"$wid".codex.sid | tr -d '\n' | wc -c)"
@@ -340,13 +353,16 @@ check "projection telemetry emitted" "codex_advisor_evidence name=advisor-projec
 check "diff telemetry emitted" "codex_advisor_evidence name=diff " "$(cat "$rigtmp/final.err")"
 check "completion marker emitted" "codex_advisor_complete status=0 provider=codex" "$(cat "$rigtmp/final.err")"
 check "outgoing final payload retains selected receipt" "$selected_receipt" "$(cat "$rigtmp/capture/payload-4")"
-check_absent "LEDGER_OWNERSHIP_RULE final demands no recorded owning attacks" "owning attacks" "$(cat "$rigtmp/capture/payload-4")"
-check "LEDGER_OWNERSHIP_RULE final judges each ledger claim on the candidate" "whether the current candidate resolves its immutable claim" "$(cat "$rigtmp/capture/payload-4")"
-check "LEDGER_VERDICT_RULE final judges a rejected or report-only entry by its measurement" "for each supplied finding-ledger entry, judge whether the current candidate resolves its immutable claim; for a rejected-with-evidence or report-only entry, judge instead whether it passes the original-result test above, or for report-only shows the difference immaterial" "$(cat "$rigtmp/capture/payload-4")"
-check "ORIGINAL_RESULT_TEST final judges a rejection by the original's result, not a reading of the request" "After preflight the original's result is the test: a rejection, or a contract item added or re-worded since preflight, stands only if the original source already gives the candidate's result for its input or a contract item approved at preflight names that result; a reading of the request is not such evidence." "$(cat "$rigtmp/capture/payload-4")"
-check "LEDGER_VERDICT_RULE final vetoes an entry failing step 4" "or a ledger entry that fails step 4, forbids commit-ready" "$(cat "$rigtmp/capture/payload-4")"
+final_payload=$(cat "$rigtmp/capture/payload-4")
+check "FINDINGS_EXECUTED final asks for a runnable probe" '"probe":{"path":"...","content":"...","command":"..."}' "$final_payload"
+check "FINDINGS_EXECUTED final asks for a deletion-only change" "only deletes code or replaces it with one call to an existing function" "$final_payload"
+check "FINDINGS_EXECUTED final leaves open findings to the runner" "re-executes every open finding" "$final_payload"
+check_absent "FINDINGS_EXECUTED final sends the ledger as a file" "finding-ledger> " "$final_payload"
+check "FINDINGS_EXECUTED final checks a lead test's expected value" "A wrong lead test is a probe asserting the right value" "$final_payload"
+for retired in "attack" "immutable claim" "original-result test" "contract item added or re-worded" "fixSketch" "evidence-only"; do
+  check_absent "FINDINGS_EXECUTED final drops $retired" "$retired" "$(printf '%s' "$final_payload" | sed -n '1,/=== Advisor checkpoint binding/p')"
+done
 check "OWNER_BATCHED final batches findings by owner and invariant" "one finding per owning Module and violated invariant" "$(cat "$rigtmp/capture/payload-4")"
-check "ADVISOR_PROMPT_STALE final judges a finding-owned change against its finding" "against its owning finding" "$(cat "$rigtmp/capture/payload-4")"
 check "ADVISOR_PROMPT_STALE final covers added and strengthened conditions" "adds, removes, weakens, strengthens or rewrites" "$(cat "$rigtmp/capture/payload-4")"
 check_absent "ADVISOR_PROMPT_STALE final judges no release" "each release against" "$(cat "$rigtmp/capture/payload-4")"
 
@@ -423,6 +439,12 @@ run_wrapper --slug adhoc-question -- 'second ad-hoc question' >/dev/null 2>&1
 adhoc_args=$(cat "$rigtmp/capture/args-$(cat "$rigtmp/capture/count")")
 check "RESUME_INHERITS_WRITE an ad-hoc question resumes its session" " resume " "$adhoc_args"
 check "RESUME_INHERITS_WRITE an ad-hoc resume is explicitly read-only" 'sandbox_mode="read-only"' "$adhoc_args"
+# A comparison recorded on the inherited non-venv interpreter keeps that environment.
+CODEX_WORKFLOW_STATE_ROOT="$rigstate" /usr/bin/python3 "$WORKFLOW" tdd --repo "$rigtmp/repo" --slug scoped-rig --behavior-id BM_READER -- /usr/bin/python3 -m unittest test_transport_probe >/dev/null 2>&1
+run_wrapper --slug scoped-rig --phase final-review --design-file "$rigtmp/design.md" -- 'reassess' >/dev/null 2>&1
+no_venv="$rigtmp/capture/env-$(cat "$rigtmp/capture/count")"
+check "FINAL_RUNS_CODE a non-venv comparison sets no VIRTUAL_ENV" "VIRTUAL_ENV=" "$(grep -x 'VIRTUAL_ENV=' "$no_venv")"
+check_absent "FINAL_RUNS_CODE a non-venv comparison adds no venv to PATH" "PATH=$rigtmp/venv/bin:" "$(cat "$no_venv")"
 rm -rf "$rigtmp"
 
 if [[ "${LIVE:-0}" == 1 ]]; then

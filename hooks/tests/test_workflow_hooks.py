@@ -869,10 +869,9 @@ Chosen architecture preserves PRES-1 and records ASSUMP-1.
 """
 
 BATCH_DEMAND = "do not ration findings across rounds"
-VERDICT_SYMMETRY = "names no measured or concretely reachable failure is not material"
+VERDICT_SYMMETRY = "the runner derives the verdict from execution"
 BOUNDARY_SEAM = "outgoing process boundary is the real Seam"
 RESERVED_MISMATCH = "Reserve context-mismatch for a candidate or projection identity mismatch"
-WORDING_VERDICT = "Judge semantic authorization from the original requested behavior"
 DIFF_SECTION = "--- current-pass diff: passStartOid^{tree} -> activeCandidateTree; a deleted file is its header and line count ---"
 DEFINITIONS_SECTION = "--- invoked test definitions"
 PROBE_RULE = "retained real-Seam probe"
@@ -995,13 +994,13 @@ class WrapperPromptTests(HookHarness):
         self.assertIn("every additional material reachable failure class", payload, marker)
 
     def test_the_final_prompt_binds_both_sides_of_the_verdict(self) -> None:
-        # Root cause of the six-round SPEC-2 loop: the rubric named conditions
-        # that invalidate commit-ready and none that invalidate fix-before-commit.
+        # Root cause of the six-round SPEC-2 loop: the rubric named conditions that invalidate
+        # commit-ready and none that invalidate fix-before-commit. Execution now decides both sides.
         marker = "VERDICT_ONE_DIRECTIONAL"
         env = self.wrapper_rig()
         payload = self.final_consult(env, "prompt-verdict")
         self.assertIn(VERDICT_SYMMETRY, payload, marker)
-        self.assertIn("new contradicting measurement", payload, marker)
+        self.assertIn("re-raise it only with a probe that still fails", payload, marker)
         self.assertNotIn(VERDICT_SYMMETRY, self.payload(env, 1), marker)
 
     def test_the_delegate_role_names_the_outgoing_boundary_seam(self) -> None:
@@ -1073,13 +1072,12 @@ class WrapperPromptTests(HookHarness):
         self.assertEqual(self.diff_section(payload), expected, marker)
 
     def test_the_final_prompt_reserves_context_mismatch_for_identity_mismatch(self) -> None:
-        # RCF #22's appeal: a measured rejection of an intent-wording claim was
+        # RCF #22: a measured rejection of an intent-wording claim was
         # answered with context-mismatch and zero findings, which advances nothing.
         marker = "CONTEXT_MISMATCH_NOT_RESERVED"
         env = self.wrapper_rig()
         payload = self.final_consult(env, "prompt-reserved")
         self.assertIn(RESERVED_MISMATCH, payload, marker)
-        self.assertIn(WORDING_VERDICT, payload, marker)
         self.assertNotIn(RESERVED_MISMATCH, self.payload(env, 1), marker)
 
     def test_the_recorded_intent_reaches_the_final_review_exactly_once(self) -> None:
@@ -1364,7 +1362,7 @@ class TollDeletionTests(HookHarness):
         self.assertEqual(self.verify(slug, "--kind", "quality-gate", "--base-ref", "HEAD").returncode, 0)
         review_input = self.tmp / "pending-review.json"
         review_input.write_text('{"findings": []}', encoding="utf-8")
-        review = self.workflow("record", "review", "--slug", slug, "--workflow-id", wid, "--review-context-id", "pending-finding", "--input", str(review_input))
+        review = self.workflow("record", "review", "--slug", slug, "--workflow-id", wid, "--input", str(review_input))
         self.assertEqual(review.returncode, 0, marker + ": " + review.stdout + review.stderr)
         completed = self.state("complete")
         self.assertEqual(completed.returncode, 2, marker + ": " + completed.stdout)
@@ -1535,59 +1533,6 @@ class RedFirstTests(HookHarness):
         self.assertEqual(json.loads(self.state("status").stdout)["nextAction"], "complete-workflow", marker)
         self.assertEqual(self.state("complete").returncode, 0, marker)
 
-    def reject(self, slug: str, wid: str, measurement: str) -> subprocess.CompletedProcess[str]:
-        """The branch's flag form: a measured rejection carries its judgment in --reason."""
-        return self.state("record", "advisor-disposition", "--slug", slug, "--workflow-id", wid, "--stage", "final",
-                          "--finding", "F-1", "--rejected", "--reason",
-                          f"premise false: {measurement} shows test_probe_a attacks the operation; occurrence count=0 over every caller")
-
-    def rejected_then_re_raised(self, slug: str) -> tuple[str, str]:
-        """A rejected final finding the advisor re-raises as material in its one response."""
-        wid = self.open_pass(slug, [pending_behavior("BM_A", behavior="a is two", seam="app module", expected="app.a == 2")])
-        self.assertEqual(self.tdd(slug, "red", "BM_A", "a").returncode, 2)
-        (self.repo / "app.py").write_text("a = 2\nb = 1\n", encoding="utf-8")
-        self.assertEqual(self.tdd(slug, "green", "BM_A", "a").returncode, 0)
-        record_context_forge(self.repo, self.tmp)
-        self.run_verification(slug)
-        self.owner_phase("code-review", "passed", findings="none")
-        finding = {"id": "F-1", "claim": "an operation is unattacked", "material": True, "kind": "behavioral"}
-        envelope = self.tmp / "final-f1.json"
-        envelope.write_text(json.dumps({"schemaVersion": 1, "verdict": "fix-before-commit", "findings": [finding]}), encoding="utf-8")
-        first = self.state("record", "advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final",
-                           "--source", "codex-advisor", "--input", str(envelope))
-        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
-        intake_id = [e["intakeEvidenceId"] for e in json.loads(self.state("status").stdout)["findingStates"] if e["findingId"] == "F-1"][0]
-        rejected = self.reject(slug, wid, "python -m unittest test_probe_a")
-        self.assertEqual(rejected.returncode, 0, rejected.stdout + rejected.stderr)
-        appeal = self.state("record", "advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final",
-                            "--source", "codex-advisor", "--input", str(envelope))
-        self.assertEqual(appeal.returncode, 0, appeal.stdout + appeal.stderr)
-        return wid, intake_id
-
-    def test_a_material_re_raise_binds_until_fixed(self) -> None:
-        marker = "UPHELD_FINDING_OVERRULED"
-        slug = "re-raise-judged"
-        wid, intake_id = self.rejected_then_re_raised(slug)
-        [entry] = [e for e in json.loads(self.state("status").stdout)["findingStates"] if e["findingId"] == "F-1"]
-        self.assertEqual((entry["status"], entry.get("appealStatus")), ("pending", "disagreement"), marker + ": " + json.dumps(entry))
-        premature = self.state("complete")
-        self.assertEqual(premature.returncode, 2, marker + ": complete ignored the re-raised measurement")
-        self.assertIn("F-1", premature.stderr, marker)
-        judged = self.reject(slug, wid, "python -m unittest test_probe_a -v")
-        self.assertEqual((judged.returncode, self.finding_entry()["status"]), (2, "pending"), marker + ": " + judged.stdout + judged.stderr)
-        self.assertIn("only a fix closes it", judged.stderr, marker)
-        (self.repo / "app.py").write_text("a = 2\nb = 2\n", encoding="utf-8")
-        self.post_edit("app.py")
-        self.assertEqual(self.tdd(slug, "green", "BM_A", "a").returncode, 0)
-        record_context_forge(self.repo, self.tmp)
-        envelope = self.tmp / "final-recheck.json"
-        envelope.write_text('{"schemaVersion":1,"findings":[],"verdict":"commit-ready"}', encoding="utf-8")
-        recheck = self.state("record", "advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final",
-                             "--source", "codex-advisor", "--input", str(envelope))
-        self.assertEqual(recheck.returncode, 0, marker + ": " + recheck.stdout + recheck.stderr)
-        completed = self.state("complete")
-        self.assertEqual(completed.returncode, 0, marker + ": " + completed.stdout + completed.stderr)
-
     def test_no_stop_hook_is_registered(self) -> None:
         marker = "STOP_HOOK_STILL_REGISTERED"
         hooks = json.loads((ROOT / "hooks.json").read_text(encoding="utf-8"))["hooks"]
@@ -1658,44 +1603,6 @@ class RedFirstTests(HookHarness):
         self.post_edit("app.py")
         self.assertEqual(self.events(), reviewed + 1, marker + ": an edit after review did not invalidate it")
         self.assertEqual(json.loads(self.state("status").stdout)["codeReview"]["status"], "pending", marker)
-
-    def final_result(self, slug: str, wid: str, name: str, verdict: str, material: bool) -> subprocess.CompletedProcess[str]:
-        envelope = self.tmp / f"{name}.json"
-        envelope.write_text(json.dumps({"schemaVersion": 1, "verdict": verdict, "findings": [
-            {"id": "F-1", "claim": "an operation is unattacked", "material": material, "kind": "behavioral"}]}), encoding="utf-8")
-        return self.state("record", "advisor-result", "--slug", slug, "--workflow-id", wid, "--stage", "final",
-                          "--source", "codex-advisor", "--input", str(envelope))
-
-    def finding_entry(self) -> dict:
-        return [e for e in json.loads(self.state("status").stdout)["findingStates"] if e["findingId"] == "F-1"][0]
-
-    def test_a_nonmaterial_finding_re_raised_as_material_blocks_completion(self) -> None:
-        marker = "RERAISED_MATERIAL_IGNORED"
-        slug = "reraise-material"
-        wid = self.open_pass(slug, [pending_behavior("BM_A", behavior="a is two", seam="app module", expected="app.a == 2")])
-        self.assertEqual(self.tdd(slug, "red", "BM_A", "a").returncode, 2)
-        (self.repo / "app.py").write_text("a = 2\nb = 1\n", encoding="utf-8")
-        self.assertEqual(self.tdd(slug, "green", "BM_A", "a").returncode, 0)
-        record_context_forge(self.repo, self.tmp)
-        self.run_verification(slug)
-        self.owner_phase("code-review", "passed", findings="none")
-        note = self.final_result(slug, wid, "final-note", "commit-ready", False)
-        self.assertEqual(note.returncode, 0, note.stdout + note.stderr)
-        rejected = self.reject(slug, wid, "python -m unittest test_probe_a")
-        self.assertEqual(rejected.returncode, 0, rejected.stdout + rejected.stderr)
-        appeal = self.final_result(slug, wid, "final-reraise", "fix-before-commit", True)
-        self.assertEqual(appeal.returncode, 0, appeal.stdout + appeal.stderr)
-        entry = self.finding_entry()
-        self.assertEqual((entry.get("status"), entry.get("material")), ("pending", True), marker + ": " + json.dumps(entry))
-        self.assertNotEqual(self.state("complete").returncode, 0, marker + ": completed with an undispositioned material re-raise")
-
-    def test_a_re_raise_archives_the_first_rejection(self) -> None:
-        marker = "FIRST_REJECTION_POINTER_LOST"
-        self.rejected_then_re_raised("reraise-history")
-        entry = self.finding_entry()
-        history = entry.get("dispositionHistory") or []
-        self.assertEqual([h.get("status") for h in history], ["rejected-with-evidence"], marker + ": " + json.dumps(entry))
-        self.assertTrue(history[0].get("evidenceId"), marker)
 
 
 

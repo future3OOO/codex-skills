@@ -5,9 +5,6 @@ description: Review a diff since a fixed point along independent Standards and S
 
 # Code review
 
-For recurring behavioral findings, apply the workflow's
-[repair contract](../repo-production-workflow/WORKFLOW-MAP.md#recurring-behavioral-repairs).
-
 Initial review uses a fresh native context in the lead's checkout; return review
 continues that context when usable. You own review, not implementation: read source and run tests or attacks, but never
 edit candidate source, rewrite the contract, mutate the active workflow ledger,
@@ -57,7 +54,7 @@ Apply [Production Code's outcome and verification rules](../production-code/SKIL
 independently to the original objective and current candidate. Challenge whether
 that objective is fulfilled, including materially wrong behavior the declared
 assertions would miss. Judge correction of the original failure, affected-domain
-coverage and preservation separately. Bound every claim to exercised inputs. Inspect the runner's recorded original, reviewed and candidate outcomes, including public results and durable state effects. Matching successful checks establish preservation; equal failures, nonexecution and setup failures prove neither preservation nor a requested change.
+coverage and preservation separately. Bound every claim to exercised inputs. Inspect the runner's recorded original and candidate outcomes, including public results and durable state effects. Matching successful checks establish preservation; equal failures, nonexecution and setup failures prove neither preservation nor a requested change.
 
 Challenge the expectation itself against the original request. Deleting implementation code does not authorize unrelated behavior changes. If an assertion expects an unrequested original-allow to candidate-block regression, reject the assertion and regression even when the comparison reports a clean failure-to-success change. Preserve original behavior where the request does not authorize a difference. Challenge omissions against changed predicates, callees, shared writers and mutation paths. Return findings through the existing workflow.
 
@@ -73,7 +70,7 @@ expected/observed results under those same verification rules.
 
 Apply TDD's [MC/DC](../tdd/tests.md#mcdc) to the diff: for every condition the edit adds, removes, weakens, strengthens or rewrites, check that each feasible decisive context has its pair executed on both sources in the item owning its Interface, or an executed case showing on both sources that the context cannot be reached. Do not re-run the lead's recorded cases. Judge each listed contract change (a changed kind, a contract item added or re-worded, contract cases added, a case dropped) against the original request, and a finding-owned one against its owning finding's immutable claim; a listing authorizes nothing. A check that finds words in the request or confirms the observed difference does not refute a finding that the difference is unauthorized. Reuse applicable proof; the packet's `open` and `contractChanges` lines are the readiness result, not a second inventory.
 
-Report one finding per owning Module and violated invariant: list every demonstrated input as a case of that finding and sketch the owner's class-wide correction, not one instance; a further input to an already-reported owner and invariant is a case of that finding (priorFinding), not a new finding.
+Report one finding per owning Module and violated invariant: list every demonstrated input as a case of that finding and name the owner's class-wide correction, not one instance; a further input to an already-reported owner and invariant is a case of that finding (priorFinding), not a new finding.
 
 Run **Standards** and **Spec** independently:
 
@@ -85,9 +82,16 @@ Run **Standards** and **Spec** independently:
   implementation, acceptance criteria without proof, and Interface claims
   contradicted by caveats or implementation limits.
 
-Every finding cites its governing requirement and states severity, whether it is
-material, the reproducing command, expected versus observed effect, consequence,
-and the smallest correction.
+Code is proof. A finding binds only through evidence the workflow runner executes
+itself when the lead records it; anything else is a report line. A Spec finding
+carries a `probe`: a new standalone test file that fails on the candidate and
+asserts a value taken from something executable (the request's own examples, the
+original code's result, or the engine's answer), never a reading. A bloat or
+duplication finding carries a `change`: a unified diff that only deletes code or
+replaces it with one call to an existing function; it binds when every recorded
+comparison still passes with it applied. A wrong lead test is a probe asserting
+the right value. Every finding cites its governing requirement and states the
+expected versus observed effect and consequence.
 
 ## 6. Return structured output
 
@@ -98,9 +102,10 @@ original identities as corrected, still present or awaiting evidence, and intake
 only new findings. An empty return cannot close an earlier unresolved finding:
 
 ```json
-{"findings":[{"id":"SPEC-1","axis":"Spec","severity":"high","material":true,"location":"path:line","claim":"...","evidence":"...","consequence":"...","smallest_action":"..."}]}
+{"findings":[{"id":"SPEC-1","axis":"Spec","location":"path:line","claim":"...","probe":{"path":"tests/test_spec1.py","content":"...","command":"python3 -m pytest tests/test_spec1.py"}},
+             {"id":"STD-1","axis":"Standards","location":"path:line","claim":"duplicate of existing()","change":"<unified diff>"}]}
 ```
 
-Material missing acceptance evidence is a Spec finding here, never prose
-beside `{"findings":[]}`; harmless residual uncertainty is not material. The
-lead verifies findings and owns dispositions.
+Missing acceptance evidence is a Spec finding with a probe, never prose beside
+`{"findings":[]}`. The lead answers a finding only with a fix or an executed
+counter-probe.

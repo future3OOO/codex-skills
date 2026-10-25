@@ -110,7 +110,7 @@ def _effective(identity: RepoIdentity, state: JsonObject | None,
     items = behavior_map.recorded_map(evidence(state.get("tddEvidence")), evidence(state.get("preflightEvidence"))) or []
     if any(item.get("comparison") for item in items):
         from .tdd_workflow import refresh_proof
-        refresh_proof(identity, items, state)
+        refresh_proof(identity, items)
         if behavior_map.unresolved(items):
             state["tdd"] = "in-progress"
             state["nextAction"] = _derive_next_action(state)
@@ -199,23 +199,8 @@ def _require_predecessor(state: JsonObject, phase: str) -> None:
 
 
 def _derive_next_action(state: JsonObject, tdd_document: JsonObject | None = None) -> str:
-    finding_states = state.get("findingStates", [])
-    correction = [
-        entry for entry in finding_states
-        if isinstance(entry, dict) and entry.get("stage") in {"code-review", "final"}
-    ] if isinstance(finding_states, list) else []
     if state.get("finalReviewContextMismatchEvidence"):
         return "re-consult-final-review"
-    accepted = any(
-        entry.get("status") == "accepted-follow-up" and entry.get("material") is True
-        for entry in correction
-    )
-    if accepted:
-        if state.get("tdd") == "in-progress":
-            return "run-mapped-tdd"
-        return "close-current-findings"
-    if any(entry.get("appealStatus") == "pending" for entry in finding_states):
-        return "appeal-final-review"
     phase = next((phase for phase in SEQUENCE if not _allows_next(state, phase)), "complete-workflow")
     if phase == "final-review":
         review = state.get("finalReview")
@@ -241,7 +226,6 @@ def begin(identity: RepoIdentity, slug: str, intent: str = "") -> JsonObject:
         "passStartOid": head,
         "activeCandidateTree": candidate,
         "intent": intent,
-        "leadContextId": os.environ.get("CODEX_THREAD_ID"),
         "phase": "intake",
         "nextAction": "repo-context-forge",
         "repoContextForge": "pending",
@@ -526,7 +510,7 @@ def commit_tdd(identity: RepoIdentity, slug: str, workflow_id: str | None,
             raise WorkflowError("probe obligations changed during execution; retry against current evidence")
         items = _map_items(summary_doc) or []
         from .tdd_workflow import refresh_proof
-        refresh_proof(identity, items, state)
+        refresh_proof(identity, items)
         manifests = []
         if tree_before is not None:
             run = summary_doc["runs"][-1]
@@ -577,51 +561,49 @@ def _validate_disposition_context(identity: RepoIdentity, state: JsonObject, doc
     return manifest, _head_oid(identity)
 
 
-def same_agent(recorded: object, named: object) -> bool:
-    """Match canonical or root-relative names, never an unrelated path suffix."""
-    if not isinstance(recorded, str) or not isinstance(named, str) or not recorded.strip("/") or not named.strip("/"):
-        return False
-    left = recorded if recorded.startswith("/") else "/root/" + recorded
-    right = named if named.startswith("/") else "/root/" + named
-    return left == right
-
-
 def _finding_unresolved(entry: JsonObject) -> bool:
-    return (
-        (entry.get("status") in {"pending", "accepted-for-proof"} and entry.get("material") is not False)
-        or (entry.get("status") == "accepted-follow-up" and entry.get("material") is True)
-        # A pending appeal waits for the advisor's one response; a recorded
-        # disagreement is history: the lead's measured rejection stands.
-        or entry.get("appealStatus") == "pending"
-    )
+    return ((entry.get("status") in {"pending", "accepted-for-proof"} and entry.get("material") is not False)
+            or (entry.get("status") == "accepted-follow-up" and entry.get("material") is True))
 
 
-def _stage_findings(state: JsonObject, stage: str, producer: str) -> list[JsonObject]:
-    return [entry for entry in state.get("findingStates") or []
-            if isinstance(entry, dict) and _finding_unresolved(entry)
-            and any(ref.get("stage") == stage and ref.get("producer") == producer
-                    for ref in (entry, *entry.get("observations", [])))]
-
-
-def _settle(state: JsonObject, stage: str, producer: str, evidence_id: str, candidate: str) -> None:
-    """A clean re-review or commit-ready re-check settles the open findings its stage raised or observed; a second
-    recurrence still needs the lead's current review of the reviewer's repair, as `fixed` does."""
-    for entry in _stage_findings(state, stage, producer):
-        if int(entry.get("recurrence", 0)) < 2 or entry.get("repairReviewedTree") == candidate:
+def _settle_executed(transaction: LedgerMutation, state: JsonObject, execution: JsonObject, evidence_id: str,
+                     intake_binds: bool) -> None:
+    """Each open binding finding settles when its re-execution on this candidate no longer binds: a fixed probe passes,
+    an applied deletion keeps every batch passing, or a mapped counter-probe makes the deletion fail. A behaviour probe
+    failing on both trees also settles beside a clean intake and a proved counter-probe mapped to it; a regression never."""
+    if state.get("tddEvidence") != execution["measuredEvidence"]:
+        raise WorkflowError("comparison evidence changed during finding execution; record the intake again")
+    owned = _linked_finding_items(transaction, items=_map_items(transaction.evidence(state.get("tddEvidence"))) or [],
+                                  state=state)
+    binding = [_finding_state(state, evidence_id, item["id"]) for item in execution["findings"] if item["material"]]
+    outcomes = []
+    for result in execution["reexecuted"]:
+        run, entry = result["execution"], _finding_state(state, result["evidenceId"], result["id"])
+        if any(entry is current for current in binding):
+            continue
+        countered = (run["kind"] == "probe" and run.get("candidate") == "failed" and run.get("original") != "passed"
+                     and not intake_binds and any(behavior_map.producer_proved(item)
+                                                  for item in owned.get((result["evidenceId"], result["id"]), {}).values()))
+        settled = run["kind"] == "claim" or "error" not in run and run.get("candidate") != "timed-out" and (run.get("candidate") == "passed" if run["kind"] == "probe"
+                                          else (run["candidate"] == "passed") == run["applied"])
+        outcomes.append((entry, settled or countered))
+    for entry, _ in outcomes:  # a finding settles only when every binding case it holds does
+        if entry is not None and all(done for other, done in outcomes if other is entry):
             entry.update(status="resolved", dispositionEvidenceId=evidence_id)
 
 
-def _stage_unresolved(state: JsonObject, stage: str, source: str, excluded: Sequence[JsonObject] = ()) -> bool:
+def _stage_unresolved(state: JsonObject, stage: str, source: str) -> bool:
     """Whether any registered finding of this stage and producer is still open."""
-    return any(entry not in excluded for entry in _stage_findings(state, stage, source))
+    return any(_finding_unresolved(entry) and any(ref.get("stage") == stage and ref.get("producer") == source
+                                                  for ref in (entry, *entry.get("observations", [])))
+               for entry in state.get("findingStates") or [] if isinstance(entry, dict))
 
 
 def commit_review(
-    identity: RepoIdentity, slug: str, workflow_id: str | None,
-    summary_doc: JsonObject, status: str, findings: str,
+    identity: RepoIdentity, slug: str, workflow_id: str | None, summary_doc: JsonObject, execution: JsonObject,
 ) -> tuple[JsonObject, str]:
-    """Commit immutable independent review intake."""
-    with mutation(identity) as transaction:
+    """Commit immutable independent review intake, executed on the candidate it binds to."""
+    with mutation(identity, expected_candidate_tree=execution["measuredTree"]) as transaction:
         state = _bound_instance_state(transaction.state, slug, workflow_id)
         if not summary_doc.get("findings"):
             _require_predecessor(state, "code-review")
@@ -630,69 +612,7 @@ def commit_review(
         manifest: ManifestWrite | None = None
         intake = summary_doc.get("findings", [])
         reference = _register_finding_intake(transaction, state, write.evidence_id, summary_doc, {})
-        repairs = [entry for entry in state.get("findingStates", [])
-                   if int(entry.get("recurrence", 0)) >= 2 and _finding_unresolved(entry)]
-        lead = state.get("leadContextId") or os.environ.get("CODEX_THREAD_ID")
-        reviewer = summary_doc.get("reviewContextId")
-        # A recurrence reached before any reviewer was named takes its owner
-        # from the first review that names one.
-        if reviewer and lead and reviewer != lead and not summary_doc.get("implementationContextId"):
-            for entry in repairs:
-                if entry.get("kind") == "behavioral" and not entry.get("repairOwner"):
-                    entry["repairOwner"] = {"implementerContextId": reviewer, "reviewerContextId": lead}
-        selected = [entry for entry in repairs
-                    if same_agent(entry.get("repairOwner", {}).get("implementerContextId"),
-                                  summary_doc.get("implementationContextId"))
-                    and same_agent(entry.get("repairOwner", {}).get("reviewerContextId"),
-                                   summary_doc.get("reviewContextId"))]
-        succession = summary_doc.get("repairSuccession")
-        if succession is not None:
-            _validate_disposition_context(identity, state, succession)
-            if not summary_doc.get("reviewContextId"):
-                raise WorkflowError("repair succession requires --review-context-id")
-            successor = {"implementerContextId": summary_doc["implementationContextId"],
-                         "reviewerContextId": summary_doc["reviewContextId"]}
-            if (all(same_agent(value, succession["previousOwner"].get(role)) for role, value in successor.items())
-                    or same_agent(successor["implementerContextId"], successor["reviewerContextId"])):
-                raise WorkflowError("repair succession requires changed, distinct actual roles")
-            selected = []
-            for ref in succession["findings"]:
-                entry = _finding_state(state, ref["evidenceId"], ref["id"])
-                if (entry is None or entry not in repairs or entry in selected
-                        or entry.get("kind") != "behavioral"
-                        or not all(same_agent(value, entry.get("repairOwner", {}).get(role))
-                                   for role, value in succession["previousOwner"].items())):
-                    raise WorkflowError("repair succession requires unique current recurring findings and their exact previous owner")
-                selected.append(entry)
-            for entry in selected:
-                entry.setdefault("repairOwnerHistory", []).append({
-                    "owner": entry["repairOwner"], "reviewEvidenceId": write.evidence_id,
-                })
-                entry["repairOwner"] = dict(successor)
-                entry.pop("repairReviewEvidence", None)
-                entry.pop("repairReviewedTree", None)
-        if repairs and summary_doc.get("implementationContextId") and not selected:
-            raise WorkflowError("second recurrence review must name a retained repair implementer; "
-                                "record the reviewer's review with --review-context-id first")
-        for entry in selected:
-            owner = entry.get("repairOwner", {})
-            implementer = owner.get("implementerContextId")
-            reviewer = owner.get("reviewerContextId")
-            if (not implementer or not reviewer or same_agent(implementer, reviewer)
-                    or not same_agent(reviewer, summary_doc.get("reviewContextId"))
-                    or not same_agent(implementer, summary_doc.get("implementationContextId"))):
-                raise WorkflowError("second recurrence requires retained reviewer repair and independent lead review")
-            if any(_finding_state(state, write.evidence_id, finding["id"]) is entry for finding in intake):
-                entry.pop("repairReviewEvidence", None)
-                entry.pop("repairReviewedTree", None)
-            else:
-                entry["repairReviewEvidence"] = write.evidence_id
-                entry["repairReviewedTree"] = _active_candidate_tree(identity)
-        if summary_doc.get("reviewContextId") and not any(
-                _finding_unresolved(entry) and entry.get("repairOwner") for entry in state.get("findingStates", [])):
-            state["reviewerContextId"] = summary_doc["reviewContextId"]
-        if not any(finding.get("material") is not False for finding in intake):  # a clean re-review settles its findings
-            _settle(state, "code-review", "code-review", write.evidence_id, summary_doc["candidateTree"])
+        _settle_executed(transaction, state, execution, write.evidence_id, any(item["material"] for item in intake))
         unresolved = _stage_unresolved(state, "code-review", "code-review")
         if not (_allows_next(state, "tdd") and _allows_next(state, "verification")):
             _reset_reviews(state)
@@ -1015,8 +935,9 @@ def _register_finding_intake(
         if len(matches) > 1:
             raise WorkflowError("ambiguous finding identity; reference an existing finding with priorFinding")
         prior = latest[next(iter(matches))] if matches else None
-        # The producer that raised a finding may re-rate it; its latest materiality stands.
-        conceded = bool(prior) and item["material"] is False and prior.get("producer") == intake.get("producer")
+        # A preflight producer may concede its own finding; an executed review or final result stands.
+        conceded = (intake["stage"] == "preflight" and bool(prior) and item["material"] is False
+                    and prior.get("producer") == intake.get("producer"))
         if prior and prior.get("status") in {"pending", "accepted-for-proof", "accepted-follow-up"}:
             reference = str(prior["intakeEvidenceId"])
             if (prior["findingId"] != item["id"]
@@ -1027,7 +948,7 @@ def _register_finding_intake(
             prior["material"] = False if conceded else prior["material"] or item["material"]
             if item["kind"] == "behavioral":
                 prior["kind"] = "behavioral"
-            pending.append((prior, item, any(all(finding.get(k) == item.get(k) for k in ("id", "claim", "kind", "material"))
+            pending.append((prior, item, any(all(finding.get(k) == item.get(k) for k in ("id", "claim", "kind", "material", "probe", "change"))
                        and all(document.get(k) == intake.get(k) for k in ("producer", "stage"))
                        for root, ref, document, finding in observed
                        if (str(root["evidenceId"]), str(root["id"])) in matches)))
@@ -1041,11 +962,6 @@ def _register_finding_intake(
             if prior:
                 root = next(iter(matches))
                 entry["canonicalFinding"] = {"evidenceId": root[0], "id": root[1]}
-                if item["kind"] == "behavioral":
-                    entry["recurrence"] = int(prior.get("recurrence", 0)) + (prior.get("kind") == "behavioral" and prior.get("status") in {"fixed", "resolved"})
-                    for field in ("mechanismEvidence", "repairOwner"):
-                        if prior.get(field):
-                            entry[field] = prior[field]
             finding_states.append(entry)
         current = prior if prior and prior.get("status") in {"pending", "accepted-for-proof", "accepted-follow-up"} else entry
         root = current.get("canonicalFinding") or {
@@ -1059,24 +975,6 @@ def _register_finding_intake(
         if reference == intake_id or intake["producer"] == "code-review" or not unchanged:
             prior.setdefault("observations", []).append({"evidenceId": intake_id, "id": item["id"],
                                                         "producer": intake["producer"], "stage": intake["stage"]})
-    for current in latest.values():
-        owner = current.get("repairOwner", {})
-        if (_finding_unresolved(current) and int(current.get("recurrence", 0)) >= 2
-                and (not owner.get("implementerContextId") or not owner.get("reviewerContextId")
-                     or owner["implementerContextId"] == owner["reviewerContextId"])):
-            current.pop("repairOwner", None)
-            lead = state.get("leadContextId") or os.environ.get("CODEX_THREAD_ID")
-            reviewer = state.get("reviewerContextId")
-            if not reviewer or reviewer == lead:
-                review = transaction.evidence(state.get("codeReviewIntakeEvidence") or state.get("codeReviewEvidence"))
-                reviewer = review.get("reviewContextId") if review else None
-            if (not reviewer or reviewer == lead) and intake["producer"] == "code-review":
-                reviewer = intake.get("reviewContextId")
-            if reviewer and lead and reviewer != lead:
-                state["reviewerContextId"] = reviewer
-                current["repairOwner"] = {
-                    "implementerContextId": reviewer, "reviewerContextId": lead,
-                }
     return reference
 
 
@@ -1101,13 +999,14 @@ def record_advisor_result(
     expected_candidate_tree: str | None = None,
     preflight_draft: JsonObject | None = None,
     submitted_draft: JsonObject | None = None,
+    execution: JsonObject | None = None,
 ) -> JsonObject:
     if source not in REVIEW_SOURCES:
         raise ValueError(f"unsupported reviewer source: {source}")
     if findings not in {None, "pending"}:
         raise ValueError("advisor-result records findings=pending; disposition findings with advisor-disposition")
-    if stage == "final" and intake is None:
-        raise ValueError("a final advisor-result records the advisor finding envelope (--input)")
+    if stage == "final" and (intake is None or execution is None):
+        raise ValueError("a final advisor-result records the advisor finding envelope (--input), executed")
     with mutation(identity, expected_candidate_tree=None if stage == "preflight" else expected_candidate_tree) as transaction:
         state = _bound_instance_state(transaction.state, slug, workflow_id)
         writes: list[EvidenceWrite] = []
@@ -1183,8 +1082,7 @@ def record_advisor_result(
             state["phase"] = "advisor-preflight"
         elif stage == "final":
             state.pop("paused", None)
-            if state.get("nextAction") != "appeal-final-review":
-                _require_predecessor(state, "final-review")
+            _require_predecessor(state, "final-review")
             if not state.get("finalStarted") and (drift := _binding_drift(identity, state, "review", transaction)):
                 raise WorkflowError(f"the reviewed tree changed after the lead review: {drift}")
             if drift := _binding_drift(identity, state, "quality-gate", transaction):
@@ -1200,93 +1098,24 @@ def record_advisor_result(
                 reviewed = manifest_write(str(state["workflowId"]), "final-review-tree", tree_manifest(identity))
                 state["reviewManifestId"] = reviewed.manifest_id
                 record = state.get("finalReview")
-                finding_states = state.setdefault("findingStates", [])
-                if not isinstance(finding_states, list):
-                    raise WorkflowError("recorded finding states are corrupt")
-                rejected = [
-                    entry for entry in finding_states
-                    if isinstance(entry, dict)
-                    and entry.get("status") == "rejected-with-evidence"
-                    and entry.get("appealStatus") == "pending"
-                ]
-                correction = _stage_unresolved(state, stage, source, rejected)
                 # A requested reassessment of a dispositioned candidate, like the re-consult of a
-                # mismatched one, is a fresh final result with its own single appeal.
-                fresh = not rejected and not correction and (
+                # mismatched one, is a fresh final result.
+                fresh = not _stage_unresolved(state, stage, source) and (
                     state.get("nextAction") == "complete-workflow" or bool(state.get("finalReviewContextMismatchEvidence")))
-                if state.get("finalAppealConsumed") and not fresh and (
-                    rejected or isinstance(record, dict) and record.get("status") != "pending"
-                ):
-                    raise WorkflowError("final appeal already consumed")
-                if rejected and correction:
-                    raise WorkflowError("final appeal is blocked by unresolved final-review work")
-                if not rejected and not fresh and isinstance(record, dict) and record.get("status") != "pending":
+                if not fresh and (isinstance(record, dict) and record.get("status") != "pending"):
                     raise WorkflowError("final review result already recorded for the current candidate")
-                if rejected:
-                    appeal_write = evidence_write(str(state["workflowId"]), "finding-appeal-final", intake)
-                    writes.append(appeal_write)
-                    responses = {str(item["id"]): item for item in intake["findings"]}
-                    rejected_ids = {str(entry["dispositionFindingId"]) for entry in rejected}
-                    for entry in rejected:
-                        response = responses.get(str(entry["dispositionFindingId"]))
-                        if response is not None and response.get("material") is True:
-                            # A material re-raise upholds the finding: it reopens,
-                            # and only a fix closes it.
-                            prior = entry.get("dispositionEvidenceId")
-                            if prior:
-                                entry.setdefault("dispositionHistory", []).append({
-                                    "evidenceId": prior,
-                                    "status": entry.get("status"),
-                                    "supersededBy": appeal_write.evidence_id,
-                                })
-                            entry["appealStatus"] = "disagreement"
-                            entry["status"] = "pending"
-                            entry["material"] = True
-                        else:
-                            entry["appealStatus"] = "conceded"
-                        entry["appealEvidenceId"] = appeal_write.evidence_id
-                    new_findings = [item for item in intake["findings"] if str(item["id"]) not in rejected_ids]
-                    if new_findings:
-                        derived_intake: JsonObject = {
-                            "schemaVersion": 1, "workflowId": state["workflowId"], "stage": stage,
-                            "producer": source, "verdict": verdict, "findings": new_findings,
-                            "sourceAppealEvidenceId": appeal_write.evidence_id,
-                        }
-                        intake_write = evidence_write(str(state["workflowId"]), "finding-intake-final", derived_intake)
-                        writes.append(intake_write)
-                        intake_reference = _register_finding_intake(
-                            transaction, state, intake_write.evidence_id, derived_intake, intakes,
-                        )
-                    if not isinstance(record, dict):
-                        raise WorkflowError("final appeal review state is corrupt")
-                    disposition = transaction.evidence(rejected[0]["dispositionEvidenceId"])
-                    reference = str(disposition["intakeEvidenceId"])
-                    original = intakes[reference] if reference in intakes else transaction.evidence(reference)
-                    if not isinstance(original, dict): raise WorkflowError("final appeal intake is corrupt")
-                    record.update({"source": source, "status": original["verdict"], "intakeEvidence": reference,
-                                   "appealEvidence": appeal_write.evidence_id, "appealVerdict": verdict})
-                    if intake_write is not None:
-                        record["intakeEvidence"] = intake_reference
-                    record["findings"] = "pending" if _stage_unresolved(state, stage, source) else "addressed"
-                    state["finalAppealConsumed"] = True
-                else:
-                    intake_write = evidence_write(str(state["workflowId"]), "finding-intake-final", intake)
-                    writes.append(intake_write)
-                    intake_reference = _register_finding_intake(
-                        transaction, state, intake_write.evidence_id, intake, intakes,
-                    )
-                    state.pop("finalAppealConsumed", None)
-                    if verdict == "commit-ready":  # the re-check judged every pending final finding: they are settled
-                        _settle(state, "final", source, intake_reference,
-                                expected_candidate_tree or _active_candidate_tree(identity))
-                    state["finalReview"] = {
-                        "source": source, "status": verdict, "intakeEvidence": intake_reference,
-                        "findings": "pending" if _stage_unresolved(state, stage, source) else "none",
-                    }
-                    # A later final is sent only the change since the tree this verdict judged; an
-                    # appeal of it re-judges from the base this verdict itself was sent.
-                    state["judgedBase"] = state.get("judgedTree")
-                    state["judgedTree"] = expected_candidate_tree or _active_candidate_tree(identity)
+                intake_write = evidence_write(str(state["workflowId"]), "finding-intake-final", intake)
+                writes.append(intake_write)
+                intake_reference = _register_finding_intake(
+                    transaction, state, intake_write.evidence_id, intake, intakes,
+                )
+                _settle_executed(transaction, state, execution, intake_reference, verdict == "fix-before-commit")
+                state["finalReview"] = {
+                    "source": source, "status": verdict, "intakeEvidence": intake_reference,
+                    "findings": "pending" if _stage_unresolved(state, stage, source) else "none",
+                }
+                # A later final is sent only the change since the tree this verdict judged.
+                state["judgedTree"] = expected_candidate_tree or _active_candidate_tree(identity)
                 state.pop("finalReviewContextMismatchEvidence", None)
                 state["phase"] = "final-review"
         else:
@@ -1467,7 +1296,7 @@ def _resolve_disposition_receipts(identity: RepoIdentity, transaction: LedgerMut
     proof_document = transaction.evidence(state.get("tddEvidence"))
     items = _map_items(proof_document) or []
     from .tdd_workflow import refresh_proof
-    refresh_proof(identity, items, state)
+    refresh_proof(identity, items)
     owned = _linked_finding_items(transaction, items=items, state=state)
     for item in document["dispositions"]:
         finding = findings.get(item["finding_id"])
@@ -1549,13 +1378,6 @@ def _apply_finding_dispositions(
     intake_states = {identifier: _finding_state(state, intake_id, identifier) for identifier in selected}
     if any(entry is None for entry in intake_states.values()):
         raise WorkflowError("recorded finding lifecycle does not match immutable intake")
-    items = _map_items(transaction.evidence(state.get("tddEvidence")))
-    if items is None:
-        items = _map_items(transaction.evidence(state.get("preflightEvidence"))) or []
-    from .tdd_workflow import refresh_proof
-    refresh_proof(transaction.identity, items, state)
-    owned = _linked_finding_items(transaction, items=items, state=state)
-    pending = set(behavior_map.unresolved(items))
     for disposition in dispositions:
         identifier, status = str(disposition["finding_id"]), str(disposition["status"])
         kind = str(disposition["kind"])
@@ -1565,53 +1387,17 @@ def _apply_finding_dispositions(
         current = finding_state.get("status")
         if kind != _finding_kind(findings[identifier]):
             raise WorkflowError(f"finding {identifier} disposition kind differs from immutable intake")
-        # Input retains its immutable observation kind; closure uses the current obligation.
-        kind = str(finding_state["kind"])
         if status == current:
             raise WorkflowError(f"finding {identifier} disposition does not change effective state")
-        if current == "pending" and finding_state.get("appealStatus") == "disagreement" and status != "fixed":
-            raise WorkflowError(f"finding {identifier} was upheld on appeal; only a fix closes it")
-        if current in {"fixed", "rejected-with-evidence", "report-only"}:
-            correcting = False
-            if kind == "behavioral" and current in {"fixed", "report-only"} and status in {"report-only", "rejected-with-evidence"}:
-                try:
-                    _behavioral_finding_closure(
-                        intake_id, identifier,
-                        owned=owned, pending=pending,
-                    )
-                except WorkflowError:
-                    # Only a terminal claim its present owning proof no longer
-                    # supports may be corrected. The new measured disposition
-                    # is validated normally and retains the old one in history.
-                    correcting = True
-            if not correcting:
-                raise WorkflowError(f"finding {identifier} already has terminal disposition {current}")
-        if status == "fixed" and int(finding_state.get("recurrence", 0)) >= 2:
-            binding = disposition.get("mechanismBinding", {})
-            if (not finding_state.get("repairReviewEvidence")
-                    or finding_state.get("repairReviewedTree") != binding.get("candidateTree")):
-                raise WorkflowError("second recurrence fixed requires current independent lead review of the reviewer repair")
-        if current != "pending":
-            prior = _disposition_evidence(state, finding_state, stage, producer)
-            if prior is None:
-                raise WorkflowError(f"finding {identifier} has no effective disposition evidence")
-            history = finding_state.setdefault("dispositionHistory", [])
-            if not isinstance(history, list):
-                raise WorkflowError(f"finding {identifier} disposition history is corrupt")
-            history.append({
-                "evidenceId": prior,
-                "status": current,
-                "supersededBy": disposition_evidence_id,
-            })
+        if status != "fixed" and stage != "preflight":
+            raise WorkflowError(f"finding {identifier} is executed evidence: only a fix or an executed counter-probe answers it")
+        if current not in {"pending", "accepted-follow-up"}:
+            raise WorkflowError(f"finding {identifier} already has terminal disposition {current}")
         finding_state["status"] = status
         finding_state["dispositionEvidenceId"] = disposition_evidence_id
         finding_state["dispositionFindingId"] = identifier
         if "mechanismBinding" in disposition:
             finding_state["mechanismEvidence"] = {"evidenceId": disposition_evidence_id, "id": identifier}
-        if stage == "final" and status == "rejected-with-evidence":
-            finding_state["appealStatus"] = (
-                "disagreement" if state.get("finalAppealConsumed") else "pending"
-            )
     return _stage_unresolved(state, stage, producer)
 
 
@@ -1754,7 +1540,7 @@ def _recorded_items(
         items = _map_items(evidence_document(identity, evidence_id if isinstance(evidence_id, str) else None))
         if items is not None:
             from .tdd_workflow import refresh_proof
-            refresh_proof(identity, items, state)
+            refresh_proof(identity, items)
             return items
     return []
 
@@ -1772,6 +1558,10 @@ def _finding_ledger(
     it, so a broad finding narrowed to one convenient attack is visible.
     """
     owned = _linked_finding_items(None, items=items, state=state)
+    from .tdd_workflow import _retained
+    cases: dict[int, list[JsonObject]] = {}  # every binding case; the ledger is a file the advisor reads on demand
+    for entry, finding in _retained(identity, state):
+        cases.setdefault(id(entry), []).append({key: finding[key] for key in ("ref", "probe", "change", "execution") if key in finding})
     states = state.get("findingStates")
     intakes: dict[str, dict[str, JsonObject]] = {}
     dispositions: dict[str, dict[str, JsonObject]] = {}
@@ -1785,7 +1575,7 @@ def _finding_ledger(
             intakes[intake_id] = {str(finding.get("id")): finding for finding in (intake or {}).get("findings", [])
                                   if isinstance(finding, dict)}
         finding_id = str(entry.get("findingId"))
-        claim = intakes[intake_id].get(finding_id, {}).get("claim")
+        recorded = intakes[intake_id].get(finding_id, {})
         disposition_id = _disposition_evidence(state, entry, str(entry.get("stage")), str(entry.get("producer")))
         if disposition_id is not None and disposition_id not in dispositions:
             document = evidence_document(identity, disposition_id)
@@ -1805,8 +1595,9 @@ def _finding_ledger(
             "producer": entry.get("producer"), "stage": entry.get("stage"),
             "findingId": entry.get("findingId"), "kind": entry.get("kind"),
             "material": entry.get("material"), "status": entry.get("status"),
-            "claim": claim,
-            **{key: entry[key] for key in ("canonicalFinding", "recurrence", "observations", "mechanismEvidence", "mechanismHistory", "repairOwner", "repairOwnerHistory") if key in entry},
+            "claim": recorded.get("claim"),
+            **({"cases": cases[id(entry)]} if id(entry) in cases else {}),
+            **{key: entry[key] for key in ("canonicalFinding", "observations", "mechanismEvidence") if key in entry},
             "owners": [{**{key: item.get(key) for key in
                            ("id", "behavior", "expected", "seam")},
                         "executedCommands": behavior_map.executed_commands(item)}
@@ -1841,7 +1632,7 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
     open_for_phase = not terminal and not (phase == "preflight-advice" and revalidation)
     stage_actions = {
         "preflight-advice": {"preflight"},
-        "final-review": {"final-review", "appeal-final-review", "re-consult-final-review", "complete-workflow"},
+        "final-review": {"final-review", "re-consult-final-review", "complete-workflow"},
     }
     reviewing = phase == "code-review"
     requirements = (
@@ -1893,7 +1684,7 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
             missing.append(str(exc))
     items = _recorded_items(identity, state)
     if phase == "final-review":
-        missing.extend(() if state.get("nextAction") in ("appeal-final-review", "re-consult-final-review")
+        missing.extend(() if state.get("nextAction") == "re-consult-final-review"
                        else correction_blockers(identity, state, items=items))
         if not state.get("finalStarted") and (drift := _binding_drift(identity, state, "review")):
             missing.append(drift)
@@ -1938,8 +1729,7 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
             map_content = {"digest": draft_id,
                            "baseDigest": evidence_write(str(workflow_id), "preflight-draft", prior).evidence_id,
                            "delta": draft_diff(prior, preflight_draft, "last-recorded-draft", "current-draft")}
-    since = state.get("judgedBase" if state.get("nextAction") == "appeal-final-review" else "judgedTree") \
-        if phase == "final-review" else None
+    since = state.get("judgedTree") if phase == "final-review" else None
     values: dict[str, tuple[object, object]] = {
         "intent": (None, state.get("intent") or None),
         "advisor-projection": (evidence_id, projection),
@@ -1981,7 +1771,7 @@ def complete(
         preflight_document = transaction.evidence(state.get("preflightEvidence"))
         from .tdd_workflow import refresh_proof
         items = behavior_map.recorded_map(tdd_document, preflight_document) or []
-        refresh_proof(identity, items, state)
+        refresh_proof(identity, items)
         missing = behavior_map.unresolved(items) + _finding_proof_blockers(transaction, state, items=items) + _finding_state_blockers(state) + completion_missing(state)
         graph_id = state.get("repoContextForgeEvidence")
         graph_document = transaction.evidence(graph_id) if isinstance(graph_id, str) else None
@@ -2220,7 +2010,7 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
         return {"command": shlex.join(command), **({"input": questions} if questions else {})}
     elif action == "complete-workflow":
         command = [*cli, "complete", *bound]
-    elif action in {"preflight", "final-review", "re-consult-final-review", "appeal-final-review"}:
+    elif action in {"preflight", "final-review", "re-consult-final-review"}:
         preflight = action == "preflight"
         advice = state.get("advisorPreflight") or {}
         intake = (evidence_document(identity, advice.get("intakeEvidence")) or {}) if preflight else {}
@@ -2249,22 +2039,16 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
                     needed.append("--preflight-file <current-draft.json>" + ("" if isinstance(draft, dict) else " shaped " + RECORD_SHAPES["preflight"]))
             return {"command": shlex.join(command), "input": "; ".join(needed)}
         command = [*cli, "paths", "--repo", str(identity.root), "--workflow-id", str(state["workflowId"])]
-    elif action in {"tdd", "run-mapped-tdd", "code-review", "close-current-findings", "address-review-findings"}:
-        producer = {"tdd": ["tdd"], "run-mapped-tdd": ["tdd"], "address-review-findings": ["tdd"],
-                    "code-review": ["record", "review"]}.get(str(action))
-        if producer is None:
-            producer = ["record", "advisor-disposition"]
+    elif action in {"tdd", "code-review", "address-review-findings"}:
+        producer = ["record", "review"] if action == "code-review" else ["tdd"]
         command = [*cli, *producer, *bound] if "record" in producer else [*cli, *producer, *bound[:4]]
         pending = [{"findingId": f["findingId"]}
                    for f in state.get("findingStates", []) if _finding_unresolved(f)]
-        if producer[-1] == "advisor-disposition" and pending:
-            command += ["--finding", str(pending[0]["findingId"])]
         ids = [str(entry["id"]) for entry in _map_items(evidence_document(
             identity, state.get("tddEvidence") or state.get("preflightEvidence"))) or []] if producer == ["tdd"] else []
         operation: JsonObject = {"command": shlex.join(command + (["--input", "-"] if producer[-1] == "review" else [])),
                                 "input": {
                                     "review": "independent review findings on stdin: " + RECORD_SHAPES["review"],
-                                    "advisor-disposition": "--fixed, --rejected, --report-only or --follow-up REFERENCE; --reason for the judgment",
                                     "tdd": f"--behavior-id ID (repeatable; recorded: {', '.join(ids) or 'none'}) -- COMMAND [ARG...]",
                                 }[producer[-1]]}
         if pending:
@@ -2314,8 +2098,7 @@ def summary(identity: RepoIdentity, limit: int = 3000, *, labels: bool = True) -
         if entry.get("kind") != "behavioral" or not _finding_unresolved(entry):
             continue
         reference = entry.get("mechanismEvidence")
-        mechanisms += (f" Mechanism {entry.get('findingId')} recurrence={entry.get('recurrence', 0)} "
-                       f"repair={entry.get('repairOwner', 'lead')} evidence={reference or 'missing'}.")
+        mechanisms += f" Mechanism {entry.get('findingId')} evidence={reference or 'missing'}."
         if isinstance(reference, dict) and excerpt_budget and reference["evidenceId"] not in shown:
             shown.add(reference["evidenceId"])
             diagnosis = _mechanism_explanation(reference, lambda ref: evidence_document(identity, ref), state["workflowId"])

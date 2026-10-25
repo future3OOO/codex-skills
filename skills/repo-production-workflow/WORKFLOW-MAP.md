@@ -25,8 +25,7 @@ flowchart LR
     C -->|behavioral correction| TM2[tdd-map adds the item]
     TM2 --> I
     C -->|non-behavioral correction| I
-    C -->|evidence-backed rejection| AP[one appeal on the same session]
-    AP --> C
+    C -->|executed counter-probe| TM2
     C -->|yes, PR| DL[delivery]
     C -->|yes, no PR| WC[workflow complete]
     DL --> PR{reviewer gate closed?}
@@ -48,7 +47,7 @@ workflow set-phase             # trivial code review only
 workflow record <kind> [--check] [--input -|path]
                                # preflight|review|advisor-result|tdd-map
 workflow record advisor-disposition --finding ID --fixed|--rejected|--report-only|--follow-up REFERENCE --reason TEXT
-workflow tdd                   # compare probes on original, reviewed and candidate sources
+workflow tdd                   # compare probes on the original and candidate sources
 workflow verify                # the typed quality gate; an unchanged tree and base reuse its receipt
 workflow pause|checkpoint|complete|prune
 ```
@@ -76,10 +75,9 @@ returns exit 2, names `no active workflow`, and creates no state.
 
 Repo Context Forge, preflight, TDD, verification and review record their native
 documents as logical evidence in the same SQLite transaction as the accepted event.
-Finding dispositions take the identifier, decision and substantive reason; the
-workflow supplies recorded intake, stage, source binding and linked comparison
-results. A judgment without runnable checks needs no execution reference. A
-findings-none disposition carries no document. The preflight document
+Review and final findings carry a `probe` or a deletion-only `change` that the runner
+executes when they are recorded; the executed result, never the producer's claim,
+decides whether a finding binds. A findings-none disposition carries no document. The preflight document
 owns the initial Behavior Map; mapped TDD evidence carries its stable IDs,
 source comparisons and finding references. A plan may show
 the map but is not an evidence owner.
@@ -102,7 +100,7 @@ the transcript audit.
 
 The database and its containing directory are private and agent-writable. Committed transactions provide continuity across process restart and compaction; it is not tamper-proof and does not authorize Git. A normal
 commit or HEAD change does not invalidate it. The edit hook advises, never
-refuses (hook table below). The runner compares original, reviewed and candidate sources and retains bound results. Update the list only when obligations change. A normally
+refuses (hook table below). The runner compares the original and candidate sources and retains bound results. Update the list only when obligations change. A normally
 completed workflow is terminal: every mutation except `begin` is rejected.
 
 The edit hook runs no impacted-test scan: a file-level list sent agents into
@@ -138,17 +136,12 @@ resume at the first unsatisfied phase in the same ordered workflow. A
 pass with an empty approved probe list resumes verification; an unresolved
 comparison resumes TDD.
 
-Behavioral findings return to the same workflow: attach the finding reference to its owning probe, implement the repair and execute the comparison against the recorded reviewed source. The runner supplies current proof; existing review judges the requirement and finding closure. List edits cannot discharge material findings. Separate work starts a new pass.
+Behavioral findings return to the same workflow: attach the finding reference to its owning probe, implement the repair and execute the comparison against the original. The runner supplies current proof; existing review judges the requirement and finding closure. List edits cannot discharge material findings. Separate work starts a new pass.
 
-A finding envelope is one correction batch. A pending behavioral finding rides
-the pass as a map-owned attack obligation; dispositions may cover any subset,
-and later documents preserve append-only history. Until every material finding is dispositioned and the map is closed, the final
-checkpoint and `complete` refuse; verification, the typed gate, and lead
-review run regardless. Targeted TDD and direct changed-Seam
-probes remain available. Final rejections use one context-matched appeal response:
-omission or same-ID `material:false` concedes, a material re-raise upholds
-the finding until a fix closes it, and new IDs form
-their own immutable intake.
+A finding envelope is one correction batch. Until every binding finding settles by
+re-execution and the map is closed, the final checkpoint and `complete` refuse;
+verification, the typed gate, and lead review run regardless. Targeted TDD and direct
+changed-Seam probes remain available. New IDs form their own immutable intake.
 
 ## Approval freshness
 
@@ -216,44 +209,15 @@ workflow state rather than one of these summaries, and it identifies working-tre
 file mode and content, plus each submodule's checked-out commit — never this
 repository's own HEAD, and never an attestation.
 
-## Recurring behavioral repairs
+## Finding batches
 
-Findings and map items batch by owner. A finding names one owning Module and violated invariant and lists every demonstrated input as its cases; a later input to the same owner and invariant is a case of that finding through `priorFinding`, and its repair is the owner's class-wide correction. The map carries one contract and one preservation item per owning Interface, each decisive context a case of it. Observations, recurrence and dispositions stay immutable.
-
-Before another repair, explain the missed cause, affected inputs/paths, invariants,
-class-wide correction and latest counterexample; include reachable states/shared
-writers where relevant. Record the diagnosis once in the existing finding reason,
-or disposition `mechanism` prose/reference (`{"evidenceId":"...","id":"..."}`).
-References preserve workflow/finding ownership. Review requires an adequate
-explanation and current owning attacks; instance-only repairs remain
-`accepted-follow-up` with the in-pass obligation open.
+Findings and map items batch by owner. A finding names one owning Module and violated invariant and lists every demonstrated input as its cases; a later input to the same owner and invariant is a case of that finding through `priorFinding`, and its repair is the owner's class-wide correction. The map carries one contract and one preservation item per owning Interface, each decisive context a case of it.
 
 Both intake paths reconcile retained namespace/ID and exact behavioral claims
 (outer whitespace only). Changed wording/identity can use an owned
 `priorFinding: {"evidenceId":"...","id":"..."}`; ambiguous matches require one.
-Distinct findings need distinct IDs. Pending retries preserve progress; only a fixed or
-settled finding raised again increments recurrence. Observations, dispositions, mechanism evidence and proof stay immutable.
-
-At recurrence two or later, the retained reviewer implements and the lead reviews. This
-exception overrides [step 10](SKILL.md#10-delegate-code-review)'s read-only and repair-before-dispatch rules: continue
-its recorded context, without a fresh/nested reviewer or interim advisor. Certify
-through `record review` using the actual lead context and `implementationContextId`
-for the repair author. Require current-candidate, independent certification and
-product verification, then the mandatory final advisor. Ordinary assessment without
-`implementationContextId` may proceed while ownership is pending; it neither
-certifies the repair nor changes owners.
-
-For unusable/wrong-checkout contexts, follow [step 10](SKILL.md#10-delegate-code-review)'s rooted fallback. Record
-authorized succession in the lead-review intake as
-`repairSuccession: {context, findings, previousOwner, evidence}`: current
-workflow/candidate, affected `{evidenceId, id}` references, exact previous
-implementer/reviewer pair, and authorization/native-checkout evidence. Author/reviewer
-fields name actual successors. Only named pending recurring repairs transfer;
-predecessor history remains and self-certification is forbidden.
-
-After compaction, recover mechanism references and ownership from summary/checkpoint;
-retrieve long evidence with `workflow evidence`. Report missing evidence; prove
-resumed-agent use, not merely availability.
+Distinct findings need distinct IDs. Pending retries preserve progress; a settled
+finding raised again opens a new obligation. Observations and proof stay immutable.
 
 ## Delivery is separate
 

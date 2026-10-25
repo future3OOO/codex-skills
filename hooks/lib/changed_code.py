@@ -113,7 +113,8 @@ def _removed(path: str, qualname: str, before: str, after: str, old: ast.AST, ne
                     pending.append(inner)
                 else:
                     removed.append({"label": f"`{text}` ({path}:{operand.lineno})", "operand": text,
-                                    "value": isinstance(group.op, ast.Or), "unpaired": text in unpaired})
+                                    "value": isinstance(group.op, ast.Or), "unpaired": text in unpaired,
+                                    "span": [operand.lineno, operand.end_lineno, operand.col_offset, operand.end_col_offset]})
         removed = list({entry["label"]: entry for entry in removed}.values())
         if removed:
             found.append({"file": path, "qualname": qualname, "test": ast.unparse(test),
@@ -187,7 +188,8 @@ def judge(decisions: list[JsonObject], traced: dict[str, list[JsonObject]] | Non
     the original and paired candidate decisions differ; False when every evaluation shows it did not (or
     none reached it); None when unmeasured: no trace, no paired decision, an unpaired repeated operand, a
     chained comparison (its jumps share one position), or a truth left unknown, including a repeated
-    operand's whose occurrences the trace cannot tell apart."""
+    operand's whose occurrences the trace cannot tell apart. `reached` maps each test whose own jumps inside
+    the operand evaluated it at its deciding value to whether one such evaluation was not shown to keep the decision."""
     results = []
     for index, decision in enumerate(decisions):
         test = ast.parse(str(decision["test"]), mode="eval").body
@@ -199,9 +201,10 @@ def judge(decisions: list[JsonObject], traced: dict[str, list[JsonObject]] | Non
                 results.append({"label": removed["label"], "decided": None})
                 continue
             operand = ast.parse(str(removed["operand"]), mode="eval").body
-            outcomes = set()
+            outcomes, reached = set(), {}
+            line, end_line, column, end_column = removed["span"]
             for evaluation in evaluations if match is not None else ():
-                known = dict(evaluation["names"])
+                known, evaluated = dict(evaluation["names"]), {}
                 # Jumps of a repeated operand's occurrences share one text; only a traced name's truth is exact.
                 ambiguous = any(_truth(ast.parse(text, mode="eval").body, dict(evaluation["names"])) is None
                                 for text in decision["unpaired"])
@@ -211,11 +214,16 @@ def judge(decisions: list[JsonObject], traced: dict[str, list[JsonObject]] | Non
                         known[text] = jumped is (kind == "true")
                     elif text is not None:
                         known[text] = (jumped is (kind == "none")) is is_none
+                    if text is not None and (line, column) <= (span[0], span[2]) and (span[1], span[3]) <= (end_line, end_column):
+                        evaluated[text] = known[text]
                 value = _truth(operand, known)
                 before, after = (None, None) if ambiguous else (_truth(test, known), _truth(match, known))
-                outcomes.add(False if value is not None and value is not removed["value"]
-                             or before is not None and before is after else
-                             None if None in (value, before, after) else True)
+                outcome = (False if value is not None and value is not removed["value"]
+                           or before is not None and before is after else
+                           None if None in (value, before, after) else True)
+                outcomes.add(outcome)
+                if evaluation.get("test") and _truth(operand, evaluated) is removed["value"]:
+                    reached[evaluation["test"]] = reached.get(evaluation["test"], False) or outcome is not False
             decided = True if True in outcomes else None if traced is None or match is None or None in outcomes else False
-            results.append({"label": removed["label"], "decided": decided})
+            results.append({"label": removed["label"], "decided": decided, **({"reached": dict(sorted(reached.items()))} if reached else {})})
     return results

@@ -122,9 +122,7 @@ def parser() -> argparse.ArgumentParser:
         if kind != "advisor-disposition":
             command.add_argument("--input", help="document path, or - for stdin" + (
                 "; defaults to the retained approved draft" if kind == "preflight" else ""))
-        if kind == "review":
-            command.add_argument("--review-context-id")
-        elif kind == "advisor-result":
+        if kind == "advisor-result":
             command.add_argument("--stage", required=True)
             command.add_argument("--source", default="codex-advisor")
             command.add_argument("--verdict")
@@ -362,9 +360,11 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
     if args.kind == "review":
         if not args.input:
             raise ValueError("record review requires --input <path|->")
-        document, status, findings = review_summary(
-            args.input, slug=slug, workflow_id=workflow_id, review_context_id=args.review_context_id)
-        state, evidence_id = commit_review(identity, slug, workflow_id, document, status, findings)
+        from .tdd_workflow import execute_findings
+        document = review_summary(args.input, slug=slug, workflow_id=workflow_id)
+        execution = execute_findings(identity, state, document["findings"])
+        document["findings"] = execution["findings"]
+        state, evidence_id = commit_review(identity, slug, workflow_id, document, execution)
         emit(_receipt(state, identity, summaryId=evidence_id, status=state["codeReview"]["status"]))
         return 0
     if args.kind == "tdd-map":
@@ -386,10 +386,18 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
         expected = args.expected_candidate_tree
         if args.stage != "preflight" and expected not in (None, candidate):  # a preflight verdict judges its draft
             raise WorkflowError("active candidate changed after the advisor checkpoint")
+        execution = None
+        if args.stage == "final" and intake is not None:
+            from .tdd_workflow import execute_findings
+            execution = execute_findings(identity, state, intake["findings"])
+            intake["findings"] = execution["findings"]
+            if verdict != "context-mismatch":  # the executed result decides, not the producer's claim
+                verdict = intake["verdict"] = ("fix-before-commit" if any(item["material"] for item in intake["findings"])
+                                               else "commit-ready")
         state = record_advisor_result(
             identity, slug, workflow_id, args.stage, args.source, verdict, reason=args.reason,
             design=design_declaration(args.design_declaration) if args.design_declaration else None,
-            intake=intake, expected_candidate_tree=expected or candidate,
+            intake=intake, expected_candidate_tree=expected or candidate, execution=execution,
             preflight_draft=preflight_document(args.preflight_file) if args.preflight_file else None,
             submitted_draft=preflight_document(args.submitted_draft) if args.submitted_draft else None)
     else:

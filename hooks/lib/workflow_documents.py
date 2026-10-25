@@ -12,10 +12,6 @@ from .behavior_map import initial_items, map_errors
 from .state_store import utc_timestamp
 
 JsonObject = dict[str, object]
-REVIEWER_RESOLVED = {"fixed", "rejected-with-evidence", "report-only"}
-REVIEWER_DISPOSITIONS = REVIEWER_RESOLVED | {"accepted-follow-up"}
-ADVISOR_RESOLVED = {"fixed", "rejected-with-evidence", "report-only"}
-ADVISOR_DISPOSITIONS = ADVISOR_RESOLVED | {"accepted-follow-up"}
 
 
 def load_json(path: str, *, label: str) -> JsonObject:
@@ -82,6 +78,8 @@ def advisor_envelope(
     typed: list[JsonObject] = []
     identifiers: set[str] = set()
     for position, item in enumerate(findings, 1):
+        if stage == "final" and isinstance(item, dict):  # the runner replaces a final finding's material with its execution
+            item = {"material": False, **item}
         if not isinstance(item, dict) or not {"id", "claim", "material"} <= set(item):
             raise ValueError(f"advisor finding {position} requires id, claim, and material")
         identifier, kind = item.get("id"), item.get("kind")
@@ -96,18 +94,12 @@ def advisor_envelope(
         if prior is not None and (not isinstance(prior, dict) or set(prior) != {"evidenceId", "id"}
                                   or not all(_text(v) for v in prior.values())):
             raise ValueError("priorFinding requires evidenceId and id")
-        finding = {"id": identifier, "claim": item["claim"], "material": item["material"], "kind": kind,
-                   **({"priorFinding": prior} if prior is not None else {})}
-        if stage == "final" and item["material"]:
-            sketch = item.get("fixSketch")
-            if (isinstance(sketch, dict) and set(sketch) == {"change", "probe"}
-                    and all(_text(v) and not re.search(r"[\ud800-\udfff]", v) for v in sketch.values())
-                    and sum(len(v.encode("utf-8")) for v in sketch.values()) <= 8192):
-                finding["fixSketch"] = sketch
-            else:
-                finding["fixSketchIssue"] = "missing, malformed, or exceeds 8192 UTF-8 bytes"
+        finding = {"id": identifier, "claim": item["claim"], "material": item.get("material") is True, "kind": kind,
+                   **({"priorFinding": prior} if prior is not None else {}),
+                   # final evidence the runner executes; the producer's material claim is then replaced
+                   **({key: item[key] for key in ("probe", "change") if key in item} if stage == "final" else {})}
         typed.append(finding)
-    if verdict in {"approved", "changes-required", "commit-ready", "fix-before-commit"} and ((verdict in {"approved", "commit-ready"}) == any(item["material"] for item in typed)):
+    if verdict in {"approved", "changes-required"} and ((verdict == "approved") == any(item["material"] for item in typed)):
         raise ValueError("advisor envelope verdict is incompatible with finding materiality")
     return {
         "schemaVersion": 1,
@@ -135,13 +127,15 @@ ITEM_SHAPE = ('{"id":"BM_X","kind":"contract|preservation","basis":"original req
               '"behavior":"...","seam":"...","expected":"...","boundaryInputs":["executed case name"],'
               '"interpretations":["reading a","reading b"],"interpretation":"...","authority":"...",'
               '"sourceRefs":[{"type":"finding","evidenceId":"<intake>","id":"SPEC-1"}]}')
+# A finding binds only through evidence the runner executes; anything else is a report line.
+EXECUTABLE = ('{"id":"R-1","claim":"...","probe":{"path":"tests/test_r1.py","content":"...","command":"python3 -m pytest tests/test_r1.py"}} or a deletion-only {"id":"R-2","claim":"...","change":"<unified diff>"}')
 RECORD_SHAPES = {
     "preflight": f'{{"authoritativeContract":"text","behaviorMap":[{ITEM_SHAPE}]}}',
-    "review": '{"findings":[{"id":"R-1","claim":"...","material":true}]}',
+    "review": '{"findings":[FINDING]} where FINDING is ' + EXECUTABLE,
     "advisor-result": ('the advisor envelope {"schemaVersion":1,"findings":[{"id":"SPEC-1","claim":"...",'
                        '"material":true}],"verdict":"approved|changes-required|completed|commit-ready|'
                        'fix-before-commit|context-mismatch"}, or --verdict unavailable --reason TEXT'),
-    "advisor-disposition": ("--finding F --fixed [--behavior-id BM]; or --finding F "
+    "advisor-disposition": ("--finding F --fixed [--behavior-id BM]; a preflight finding also "
                             "--rejected|--report-only|--follow-up REF --reason TEXT; or --findings none"),
     "tdd-map": f'{{"items":[{ITEM_SHAPE}]}}; a recorded item needs only id and the changed fields, null removes an optional one',
 }
@@ -439,60 +433,20 @@ def graph_evidence_document(
     return document
 
 
-def _disposition_context(value: object) -> list[str]:
-    fields = value if isinstance(value, dict) else {}
-    return [message for message, bad in (
-        ("disposition context requires workflowId, candidateTree, and optional prHead",
-         set(fields) not in ({"workflowId", "candidateTree"}, {"workflowId", "candidateTree", "prHead"})),
-        ("disposition context requires workflowId and a canonical candidateTree Git OID", "workflowId" in fields
-         and not _text(fields["workflowId"]) or "candidateTree" in fields and not _git_oid(fields["candidateTree"])),
-        ("disposition context prHead must be a canonical Git OID", "prHead" in fields and not _git_oid(fields["prHead"])),
-    ) if bad]
-
-
-def _repair_succession(succession: object) -> list[str]:
-    if not isinstance(succession, dict):
-        return ["repairSuccession requires context, findings, previousOwner and evidence"]
-    owner, refs = succession.get("previousOwner"), succession.get("findings")
-    return [problem for problem, bad in (
-        ("repairSuccession requires context, findings, previousOwner and evidence",
-         set(succession) != {"context", "findings", "previousOwner", "evidence"} or not _text(succession.get("evidence"))),
-        ("repairSuccession requires the previous implementer and reviewer", "previousOwner" in succession and (
-            not isinstance(owner, dict) or set(owner) != {"implementerContextId", "reviewerContextId"}
-            or not all(_text(v) for v in owner.values()))),
-        ("repairSuccession findings require evidenceId/id references", "findings" in succession and (
-            not isinstance(refs, list) or not refs or any(not isinstance(ref, dict) or set(ref) != {"evidenceId", "id"}
-                                                          or not all(_text(v) for v in ref.values()) for ref in refs))),
-    ) if bad] + (_disposition_context(succession["context"]) if "context" in succession else [])
-
-
-def review_summary(
-    path: str, *, slug: str, workflow_id: str, review_context_id: str | None,
-) -> tuple[JsonObject, str, str]:
+def review_summary(path: str, *, slug: str, workflow_id: str) -> JsonObject:
     value = load_json(path, label="review")
     common: JsonObject = {
         "schemaVersion": 1, "slug": slug, "workflowId": workflow_id,
         "producer": "code-review", "stage": "code-review", "recordedAt": utc_timestamp(),
         "observationId": uuid.uuid4().hex,
     }
-    if review_context_id is not None:
-        if not review_context_id.strip():
-            raise ValueError("--review-context-id must be non-empty")
-        common["reviewContextId"] = review_context_id.strip()
     if value == {"findings": [], "dispositions": []}:
         value = {"findings": []}
     if "findings" not in value:
         raise ValueError("review intake requires the reviewer's findings")
-    unknown = sorted(set(value) - {"findings", "implementationContextId", "repairSuccession"})
+    unknown = sorted(set(value) - {"findings"})
     findings = value["findings"]
-    errors = [message for message, bad in (
-        (f"review intake has unknown fields: {', '.join(unknown)}", unknown),
-        ("implementationContextId must identify the actual repair author",
-         "implementationContextId" in value and not _text(value["implementationContextId"])),
-    ) if bad]
-    if "repairSuccession" in value:
-        errors += _repair_succession(value["repairSuccession"])
-        errors += [] if "implementationContextId" in value else ["repairSuccession requires implementationContextId"]
+    errors = [f"review intake has unknown fields: {', '.join(unknown)}"] if unknown else []
     errors += [] if isinstance(findings, list) else ["review intake findings must be an array"]
     seen: set[str] = set()
     for position, item in enumerate(findings if isinstance(findings, list) else [], 1):
@@ -504,7 +458,6 @@ def review_summary(
         problems = [problem for problem, bad in (
             ("id must be non-empty and unique", not _text(identifier) or identifier in seen),
             ("requires a non-empty claim", not _text(item.get("claim"))),
-            ("requires a material boolean", not isinstance(item.get("material"), bool)),
         ) if bad]
         if _text(identifier):
             seen.add(str(identifier))
@@ -515,6 +468,4 @@ def review_summary(
         errors += [f"{label}: " + ", ".join(problems)] if problems else []
     if errors:
         raise ValueError("; ".join(errors))
-    common.update({key: value[key] for key in ("implementationContextId", "repairSuccession") if key in value})
-    status = "pending" if findings else "passed"
-    return {**common, "kind": "intake", "status": status, "findings": findings}, status, "pending" if findings else "none"
+    return {**common, "kind": "intake", "findings": findings}

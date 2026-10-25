@@ -1254,10 +1254,13 @@ class ReadinessTests(unittest.TestCase):
         self.probe("def test_value(self): self.assertEqual(app.value, 2)")
         identity = resolve_repo_identity(self.repo)
 
-        def final(verdict, *ids):
+        def final(verdict, *kept):
             envelope = self.case.tmp / "final.json"
             envelope.write_text(json.dumps({"schemaVersion": 1, "verdict": verdict, "findings": [
-                {"id": i, "claim": f"{i}: the value must stay two", "material": True, "kind": "behavioral"} for i in ids]}))
+                {"id": f"SPEC-{k}", "claim": f"kept must be {k}", "kind": "behavioral", "probe": {
+                    "path": f"test_kept_{k}.py", "command": f"{sys.executable} -m unittest test_kept_{k}",
+                    "content": f"import app, unittest\nclass K(unittest.TestCase):\n    def test_kept(self): self.assertGreaterEqual(app.kept, {k})\n"}}
+                for k in kept]}))
             return self.case.cli("record", "advisor-result", "--slug", "mapped-repair", "--workflow-id", wid, "--stage", "final",
                                  "--source", "codex-advisor", "--input", str(envelope), "--repo", str(self.repo))
 
@@ -1272,21 +1275,17 @@ class ReadinessTests(unittest.TestCase):
         self.case.cli("verify", "--kind", "quality-gate", "--base-ref", "HEAD", "--repo", str(self.repo))
         record_context_forge(self.repo, self.case.tmp)
         set_phase(identity, "code-review", "passed", findings="none")
-        self.assertEqual(final("fix-before-commit", "SPEC-1", "SPEC-2").returncode, 0, marker)
+        self.assertEqual(final("fix-before-commit", 3, 4).returncode, 0, marker)
         self.assertEqual(self.status()["nextAction"], "address-review-findings", marker + ": the fix waits on dispositions")
         correct(3)
         self.assertEqual(self.status()["nextAction"], "final-review", marker)
-        self.assertEqual(final("fix-before-commit", "SPEC-2").returncode, 0, marker)
+        self.assertEqual(final("commit-ready").returncode, 0, marker)
         statuses = lambda: {e["findingId"]: e["status"] for e in self.status()["findingStates"]}
-        self.assertEqual(statuses(), {"SPEC-1": "pending", "SPEC-2": "pending"}, marker + ": a fix-before-commit settled a finding")
+        self.assertEqual(statuses(), {"SPEC-3": "resolved", "SPEC-4": "pending"}, marker + ": settling ignored execution")
         correct(4)
         self.assertEqual(final("commit-ready").returncode, 0, marker)
         self.assertEqual((statuses(), self.status()["finalReview"]["findings"]),
-                         ({"SPEC-1": "resolved", "SPEC-2": "resolved"}, "none"), marker + ": the commit-ready re-check left findings open")
-        self.assertEqual(final("fix-before-commit", "SPEC-1").returncode, 0, marker)
-        self.assertEqual(self.status()["findingStates"][-1].get("recurrence"), 1, "SETTLED_FINDING_RECURRENCE_LOST")
-        correct(5)
-        self.assertEqual(final("commit-ready").returncode, 0, marker)
+                         ({"SPEC-3": "resolved", "SPEC-4": "resolved"}, "none"), marker + ": the re-check left fixed findings open")
         completed = self.case.cli("complete", "--repo", str(self.repo))
         self.assertEqual(completed.returncode, 0, marker + ": " + completed.stdout + completed.stderr)
 
@@ -1501,16 +1500,6 @@ class ReadinessTests(unittest.TestCase):
         self.probe("def test_value(self): self.assertEqual(app.value, 2, 'REVISED')", "def test_kept(self): self.assertEqual(app.kept, 1)")
         receipt = self.tdd("BM_CHANGE", command=value)
         self.assertEqual([arm["source"] for arm in receipt["arms"]], ["original", "current"], marker + ": " + json.dumps(receipt["arms"]))
-        # this batch's own failed run on a broken edit returns when its probe is revised again
-        (self.repo / "app.py").write_text("value = 3\nkept = 1\n")
-        self.tdd("BM_CHANGE", command=value)
-        (self.repo / "app.py").write_text("value = 2\nkept = 1\n")
-        self.tdd("BM_CHANGE", command=value)
-        self.probe("def test_value(self): self.assertEqual(app.value, 2, 'REVISED AGAIN')", "def test_kept(self): self.assertEqual(app.kept, 1)")
-        receipt = self.tdd("BM_CHANGE", command=value)
-        self.assertEqual([arm["source"] for arm in receipt["arms"]], ["original", "earlier", "current"], marker + ": " + json.dumps(receipt["arms"]))
-        self.assertEqual(receipt["cases"], ["test_value (test_value.Value.test_value): original=failed (stopped): 1 != 2 : "
-                                            "REVISED AGAIN; earlier=failed (stopped): 3 != 2 : REVISED AGAIN; current=passed"], marker)
 
     def test_narrowing_reports_every_selection_form(self):
         marker = "NARROWING_MISREPORTED"
@@ -1948,7 +1937,7 @@ TOTAL_TEST = ("import unittest, app\nclass Total(unittest.TestCase):\n"
 
 
 class ChangedCodeTests(unittest.TestCase):
-    """The runner answers for the test files named for changed functions and the conditions a candidate removes."""
+    """The runner answers for the conditions a candidate removes."""
 
     def setUp(self):
         self.case = harness.MappedTddRepairTests()
@@ -1976,46 +1965,6 @@ class ChangedCodeTests(unittest.TestCase):
         (self.repo / "test_value.py").write_text(UNITTEST_PROBE + "    def test_value(self): self.assertEqual(app.value, 1)\n")
         (self.repo / "app.py").write_text("value = 1\n" + TOTAL.replace("sum(items)", "sum(item for item in items)"))
 
-    def test_recognised_runner_compares_named_files_whole(self):
-        marker = "NAMED_FILE_NOT_COMPARED"
-        self.named_setup()
-        for command in ((sys.executable, "-m", "unittest", "test_value"), (sys.executable, "-m", "pytest", "test_value.py"),
-                        (sys.executable, "-m", "pytest", "test_value.py", "test_total.py::Total::test_sum")):
-            with self.subTest(command=command[2:]):
-                receipt = self.tdd("BM_VALUE", command=command)
-                self.assertEqual(receipt["added"], ["test_total.py, named for changed `total`"], marker + json.dumps(receipt))
-                self.assertTrue(receipt["command"].endswith(" test_total.py"), marker)
-                self.assertEqual(([arm["outcome"] for arm in receipt["arms"]], self.case.cli("status", "--repo", str(self.repo))
-                                  .stdout.count('"tdd": "passed"')), (["passed", "passed"], 1), marker + json.dumps(receipt))
-        whole = self.tdd("BM_VALUE", command=(sys.executable, "-m", "unittest", "test_value", "test_total"))
-        self.assertEqual((whole.get("added"), whole["command"].endswith("test_value test_total")), (None, True), marker)
-
-    def test_unextended_commands_leave_named_files_open(self):
-        marker = "NAMED_FILE_LEFT_SILENT"
-        self.named_setup()
-        line = "`test_total.py` is named for changed `total`; compare it whole"
-        for command in ((sys.executable, "-c", "import app; print('value:', app.value)"),
-                        (sys.executable, "-m", "pytest", "test_value.py", "-k", "test_value"),
-                        (sys.executable, "-m", "pytest", "test_value.py", "-m", "not slow"),
-                        (sys.executable, "-m", "pytest", "test_value.py", "--deselect", "test_value.py::Value::test_none"),
-                        (sys.executable, "-m", "unittest", "discover", "-p", "test_value.py")):
-            with self.subTest(command=command[2:]):
-                receipt = self.tdd("BM_VALUE", command=command) if command[1] != "-c" else None
-                if receipt is None:
-                    self.case.cli("record", "tdd-map", "--repo", str(self.repo), "--input", "-")
-                    update = self.case.tmp / "printed.json"
-                    update.write_text(json.dumps({"items": [{"id": "BM_VALUE", "boundaryInputs": ["value"]}]}))
-                    self.case.cli("record", "tdd-map", "--repo", str(self.repo), "--input", str(update))
-                    receipt = self.tdd("BM_VALUE", command=command)
-                self.assertEqual(receipt.get("added"), None, marker)
-                self.assertIn(line, receipt["open"], marker + json.dumps(receipt))
-                status = json.loads(self.case.cli("status", "--repo", str(self.repo), "--fields", "tdd").stdout)
-                self.assertEqual(status["tdd"], "in-progress", marker)
-                self.assertIn("workflow incomplete: " + line + ",", self.case.cli("complete", "--repo", str(self.repo)).stderr, marker)
-                update = self.case.tmp / "named.json"
-                update.write_text(json.dumps({"items": [{"id": "BM_VALUE", "boundaryInputs": ["test_value"]}]}))
-                self.case.cli("record", "tdd-map", "--repo", str(self.repo), "--input", str(update))
-
     def test_named_file_skips_keep_a_passing_arm(self):
         marker = "NAMED_FILE_SKIP_VOIDED_THE_ARM"
         self.named_setup()
@@ -2036,71 +1985,6 @@ class ChangedCodeTests(unittest.TestCase):
                                                  "    @unittest.skip('all')\n    def test_sum(self): pass\n")
         only = self.tdd("BM_VALUE", command=(sys.executable, "-m", "pytest", "test_total.py"))
         self.assertEqual([arm["outcome"] for arm in only["arms"]], ["incomplete", "incomplete"], "ALL_SKIPPED_ARM_PROVED")
-
-    def test_other_language_named_files_remain_open_until_compared_whole(self):
-        marker = "OTHER_LANGUAGE_NAMED_FILE_DROPPED"
-        self.commit({"app.py": "value = 1\n", "calc.go": "package calc\n\nfunc Total(a int) int {\n\treturn a\n}\n",
-                     "Total_test.go": "package calc\n",
-                     "web/total.ts": "export function total(a: number[]) {\n  let sum = 0;\n  for (const i of a) {\n    if (i) {\n      sum += i;\n    }\n  }\n  return sum;\n}\n",
-                     "web/total.test.ts": "import { test } from 'node:test';\nimport assert from 'node:assert';\nimport { total } from './total.ts';\n"
-                                          "test('sums', () => { assert.strictEqual(total([1, 2]), 3); });\n",
-                     "web/report.test.mjs": "export default async function* (events) {\n  for await (const event of events) {\n"
-                                            "    if (event.type === 'test:pass' || event.type === 'test:fail') yield `${event.data.name}: ${event.type.slice(5)}\\n`;\n  }\n}\n",
-                     "web/inc.ts": "export const inc = x => x + 1;\n", "web/inc.test.ts": "",
-                     "web/dec.ts": "export const dec = async x => x - 1;\n", "web/dec.test.ts": "",
-                     "web/absent.ts": "export function absent() {\n  return 1;\n}\n"})
-        self.case.begin_with_map([pending_behavior("BM_VALUE", kind="preservation", behavior="value stays", expected="value is 1",
-                                                   boundaryInputs=["test_value"]),
-                                  pending_behavior("BM_TOTAL", kind="preservation", behavior="total stays", expected="sums",
-                                                   boundaryInputs=["sums"])])
-        (self.repo / "test_value.py").write_text(UNITTEST_PROBE + "    def test_value(self): self.assertEqual(app.value, 1)\n")
-        (self.repo / "calc.go").write_text("package calc\n\nfunc Total(a int) int {\n\treturn a + 0\n}\n")
-        (self.repo / "web/total.ts").write_text((self.repo / "web/total.ts").read_text().replace("sum += i;", "sum = sum + i;"))
-        (self.repo / "web/inc.ts").write_text("export const inc = x => x + 2;\n")
-        (self.repo / "web/dec.ts").write_text("export const dec = async x => x - 2;\n")
-        (self.repo / "web/absent.ts").write_text("export function absent() {\n  return 2;\n}\n")
-        receipt = self.tdd("BM_VALUE", command=(sys.executable, "-m", "unittest", "test_value"))
-        self.assertEqual(receipt.get("added"), None, marker)
-        named = lambda receipt: sorted(line for line in receipt["open"] if "is named for" in line)
-        self.assertEqual(named(receipt), ["`Total_test.go` is named for changed `Total`; compare it whole",
-                                          "`web/dec.test.ts` is named for changed `dec`; compare it whole",
-                                          "`web/inc.test.ts` is named for changed `inc`; compare it whole",
-                                          "`web/total.test.ts` is named for changed `total`; compare it whole"], marker + json.dumps(receipt))
-        node = ("node", "--test", "--test-reporter=./web/report.test.mjs")
-        (self.repo / "test_probe.py").write_text("import app\nprint('test_value:', app.value)\n")
-        ignored = self.tdd("BM_VALUE", command=(sys.executable, "test_probe.py", "web/total.test.ts"))
-        self.assertIn("`web/total.test.ts` is named for changed `total`; compare it whole", ignored["open"], marker)
-        filtered = self.tdd("BM_TOTAL", command=(*node, "--test-name-pattern=sums", "web/total.test.ts"))
-        self.assertIn("`web/total.test.ts` is named for changed `total`; compare it whole", filtered["open"], marker)
-        whole = self.tdd("BM_TOTAL", command=(*node, "web/total.test.ts"))
-        self.assertEqual(([arm["outcome"] for arm in whole["arms"]], len(named(whole))), (["passed", "passed"], 3),
-                         marker + json.dumps(whole))
-        self.assertNotIn("`web/total.test.ts` is named for changed `total`; compare it whole", whole["open"], marker)
-
-    def test_named_file_comparison_requires_current_valid_whole_file_coverage(self):
-        marker = "STALE_WHOLE_FILE_COVERAGE_KEPT"
-        self.commit({"app.py": "value = 0\n" + TOTAL, "test_total.py": TOTAL_TEST})
-        self.case.begin_with_map([pending_behavior("BM_VALUE", behavior="value becomes 1", expected="value is 1",
-                                                   boundaryInputs=["test_value"])])
-        (self.repo / "test_value.py").write_text(UNITTEST_PROBE + "    def test_value(self): self.assertEqual(app.value, 1)\n")
-        (self.repo / "app.py").write_text("value = 1\n" + TOTAL.replace("sum(items)", "sum(item for item in items)"))
-        failfast = self.tdd("BM_VALUE", command=(sys.executable, "-m", "unittest", "-f", "test_value"))
-        self.assertEqual([arm["outcome"] for arm in failfast["arms"]], ["failed", "passed"], marker + json.dumps(failfast))
-        self.assertIn("`test_total.py` is named for changed `total`; compare it whole", failfast["open"], "FAIL_FAST_DISCHARGED_THE_FILE")
-        self.setUp()
-        self.named_setup()
-        command = (sys.executable, "-m", "unittest", "test_value")
-        self.assertEqual(self.tdd("BM_VALUE", command=command)["open"], [], marker)
-        (self.repo / "app.py").write_text("value = 1\n" + TOTAL.replace("sum(items)", "sum(list(items))"))
-        stale = json.loads(self.case.cli("status", "--repo", str(self.repo), "--fields", "tdd").stdout)
-        self.assertEqual(stale["tdd"], "in-progress", marker)
-        summary = self.case.cli("summary", "--repo", str(self.repo)).stdout
-        self.assertNotIn("is named for changed", summary, "NAMED_LINE_FROM_A_STALE_RUN")
-        (self.repo / "test_total.py").write_text(TOTAL_TEST.replace("3)", "4)"))
-        failed = self.tdd("BM_VALUE", command=(sys.executable, "-m", "unittest", "-f", "test_value"))
-        self.assertIn("failed", [arm["outcome"] for arm in failed["arms"]], marker + json.dumps(failed))
-        self.assertIn("`test_total.py` is named for changed `total`; compare it whole",
-                      self.case.cli("summary", "--repo", str(self.repo)).stdout, "FAILED_RUN_DISCHARGED_THE_FILE")
 
     CONDITION = ("def admit(enabled, name, created):\n    if enabled and name not in created:\n        return 'gap'\n"
                  "    return 'none'\n")

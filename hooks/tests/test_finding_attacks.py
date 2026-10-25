@@ -279,84 +279,6 @@ class PendingAdvisorRetries(AttackHarness):
         foreign = {**collision, "priorFinding": {"evidenceId": "evidence-foreign", "id": a["id"]}}
         self.refused_unchanged(marker, lambda: self.response(wid, [foreign]))
 
-
-    def test_recurrence_preserves_mechanism_and_retries_do_not_escalate(self) -> None:
-        marker = "RECURRENCE_HISTORY_LOST"
-        wid = self.begin("pending-retry")
-        finding = {**self.CAPTURED, "id": "SPEC-1"}
-        first = self.accept(wid, [finding])
-        original = first["advisorPreflight"]["intakeEvidence"]
-        self.assertEqual(self.record_preflight("pending-retry", wid,
-                         self.owned_map(original, marker="VALUE_NOT_TWO")).returncode, 0)
-        self.drive_attack_green("pending-retry", "VALUE_NOT_TWO")
-        self.ok("record", "advisor-disposition", *self.fixed_args())
-        fixed = self.status()["findingStates"][0]
-        state = self.accept(wid, [finding])
-        current = state["findingStates"][-1]
-        self.assertEqual(current.get("recurrence"), 1, marker)
-        self.assertEqual(current.get("mechanismEvidence"), fixed.get("mechanismEvidence"), marker)
-        self.assertEqual(state["findingStates"][0], fixed, marker)
-        ledger = checkpoint_channels(self.repo, self.env, "final-review").get("finding-ledger", [])
-        self.assertEqual([owner["id"] for owner in ledger[-1]["owners"]], ["BM_ATTACK"],
-                         "RECURRENCE_LEDGER_LOST_OWNERS")
-        retried = self.accept(wid, [{**finding, "claim": "The current counterexample also affects a fresh process"}])
-        self.assertEqual(len(retried["findingStates"]), 2, marker)
-        self.assertEqual(retried["findingStates"][-1].get("recurrence"), 1, marker)
-        closed = self.cli("record", "advisor-disposition", "--slug", "pending-retry", "--workflow-id", wid,
-                           "--stage", "preflight", "--findings", "addressed", *self.fixed_args())
-        self.assertEqual(closed.returncode, 0, marker + closed.stderr)
-
-
-    def test_second_recurrence_requires_reviewer_repair_and_lead_review(self) -> None:
-        marker = "REPAIR_OWNERSHIP_BYPASSED"
-        self.env["CODEX_THREAD_ID"] = "recurrence-lead-input"
-        wid = self.start_final()
-        finding = {**self.CAPTURED, "id": "SPEC-1"}
-        state = self.recur_twice(wid, finding)
-        current = state["findingStates"][-1]
-        self.assertEqual(current.get("recurrence"), 2, marker)
-        owner = current.get("repairOwner", {})
-        self.assertEqual(owner.get("implementerContextId"), "retry-fixture", marker)
-        self.assertEqual(owner.get("reviewerContextId"), self.env.get("CODEX_THREAD_ID"), marker)
-        ref = state["advisorPreflight"]["intakeEvidence"]
-        items = self.items()
-        items[0]["sourceRefs"].append({"type": "finding", "evidenceId": ref, "id": "SPEC-1"})
-        self.ok("record", "tdd-map", "--slug", "pending-retry", "--workflow-id", wid,
-                "--input", str(self.json_file("owner.json", {"items": items})))
-        (self.repo / "app.py").write_text("value = 2\n")
-        self.assertEqual(self.mapped_tdd("pending-retry", "green", [sys.executable, "-m", "unittest", "test_attack_probe"]).returncode, 0)
-        result = self.cli("record", "advisor-disposition", "--slug", "pending-retry", "--workflow-id", wid,
-                          "--stage", "preflight", "--findings", "addressed", *self.fixed_args())
-        self.assertEqual(result.returncode, 2, marker)
-        self.assertIn("lead review", result.stderr, marker)
-        for tool, target, expected_denial in (("followup_task", "retry-fixture", False),
-                                               ("followup_task", "another-reviewer", True),
-                                               ("spawn_agent", "retry-fixture", True)):
-            hook = subprocess.run([sys.executable, str(ROOT / "hooks/rcf-intake-gate.py")],
-                input=json.dumps({"tool_name": tool, "session_id": self.env.get("CODEX_THREAD_ID"),
-                                  "cwd": str(self.repo), "tool_input": {"target": target}}),
-                env=self.env, text=True, capture_output=True)
-            self.assertEqual(hook.returncode, 0, hook.stderr)
-            self.assertEqual('"deny"' in hook.stdout, expected_denial, marker)
-        record_context_forge(self.repo, self.tmp)
-        self.ok("verify", "--slug", "pending-retry", "--kind", "quality-gate", "--base-ref", "HEAD")
-        assessment = self.json_file("ordinary-review.json", {"findings": []})
-        self.ok("record", "review", "--slug", "pending-retry", "--workflow-id", wid,
-                "--review-context-id", "fresh-rooted-reviewer", "--input", str(assessment))
-        assessed = self.status()["findingStates"][-1]
-        self.assertEqual(assessed["repairOwner"], owner, marker)
-        self.assertNotIn("repairReviewEvidence", assessed, marker)
-        self.assertEqual(assessed["status"], "pending", marker)
-        review = self.json_file("lead-review.json", {"findings": [], "implementationContextId": "retry-fixture"})
-        for reviewer, expected in (("retry-fixture", 2), (self.env["CODEX_THREAD_ID"], 0)):
-            result = self.cli("record", "review", "--slug", "pending-retry", "--workflow-id", wid,
-                              "--review-context-id", reviewer,
-                              "--input", str(review))
-            self.assertEqual(result.returncode, expected, marker + result.stderr)
-        self.ok("record", "advisor-disposition", "--slug", "pending-retry", "--workflow-id", wid,
-                "--stage", "preflight", "--findings", "addressed", *self.fixed_args())
-        self.assertEqual(self.status()["finalReview"]["status"], "pending", marker)
-
     def response(self, wid: str, findings: list[dict[str, object]], *, stage: str = "preflight",
                  source: str = "codex-advisor", raw: str | None = None) -> subprocess.CompletedProcess[str]:
         envelope = self.json_file("retry.json", {
@@ -382,91 +304,17 @@ class PendingAdvisorRetries(AttackHarness):
         return self.cli("record", "advisor-disposition", "--finding", finding["id"], option,
                         "--reason", "test -f app.py exited 0: the claimed absent file exists.")
 
-    def ready(self, wid: str, *context: str) -> None:
+    def ready(self, wid: str) -> None:
         record_context_forge(self.repo, self.tmp)
         self.ok("verify", "--slug", "pending-retry", "--kind", "quality-gate", "--base-ref", "HEAD")
         self.ok("record", "review", "--slug", "pending-retry", "--workflow-id", wid,
-                *(context or ("--review-context-id", "retry-fixture")),
                 "--input", str(self.json_file("review.json", {"findings": []})))
 
-    def start_final(self, *context: str) -> str:
+    def start_final(self) -> str:
         wid = self.open_pytest_pass("pending-retry", "VALUE_NOT_TWO")
         self.drive_attack_green("pending-retry", "VALUE_NOT_TWO")
-        self.ready(wid, *context)
+        self.ready(wid)
         return wid
-
-    def recur_twice(self, wid: str, finding: dict[str, object]) -> dict[str, object]:
-        (self.repo / "app.py").write_text("value = 1\n")
-        state = self.accept(wid, [finding])
-        for recurrence in range(2):
-            ref = state["advisorPreflight"]["intakeEvidence"]
-            items = self.items()
-            items[0]["sourceRefs"].append({"type": "finding", "evidenceId": ref, "id": "SPEC-1"})
-            update = self.json_file("owner.json", {"items": items})
-            self.ok("record", "tdd-map", "--slug", "pending-retry", "--workflow-id", wid, "--input", str(update))
-            (self.repo / "app.py").write_text("value = 2\n")
-            self.assertEqual(self.mapped_tdd("pending-retry", "green", [sys.executable, "-m", "unittest", "test_attack_probe"]).returncode, 0)
-            self.ok("record", "advisor-disposition", "--slug", "pending-retry", "--workflow-id", wid,
-                    "--stage", "preflight", "--findings", "addressed", *self.fixed_args())
-            (self.repo / "app.py").write_text("value = 1\n")
-            state = self.accept(wid, [finding])
-        return state
-
-    def test_agent_paths_are_root_relative_not_suffix_matches(self) -> None:
-        from hooks.lib.workflow_state import same_agent
-        for left, right, expected in (
-            ("/root/retry-fixture", "retry-fixture", True),
-            ("/root/a/repair", "a/repair", True),
-            ("/root/a/repair", "repair", False),
-            ("/root/b/repair", "repair", False),
-            ("lead-thread-id", "lead-thread-id", True),
-            ("lead-thread-id", "other-thread-id", False),
-        ):
-            with self.subTest(left=left, right=right):
-                self.assertEqual(same_agent(left, right), expected)
-                self.assertEqual(same_agent(right, left), expected)
-
-    def test_an_unnamed_reviewer_context_is_recovered_by_name(self) -> None:
-        marker = "REVIEWER_OWNER_LOST"
-        self.env["CODEX_THREAD_ID"] = "recurrence-lead-input"
-        wid = self.open_pytest_pass("pending-retry", "VALUE_NOT_TWO")
-        self.drive_attack_green("pending-retry", "VALUE_NOT_TWO")
-        record_context_forge(self.repo, self.tmp)
-        self.ok("verify", "--slug", "pending-retry", "--kind", "quality-gate", "--base-ref", "HEAD")
-        self.ok("record", "review", "--input", str(self.json_file("unnamed.json", {"findings": []})))
-        state = self.recur_twice(wid, {**self.CAPTURED, "id": "SPEC-1"})
-        self.assertNotIn("repairOwner", state["findingStates"][-1], marker)
-        record_context_forge(self.repo, self.tmp)
-        # The gate passes and runs no comparison; the lead's rerun reports the recurring defect's failing comparison.
-        gate = self.cli("verify", "--slug", "pending-retry", "--kind", "quality-gate", "--base-ref", "HEAD")
-        self.assertEqual((gate.returncode, self.status()["verification"]), (0, "passed"), marker + gate.stderr)
-        probe = [sys.executable, "-m", "unittest", "test_attack_probe"]
-        self.assertEqual(self.mapped_tdd("pending-retry", "green", probe).returncode, 2, marker)
-        def dispatch(tool: str, target: str | None = None) -> str:
-            return subprocess.run([sys.executable, str(ROOT / "hooks/rcf-intake-gate.py")], env=self.env, text=True,
-                capture_output=True, input=json.dumps({"tool_name": tool, "session_id": self.env["CODEX_THREAD_ID"],
-                                                       "cwd": str(self.repo), "tool_input": {"target": target}})).stdout
-        # A fresh reviewer cannot be spawned over the recurring failure; the retained one stays continuable once named.
-        self.assertIn('"deny"', dispatch("spawn_agent"), marker)
-        # The named reviewer reports the recurring defect it observes; its review names the owner.
-        self.ok("record", "review", "--slug", "pending-retry", "--workflow-id", wid, "--review-context-id", "/root/retry-fixture",
-                "--input", str(self.json_file("named.json", {"findings": [{**self.CAPTURED, "id": "SPEC-1"}]})))
-        self.assertEqual(self.status()["findingStates"][-1].get("repairOwner"),
-                         {"implementerContextId": "/root/retry-fixture", "reviewerContextId": self.env["CODEX_THREAD_ID"]}, marker)
-        # obs6: the lead continues its reviewer by the relative name spawn_agent returned beside the canonical one
-        for target, denied in (("retry-fixture", False), ("/root/retry-fixture", False), ("fixture", True)):
-            self.assertEqual('"deny"' in dispatch("followup_task", target), denied, f"{marker}: {target}")
-        # The retained reviewer's repair turns the rerun comparison green; the lead then certifies it.
-        (self.repo / "app.py").write_text("value = 2\n")
-        self.assertEqual(self.mapped_tdd("pending-retry", "green", probe).returncode, 0, marker)
-        self.ok("verify", "--slug", "pending-retry", "--kind", "quality-gate", "--base-ref", "HEAD")
-        # R-25: the lead's review names the implementer as it continued it, relatively
-        review = self.json_file("lead-review.json", {"findings": [], "implementationContextId": "retry-fixture"})
-        refused = self.cli("record", "review", "--slug", "pending-retry", "--workflow-id", wid,
-                           "--review-context-id", "/root/retry-fixture", "--input", str(review))
-        self.assertIn("--review-context-id", refused.stderr, marker)
-        self.ok("record", "review", "--slug", "pending-retry", "--workflow-id", wid,
-                "--review-context-id", self.env["CODEX_THREAD_ID"], "--input", str(review))
 
     def test_preflight_retries_keep_one_reference(self) -> None:
         marker = "DUPLICATE_PREFLIGHT_OBLIGATION"
@@ -508,28 +356,6 @@ class PendingAdvisorRetries(AttackHarness):
         self.assertEqual(closed.returncode, 0, marker + closed.stdout + closed.stderr)
         self.ready(wid)
         self.accept(wid, [], stage="final")
-        self.ok("complete")
-
-    def test_refreshed_final_retry_closes_original_obligation(self) -> None:
-        marker = "DUPLICATE_FINAL_OBLIGATION"
-        wid = self.start_final()
-        finding = {**self.CAPTURED, "id": "SPEC-FINAL", "kind": "nonbehavioral"}
-        first = self.accept(wid, [finding], stage="final")
-        original = first["finalReview"]["intakeEvidence"]
-        self.refused_unchanged("REFUSAL_MUTATED_HISTORY", lambda: self.response(wid, [finding], stage="final"))
-        (self.repo / "issue253_marker.txt").write_text("present after correction\n")
-        self.assertEqual(self.mapped_tdd("pending-retry", "green", [sys.executable, "-m", "unittest", "test_attack_probe"]).returncode, 0)
-        self.refused_unchanged("REFUSAL_MUTATED_HISTORY", lambda: self.response(wid, [finding], stage="final"))
-        self.ready(wid)
-        refreshed = self.status()
-        replay = self.accept(wid, [finding], stage="final")
-        self.assertEqual(replay["findingStates"], first["findingStates"], marker)
-        self.assertEqual(replay["finalReview"]["intakeEvidence"], original, marker)
-        for key in ("activeCandidateTree", "verificationEvidence", "qualityGateEvidence", "codeReviewEvidence"):
-            self.assertEqual(replay[key], refreshed[key], marker)
-        self.assertNotEqual(replay["activeCandidateTree"], first["activeCandidateTree"], marker)
-        closed = self.close_finding(wid, original, finding, stage="final", status="report-only")
-        self.assertEqual(closed.returncode, 0, marker + closed.stdout + closed.stderr)
         self.ok("complete")
 
     def test_mixed_retry_preserves_identity_and_returns_usable_intake(self) -> None:
@@ -576,36 +402,6 @@ class PendingAdvisorRetries(AttackHarness):
         independent = self.accept(other, [self.CAPTURED])
         self.assertEqual(len(independent["findingStates"]), 1, marker)
         self.assertNotEqual(independent["advisorPreflight"]["intakeEvidence"], original, marker)
-        reference = independent["advisorPreflight"]["intakeEvidence"]
-        owned = self.owned_map(reference, marker="VALUE_NOT_TWO")
-        owned[0]["sourceRefs"][0]["id"] = self.CAPTURED["id"]
-        self.assertEqual(self.record_preflight("pending-retry", other, owned).returncode, 0)
-        self.drive_attack_green("pending-retry", "VALUE_NOT_TWO")
-        self.ready(other)
-        across_stage = self.accept(other, [self.CAPTURED], stage="final")
-        self.assertEqual(len(across_stage["findingStates"]), 1, marker)
-        self.assertEqual(len(across_stage["findingStates"][0]["observations"]), 1, marker)
-        review = self.json_file("cross-producer.json", {"findings": [{**self.CAPTURED,
-            "id": "REVIEW-ALIAS", "axis": "Spec", "severity": "high", "location": "app.py",
-            "evidence": "recorder input, not a native review", "consequence": "same unresolved obligation",
-            "smallest_action": "repair the original finding"}]})
-        self.ok("record", "review", "--slug", "pending-retry", "--workflow-id", other,
-                "--review-context-id", "retry-fixture",
-                "--input", str(review))
-        cross = self.status()
-        self.assertEqual(len(cross["findingStates"]), 1, marker)
-        self.assertEqual(cross["codeReview"]["findings"], "pending", marker)
-        returned = self.accept(other, [self.CAPTURED], stage="final")["finalReview"]["intakeEvidence"]
-        closed = self.close_finding(other, returned, self.CAPTURED, stage="final")
-        self.assertEqual(closed.returncode, 0, "CROSS_STAGE_RETURN_CLOSURE_REFUSED: " + closed.stderr)
-        final_wid = self.start_final()
-        note = {**self.CAPTURED, "material": False, "kind": "nonbehavioral"}
-        self.accept(final_wid, [note], stage="final")
-        (self.repo / "note.txt").write_text("new candidate\n")
-        self.drive_attack_green("pending-retry", "VALUE_NOT_TWO")
-        self.ready(final_wid)
-        changed_verdict = self.accept(final_wid, [note, {**note, "id": "NEW", "material": True}], stage="final")
-        self.assertEqual(len(changed_verdict["findingStates"]), 2, marker)
 
     def test_observations_retain_response_identity(self) -> None:
         marker = "OBSERVATION_LOST"
@@ -671,53 +467,6 @@ class PendingAdvisorRetries(AttackHarness):
         self.assertFalse(any(key[2] == "history" for key in stats), "UNBOUNDED_PENDING_LOOKUP")
         print(f"target=workflow.py advisor-result pending_findings=3 pending_intakes=1 history_retries=4 "
               f"read_limit=1 observed_registration_reads={reads}")
-
-
-    def test_appeal_reads_original_intake_once(self) -> None:
-        self.assert_appeal_reads_once(shared=False)
-
-    def test_shared_appeal_reads_original_intake_once(self) -> None:
-        self.assert_appeal_reads_once(shared=True)
-
-    def assert_appeal_reads_once(self, *, shared: bool) -> None:
-        wid = self.start_final()
-        a = {**self.CAPTURED, "id": "A", "kind": "nonbehavioral"}
-        b = {**a, "id": "B", "material": not shared}
-        c = {**a, "id": "C"}
-        first = self.accept(wid, [a, b] if shared else [a], stage="final")
-        original = first["finalReview"]["intakeEvidence"]
-        self.assertEqual(self.close_finding(wid, original, a, stage="final-review").returncode, 0,
-                         "EXECUTED_RECEIPT_REFUSED")
-        envelope = self.json_file("appeal.json", {"schemaVersion": 1, "findings": [a, b, c] if shared else [a, b],
-                                                 "verdict": "fix-before-commit"})
-        reads_file = self.tmp / "reads.json"
-        # Observe real calls without replacing the recorder or its collaborators.
-        tracer = (
-            "import atexit,json,runpy,sys; from pathlib import Path; reads=[]; "
-            "sys.setprofile(lambda f,e,a: reads.append(f.f_locals.get('evidence_id')) "
-            "if e=='call' and f.f_code.co_name=='evidence' else None); "
-            f"atexit.register(lambda: Path({str(reads_file)!r}).write_text(json.dumps(reads))); "
-            "sys.argv=sys.argv[1:]; runpy.run_path(sys.argv[0],run_name='__main__')"
-        )
-        result = subprocess.run([sys.executable, "-c", tracer, str(WORKFLOW), "record", "advisor-result",
-            "--repo", str(self.repo), "--slug", "pending-retry", "--workflow-id", wid,
-            "--stage", "final", "--source", "codex-advisor", "--input", str(envelope),
-            "--design-declaration", str(self.design_absent)], cwd=ROOT, env=self.env,
-            capture_output=True, text=True)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        count = json.loads(reads_file.read_text()).count(original)
-        self.assertEqual(count, 1, "REFERENCED_INTAKE_READ_TWICE")
-        states = self.status()["findingStates"]
-        expected = [("A", "pending"), ("B", "pending")] + ([("C", "pending")] if shared else [])
-        self.assertEqual([(f["findingId"], f["status"]) for f in states], expected)
-        self.assertEqual(states[0]["intakeEvidenceId"], original)
-        self.assertEqual(states[0]["appealStatus"], "disagreement")
-        if shared:
-            self.assertEqual(states[1], {**first["findingStates"][1], "observations": [
-                {"evidenceId": self.status()["finalReview"]["intakeEvidence"],
-                 "id": "B", "producer": "codex-advisor", "stage": "final"}]})
-            self.assertNotEqual(states[2]["intakeEvidenceId"], original)
-        print(f"target=workflow.py advisor-result final_appeal pending_findings={len(states)} original_intake_read_limit=1 observed={count}")
 
 
 class CheckpointIntent(AttackHarness):
@@ -818,16 +567,11 @@ class ReservationGone(AttackHarness):
         self.assertEqual(refused.returncode, 2, marker + ": " + refused.stdout + refused.stderr)
         self.assertIn("unrecognized arguments", refused.stderr, marker)
         self.assertNotIn("findingReservations", self.status(), marker)
-        from hooks.lib.workflow_documents import ADVISOR_DISPOSITIONS, REVIEWER_DISPOSITIONS
-        self.assertNotIn("accepted-for-proof", ADVISOR_DISPOSITIONS, marker)
-        self.assertNotIn("accepted-for-proof", REVIEWER_DISPOSITIONS, marker)
 
 
 class SamePassAttack(AttackHarness):
     def review(self, slug: str, wid: str, path: Path) -> subprocess.CompletedProcess[str]:
-        return self.cli("record", "review", "--slug", slug, "--workflow-id", wid,
-                        "--review-context-id",
-                        "same-pass-attack", "--input", str(path))
+        return self.cli("record", "review", "--slug", slug, "--workflow-id", wid, "--input", str(path))
 
     def test_a_late_attack_is_proved_and_closed_in_the_same_workflow(self) -> None:
         from hooks.tests.test_workflow_hooks import WrapperPromptTests
@@ -1332,6 +1076,11 @@ class WorkflowRecovery(AttackHarness):
 
 
 
+
+
+
+APP = ("value = 2\n\ndef unused():\n    return 3\n\ndef total(a, b):\n    return a + b\n\n"
+       "def twice(a, b):\n    result = a + b\n    return result\n\ndef diff(a, b):\n    spare = a\n    return a - b\n")
 
 
 if __name__ == "__main__":

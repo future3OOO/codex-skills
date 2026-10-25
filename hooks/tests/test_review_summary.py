@@ -8,7 +8,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import time
 import unittest
 from pathlib import Path
 
@@ -101,20 +100,19 @@ class ReviewSummaryHarness(unittest.TestCase):
                                        env=self.env, text=True).strip()
         return {"workflowId": self.wid, "candidateTree": candidate, "prHead": head}
 
-    def review_finding(self) -> dict[str, object]:
-        return {"id": "SPEC-1", "material": True, "kind": "nonbehavioral", "claim": "wrong value"}
+    def review_finding(self, expected: int = 3) -> dict[str, object]:
+        """An executable finding: a probe that fails on the candidate binds."""
+        return {"id": "SPEC-1", "kind": "nonbehavioral", "claim": "wrong value", "probe": {
+            "path": "test_spec1.py", "command": f"{sys.executable} -m unittest test_spec1",
+            "content": f"import app, unittest\nclass S(unittest.TestCase):\n    def test_value(self): self.assertEqual(app.value, {expected})\n"}}
 
-    def dispose(self, identifier: str, status: str = "report-only") -> subprocess.CompletedProcess[str]:
-        option = {"report-only": "--report-only", "rejected-with-evidence": "--rejected",
-                  "fixed": "--fixed", "accepted-follow-up": "--follow-up"}[status]
-        return self.run_script(WORKFLOW, "record", "advisor-disposition", "--finding", identifier,
-                               option, *(["issue-1"] if status == "accepted-follow-up" else []),
-                               "--reason", "The current fixture was inspected; this observation has no material consequence.")
+    def fixed(self, identifier: str) -> subprocess.CompletedProcess[str]:
+        return self.run_script(WORKFLOW, "record", "advisor-disposition", "--finding", identifier, "--fixed",
+                               "--reason", "The current fixture was inspected.")
 
     def record_review(self, path: Path, context: str = "review") -> subprocess.CompletedProcess[str]:
         return self.run_script(
-            WORKFLOW, "record", "review", "--slug", "review-summary", "--workflow-id", self.wid,
-            "--review-context-id", context, "--input", str(path),
+            WORKFLOW, "record", "review", "--slug", "review-summary", "--workflow-id", self.wid, "--input", str(path),
         )
 
 class ReviewSummaryTests(ReviewSummaryHarness):
@@ -178,49 +176,14 @@ class ReviewSummaryTests(ReviewSummaryHarness):
             self.assertEqual(result.returncode, 0, result.stderr)
             references.append(json.loads(result.stdout)["summaryId"])
         before = self.event_count()
-        result = self.dispose("SPEC-1", "fixed")
+        result = self.fixed("SPEC-1")
         self.assertEqual(result.returncode, 2, marker)
         self.assertEqual(self.event_count(), before, marker)
         state = json.loads(self.run_script(WORKFLOW, "status").stdout)
         self.assertEqual((state["findingStates"][0]["kind"], state["codeReview"]["findings"]),
                          ("behavioral", "pending"), marker)
 
-    def test_pending_retry_preserves_material_escalation(self) -> None:
-        path = self.tmp / "review.json"
-        for material in (False, True):
-            path.write_text(json.dumps({"findings": [{**self.review_finding(), "material": material}]}))
-            result = self.record_review(path)
-            self.assertEqual(result.returncode, 0, result.stderr)
-        state = json.loads(self.run_script(WORKFLOW, "status").stdout)
-        self.assertEqual((len(state["findingStates"]), state["findingStates"][0]["material"],
-                          state["codeReview"]["findings"]), (1, True, "pending"),
-                         "MATERIAL_ESCALATION_LOST")
-
-    def test_review_retries_reconcile_identity_and_disposition_the_observation(self) -> None:
-        finding = self.review_finding()
-        finding.pop("kind")
-        path = self.tmp / "review.json"
-        references = []
-        for claim in ("wrong value", "same defect with a new counterexample", "same defect with a new counterexample"):
-            path.write_text(json.dumps({"findings": [{**finding, "claim": claim}]}))
-            result = self.record_review(path)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            references.append(json.loads(result.stdout)["summaryId"])
-        state = json.loads(self.run_script(WORKFLOW, "status").stdout)
-        self.assertEqual(len(state["findingStates"]), 1, "FINDING_IDENTITY_SPLIT")
-        result = self.dispose("SPEC-1")
-        self.assertEqual(result.returncode, 0, "OBSERVATION_REFERENCE_UNUSABLE: " + result.stderr)
-        state = json.loads(self.run_script(WORKFLOW, "status").stdout)
-        self.assertEqual(state["findingStates"][0]["status"], "report-only")
-        self.assertNotEqual(references[0], references[1])
-        for _ in range(2):
-            path.write_text(json.dumps({"findings": [finding]}))
-            result = self.record_review(path)
-            self.assertEqual(result.returncode, 0, "NONFIX_SEMANTICS_CHANGED" + result.stderr)
-            result = self.dispose("SPEC-1")
-            self.assertEqual(result.returncode, 0, "NONFIX_SEMANTICS_CHANGED" + result.stderr)
-
-    def test_material_findings_require_intake_then_appended_disposition(self) -> None:
+    def test_a_review_finding_requires_a_claim_and_keeps_its_fields(self) -> None:
         finding = {"id": "SPEC-1", "material": True, "kind": "test-coverage", "claim": "wrong value",
                    "location": "app.py:1"}
         path = self.tmp / "review.json"
@@ -235,125 +198,22 @@ class ReviewSummaryTests(ReviewSummaryHarness):
         intake_id = json.loads(intake.stdout)["summaryId"]
         self.assertEqual(self.evidence(intake_id)["findings"][0]["location"], "app.py:1")
 
-        before_events = self.event_count()
-        for invalid in (
-            {"findings": [finding], "intakeEvidenceId": intake_id, "dispositions": []},
-            {"intakeEvidenceId": intake_id, "dispositions": [{
-                "finding_id": "SPEC-1", "status": "fixed", "evidence": "verified correction",
-                "claim": "restated claim",
-            }]},
-        ):
-            path.write_text(json.dumps(invalid), encoding="utf-8")
-            refused = self.record_review(path, "fresh-review-1")
-            self.assertEqual(refused.returncode, 2, "a disposition restated immutable intake")
-            self.assertEqual(self.event_count(), before_events, "a refused disposition appended an event")
-
-        recorded = self.dispose("SPEC-1")
-        self.assertEqual(recorded.returncode, 0, recorded.stdout + recorded.stderr)
-        state = read_workflow(resolve_repo_identity(self.repo))
-        self.assertEqual(state["codeReview"]["status"], "passed")
-        self.assertEqual(self.evidence(intake_id)["findings"], [finding])
-        second = {**finding, "id": "SPEC-2", "claim": "second observation"}
-        path.write_text(json.dumps({"findings": [second]}), encoding="utf-8")
-        self.assertEqual(self.record_review(path, "fresh-review-2").returncode, 0)
-        final = self.dispose("SPEC-2")
-        self.assertEqual(final.returncode, 0, final.stdout + final.stderr)
-        self.assertEqual(read_workflow(resolve_repo_identity(self.repo))["codeReview"]["status"], "passed")
-
-    def test_later_disposition_closes_only_changed_findings_and_links_history(self) -> None:
-        marker = "FINDING_CLOSURE_OVERWROTE_HISTORY"
-        path = self.tmp / "partial-finding-closure.json"
-        first = self.review_finding()
-        second = {**first, "id": "SPEC-2", "material": False, "claim": "minor follow-up"}
-        path.write_text(json.dumps({"findings": [first, second]}), encoding="utf-8")
-        intake = self.record_review(path, "partial-intake")
-        self.assertEqual(intake.returncode, 0, intake.stderr)
-
-        classified = self.dispose("SPEC-1", "accepted-follow-up")
-        self.assertEqual(classified.returncode, 0, marker + classified.stderr)
-        first_disposition_id = read_workflow(resolve_repo_identity(self.repo))["findingStates"][0]["dispositionEvidenceId"]
-        self.assertEqual(self.dispose("SPEC-2").returncode, 0)
-        update = self.tmp / "reopened-map.json"
-        update.write_text(json.dumps({"items": [{
-            "id": "BM_VALUE", "kind": "contract", "basis": "Make the application value two.",
-            "behavior": "app.value is two", "seam": "import app", "expected": "value equals two",
-        }]}), encoding="utf-8")
-        mapped = self.run_script(WORKFLOW, "record", "tdd-map", "--slug", "review-summary", "--workflow-id", self.wid,
-                                 "--input", str(update))
-        self.assertEqual(mapped.returncode, 0, mapped.stdout + mapped.stderr)
-        verified = self.run_script(WORKFLOW, "verify", "--slug", "review-summary", "--kind", "quality-gate", "--base-ref", "HEAD")
-        self.assertEqual(verified.returncode, 0, verified.stdout + verified.stderr)
-        self.assertEqual(read_workflow(resolve_repo_identity(self.repo))["tdd"], "in-progress")
-
-        closed = self.dispose("SPEC-1")
-        self.assertEqual(closed.returncode, 0, marker + closed.stdout + closed.stderr)
-        state = read_workflow(resolve_repo_identity(self.repo))
-        self.assertEqual(state["nextAction"], "tdd", marker)
-        second_disposition_id = state["findingStates"][0]["dispositionEvidenceId"]
-
-        states = {
-            entry["findingId"]: entry
-            for entry in read_workflow(resolve_repo_identity(self.repo))["findingStates"]
-        }
-        self.assertEqual(states["SPEC-2"]["status"], "report-only", marker)
-        self.assertEqual(states["SPEC-1"]["status"], "report-only", marker)
-        self.assertEqual(states["SPEC-1"]["dispositionEvidenceId"], second_disposition_id, marker)
-        self.assertEqual(states["SPEC-1"]["dispositionHistory"], [{
-            "evidenceId": first_disposition_id,
-            "status": "accepted-follow-up",
-            "supersededBy": second_disposition_id,
-        }], marker)
-        self.assertEqual(
-            self.evidence(second_disposition_id)["supersedesEvidenceIds"],
-            [first_disposition_id],
-            marker,
-        )
-        proof = self.repo / "test_value.py"
-        proof.write_text("import unittest\nimport app\nclass Value(unittest.TestCase):\n"
-                         "    def test_value(self):\n        self.assertEqual(app.value, 2, 'VALUE_NOT_TWO')\n",
-                         encoding="utf-8")
-        (self.repo / "app.py").write_text("value = 2\n", encoding="utf-8")
-        result = subprocess.run(
-            [sys.executable, str(WORKFLOW), "tdd", "--repo", str(self.repo), "--slug", "review-summary",
-             "--behavior-id", "BM_VALUE", "--", sys.executable, "-m", "unittest", "-v", "test_value"],
-            cwd=self.repo, env=self.env, text=True, capture_output=True, check=False,
-        )
-        self.assertEqual(result.returncode, 0, marker + result.stdout + result.stderr)
-        verified = self.run_script(WORKFLOW, "verify", "--slug", "review-summary", "--kind", "quality-gate", "--base-ref", "HEAD")
-        self.assertEqual(verified.returncode, 0, marker + verified.stdout + verified.stderr)
-        path.write_text(json.dumps({"findings": []}), encoding="utf-8")
-        ready = self.record_review(path, "ready-return")
-        self.assertEqual(ready.returncode, 0, marker + ready.stdout + ready.stderr)
-        self.assertEqual(json.loads(ready.stdout)["status"], "passed", marker)
-        self.assertEqual(read_workflow(resolve_repo_identity(self.repo))["findingStates"], list(states.values()), marker)
-
     def test_a_clean_rereview_settles_its_findings_and_refreshes_the_binding(self) -> None:
         marker, path = "PENDING_REVIEW_BINDING_STALE", self.tmp / "pending-review.json"
         status = lambda: json.loads(self.run_script(WORKFLOW, "status").stdout)
-        findings = [self.review_finding(), {**self.review_finding(), "id": "SPEC-2", "kind": "behavioral", "claim": "value must stay two"}]
-        path.write_text(json.dumps({"findings": findings}))
+        path.write_text(json.dumps({"findings": [self.review_finding(2)]}))
         self.assertEqual(self.record_review(path, "current-pending-review").returncode, 0, marker)
         first = status()
         self.assertEqual((first["findingStates"][0]["status"], first["nextAction"]), ("pending", "code-review"), marker)
         (self.repo / "app.py").write_text("value = 2\n")
         verified = self.run_script(WORKFLOW, "verify", "--slug", "review-summary", "--kind", "quality-gate", "--base-ref", "HEAD")
         self.assertEqual(verified.returncode, 0, verified.stdout + verified.stderr)
-        path.write_text(json.dumps({"findings": [{"id": "R-2", "material": False, "kind": "nonbehavioral", "claim": "a note"}]}))
+        path.write_text(json.dumps({"findings": [{"id": "R-2", "kind": "nonbehavioral", "claim": "a note"}]}))
         self.assertEqual(self.record_review(path, "current-pending-review").returncode, 0, marker)
         state = status()
         self.assertEqual(({e["findingId"]: e["status"] for e in state["findingStates"]}["SPEC-1"], state["codeReview"]["status"]),
                          ("resolved", "passed"), marker + ": the clean re-review left its finding open")
         self.assertNotIn(state.get("reviewManifestId"), (None, first["reviewManifestId"]), marker)
-        path.write_text(json.dumps({"findings": findings}))
-        self.assertEqual(self.record_review(path, "current-pending-review").returncode, 0, marker)
-        self.assertEqual({e["findingId"]: e.get("recurrence") for e in status()["findingStates"][-2:]},
-                         {"SPEC-1": None, "SPEC-2": 1}, "SETTLED_FINDING_RECURRENCE_LOST")
-        clean, again = json.dumps({"findings": []}), json.dumps({"findings": findings[1:]})
-        for document in (clean, again, clean):  # recurrence two: an uncertified clean review settles nothing
-            path.write_text(document)
-            self.assertEqual(self.record_review(path, "current-pending-review").returncode, 0, marker)
-        self.assertEqual((status()["findingStates"][-1].get("recurrence"), status()["findingStates"][-1]["status"]),
-                         (2, "pending"), "UNCERTIFIED_REPAIR_SETTLED")
 
     def test_legacy_empty_document_is_a_no_finding_intake(self) -> None:
         path = self.tmp / "legacy-empty.json"
@@ -361,49 +221,6 @@ class ReviewSummaryTests(ReviewSummaryHarness):
         recorded = self.record_review(path, "legacy-empty")
         self.assertEqual(recorded.returncode, 0, "LEGACY_EMPTY_REVIEW_REJECTED" + recorded.stdout + recorded.stderr)
         self.assertEqual(json.loads(recorded.stdout)["status"], "passed", "LEGACY_EMPTY_REVIEW_REJECTED")
-
-
-    def test_reviewer_disposition_derives_context_and_is_terminal(self) -> None:
-        path = self.tmp / "review.json"
-        path.write_text(json.dumps({"findings": [self.review_finding()]}))
-        intake = json.loads(self.record_review(path).stdout)["summaryId"]
-        result = self.dispose("SPEC-1")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        state = read_workflow(resolve_repo_identity(self.repo))
-        document = self.evidence(state["findingStates"][0]["dispositionEvidenceId"])
-        self.assertEqual(document["intakeEvidenceId"], intake)
-        self.assertEqual(document["context"]["candidateTree"], self.disposition_context()["candidateTree"])
-        self.assertEqual(self.dispose("SPEC-1", "fixed").returncode, 2)
-
-    def test_disposition_binds_the_exact_validated_manifest_snapshot(self) -> None:
-        bulk = self.repo / "bulk"; bulk.mkdir()
-        for index in range(2500): (bulk / f"f{index:04d}.py").write_text("x" * 4096, encoding="utf-8")
-        path = self.tmp / "race.json"
-        path.write_text(json.dumps({"findings": [self.review_finding()]}), encoding="utf-8")
-        intake = self.record_review(path, "race-intake")
-        self.assertEqual(intake.returncode, 0, intake.stderr)
-        before_events = self.event_count()
-        process = subprocess.Popen([sys.executable, str(WORKFLOW), "record", "advisor-disposition", "--slug", "review-summary",
-            "--workflow-id", self.wid, "--finding", "SPEC-1", "--report-only", "--reason", "Current observation is nonmaterial",
-            "--repo", str(self.repo)], cwd=ROOT, env=self.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        saw_hash = mutated = False
-        deadline = time.monotonic() + 30
-        while process.poll() is None and time.monotonic() < deadline:
-            try:
-                children = Path(f"/proc/{process.pid}/task/{process.pid}/children").read_text().split()
-                commands = [Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ") for pid in children]
-            except OSError:
-                continue
-            if any(b"hash-object --no-filters" in command for command in commands):
-                saw_hash = True
-            elif saw_hash and not mutated:
-                (self.repo / "app.py").write_text("value = 2\n", encoding="utf-8")
-                mutated = True
-        stdout, stderr = process.communicate(timeout=30)
-        self.assertTrue(saw_hash and mutated, "did not mutate after raw-manifest validation")
-        self.assertEqual(process.returncode, 2, stdout + stderr)
-        self.assertIn("candidate", stderr)
-        self.assertEqual(self.event_count(), before_events, "a stale candidate appended review evidence")
 
 
     def test_rejected_recorder_call_appends_no_event(self) -> None:
@@ -416,7 +233,6 @@ class ReviewSummaryTests(ReviewSummaryHarness):
         payload.write_text(json.dumps({"findings": []}), encoding="utf-8")
         premature = self.run_script(
             WORKFLOW, "record", "review", "--slug", "review-summary", "--workflow-id", new_wid,
-            "--review-context-id", "fresh-review-2",
             "--input", str(payload),
         )
         self.assertEqual(premature.returncode, 2, "a premature recorder call was accepted before verification")
@@ -435,7 +251,8 @@ class SkillTextTests(unittest.TestCase):
         documents = [path for root in roots for path in root.rglob("*.md")]
         self.assertTrue(documents, marker)
         removed = re.compile(r"RED/GREEN|redFailure|retainedEffect|hooks/lib/mcdc|Behavior Map requirements|#task-boundary-and-seams"
-                             r"|\breleased\b|request sentence|quoting, verbatim|what-a-slice-must-prove|mcdc-decisive-contexts")
+                             r"|\breleased\b|request sentence|quoting, verbatim|what-a-slice-must-prove|mcdc-decisive-contexts"
+                             r"|appeal|recurring-behavioral-repairs|--review-context-id|repair owner|fixSketch|rejected-with-evidence")
         for path in documents:
             text = path.read_text(encoding="utf-8")
             self.assertIsNone(removed.search(text), f"{marker}: {path.relative_to(ROOT)} names a removed feature")
