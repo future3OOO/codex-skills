@@ -21,7 +21,7 @@ standalone brief.
    constraint changes require reconfirmation. This gate belongs to the brief
    writer, including issue work, not the downstream AFK implementer.
 2. **Investigate.** After confirmation, read [AGENT-BRIEF.md](AGENT-BRIEF.md).
-   Inspect code, callers, and retained evidence. Run only real
+   Trace affected code, callers, and retained evidence. Run targeted real
    code/entrypoint probes, each completing in milliseconds. Record the reproducible
    command, measured scope and elapsed runtime (including startup), result, and
    output reference. Never run full unit tests or suites as brief-writer
