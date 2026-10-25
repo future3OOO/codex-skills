@@ -384,6 +384,11 @@ def open_obligations(items: list[JsonObject]) -> list[str]:
     named = {path: function for entry in items if (entry.get("comparison") or {}).get("fresh")
              for path, function in entry["comparison"].get("named", {}).items()}
     lines += [f"`{path}` is named for changed `{function}`; compare it whole" for path, function in named.items() if path not in whole]
+    expected = [str(entry.get("expected", "")) for entry in items if entry.get("kind") == "contract"]
+    lines += [f"existing test `{case}` is missing on the candidate: restore it, or name it in the expected result "
+              "of a contract item whose request removes it"
+              for case in dict.fromkeys(case for run in current for case in run.get("renamed") or [])
+              if not any(re.search(rf"(?<![^\s`'\"(,;]){re.escape(case)}(?![^\s`'\"),;.]|\.\S)", text) for text in expected)]
     decided: dict[str, set[bool | None]] = {}
     for run in current:
         for condition in run["arms"][0].get("conditions", []):
@@ -513,6 +518,8 @@ def comparison_view(run: JsonObject) -> JsonObject:
     if unmeasured := [condition["label"] for condition in run["arms"][0].get("conditions", []) if condition["decided"] is None]:
         limitations.append("removed conditions not measured: " + ", ".join(unmeasured[:8])
                            + (f" +{len(unmeasured) - 8} more in evidence" if len(unmeasured) > 8 else ""))
+    if run.get("renamed", []) is None:
+        limitations.append("existing test ids not compared: pytest collection failed")
     return {**{key: run[key] for key in ("comparison", "valid", "fresh", "runIndex", "command") if key in run},
             "arms": [{"source": label, "tree": arm["requestedTree"], "outcome": arm["outcome"],
                       "testsExecuted": (arm.get("proof") or {}).get("testsExecuted"), "unnamed": unnamed[label],

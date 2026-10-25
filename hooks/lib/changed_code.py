@@ -162,6 +162,13 @@ def analyse(identity: RepoIdentity, original: str, candidate: str) -> tuple[dict
     return dict(sorted(named.items())), decisions
 
 
+def changed_tests(identity: RepoIdentity, original: str, candidate: str) -> dict[str, set[str]]:
+    """Each existing Python test file the candidate modifies, with its candidate functions' qualified names."""
+    return {path: set(_functions(_blob(identity, candidate, path)))
+            for raw in _git(identity, "diff", "--name-only", "--diff-filter=M", "-z", original, candidate).split(b"\0")
+            if raw and (path := os.fsdecode(raw)).endswith(".py") and is_test_path(path)}
+
+
 def _truth(node: ast.expr, known: dict[str, bool]) -> bool | None:
     if (text := ast.unparse(node)) in known:
         return known[text]

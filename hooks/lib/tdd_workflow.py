@@ -283,6 +283,27 @@ def _named_command(surface: JsonObject, command: list[str], named: dict[str, str
     return [*command, *added], [path for path in named if path in whole or path in added]
 
 
+def _renamed_tests(identity: RepoIdentity, original: str, candidate: str, files: list[str], surface: JsonObject,
+                   timeout: float) -> list[str] | None:
+    """The original pytest ids of each modified existing test file that the candidate loses while their test
+    function remains, both collected on the candidate's production code; None when a collection fails."""
+    changed = changed_code.changed_tests(identity, original, candidate)
+    if not changed:
+        return []
+    command = [*shlex.split(str(surface["invocation"])), "--collect-only", "-q", "--rootdir=.", "--override-ini=addopts=", *changed]
+    kept = [os.fsdecode(path) for path in
+            _git(identity, "--literal-pathspecs", "ls-tree", "-r", "--name-only", "-z", original, "--", *files).split(b"\0") if path]
+    collected = []
+    for tests, paths in ((original, kept), (candidate, files)):
+        arm = _execute_tree(identity, candidate, tests, paths, command, {"runner": "exact"}, timeout, {}, [])
+        if arm["exitCode"] not in (0, 5):
+            return None
+        collected.append([line for line in arm["output"].splitlines() if line.startswith(tuple(path + "::" for path in changed))])
+    present = {case.split("[", 1)[0] for case in collected[1]}  # collected, so inherited tests count
+    return [case for case in collected[0] if case not in collected[1] and (case.split("[", 1)[0] in present
+            or case.split("::", 1)[1].split("[")[0].replace("::", ".") in changed[case.split("::", 1)[0]])]
+
+
 def _source_delta(identity: RepoIdentity, original: str, candidate: str) -> JsonObject:
     changed = [os.fsdecode(name) for name in _git(identity, "diff", "--name-only", "-z", original, candidate).split(b"\0")
                if name and not is_test_path(os.fsdecode(name))]
@@ -385,10 +406,12 @@ def _run_tdd(values: list[str]) -> int:
     if preserved and surface.get("runner") not in {"pytest", "unittest"}:
         preserved = len({arm["output"].replace(arm["loadedRoot"], "<source>") for arm in arms}) == 1
     comparison = "incomplete" if not valid else "preserved" if preserved else "changed"
+    # The candidate's own tests run on every arm, so renamed ids are collected apart.
+    renamed = {"renamed": _renamed_tests(identity, original, candidate, files, surface, args.timeout)} if surface.get("runner") == "pytest" else {}
     run = {"runIndex": len(runs), "command": shlex.join(command), "candidateTree": candidate, "originalTree": original,
            "probeFiles": files, "support": args.support, "timeout": args.timeout, "candidateKey": keys[-1],
            "probeKey": probe_key, "reviewSources": reviewed, "named": named, "wholeFiles": whole, "added": added,
-           "sourceDelta": _source_delta(identity, original, candidate),
+           "sourceDelta": _source_delta(identity, original, candidate), **renamed,
            "comparison": comparison, "arms": arms, "valid": valid, "execution": execution,
            "exitCode": 0 if valid else 1, "timedOut": any(arm["timedOut"] for arm in arms)}
     for item in mapped:

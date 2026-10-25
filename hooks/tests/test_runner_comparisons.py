@@ -2201,3 +2201,81 @@ class ChangedCodeTests(unittest.TestCase):
         evidence = json.loads(self.case.cli("evidence", "--repo", str(self.repo), "--evidence-id", receipt["summaryId"], "--full").stdout)
         output = evidence["document"]["runs"][receipt["runIndex"]]["arms"][0]["output"]
         self.assertIn("pop: (1, [False])", output, marker + ": " + output)
+
+    def ids_setup(self, original, candidate):
+        """Commit `original`, begin with a passing pytest batch and two unrun items, then write `candidate`."""
+        self.commit(original)
+        self.case.begin_with_map([pending_behavior("BM_VALUE", kind="preservation", behavior="value stays", expected="value is 1",
+                                                   boundaryInputs=["test_value"]),
+                                  pending_behavior("BM_REMOVE"), pending_behavior("BM_OTHER", kind="preservation")])
+        (self.repo / "test_value.py").write_text("import app\ndef test_value(): assert app.value == 1\n")
+        for name, text in candidate.items():
+            (self.repo / name).unlink() if text is None else (self.repo / name).write_text(text)
+
+    def ids_open(self, command=(sys.executable, "-m", "pytest", "test_value.py")):
+        receipt = self.tdd("BM_VALUE", command=command)
+        return (sorted(line for line in receipt["open"] if line.startswith("existing test ")),
+                [line for line in receipt.get("limitations", []) if line == UNMEASURED])
+
+    def expect(self, item, text):
+        update = self.case.tmp / "expected.json"
+        update.write_text(json.dumps({"items": [{"id": item, "expected": text}]}))
+        self.case.cli("record", "tdd-map", "--repo", str(self.repo), "--input", str(update))
+
+    def test_renamed_ids_stay_open_until_restored_or_named(self):
+        # Arm I's captured edit: an added `safe_mode` parameter renames every existing id of the test it reuses.
+        self.ids_setup({"tests/test_cli.py": STRICT}, {"tests/test_cli.py": SAFE})
+        ids = [f"tests/test_cli.py::test_insert_upsert_strict[{case}]"
+               for case in ("False-insert", "False-upsert", "True-insert", "True-upsert")] + ["tests/test_cli.py::test_plain"]
+        seen = [self.ids_open()[0], self.ids_open()[0]]
+        for item, text in (("BM_REMOVE", "removes `test_insert_upsert_strict[False-insert]`"), ("BM_OTHER", " ".join(ids)),
+                           ("BM_REMOVE", f"sub/{ids[0]} {ids[4]}[True] {ids[2]}-tail] {ids[3]}.tail]"),
+                           ("BM_REMOVE", " ".join(ids[:2]) + ".")):
+            self.expect(item, text)
+            seen.append(self.ids_open()[0])
+        (self.repo / "tests/test_cli.py").write_text(STRICT)
+        seen.append(self.ids_open()[0])
+        (self.repo / "tests/test_cli.py").write_text("__test__ = False\n" + SAFE)
+        seen.append(self.ids_open())
+        self.setUp()
+        self.ids_setup({"tests/test_cli.py": STRICT}, {"tests/test_cli.py": "import absent_module\n" + SAFE})
+        seen.append(self.ids_open())
+        self.setUp()
+        inherited = 'import pytest\nclass Base:\n    @pytest.mark.parametrize("v", [1, 2])\n    def test_p(self, v): assert v\n'
+        self.ids_setup({"tests/test_cli.py": inherited + "class TestKept(Base): pass\n"},
+                       {"tests/test_cli.py": inherited.replace("[1, 2]", "[3, 4]") + "class TestKept(Base): pass\n"})
+        seen.append(len(self.ids_open()[0]))
+        lines = [MISSING.format(case) for case in ids]
+        self.assertEqual(seen, [lines, lines, lines, lines, lines, lines[2:], [], (lines[2:], []), ([], [UNMEASURED]), 2],
+                         "RENAMED_IDS_NOT_HELD_OPEN")
+
+    def test_surviving_or_deleted_ids_open_nothing(self):
+        # Captured edits that keep ids: J's added fixture, an appended case, #34's deleted tests and unittest batches,
+        # and ids that production values decide.
+        values = "import pytest, app\n@pytest.mark.parametrize('v', app.VALUES)\ndef test_p(v): assert v\n"
+        unit = UNITTEST_PROBE + "    def test_value(self): self.assertEqual(app.value, 1)\n"
+        cases = {"fixture": ({"tests/test_cli.py": STRICT.replace("strict):", "strict, capsys):")}, None),
+                 "appended": ({"tests/test_cli.py": STRICT.replace('"upsert")', '"upsert", "bulk")')}, None),
+                 "deleted": ({"tests/test_cli.py": "def test_other(): pass\n"}, None),
+                 "unittest": ({"tests/test_cli.py": SAFE, "test_value_unit.py": unit},
+                              (sys.executable, "-m", "unittest", "test_value_unit")),
+                 "production": ({"tests/test_cli.py": "# kept\n" + values, "app.py": "value = 1\nVALUES = [1, 3]\n"}, None)}
+        seen = {}
+        for name, (candidate, command) in cases.items():
+            self.setUp()
+            original = {"tests/test_cli.py": values, "app.py": "value = 1\nVALUES = [1, 2]\n"} if name == "production" else {
+                "tests/test_cli.py": STRICT}
+            self.ids_setup(original, candidate)
+            seen[name] = self.ids_open(*filter(None, [command]))
+        self.assertEqual(seen, dict.fromkeys(cases, ([], [])), "KEPT_IDS_OPENED")
+
+
+STRICT = ('import pytest\n@pytest.mark.parametrize("method", ("insert", "upsert"))\n'
+          '@pytest.mark.parametrize("strict", (False, True))\ndef test_insert_upsert_strict(method, strict):\n    assert method\n'
+          'def test_plain():\n    assert True\n')
+SAFE = STRICT.replace("def test_insert_upsert_strict(method, strict)", '@pytest.mark.parametrize("safe_mode", (False, True))\n'
+                      "def test_insert_upsert_strict(method, strict, safe_mode)").replace(
+    "def test_plain()", '@pytest.mark.parametrize("safe_mode", (False, True))\ndef test_plain(safe_mode)')
+MISSING = ("existing test `{}` is missing on the candidate: restore it, or name it in the expected result "
+           "of a contract item whose request removes it")
+UNMEASURED = "existing test ids not compared: pytest collection failed"
