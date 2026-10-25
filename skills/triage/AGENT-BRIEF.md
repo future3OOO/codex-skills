@@ -19,9 +19,9 @@ Authors, including callers reusing this contract, first complete
   Follow [codebase-design](../codebase-design/SKILL.md); link applicable
   `AGENTS.md` for ownership/execution instead of copying doctrine.
   Favor deep Modules and efficient Interfaces.
-  Small functions are not automatically shallow public Modules; require no new
-  wrapper or extraction. For a PR, preserve working contributions and scope the
-  remaining gaps.
+  Small functions are not automatically shallow public Modules; add no wrapper
+  or extraction merely to fill the template. For a PR, preserve working
+  contributions and scope the remaining gaps.
 - **Acceptance:** State independently falsifiable before/after outcomes and
   affected preservation. Always specify the relevant performance baseline,
   workload, metric, and no-regression comparison at equivalent correct outcomes,
