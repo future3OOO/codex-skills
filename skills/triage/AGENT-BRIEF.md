@@ -28,8 +28,9 @@ through the production Interface on unchanged N and edited N+1, with real
 collaborators. Verify loaded sources, equivalent inputs and isolated mutable state;
 cover the actual changed code, affected cases and interactions. Follow
 [production-code's comparison rules](../production-code/SKILL.md#minimum-implementation-decision).
-Require agent observations for agent/workflow claims; compare actual artifacts for
-non-behavioral changes. Neither artifact nor component checks prove workflow speed.
+Require the CLI for CLI claims and real agents for agent/workflow claims; compare
+artifacts for non-behavioral changes. Neither artifact nor component checks prove
+workflow speed.
 
 Reuse evidence; add no harnesses, metadata or tests per bullet. Historical examples
 are cases, not templates. Include only concrete dependencies or shared Interfaces;
