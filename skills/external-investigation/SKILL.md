@@ -8,8 +8,7 @@ description: Map desired behavior to comparable GitHub implementations, assess w
 Build a blueprint by learning how existing code produces behavior close to the
 user's goal. Connect desired behavior, research questions, inspected implementations,
 adaptation and proof. Produce cited Markdown and a self-contained HTML outline.
-Research only: write those artifacts; leave application code, dependencies,
-governance documents and runtime unchanged.
+Research only: write artifacts; leave application code, dependencies, governance and runtime unchanged.
 
 ## 1. Anchor on desired behavior
 
@@ -82,7 +81,7 @@ override hard local constraints or remove the need to prove the resulting implem
 ## 5. Save and hand off
 
 Honor the user's destination; preserve prior artifacts unless replacement is authorized.
-Otherwise create a distinct directory: with an active pass, use [workflow state resolved by `workflow.py paths`](../execution-planning/SKILL.md#core-rule);
+Otherwise create a distinct directory: with an active pass, create a child of `repoStateDir` from [`workflow.py paths`](../execution-planning/SKILL.md#core-rule);
 without a pass, use a location outside the checkout. Reuse only for the same investigation; report its absolute path.
 
 Link both artifacts with readiness and remaining blockers. Stop when the important

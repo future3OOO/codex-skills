@@ -62,13 +62,13 @@ Set one overall readiness disposition and identify which decisions determine it:
 ## Standalone HTML outline
 
 Make this a one-minute decision view: lead with the objective, recommendation,
-readiness and decisive trade-off. Show the main Module relationships, alternatives
+readiness and decisive trade-off. Show Module responsibilities, relationships, alternatives
 and first-slice outcome; keep material assumptions beside the choices they affect.
 For existing projects, distinguish preserved, changed and proposed structure.
 Link detailed evidence, reuse analysis and validation checklists to the report.
 
-Use standalone HTML with inline CSS and no network-dependent fonts, scripts, stylesheets
-or embedded resources; ordinary source links are allowed. Prefer a simple diagram or comparison.
+Use self-contained HTML with inline CSS and embedded assets only; no network dependencies.
+No external fonts, scripts or stylesheets. Allow source links; prefer a simple diagram or comparison.
 Use semantic headings, readable contrast and a layout that works on narrow screens.
 Use explicit evidence labels where helpful; never invent numerical confidence scores.
 
