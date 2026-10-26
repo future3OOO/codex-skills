@@ -73,6 +73,20 @@ class Binds(unittest.TestCase):
 
 
 class FinalEnvelope(unittest.TestCase):
+    def test_a_contract_without_objective_adds_and_removes_is_refused(self) -> None:
+        draft = Path(tempfile.mkdtemp()) / "preflight.json"
+        self.addCleanup(draft.unlink)
+        for contract, refused in (("keep the rest", True), ("Objective: o\nRemoves: r\nAdds: a", True), ("Objective\nAdds\nRemoves", True),
+                                  ("Objective: o\nAdds: nothing\nRemoves", True), ("Objective: o\nAdds: a", True),
+                                  ("Objective: o\nAdds: nothing\nRemoves: `b` (app.py:2)\nmore", False)):
+            draft.write_text('{"authoritativeContract": %s, "behaviorMap": []}' % repr(contract).replace("'", '"'))
+            with self.subTest(contract=contract):
+                if refused:
+                    with self.assertRaisesRegex(ValueError, "must open with Objective:, Adds: and Removes: lines"):
+                        workflow_documents.preflight_document(str(draft))
+                else:
+                    self.assertEqual(workflow_documents.preflight_document(str(draft))["authoritativeContract"], contract)
+
     def test_a_final_finding_keeps_only_executable_evidence(self) -> None:
         envelope = Path(tempfile.mkdtemp()) / "final.json"
         self.addCleanup(envelope.unlink)

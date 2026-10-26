@@ -47,6 +47,9 @@ def preflight_document(path: str) -> JsonObject:
         (f"preflight document has unknown sections: {', '.join(sorted(set(value) - PREFLIGHT_SECTIONS))}",
          set(value) - PREFLIGHT_SECTIONS),
         ("preflight authoritativeContract must be non-empty text", not _text(value.get("authoritativeContract"))),
+        ("preflight authoritativeContract must open with Objective:, Adds: and Removes: lines",
+         [re.match(r"(\w+):\s*\S", line) and line.split(":")[0] for line in str(value.get("authoritativeContract") or "").strip().splitlines()[:3]]
+         != ["Objective", "Adds", "Removes"]),
     ) if bad] + map_errors(value.get("behaviorMap"), allow_runtime=False)
     if errors:
         raise ValueError("; ".join(errors))
@@ -130,7 +133,7 @@ ITEM_SHAPE = ('{"id":"BM_X","kind":"contract|preservation","basis":"original req
 # A finding binds only through evidence the runner executes; anything else is a report line.
 EXECUTABLE = ('{"id":"R-1","claim":"...","probe":{"path":"tests/test_r1.py","content":"...","command":"python3 -m pytest tests/test_r1.py"}} or a deletion-only {"id":"R-2","claim":"...","change":"<unified diff>"}')
 RECORD_SHAPES = {
-    "preflight": f'{{"authoritativeContract":"text","behaviorMap":[{ITEM_SHAPE}]}}',
+    "preflight": f'{{"authoritativeContract":"Objective: ...\\nAdds: ...\\nRemoves: ...\\n...","behaviorMap":[{ITEM_SHAPE}]}}',
     "review": '{"findings":[FINDING]} where FINDING is ' + EXECUTABLE,
     "advisor-result": ('the advisor envelope {"schemaVersion":1,"findings":[FINDING],"verdict":VERDICT}: at preflight '
                        'FINDING is {"id":"SPEC-1","claim":"...","material":true} and VERDICT approved|changes-required|'
@@ -138,7 +141,8 @@ RECORD_SHAPES = {
                        ' and VERDICT commit-ready|fix-before-commit|context-mismatch'),
     "advisor-disposition": ("--finding F --fixed [--behavior-id BM]; a preflight finding also "
                             "--rejected|--report-only|--follow-up REF --reason TEXT; or --findings none"),
-    "tdd-map": f'{{"items":[{ITEM_SHAPE}]}}; a recorded item needs only id and the changed fields, null removes an optional one',
+    "tdd-map": (f'{{"items":[{ITEM_SHAPE}]}}; a recorded item needs only id and the changed fields, null removes an optional one; '
+                '{"removes":"..."} replaces the contract\'s Removes line'),
 }
 
 

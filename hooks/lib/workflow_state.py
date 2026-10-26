@@ -1957,11 +1957,14 @@ def _readiness_lines(identity: RepoIdentity, state: JsonObject, items: list[Json
     try:
         items = _recorded_items(identity, state) if items is None else items
         recorded = behavior_map.recorded_map(None, evidence_document(identity, state.get("preflightEvidence")))
+        from .tdd_workflow import _removes
+        removes = _removes(identity, state, evidence_document(identity, state.get("tddEvidence")))
+        amended = [f"Removes line amended since preflight: {removes}"] if removes != _removes(identity, state, None) else []
     except (WorkflowError, LedgerError, ValueError):
         return {}
     opened = behavior_map.open_obligations(items)
     return {"open": opened, "openCount": len(opened), "never": behavior_map.never_compared(items),
-            "contractChanges": behavior_map.contract_changes(items, recorded)}
+            "contractChanges": behavior_map.contract_changes(items, recorded) + amended}
 
 
 def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObject | None = None, *,

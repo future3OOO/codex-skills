@@ -114,7 +114,7 @@ def build_document(
     behavior_map: list[dict[str, object]],
 ) -> dict[str, object]:
     """A structurally valid preflight document with explicit TDD scope."""
-    return {"authoritativeContract": f"contract: {fill}",
+    return {"authoritativeContract": f"Objective: {fill}\nAdds: nothing\nRemoves: nothing",
             "behaviorMap": [{key: value for key, value in item.items() if key not in {"status", "comparison"}} for item in behavior_map]}
 
 
