@@ -6,8 +6,9 @@ summarizes it. Keep source notes in the report rather than creating another ledg
 
 ## Markdown blueprint
 
-Keep the decision summary short; place supporting detail beneath it. Include only
-the following material that affects this investigation:
+Lead with a decision brief: recommendation, decisive rationale, first useful slice
+and blockers. Put supporting design, reuse and evidence detail beneath it; include
+only the following material that affects the investigation:
 
 1. **Objective and scope.** Intended behavior, success criteria, hard constraints,
    non-goals and the local evidence or brief the investigation builds on.
@@ -18,15 +19,16 @@ the following material that affects this investigation:
    important flows and state ownership. Describe inputs, outputs, invariants, ordering
    and failures where they affect callers. Name configuration or operational needs
    only when consequential. Distinguish existing, changed and proposed structure.
-4. **Reuse map.** For each useful donor, give the repository and file/function link,
-   pinned when available; the part to adopt, adapt or learn from; dependencies,
-   license obligations, required changes and how it fits the proposed Interface.
-   A recommendation to build custom should explain what the precedents still teach.
+4. **Comparable implementations.** Map each material behavior to the repository and
+   file/function path that implements something similar, pinned when available.
+   Explain the mechanism, observed match and contract differences, what to adapt or
+   avoid, dependencies/license obligations, and the validation our version needs.
+   Combine partial matches explicitly; disclose behaviors without a useful precedent.
 5. **Change and preservation.** Existing callers and behavior that must remain correct;
    integration points and migration or compatibility requirements when applicable.
    For greenfield work, state the initial scope without inventing existing paths.
-6. **First slice and validation.** The smallest end-to-end capability worth implementing,
-   its observable acceptance outcome and affected preservation checks. For unresolved
+6. **First slice and validation.** The smallest end-to-end slice that establishes a
+   consequential desired behavior, its acceptance outcome and preservation checks. For unresolved
    assumptions, specify a validation operation, expected observation and consequence
    of failure. Proposed checks are not executed proof or a duplicate Behavior Map.
 7. **Readiness and gaps.** Unresolved questions, decision impact, next action and the
@@ -59,15 +61,14 @@ Set one overall readiness disposition and identify which decisions determine it:
 
 ## Standalone HTML outline
 
-Show the objective and readiness first, then the recommended structure or change,
-the main alternatives and their decisive trade-offs. Show Module responsibilities
-and important relationships; a stack list alone is insufficient. For an existing
-project, distinguish what stays, changes or is proposed. Include the first slice,
-linked precedents and top unresolved assumptions beside the decisions they affect.
+Make this a one-minute decision view: lead with the objective, recommendation,
+readiness and decisive trade-off. Show the main Module relationships, alternatives
+and first-slice outcome; keep material assumptions beside the choices they affect.
+For existing projects, distinguish preserved, changed and proposed structure.
+Link detailed evidence, reuse analysis and validation checklists to the report.
 
-Use a self-contained HTML document with inline CSS and no external fonts, scripts,
-stylesheets or embedded resources that require network access. Ordinary source links
-are allowed. Prefer a simple diagram, flow or comparison to a decorative dashboard.
+Use standalone HTML with inline CSS and no network-dependent fonts, scripts, stylesheets
+or embedded resources; ordinary source links are allowed. Prefer a simple diagram or comparison.
 Use semantic headings, readable contrast and a layout that works on narrow screens.
 Use explicit evidence labels where helpful; never invent numerical confidence scores.
 
