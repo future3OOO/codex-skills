@@ -82,10 +82,9 @@ load-bearing assumptions rather than presenting a polished visual as settled des
 
 ## 5. Save and hand off
 
-Use the user's designated destination. Otherwise, reuse a task-specific artifact
-directory under an active workflow's resolved state location; obtain paths through
-its public CLI. Without an active workflow, use a task-specific research directory
-outside the checkout and report its absolute path. Preserve prior investigations.
+Honor the user's destination; preserve prior artifacts unless replacement is authorized.
+Otherwise create a distinct directory under [workflow state resolved by `workflow.py paths`](../execution-planning/SKILL.md#core-rule),
+or outside the checkout without a pass. Reuse only for the same investigation; report its absolute path.
 
 Link both artifacts and report the blueprint's readiness and remaining blockers.
 Stop when every decision question has a supported disposition or an explicit gap;
