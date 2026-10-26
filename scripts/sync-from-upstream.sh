@@ -10,7 +10,6 @@ MANUAL=(
   README.md install.sh mcp_config.json hooks.json decisions.md
   hooks/lib/hook_input.py
   skills/code-review/SKILL.md
-  skills/production-code/scripts/test_code_quality_gate.py
 )
 MANUAL_PREFIX=(skills/codex-advisor/)
 is_manual() {
