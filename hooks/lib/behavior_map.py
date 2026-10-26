@@ -259,6 +259,12 @@ def _matched(name: str, cases: dict[str, dict[str, JsonObject]]) -> tuple[list[s
     return aliases, None
 
 
+def _ran(case: str, test: str) -> bool:
+    """Whether a runner-reported case is the traced test: pytest's node id, or the id unittest reports."""
+    match = UNITTEST_CASE.match(case)
+    return (match.group(1).split(" (", 1)[1][:-1] if match else case) == test
+
+
 def _judge(entry: JsonObject, items: list[JsonObject], cases: dict[str, dict[str, JsonObject]]) -> list[str]:
     """Why the item's latest comparison, judged against the current map, does not prove it; none when
     it does. A case another item names is that item's to judge; a differing case no item names stays
@@ -338,7 +344,7 @@ def _claimed(entry: JsonObject, items: list[JsonObject], cases: dict[str, dict[s
 def open_obligations(items: list[JsonObject]) -> list[str]:
     """The single readiness result: one question per item whose required proof is missing.
     Items sharing one comparison fold its cases once. The current comparisons then answer for the
-    existing test ids the candidate renames and the conditions it removes that Removes does not name."""
+    existing test ids the candidate renames and the conditions it removes."""
     lines: list[str] = []
     folded: dict[object, dict[str, dict[str, JsonObject]]] = {}
     for entry in items:
@@ -375,9 +381,24 @@ def open_obligations(items: list[JsonObject]) -> list[str]:
               "of a contract item whose request removes it"
               for case in dict.fromkeys(case for run in current for case in run.get("renamed") or [])
               if not any(re.search(rf"(?<![^\s`'\"(,;]){re.escape(case)}(?![^\s`'\"),;.]|\.\S)", text) for text in expected)]
-    undeclared = dict.fromkeys(condition["label"] for run in current for condition in run["arms"][0].get("conditions", [])
-                               if not condition.get("declared"))
-    return lines + [f"removed condition {label} is not in the preflight Removes line: restore it" for label in undeclared]
+    decided: dict[str, set[bool | None]] = {}
+    for run in current:
+        for condition in run["arms"][0].get("conditions", []):
+            decided.setdefault(condition["label"], set()).add(condition["decided"])
+    # A removal a contract item names closes on one of its own cases whose result changed and whose test
+    # evaluated the condition at its deciding value on the original, not shown to keep the decision.
+    claimed = set()
+    for entry in items:
+        if entry.get("kind") == "contract" and producer_proved(entry):
+            cases = folded[entry["comparison"].get("runIndex")]
+            own = {case for name in entry.get("boundaryInputs") or [] for case in _matched(name, cases)[0]
+                   if _state(cases[case].get("original")) != _state(cases[case].get("current"))}
+            for condition in entry["comparison"]["arms"][0].get("conditions", []):
+                if condition["label"] in str(entry.get("expected", "")) and any(
+                        possible and _ran(case, test) for test, possible in (condition.get("reached") or {}).items() for case in own):
+                    claimed.add(condition["label"])
+    return lines + [f"removed condition {label} never decided a compared case"
+                    for label, seen in decided.items() if False in seen and True not in seen and label not in claimed]
 
 
 def obligation(entry: JsonObject) -> list[object]:
@@ -496,6 +517,9 @@ def comparison_view(run: JsonObject) -> JsonObject:
         limitations.append(f"narrowed selection: {narrowed}; tests outside it are not compared")
     if any(entry.get("execution") == "stopped" for by_tree in cases.values() for entry in by_tree.values()):
         limitations.append(STOPPED_NOTE)
+    if unmeasured := [condition["label"] for condition in run["arms"][0].get("conditions", []) if condition["decided"] is None]:
+        limitations.append("removed conditions not measured: " + ", ".join(unmeasured[:8])
+                           + (f" +{len(unmeasured) - 8} more in evidence" if len(unmeasured) > 8 else ""))
     if run.get("renamed", []) is None:
         limitations.append("existing test ids not compared: pytest collection failed")
     return {**{key: run[key] for key in ("comparison", "valid", "fresh", "runIndex", "command") if key in run},

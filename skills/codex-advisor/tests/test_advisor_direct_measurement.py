@@ -376,7 +376,7 @@ class AdvisorSecurityBoundaryTest(unittest.TestCase):
                 "--workflow-id", workflow_id, "--stage", "preflight", "--findings", "none",
                 cwd=repo, env=env,
             )
-            document: dict[str, object] = {"authoritativeContract": 'Objective: final evidence-scope probe\nAdds: nothing\nRemoves: nothing'}
+            document: dict[str, object] = {"authoritativeContract": "final evidence-scope probe"}
             document["behaviorMap"] = [
                 {
                     "id": "BM_FINAL_PROBE",

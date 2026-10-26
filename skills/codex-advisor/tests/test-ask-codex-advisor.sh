@@ -183,7 +183,7 @@ if [[ "${FAIL_PROVIDER:-0}" == 1 ]]; then exit 7; fi
 printf 'session id: 00000000-0000-7000-8000-%012d\n' "$count" >&2
 if [[ -n "${PROVIDER_EDIT:-}" ]]; then
   draft=$(grep -o '/[^ ]*/preflight\.json in place' "$CAPTURE_DIR/payload-$count" | head -1); draft=${draft% in place}
-  python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d["authoritativeContract"]="Objective: "+sys.argv[2]+"\nAdds: nothing\nRemoves: nothing"; json.dump(d,open(sys.argv[1],"w"))' "$draft" "$PROVIDER_EDIT"
+  python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d["authoritativeContract"]=sys.argv[2]; json.dump(d,open(sys.argv[1],"w"))' "$draft" "$PROVIDER_EDIT"
 fi
 if [[ -n "${PROVIDER_ENVELOPE:-}" ]]; then
   printf '%s\n' "$PROVIDER_ENVELOPE"
@@ -364,9 +364,7 @@ check "completion marker emitted" "codex_advisor_complete status=0 provider=code
 check "outgoing final payload retains selected receipt" "$selected_receipt" "$(cat "$rigtmp/capture/payload-4")"
 check "ORIGINAL_RESULT_RULES final rejects an unrequested regression" "Reject an assertion that expects an unrequested original-allow to candidate-block regression even when the runner reports failure-to-success." "$(cat "$rigtmp/capture/payload-4")"
 check "ORIGINAL_RESULT_RULES final takes the original's result as the test" "After preflight the original's result is the test: a rejection, or a contract item added or re-worded since preflight, stands only if the original source already gives the candidate's result for its input or a contract item approved at preflight names that result; a reading of the request is not such evidence." "$(cat "$rigtmp/capture/payload-4")"
-check "REMOVES_VERIFIED preflight verifies the Removes line" "Verify the contract's Removes line and every other deletion-scope claim" "$(cat "$rigtmp/capture/payload-1")"
 check "DIRECT_PROBE preflight takes a direct call as the first probe" "first decisive probe as a direct call to the changed function" "$(cat "$rigtmp/capture/payload-1")"
-check_absent "DELETED_CODE_EXEMPT_REVERTED preflight asks decisive contexts of every removed condition" "not code the request itself deletes" "$(cat "$rigtmp/capture/payload-1")"
 final_payload=$(cat "$rigtmp/capture/payload-4")
 check "FINDINGS_EXECUTED final asks for a runnable probe" '"probe":{"path":"...","content":"...","command":"..."}' "$final_payload"
 check "FINDINGS_EXECUTED final asks for a deletion-only change" "only deletes code or replaces it with one call to an existing function" "$final_payload"

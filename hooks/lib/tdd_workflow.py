@@ -128,7 +128,7 @@ def _probe_files(surface: JsonObject, root: Path, support: list[str]) -> list[st
 
 def _environment() -> dict[str, str]:
     owned = {"SHLVL", "_", "PWD", "OLDPWD", "PYTHONHOME", "TMPDIR", "CODEX_WORKFLOW_STATE_ROOT", "PYTHONDONTWRITEBYTECODE",
-             "PYTEST_ADDOPTS"}
+             "PYTEST_ADDOPTS", "WORKFLOW_CONDITION_PROBES", "WORKFLOW_CONDITION_RESULTS"}
     return {**{key: value for key, value in os.environ.items() if key not in owned},
             "SHLVL": "0", "PYTHONDONTWRITEBYTECODE": "1", "PYTEST_ADDOPTS": ""}
 
@@ -152,12 +152,14 @@ def _execution_key(identity: RepoIdentity, source: str, probe: str, files: list[
     config = json.dumps([command, timeout, execution,
                          executable_state.st_size, executable_state.st_mtime_ns], sort_keys=True).encode()
     producer = b"".join((Path(__file__).parent / name).read_bytes()
-                       for name in ("tdd_workflow.py", "tdd_surface.py", "command_runner.py", "changed_code.py"))
+                       for name in ("tdd_workflow.py", "tdd_surface.py", "command_runner.py", "changed_code.py",
+                                    "condition_trace/sitecustomize.py"))
     return hashlib.sha256(b"\0".join(production) + support + config + producer).hexdigest()
 
 
 def _execute_tree(identity: RepoIdentity, source_tree: str, candidate_tree: str, files: list[str],
-                  command: list[str], surface: JsonObject, timeout: float, named: dict[str, str]) -> JsonObject:
+                  command: list[str], surface: JsonObject, timeout: float, named: dict[str, str],
+                  decisions: list[JsonObject]) -> JsonObject:
     started = time.perf_counter()
     with tempfile.TemporaryDirectory(prefix="workflow-proof-") as temporary:
         root = Path(temporary) / "source"
@@ -179,6 +181,13 @@ def _execute_tree(identity: RepoIdentity, source_tree: str, candidate_tree: str,
         env = _environment()
         env.update(PYTHONPATH=os.pathsep.join(filter(None, (identity.root, env.get("PYTHONPATH")))), PWD=identity.root,
                    TMPDIR=temporary, CODEX_WORKFLOW_STATE_ROOT=str(Path(temporary) / "state"))
+        traced = Path(temporary) / "conditions.jsonl"
+        if decisions:  # the original arm records which removed conditions its cases decide
+            (Path(temporary) / "conditions.json").write_text(json.dumps(decisions), encoding="utf-8")
+            trace = shutil.copytree(Path(__file__).with_name("condition_trace"), Path(temporary) / "trace")
+            env.update(PYTHONPATH=os.pathsep.join([str(trace), env["PYTHONPATH"]]),
+                       WORKFLOW_CONDITION_PROBES=str(Path(temporary) / "conditions.json"),
+                       WORKFLOW_CONDITION_RESULTS=str(traced))
         actual = [_executable(identity, command[0]), *command[1:]]
         binding = ["bwrap", "--die-with-parent", "--dev-bind", "/", "/", "--bind", str(root), identity.root]
         runtime = Path(actual[0]).parent.parent
@@ -196,6 +205,12 @@ def _execute_tree(identity: RepoIdentity, source_tree: str, candidate_tree: str,
         except OSError as exc:
             raw, code, timed_out = str(exc).encode(), 127, False
         output = raw.decode("utf-8", errors="replace")
+        evaluations: dict[str, list[JsonObject]] | None = None
+        if traced.is_file():
+            evaluations = {}
+            for line in traced.read_text(encoding="utf-8").splitlines():
+                for index, found in json.loads(line).items():
+                    evaluations.setdefault(index, []).extend(found)
         timing = {"totalSeconds": time.perf_counter() - started,
                   "executionSeconds": time.perf_counter() - process_started}
         proof, error = None, "command timed out" if timed_out else ""
@@ -207,7 +222,8 @@ def _execute_tree(identity: RepoIdentity, source_tree: str, candidate_tree: str,
         outcome = ("passed" if code == 0 else "failed") if proof else "incomplete"
         return _run_entry(raw, code, timed_out, sourceTree=source_tree, outcome=outcome, proof=proof, error=error,
                           output=output, loadedRoot=identity.root, cases=tdd_surface.case_results(surface, output),
-                          executedCommand=actual, timing=timing)
+                          executedCommand=actual, timing=timing,
+                          **({"conditions": changed_code.judge(decisions, evaluations)} if decisions else {}))
 
 
 def _from_file(case: str, path: str) -> bool:
@@ -255,7 +271,7 @@ def _renamed_tests(identity: RepoIdentity, original: str, candidate: str, files:
             _git(identity, "--literal-pathspecs", "ls-tree", "-r", "--name-only", "-z", original, "--", *files).split(b"\0") if path]
     collected = []
     for tests, paths in ((original, kept), (candidate, files)):
-        arm = _execute_tree(identity, candidate, tests, paths, command, {"runner": "exact"}, timeout, {})
+        arm = _execute_tree(identity, candidate, tests, paths, command, {"runner": "exact"}, timeout, {}, [])
         if arm["exitCode"] not in (0, 5):
             return None
         collected.append([line for line in arm["output"].splitlines() if line.startswith(tuple(path + "::" for path in changed))])
@@ -301,7 +317,7 @@ def _probe_outcome(identity: RepoIdentity, source: str, tree: str, path: str, co
     surface = tdd_surface.identify(command)
     files = [name for raw in _git(identity, "ls-tree", "-r", "--name-only", "-z", tree).split(b"\0")
              if raw and is_test_path(name := os.fsdecode(raw))]
-    arm = _execute_tree(identity, source, tree, files, command, surface, PROBE_TIMEOUT, {})
+    arm = _execute_tree(identity, source, tree, files, command, surface, PROBE_TIMEOUT, {}, [])
     if arm["timedOut"]:
         return "timed-out"
     cases = [case for name, case in (arm.get("cases") or {}).items() if _from_file(name, path)]
@@ -353,7 +369,7 @@ def _replay(identity: RepoIdentity, batches: list[JsonObject], tree: str) -> tup
     for run in batches:
         command = shlex.split(run["command"])
         arm = _execute_tree(identity, tree, run["candidateTree"], run["probeFiles"], command, tdd_surface.identify(command),
-                            run["timeout"], run.get("named") or {})
+                            run["timeout"], run.get("named") or {}, [])
         if arm["timedOut"]:
             return "timed-out", f"recorded batch `{run['command']}` ran past {run['timeout']:g} s: replace it with direct probes of the changed code"
         if arm["outcome"] != "passed":
@@ -473,7 +489,7 @@ def _run_tdd(values: list[str]) -> int:
     before = tree_manifest(identity)
     candidate = _active_candidate_tree(identity)
     original = _git(identity, "rev-parse", f"{state['passStartOid']}^{{tree}}").decode().strip()
-    named, removed = changed_code.analyse(identity, original, candidate)
+    named, decisions = changed_code.analyse(identity, original, candidate)
     command, added = _named_command(surface, command, named, identity.root)
     surface = tdd_surface.identify(command)
     previous = [item.get("comparison") for item in mapped]
@@ -483,6 +499,8 @@ def _run_tdd(values: list[str]) -> int:
                  "support": args.support,
                  "environment": hashlib.sha256(json.dumps(sorted(_environment().items())).encode()).hexdigest()}
     keys = [_execution_key(identity, source, candidate, files, command, args.timeout, execution) for source in sources]
+    if decisions:  # the traced original answers for the conditions this candidate removes
+        keys[0] = hashlib.sha256((keys[0] + json.dumps(decisions, sort_keys=True)).encode()).hexdigest()
     if (all(proof and proof.get("valid") and proof.get("fresh") and proof.get("candidateKey") == keys[-1] for proof in previous)
             and all(behavior_map.producer_proved(item) for item in mapped)
             and len({proof["runIndex"] for proof in previous}) == 1
@@ -500,12 +518,10 @@ def _run_tdd(values: list[str]) -> int:
         arm = cache.get((key, source))
         if arm is None:
             if key not in held:
-                held[key] = {**_execute_tree(identity, source, candidate, files, command, surface, args.timeout, named),
-                             "key": key}
+                held[key] = {**_execute_tree(identity, source, candidate, files, command, surface, args.timeout, named,
+                                             decisions if source == original else []), "key": key}
             arm = held[key]
         arms.append({**arm, "requestedTree": source})
-    removes = _removes(identity, state)
-    arms[0]["conditions"] = [{"label": label, "declared": _declared(label, removes)} for label in removed]
     outcomes = [arm["outcome"] for arm in arms]
     valid = outcomes[-1] == "passed" and all(outcome in {"passed", "failed"} for outcome in outcomes[:-1])
     preserved = all(outcome == "passed" for outcome in outcomes)
@@ -532,32 +548,12 @@ def _run_tdd(values: list[str]) -> int:
     return 0 if run["valid"] else 2
 
 
-def _removes(identity: RepoIdentity, state: JsonObject) -> str:
-    """The recorded preflight contract's Removes line; it is frozen after preflight."""
-    contract = str(((evidence_document(identity, state.get("preflightEvidence")) or {}).get("document") or {})
-                   .get("authoritativeContract") or "")
-    return next((line[len("Removes:"):].strip() for line in contract.splitlines() if line.startswith("Removes:")), "")
-
-
-def _declared(label: str, removes: str) -> bool:
-    """Whether the Removes line names a removed condition `operand` (path:line) by its backticked operand. The operand
-    and the path may both contain the separator; a backtick is invalid Python outside a string, so the only split
-    whose prefix parses is the operand."""
-    for split in (index for index in range(1, len(label)) if label.startswith("` (", index)):
-        try:
-            ast.parse(label[1:split], mode="eval")
-        except SyntaxError:
-            continue
-        return f"{label[:split]}`" in removes
-    return False
-
-
 def map_update(identity: RepoIdentity, state: JsonObject, value: JsonObject) -> JsonObject:
     if set(value) not in ({"items"}, {"added"}):
         raise ValueError("tdd-map takes items to update by id; statuses and dispositions are runner-owned")
     previous, current = current_map(identity, state)
     recorded = {entry["id"]: entry for entry in previous or []}
-    merged = value.get("items", value.get("added", []))
+    merged = value.get("items", value.get("added"))
     if isinstance(merged, list):  # an item names only what changes: a given field replaces, null removes, an omitted field stays
         fields = behavior_map.REQUIRED_FIELDS | behavior_map.JUDGEMENT_FIELDS
         for position, entry in enumerate(merged):

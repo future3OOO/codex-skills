@@ -12,9 +12,7 @@ import time
 import unittest
 from pathlib import Path
 
-from hooks.lib import changed_code, tdd_workflow
 from hooks.lib.behavior_map import comparison_view
-from hooks.lib.repo_identity import resolve_repo_identity
 from hooks.tests import test_tdd_repairs as harness
 from hooks.tests.support import checkpoint_channels, pending_behavior
 
@@ -1991,78 +1989,96 @@ class ChangedCodeTests(unittest.TestCase):
     CONDITION = ("def admit(enabled, name, created):\n    if enabled and name not in created:\n        return 'gap'\n"
                  "    return 'none'\n")
 
-    def condition_setup(self, original, candidate, cases, kind="preservation", expected="same results", removes="nothing"):
+    def condition_setup(self, original, candidate, cases, kind="preservation", removes="nothing"):
         self.commit({"app.py": original})
         self.case.begin_with_map([pending_behavior("BM_GUARD", kind=kind, behavior="admit results stay",
-                                                   expected=expected, boundaryInputs=[name for name, _ in cases])], removes=removes)
+                                                   expected="same results", boundaryInputs=[name for name, _ in cases])], removes=removes)
         (self.repo / "app.py").write_text(candidate)
         (self.repo / "test_probe.py").write_text(
             "import app\ndef run(call):\n    try:\n        return call()\n    except Exception as error:\n        return type(error).__name__\n"
             + "".join(f"print({name!r} + ':', run(lambda: app.admit{args}))\n" for name, args in cases))
         return self.tdd("BM_GUARD", command=(sys.executable, "test_probe.py"))
 
-    def test_an_undeclared_removal_stays_open_whatever_a_case_decides(self):
-        marker = "UNDECLARED_REMOVAL_CLOSED"
+    def test_removed_condition_without_a_deciding_case_stays_open(self):
+        marker = "UNDECIDED_REMOVAL_SILENT"
         receipt = self.condition_setup(self.CONDITION, self.CONDITION.replace(" and name not in created", ""),
-                                       [("absent", "(True, 'x', set())"), ("present", "(True, 'x', {'x'})")],
-                                       kind="contract", expected="removes `name not in created` (app.py:2)")
-        self.assertIn("removed condition `name not in created` (app.py:2) is not in the preflight Removes line: restore it",
-                      receipt["open"], marker + json.dumps(receipt))
+                                       [("absent", "(True, 'x', set())"), ("disabled", "(False, 'x', {'x'})")])
+        self.assertIn("removed condition `name not in created` (app.py:2) never decided a compared case", receipt["open"],
+                      marker + json.dumps(receipt))
 
-    def test_a_removal_named_in_removes_opens_nothing(self):
-        marker = "DECLARED_REMOVAL_OPEN"
-        label = "`name not in created` (app.py:2)"
-        for removes, declared in (("`name not in created`", True), ("the guard `name not in created`.", True), ("app.py:2", False),
-                                  ("name not in created", False), ("`name`", False), ("`name not in created_x`", False)):
-            self.assertEqual(tdd_workflow._declared(label, removes), declared, f"{marker} {removes}")
-        for path in ("src (legacy)/app.py", "src` (legacy)/app.py"):
-            self.assertTrue(tdd_workflow._declared(f"`name not in created` ({path}:2)", "`name not in created`"), f"{marker} {path}")
-        quoted = "`name == 'x` (y'` (src` (z)/app.py:2)"
-        self.assertEqual([tdd_workflow._declared(quoted, removes) for removes in ("`name == 'x`", "`name == 'x` (y'`")], [False, True], marker)
-        named = self.condition_setup(self.CONDITION, self.CONDITION.replace(" and name not in created", ""), [("absent", "(True, 'x', set())")],
-                                     removes="the guard `name not in created`")
-        self.assertFalse([line for line in named["open"] if "removed condition" in line], f"{marker} preflight: {named}")
-        update = self.repo.parent / "removes.json"
-        update.write_text(json.dumps({"removes": "`name not in created`"}))
-        amended = self.case.cli("record", "tdd-map", "--repo", str(self.repo), "--input", str(update))
-        self.assertNotEqual(amended.returncode, 0, "REMOVES_AMENDED: " + amended.stdout)
+    def test_removed_condition_decided_by_a_compared_case_closes(self):
+        marker = "DECIDED_REMOVAL_OPEN"
+        receipt = self.condition_setup(self.CONDITION, self.CONDITION.replace(" and name not in created", ""),
+                                       [("absent", "(True, 'x', set())"), ("present", "(True, 'x', {'x'})")])
+        self.assertFalse([line for line in receipt["open"] if "removed condition" in line], marker + json.dumps(receipt))
+        self.setUp()  # the Removes line's spelling of a decided removal cannot hold it open
+        quoted = 'def admit(enabled, name, c):\n    if enabled and name == "x` (y":\n        return 0\n    return 1\n'
+        spelled = self.condition_setup(quoted, quoted.replace(' and name == "x` (y"', ""), [("other", "(True, 'other', None)")],
+                                       removes='`name == "x` (y"`')
+        self.assertFalse([line for line in spelled["open"] if "removed condition" in line], marker + json.dumps(spelled))
 
-    def test_tdd_map_refuses_mixed_and_unknown_updates(self):
-        self.condition_setup(self.CONDITION, self.CONDITION, [("absent", "(True, 'x', set())")])
-        update, kept = self.repo.parent / "update.json", {"id": "BM_GUARD", "expected": "same results"}
-        for value, accepted in (({}, False), ({"items": [], "extra": True}, False), ({"items": [], "added": []}, False),
-                                ({"items": [kept]}, True), ({"added": [kept]}, True)):
-            update.write_text(json.dumps(value))
-            result = self.case.cli("record", "tdd-map", "--repo", str(self.repo), "--input", str(update))
-            self.assertEqual(result.returncode == 0, accepted, f"MAP_SHAPE_MISJUDGED {value}: {result.stdout}{result.stderr}")
+    def test_removed_condition_detection_is_per_decision(self):
+        marker = "REMOVAL_MISSED"
+        original = "def admit(a, b, c):\n    if a and b:\n        return 1\n    if b:\n        return 2\n    return 0\n"
+        receipt = self.condition_setup(original, original.replace("if a and b:", "if a:"), [("first", "(True, True, None)")])
+        self.assertIn("removed condition `b` (app.py:2) never decided a compared case", receipt["open"], marker + json.dumps(receipt))
+        widened = "def admit(a, b, c):\n    if a and not (b or c):\n        return 1\n    return 0\n"
+        self.setUp()
+        quiet = self.condition_setup(widened, widened.replace("(b or c)", "(b or c or a is None)"), [("one", "(True, False, False)")])
+        self.assertFalse([line for line in quiet["open"] if "removed condition" in line], "WIDENED_GROUP_OPENED: " + json.dumps(quiet))
 
-    def test_removed_operands_are_detected_per_decision(self):
-        cases = {
-            'per_decision': ('def admit(a, b, c):\n    if a and b:\n        return 1\n    if b:\n        return 2\n    return 0\n', 'def admit(a, b, c):\n    if a:\n        return 1\n    if b:\n        return 2\n    return 0\n', ['`b` (app.py:2)']),
-            'widened': ('def admit(a, b, c):\n    if a and not (b or c):\n        return 1\n    return 0\n', 'def admit(a, b, c):\n    if a and not (b or c or a is None):\n        return 1\n    return 0\n', []),
-            'either': ('def admit(a, b, c):\n    if a or b:\n        return 1\n    return 0\n', 'def admit(a, b, c):\n    if a:\n        return 1\n    return 0\n', ['`b` (app.py:2)']),
-            'negated': ('def admit(a, b, c):\n    if not (a and b):\n        return 1\n    return 0\n', 'def admit(a, b, c):\n    if not a:\n        return 1\n    return 0\n', ['`b` (app.py:2)']),
-            'loops': ('def admit(a, b, c):\n    found = [x for x in a if x and b]\n    while b and c:\n        c = c[1:]\n    assert c is not None and b\n    return found, ternary(a)\n\ndef ternary(a):\n    return 1 if a and a[0] else 0\n', 'def admit(a, b, c):\n    found = [x for x in a if x]\n    while c:\n        c = c[1:]\n    assert c is not None\n    return found, ternary(a)\n\ndef ternary(a):\n    return 1 if a else 0\n', ['`a[0]` (app.py:9)', '`b` (app.py:2)', '`b` (app.py:3)', '`b` (app.py:5)']),
-            'raising': ('def explode():\n    raise ValueError\n\ndef admit(a, b, c):\n    if a and explode():\n        return 1\n    return 0\n', 'def explode():\n    raise ValueError\n\ndef admit(a, b, c):\n    if a:\n        return 1\n    return 0\n', ['`explode()` (app.py:5)']),
-            'whole': ('def admit(a, b, c):\n    if a or b:\n        return 1\n    return 0\n', 'def admit(a, b, c):\n    return 0\n', ['`a` (app.py:2)', '`b` (app.py:2)']),
-            'repeated': ('def admit(a, b, c):\n    if a.pop() or a.pop():\n        return 1\n    return 0\n', 'def admit(a, b, c):\n    if a.pop():\n        return 1\n    return 0\n', ['`a.pop()` (app.py:2)']),
-            'chained': ('def admit(a, b, c):\n    if b or 0 < a < 10:\n        return 1\n    return 0\n', 'def admit(a, b, c):\n    if b:\n        return 1\n    return 0\n', ['`0 < a < 10` (app.py:2)']),
-            'shared': ('def admit(a, b, c, d, e):\n    if a and b and (c or d) and (c or e):\n        return 1\n    return 0\n', 'def admit(a, b, c, d, e):\n    if a and (c or e):\n        return 1\n    return 0\n', ['`b` (app.py:2)', '`c` (app.py:2)', '`d` (app.py:2)']),
-            'property': ('class Source:\n    @property\n    def ready(self): return True\ndef admit(a, b, c):\n    if a.ready or a.ready:\n        return 1\n    return 0\n', 'class Source:\n    @property\n    def ready(self): return True\ndef admit(a, b, c):\n    if a.ready:\n        return 1\n    return 0\n', ['`a.ready` (app.py:5)']),
-            'subscript': ('def admit(a, b, c):\n    if a[0] or a[0]:\n        return 1\n    return 0\n', 'def admit(a, b, c):\n    if a[0]:\n        return 1\n    return 0\n', ['`a[0]` (app.py:2)']),
-            'truth': ('def admit(a, b, c):\n    if a or a:\n        return 1\n    return 0\n', 'def admit(a, b, c):\n    if a:\n        return 1\n    return 0\n', ['`a` (app.py:2)']),
-        }
-        repo = Path(self.case.tmp) / "detect"
-        subprocess.run(["git", "init", "-q", str(repo)], check=True)
-        identity = resolve_repo_identity(repo)
-
-        def tree(text):
-            (repo / "app.py").write_text(text)
-            subprocess.run(["git", "-C", str(repo), "add", "app.py"], check=True)
-            return subprocess.run(["git", "-C", str(repo), "write-tree"], check=True, capture_output=True, text=True).stdout.strip()
-        for name, (original, candidate, labels) in cases.items():
-            found = changed_code.analyse(identity, tree(original), tree(candidate))[1]
-            self.assertEqual(sorted(found), labels, "REMOVED_OPERAND_MISSED: " + name)
+    def test_removed_condition_contexts_and_unmeasured_runs(self):
+        marker = "CONDITION_CONTEXT_MISJUDGED"
+        either = "def admit(a, b, c):\n    if a or b:\n        return 1\n    return 0\n"
+        receipt = self.condition_setup(either, either.replace("a or b", "a"), [("a_only", "(True, True, None)"), ("none", "(False, False, None)")])
+        self.assertIn("removed condition `b` (app.py:2) never decided a compared case", receipt["open"], marker)
+        self.setUp()
+        decided = self.condition_setup(either, either.replace("a or b", "a"), [("b_only", "(False, True, None)")])
+        self.assertFalse([line for line in decided["open"] if "removed condition" in line], marker + json.dumps(decided))
+        self.setUp()
+        negated = "def admit(a, b, c):\n    if not (a and b):\n        return 1\n    return 0\n"
+        decided = self.condition_setup(negated, negated.replace("(a and b)", "a"), [("a_not_b", "(True, False, None)")])
+        self.assertFalse([line for line in decided["open"] if "removed condition" in line], marker + json.dumps(decided))
+        self.setUp()
+        loop = ("def admit(a, b, c):\n    found = [x for x in a if x and b]\n    while b and c:\n        c = c[1:]\n"
+                "    assert c is not None and b\n    return found, ternary(a)\n\ndef ternary(a):\n    return 1 if a and a[0] else 0\n")
+        candidate = loop.replace("x and b", "x").replace("b and c", "c").replace("a and a[0]", "a").replace(" and b\n", "\n")
+        receipt = self.condition_setup(loop, candidate, [("loops", "([1, 0], True, [1, 2])")])
+        self.assertEqual(sorted(line for line in receipt["open"] if "removed condition" in line),
+                         ["removed condition `a[0]` (app.py:9) never decided a compared case",
+                          "removed condition `b` (app.py:2) never decided a compared case",
+                          "removed condition `b` (app.py:3) never decided a compared case",
+                          "removed condition `b` (app.py:5) never decided a compared case"], marker + json.dumps(receipt))
+        self.setUp()
+        raising = "def explode():\n    raise ValueError\n\ndef admit(a, b, c):\n    if a and explode():\n        return 1\n    return 0\n"
+        raised = self.condition_setup(raising, raising.replace(" and explode()", ""), [("boom", "(True, None, None)")], kind="contract")
+        self.assertIn("removed conditions not measured: `explode()` (app.py:5)", raised["limitations"], marker + json.dumps(raised))
+        self.assertFalse([line for line in raised["open"] if "removed condition" in line], marker + json.dumps(raised))
+        self.setUp()
+        whole = self.condition_setup(either, "def admit(a, b, c):\n    return 0\n", [("none", "(False, False, None)")])
+        self.assertIn("removed conditions not measured: `a` (app.py:2), `b` (app.py:2)", whole["limitations"], marker + json.dumps(whole))
+        self.assertFalse([line for line in whole["open"] if "removed condition" in line], marker)
+        self.setUp()
+        repeated = "def admit(a, b, c):\n    if a.pop() or a.pop():\n        return 1\n    return 0\n"
+        popped = self.condition_setup(repeated, repeated.replace("a.pop() or a.pop()", "a.pop()"), [("pops", "([True, False], None, None)")])
+        self.assertIn("removed conditions not measured: `a.pop()` (app.py:2)", popped["limitations"], marker + json.dumps(popped))
+        self.setUp()
+        chain = "def admit(a, b, c):\n    if b or 0 < a < 10:\n        return 1\n    return 0\n"
+        chained = self.condition_setup(chain, chain.replace("b or 0 < a < 10", "b"), [("outside", "(20, False, None)")])
+        self.assertIn("removed conditions not measured: `0 < a < 10` (app.py:2)", chained["limitations"], marker + json.dumps(chained))
+        for expression, declaration in (("a.ready", "    @property\n    def ready(self):"), ("a[0]", "    def __getitem__(self, key):"),
+                                        ("a", "    def __bool__(self):")):
+            self.setUp()
+            implicit = ("class Source:\n    def __init__(self): self.values = [True, False]\n" + declaration
+                        + " return self.values.pop()\n" + f"def admit(a, b, c):\n    if {expression} or {expression}:\n        return 1\n    return 0\n")
+            receipt = self.condition_setup(implicit, implicit.replace(f"{expression} or {expression}", expression),
+                                           [("implicit", "(app.Source(), None, None)")], kind="contract")
+            line = implicit.splitlines().index(f"    if {expression} or {expression}:") + 1
+            self.assertIn(f"removed conditions not measured: `{expression}` (app.py:{line})", receipt["limitations"], marker + json.dumps(receipt))
+        self.setUp()
+        shared = "def admit(a, b, c, d, e):\n    if a and b and (c or d) and (c or e):\n        return 1\n    return 0\n"
+        kept = self.condition_setup(shared, shared.replace("a and b and (c or d) and", "a and"), [("kept_b", "(True, True, True, True, True)")])
+        self.assertIn("removed condition `b` (app.py:2) never decided a compared case", kept["open"], marker + json.dumps(kept))
 
     def test_tracing_the_original_leaves_its_operation_unchanged(self):
         marker = "TRACE_CHANGED_THE_OPERATION"

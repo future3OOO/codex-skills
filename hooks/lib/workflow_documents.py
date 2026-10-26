@@ -43,15 +43,10 @@ def preflight_document(path: str) -> JsonObject:
         raise ValueError(f"cannot read preflight JSON: {exc}") from exc
     if not isinstance(value, dict):
         raise ValueError("preflight document must be a JSON object")
-    opening = (str(value.get("authoritativeContract") or "").strip().splitlines() + ["", "", ""])[:3]
     errors = [message for message, bad in (
         (f"preflight document has unknown sections: {', '.join(sorted(set(value) - PREFLIGHT_SECTIONS))}",
          set(value) - PREFLIGHT_SECTIONS),
         ("preflight authoritativeContract must be non-empty text", not _text(value.get("authoritativeContract"))),
-        ("preflight authoritativeContract must open with Objective:, Adds: and Removes: lines",
-         [re.match(r"(\w+):\s*\S", line) and line.split(":")[0] for line in opening] != ["Objective", "Adds", "Removes"]),
-        ("preflight Removes: line must be `nothing` or name each removed condition or function by its `backticked code`",
-         opening[2].partition(":")[2].strip() != "nothing" and not any(span.strip() for span in re.findall(r"`([^`]*)`", opening[2]))),
     ) if bad] + map_errors(value.get("behaviorMap"), allow_runtime=False)
     if errors:
         raise ValueError("; ".join(errors))
@@ -135,7 +130,7 @@ ITEM_SHAPE = ('{"id":"BM_X","kind":"contract|preservation","basis":"original req
 # A finding binds only through evidence the runner executes; anything else is a report line.
 EXECUTABLE = ('{"id":"R-1","claim":"...","probe":{"path":"tests/test_r1.py","content":"...","command":"python3 -m pytest tests/test_r1.py"}} or a deletion-only {"id":"R-2","claim":"...","change":"<unified diff>"}')
 RECORD_SHAPES = {
-    "preflight": f'{{"authoritativeContract":"Objective: ...\\nAdds: ...\\nRemoves: ...\\n...","behaviorMap":[{ITEM_SHAPE}]}}',
+    "preflight": f'{{"authoritativeContract":"text","behaviorMap":[{ITEM_SHAPE}]}}',
     "review": '{"findings":[FINDING]} where FINDING is ' + EXECUTABLE,
     "advisor-result": ('the advisor envelope {"schemaVersion":1,"findings":[FINDING],"verdict":VERDICT}: at preflight '
                        'FINDING is {"id":"SPEC-1","claim":"...","material":true} and VERDICT approved|changes-required|'

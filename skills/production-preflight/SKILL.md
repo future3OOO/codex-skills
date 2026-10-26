@@ -25,13 +25,14 @@ invariants and proof surface; an unnamed material part blocks recording.
 
 ## What To Produce
 
-Two fields: `authoritativeContract` and `behaviorMap`. `behaviorMap` is authoritative for the obligations TDD must reconcile, not for
-choosing the architecture; a plan may reference it but owns no copy.
+Two fields: `authoritativeContract` (concise prose for the reviewers who read it;
+the recorder checks only that it is present) and `behaviorMap`. `behaviorMap` is authoritative for the obligations TDD must reconcile, not for
+choosing the architecture; a plan may reference it but owns no copy. Keep ordinary
+local work short; transaction-sensitive work names the full surrounding surface.
 
 ### `authoritativeContract`
 
-It opens with three lines, which the recorder requires: `Objective:` the desired behaviour in the request's terms; `Adds:` what the change adds, in plain words; `Removes:` each condition or function the change removes by its `backticked code`, or `nothing`.
-Removes is frozen once preflight records: a condition the diff removes that it does not name keeps readiness open until restored.
+Before editing, trace the shared responsibilities visible in the original code and derive distinguishing inputs for affected preservation, reusing existing items and probes. TDD's [required probe loop](../tdd/SKILL.md#required-probe-loop) revisits them against the actual diff.
 
 Before choosing an implementation or writing tests, investigate each behavioral
 predicate that decides an outcome:

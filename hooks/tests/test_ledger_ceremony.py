@@ -173,7 +173,7 @@ class Ceremony(unittest.TestCase):
         draft_args = []
         if phase == "preflight-advice":
             draft = self.tmp / "draft.json"
-            draft.write_text(json.dumps({"authoritativeContract": 'Objective: fixture\nAdds: nothing\nRemoves: nothing', "behaviorMap": [item("BM_ONE")]}))
+            draft.write_text(json.dumps({"authoritativeContract": "fixture", "behaviorMap": [item("BM_ONE")]}))
             draft_args = ["--preflight-file", str(draft)]
         result = subprocess.run(["bash", *(["-x"] if trace else []), str(WRAPPER), "--slug", "ceremony", "--phase", phase,
                                  "--cwd", str(self.repo), *design, *draft_args, *extra,
@@ -200,7 +200,7 @@ class TerseReceipts(Ceremony):
 
 
 class PreflightContinuation(Ceremony):
-    def advice(self, verdict: str = "approved", contract: str = 'Objective: continuation repair\nAdds: nothing\nRemoves: nothing') -> dict[str, object]:
+    def advice(self, verdict: str = "approved", contract: str = "continuation repair") -> dict[str, object]:
         # These are recorder inputs, not a substituted advisor transport.
         draft = self.tmp / "draft.json"
         draft.write_text(json.dumps({"authoritativeContract": contract,
@@ -279,7 +279,7 @@ class PreflightContinuation(Ceremony):
         refused = self.cli(*record)
         self.assertEqual(refused.returncode, 2, marker + ": a third preflight round was opened: " + refused.stdout)
         unedited = (self.tmp / "draft.json").read_text()  # the lead's own file, which the advisor does not edit
-        edited = {"authoritativeContract": "Objective: the advisor's corrected contract\nAdds: nothing\nRemoves: nothing", "behaviorMap": [item("BM_ONE"), item("BM_TWO")]}
+        edited = {"authoritativeContract": "the advisor's corrected contract", "behaviorMap": [item("BM_ONE"), item("BM_TWO")]}
         answer = {"schemaVersion": 1, "verdict": "approved",
                   "findings": [{"id": "SPEC-1", "claim": "BM_TWO was missing; added to the draft", "material": False}]}
         (self.tmp / "advice.json").write_text(json.dumps({**answer, "preflightDraft": edited}))
@@ -296,7 +296,7 @@ class PreflightContinuation(Ceremony):
         self.assertEqual(recorded.returncode, 0, marker + recorded.stderr)
         stored = self.ok("evidence", "--full", "--evidence-id", json.loads(recorded.stdout)["evidenceId"])["document"]["document"]
         self.assertEqual((stored["authoritativeContract"], [entry["id"] for entry in stored["behaviorMap"]]),
-                         ("Objective: the advisor's corrected contract\nAdds: nothing\nRemoves: nothing", ["BM_ONE", "BM_TWO"]), marker)
+                         ("the advisor's corrected contract", ["BM_ONE", "BM_TWO"]), marker)
 
     def round_two(self, submitted: dict[str, object], approved: dict[str, object], *extra: str) -> subprocess.CompletedProcess[str]:
         """The last round as the wrapper records it: the submitted snapshot and the advisor's edited copy."""
@@ -311,9 +311,9 @@ class PreflightContinuation(Ceremony):
     def test_record_preflight_returns_the_advisor_edits(self) -> None:
         marker = "ADVISOR_EDITS_NOT_RETURNED"
         self.begin()
-        self.advice("changes-required", contract='Objective: round one draft A\nAdds: nothing\nRemoves: nothing')
-        resubmitted = {"authoritativeContract": 'Objective: lead resubmission B\nAdds: nothing\nRemoves: nothing', "behaviorMap": [item("BM_ONE")]}
-        edited = {"authoritativeContract": 'Objective: lead resubmission B\nAdds: nothing\nRemoves: nothing', "behaviorMap": [item("BM_ONE"), item("BM_ADVISOR_EDIT")]}
+        self.advice("changes-required", contract="round one draft A")
+        resubmitted = {"authoritativeContract": "lead resubmission B", "behaviorMap": [item("BM_ONE")]}
+        edited = {"authoritativeContract": "lead resubmission B", "behaviorMap": [item("BM_ONE"), item("BM_ADVISOR_EDIT")]}
         self.assertEqual(self.round_two(resubmitted, edited).returncode, 0, marker)
         recorded = self.ok("record", "preflight")
         edits = str(recorded.get("draftEdits"))
@@ -348,7 +348,7 @@ class PreflightContinuation(Ceremony):
         self.assertEqual(self.wrapper("approved", "--reconsult")[0].returncode, 0, marker)
         recorded = self.ok("record", "preflight")
         stored = self.ok("evidence", "--full", "--evidence-id", recorded["evidenceId"])["document"]["document"]
-        self.assertEqual(("draftEdits" in recorded, stored["authoritativeContract"]), (False, 'Objective: fixture\nAdds: nothing\nRemoves: nothing'), marker)
+        self.assertEqual(("draftEdits" in recorded, stored["authoritativeContract"]), (False, "fixture"), marker)
         self.assertEqual(self.state()["intent"], "issue 96 fixture intent.", marker)
 
     def test_preflight_consult_defaults_an_absent_design(self) -> None:
@@ -382,7 +382,7 @@ class PreflightContinuation(Ceremony):
         self.wrapper("approved", "--reconsult", design=())  # refused or inheriting, never a replacement
         self.assertEqual(evidence_document(identity, self.state()["governedDesignEvidence"]), declared, f"{marker}: reconsult dropped the design")
         advisor_disposition(identity, "ceremony", self.state()["workflowId"], "preflight", "none")
-        self.record_preflight({"authoritativeContract": 'Objective: c\nAdds: nothing\nRemoves: nothing', "behaviorMap": []})
+        self.record_preflight({"authoritativeContract": "c", "behaviorMap": []})
         record_context_forge(self.repo, self.tmp)
         self.ok("verify", "--kind", "quality-gate", "--base-ref", "HEAD")
         set_phase(identity, "code-review", "passed", findings="none")
@@ -399,7 +399,7 @@ class PreflightContinuation(Ceremony):
         self.advice()
         draft = json.loads((self.tmp / "draft.json").read_text())
         before = self.rows(), self.state()
-        for document, extra in (({**draft, "authoritativeContract": 'Objective: changed\nAdds: nothing\nRemoves: nothing'}, []),
+        for document, extra in (({**draft, "authoritativeContract": "changed"}, []),
                                 (draft, ["--input", ""]),
                                 (draft, ["--workflow-id", "foreign-pass"])):
             result = self.cli("record", "preflight", "--input", "-", *extra, input=json.dumps(document))
@@ -417,7 +417,7 @@ class PreflightContinuation(Ceremony):
         self.advice()
         identity = resolve_repo_identity(self.repo)
         old = evidence_document(identity, self.state()["advisorPreflight"]["intakeEvidence"])["preflightDraft"]
-        self.advice(contract='Objective: revised continuation repair\nAdds: nothing\nRemoves: nothing')
+        self.advice(contract="revised continuation repair")
         before = self.rows(), self.state()
         marker = "STALE_APPROVAL_RECORDED"
         with self.assertRaisesRegex(WorkflowError, "approval bound to this exact draft", msg=marker):
@@ -425,7 +425,7 @@ class PreflightContinuation(Ceremony):
         self.assertEqual((self.rows(), self.state()), before, marker)
         self.ok("record", "preflight", "--input", str(self.tmp / "draft.json"))
         stored = evidence_document(identity, self.state()["preflightLatestEvidence"])
-        self.assertEqual(stored["document"]["authoritativeContract"], 'Objective: revised continuation repair\nAdds: nothing\nRemoves: nothing', marker)
+        self.assertEqual(stored["document"]["authoritativeContract"], "revised continuation repair", marker)
 
     def test_refusal_guides_reconsultation_of_the_current_draft(self) -> None:
         self.begin()
@@ -434,7 +434,7 @@ class PreflightContinuation(Ceremony):
             if approved:
                 self.advice()
             draft = self.tmp / "current draft.json"
-            draft.write_text(json.dumps({"authoritativeContract": 'Objective: current revised contract\nAdds: nothing\nRemoves: nothing',
+            draft.write_text(json.dumps({"authoritativeContract": "current revised contract",
                                          "behaviorMap": [item("BM_ONE")]}))
             before = self.rows(), self.state()
             result = self.cli("record", "preflight", "--input", str(draft))
@@ -447,10 +447,10 @@ class PreflightContinuation(Ceremony):
             self.assertIn("preflight-advice", args, marker)
             self.assertEqual("--reconsult" in args, approved, marker)
             self.assertEqual(args[args.index("--preflight-file") + 1], str(draft), marker)
-        self.advice(contract='Objective: current revised contract\nAdds: nothing\nRemoves: nothing')
+        self.advice(contract="current revised contract")
         self.ok("record", "preflight")
         stored = evidence_document(resolve_repo_identity(self.repo), self.state()["preflightLatestEvidence"])
-        self.assertEqual(stored["document"]["authoritativeContract"], 'Objective: current revised contract\nAdds: nothing\nRemoves: nothing', marker)
+        self.assertEqual(stored["document"]["authoritativeContract"], "current revised contract", marker)
 
     def test_other_continuations_keep_their_bound_operations(self) -> None:
         self.begin()
@@ -541,7 +541,7 @@ class AdvisorDiffBounded(Ceremony):
 
         self.assertEqual(self.wrapper("approved")[0].returncode, 0, marker)  # a preflight answer judges no commit
         advisor_disposition(identity, "ceremony", wid, "preflight", "none")
-        self.record_preflight({"authoritativeContract": 'Objective: c\nAdds: nothing\nRemoves: nothing',
+        self.record_preflight({"authoritativeContract": "c",
                 "behaviorMap": []})
         set_phase(identity, "tdd", "not-required")
         self.assertIn("JUDGED = 1", final("fix-before-commit", "# FIRST\n"), f"{marker}: a preflight advanced the judged tree")
@@ -796,7 +796,7 @@ class EvidenceParts(Ceremony):
         second = self.verify("PART_MARKER_TWO")
         captured[second] = evidence_document(identity, second)
         self.assertEqual(self.rows_containing("PART_MARKER_ONE"), 1, f"{marker}: a run row is stored per document")
-        document = {"authoritativeContract": 'Objective: fixture\nAdds: nothing\nRemoves: nothing', "behaviorMap": [
+        document = {"authoritativeContract": "fixture", "behaviorMap": [
             item("BM_KEEP", behavior="unchanged item"), item("BM_MAP_ITEM_ONE")]}
         evidence_id = self.record_preflight(document)["evidenceId"]
         captured[evidence_id] = evidence_document(identity, evidence_id)
@@ -854,7 +854,7 @@ class StepRegistry(Ceremony):
         record_advisor_result(identity, "ceremony", wid, "preflight", "codex-advisor", "completed")
         advisor_disposition(identity, "ceremony", wid, "preflight", "none")
         observed.append(self.snapshot())
-        self.record_preflight({"authoritativeContract": 'Objective: matrix\nAdds: nothing\nRemoves: nothing', "behaviorMap": []})
+        self.record_preflight({"authoritativeContract": "matrix", "behaviorMap": []})
         observed.append(self.snapshot())
         set_phase(identity, "tdd", "not-required")
         observed.append(self.snapshot())
@@ -902,7 +902,7 @@ class RecordSeam(Ceremony):
     def test_record_check_rolls_back_and_each_kind_describes_itself(self) -> None:
         marker = "RECORD_CHECK_MISSING"
         self.begin()
-        document = {"authoritativeContract": 'Objective: fixture contract\nAdds: nothing\nRemoves: nothing', "behaviorMap": [item("BM_ONE")]}
+        document = {"authoritativeContract": "fixture contract", "behaviorMap": [item("BM_ONE")]}
         approve_preflight(self.repo, document)
         before = self.rows()
         checked = self.cli("record", "preflight", "--check", "--input", "-", input=json.dumps(document))
@@ -961,7 +961,7 @@ class EveryViolation(Ceremony):
         self.ok("record", "advisor-result", "--stage", "preflight", "--input", "-", input=json.dumps({"schemaVersion": 1,
                 "verdict": "completed", "findings": [{"id": "S-1", "claim": "c", "material": True, "kind": "nonbehavioral"}]}))
         design = {"type": "design", "evidenceId": "e", "id": "D"}
-        lost = self.pairs("preflight", {"authoritativeContract": 'Objective: c\nAdds: nothing\nRemoves: nothing', "behaviorMap": [
+        lost = self.pairs("preflight", {"authoritativeContract": "c", "behaviorMap": [
             item("BM_ONE", refs=[design]), item("BM_TWO"), item("BM_THREE")]}, {
             "contract": (("authoritativeContract",), _DROP), "extra": (("extra",), 1),
             "kind": (("behaviorMap", 0, "kind"), []), "basis": (("behaviorMap", 0, "basis"), _DROP),
@@ -973,7 +973,7 @@ class EveryViolation(Ceremony):
         lost += self.pairs("review", {"findings": [dict(finding), {**finding, "id": "R-2"}]}, {
             "extra": (("extra",), 1), "claim": (("findings", 0, "claim"), ""), "prior": (("findings", 0, "priorFinding"), 5),
             "duplicate": (("findings", 1, "id"), "R-1"), "second": (("findings", 1, "claim"), 7)})
-        self.record_preflight({"authoritativeContract": 'Objective: c\nAdds: nothing\nRemoves: nothing', "behaviorMap": [
+        self.record_preflight({"authoritativeContract": "c", "behaviorMap": [
             item("BM_ONE"), item("BM_KEEP"),
             item("BM_HOLD")]})
         stored = self.ok("evidence", "--full", "--evidence-id", str(self.state()["preflightEvidence"]))["document"]
@@ -1008,7 +1008,7 @@ class RearmOpenOnly(Ceremony):
     def test_the_rearm_names_open_work_and_omits_settled_items(self) -> None:
         marker = "REARM_REPEATS_SETTLED_WORK"
         self.begin()
-        self.record_preflight({"authoritativeContract": 'Objective: c\nAdds: nothing\nRemoves: nothing', "behaviorMap": [
+        self.record_preflight({"authoritativeContract": "c", "behaviorMap": [
             item("BM_OPEN_WORK")]})
         rearmed = subprocess.run([sys.executable, str(REARM)], env=self.env, capture_output=True, text=True,
                                  input=json.dumps({"cwd": str(self.repo), "source": "compact",
@@ -1025,7 +1025,7 @@ class RearmOpenOnly(Ceremony):
     def test_the_rearm_omits_settled_comparison(self) -> None:
         marker = "REARM_REPEATS_SETTLED_WORK"
         self.begin()
-        self.record_preflight({"authoritativeContract": 'Objective: c\nAdds: nothing\nRemoves: nothing', "behaviorMap": [item("BM_LATE_SETTLED")]})
+        self.record_preflight({"authoritativeContract": "c", "behaviorMap": [item("BM_LATE_SETTLED")]})
         (self.repo / "app.py").write_text("value = 1\nother = 1\n# changed before RED\n", encoding="utf-8")
         command = ("--", sys.executable, "-m", "unittest", "test_app")
         (self.repo / "app.py").write_text("value = 2\nother = 1\n", encoding="utf-8")
@@ -1054,7 +1054,7 @@ class AdvisoryDedup(Ceremony):
         self.assertIn("workflow intake", first, marker)
         self.assertEqual(self.edit(PRE_TOOL), "", f"{marker}: identical intake advice repeated")
         self.assertEqual(self.edit(PRE_TOOL, "other-session"), first, f"{marker}: another session lost it")
-        self.record_preflight({"authoritativeContract": 'Objective: c\nAdds: nothing\nRemoves: nothing', "behaviorMap": [item("BM_ONE")]})
+        self.record_preflight({"authoritativeContract": "c", "behaviorMap": [item("BM_ONE")]})
         self.cli("tdd", "--behavior-id", "BM_ONE", "--", sys.executable, "-m", "unittest", "test_app")
         changed = self.edit(PRE_TOOL)
         self.assertIn("Probe obligations", changed, f"{marker}: changed advice was suppressed")
@@ -1255,7 +1255,7 @@ class FlagDisposition(Ceremony):
         first = self.intake(identity, wid, "SPEC-1")
         ref = {"type": "finding", "evidenceId": first, "id": "SPEC-1"}
         self.record_preflight({
-                "authoritativeContract": 'Objective: fixture\nAdds: nothing\nRemoves: nothing', "behaviorMap": [
+                "authoritativeContract": "fixture", "behaviorMap": [
                     item("BM_ATTACK", refs=[ref], basis="fixture"),
                     item("BM_LATER", basis="fixture")]})
         self.intake(identity, wid, "SPEC-2")
@@ -1286,7 +1286,7 @@ class FlagDisposition(Ceremony):
     def test_finding_relink_keeps_proof_after_its_rerun(self) -> None:
         wid = self.begin()
         identity = resolve_repo_identity(self.repo)
-        self.record_preflight({"authoritativeContract": 'Objective: fixture\nAdds: nothing\nRemoves: nothing', "behaviorMap": [item("BM_ATTACK", basis="fixture")]})
+        self.record_preflight({"authoritativeContract": "fixture", "behaviorMap": [item("BM_ATTACK", basis="fixture")]})
         (self.repo / "app.py").write_text("value = 3\nother = 1\n", encoding="utf-8")
         ref = {"type": "finding", "evidenceId": self.intake(identity, wid, "SPEC-1"), "id": "SPEC-1"}
         (self.repo / "app.py").write_text("value = 2\nother = 1\n", encoding="utf-8")
@@ -1299,7 +1299,7 @@ class FlagDisposition(Ceremony):
 
     def test_map_delta_keeps_new_obligations_pending_until_compared(self) -> None:
         self.begin()
-        self.record_preflight({"authoritativeContract": 'Objective: fixture\nAdds: nothing\nRemoves: nothing', "behaviorMap": [item("BM_ATTACK", basis="fixture")]})
+        self.record_preflight({"authoritativeContract": "fixture", "behaviorMap": [item("BM_ATTACK", basis="fixture")]})
         (self.repo / "app.py").write_text("value = 2\nother = 1\n", encoding="utf-8")
         self.comparison(0, "BM_ATTACK")
         (self.repo / "app.py").write_text("value = 4\nother = 1\n", encoding="utf-8")
@@ -1314,7 +1314,7 @@ class FlagDisposition(Ceremony):
 
     def test_reviewer_package_carries_the_contract_and_comparison_outcomes(self) -> None:
         self.begin()
-        self.record_preflight({"authoritativeContract": 'Objective: Create keeps its suppression\nAdds: nothing\nRemoves: nothing', "behaviorMap": [item("BM_ATTACK", basis="fixture")]})
+        self.record_preflight({"authoritativeContract": "Create keeps its suppression", "behaviorMap": [item("BM_ATTACK", basis="fixture")]})
         (self.repo / "app.py").write_text("value = 2\nother = 1\n", encoding="utf-8")
         self.comparison(0, "BM_ATTACK")
         gate = self.cli("verify", "--kind", "quality-gate", "--base-ref", "HEAD")
@@ -1336,7 +1336,7 @@ class FlagRefusal(Ceremony):
         identity = resolve_repo_identity(self.repo)
         intake = FlagDisposition.intake(self, identity, wid, "SPEC-1")
         self.record_preflight({
-                "authoritativeContract": 'Objective: fixture\nAdds: nothing\nRemoves: nothing', "behaviorMap": [
+                "authoritativeContract": "fixture", "behaviorMap": [
                     item("BM_ATTACK", refs=[{"type": "finding", "evidenceId": intake, "id": "SPEC-1"}],
                          basis="fixture")]})
         FlagDisposition.comparison(self, 2, "BM_ATTACK")
@@ -1378,7 +1378,7 @@ class MinimalDocuments(Ceremony):
     def test_documents_carry_only_consumed_fields(self) -> None:
         marker = "MINIMAL_DOCUMENT_REFUSED"
         self.begin()
-        document = {"authoritativeContract": 'Objective: fixture\nAdds: nothing\nRemoves: nothing', "behaviorMap": []}
+        document = {"authoritativeContract": "fixture", "behaviorMap": []}
         approve_preflight(self.repo, document)
         recorded = self.cli("record", "preflight", "--input", "-", input=json.dumps(document))
         self.assertEqual(recorded.returncode, 0, f"{marker}: {recorded.stderr[-300:]}")
@@ -1396,7 +1396,7 @@ class MinimalDocuments(Ceremony):
     def test_a_map_update_names_only_what_changes(self) -> None:
         marker = "PARTIAL_MAP_UPDATE"
         self.begin()
-        self.record_preflight({"authoritativeContract": 'Objective: fixture\nAdds: nothing\nRemoves: nothing', "behaviorMap": [
+        self.record_preflight({"authoritativeContract": "fixture", "behaviorMap": [
             item("BM_ONE", interpretations=["a", "b"], interpretation="a", authority="spec", boundaryInputs=["test_old"])]})
         current = lambda: evidence_document(resolve_repo_identity(self.repo), self.state()["tddEvidence"])["behaviorMap"]
         self.ok("record", "tdd-map", "--input", "-", input=json.dumps({"items": [{"id": "BM_ONE", "boundaryInputs": ["test_y"]}]}))
@@ -1414,7 +1414,7 @@ class MinimalDocuments(Ceremony):
         self.begin()
         draft, envelope = self.tmp / "draft.json", json.dumps({"schemaVersion": 1, "verdict": "approved", "findings": []})
         for names, code in ((["test_kept: kept stays one"], 2), (["t.py::test_kept: kept stays one"], 2), (["t.py::test_kept[a: b]", "kept"], 0)):
-            draft.write_text(json.dumps({"authoritativeContract": 'Objective: c\nAdds: nothing\nRemoves: nothing', "behaviorMap": [item("BM_ONE", boundaryInputs=names)]}))
+            draft.write_text(json.dumps({"authoritativeContract": "c", "behaviorMap": [item("BM_ONE", boundaryInputs=names)]}))
             checked = self.cli("record", "advisor-result", "--check", "--stage", "preflight", "--input", "-",
                                "--preflight-file", str(draft), input=envelope)
             self.assertEqual(checked.returncode, code, f"{marker}: {names}: {checked.stderr[-300:]}")
