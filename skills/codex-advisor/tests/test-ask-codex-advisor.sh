@@ -366,7 +366,7 @@ check "ORIGINAL_RESULT_RULES final rejects an unrequested regression" "Reject an
 check "ORIGINAL_RESULT_RULES final takes the original's result as the test" "After preflight the original's result is the test: a rejection, or a contract item added or re-worded since preflight, stands only if the original source already gives the candidate's result for its input or a contract item approved at preflight names that result; a reading of the request is not such evidence." "$(cat "$rigtmp/capture/payload-4")"
 check "REMOVES_VERIFIED preflight verifies the Removes line" "Verify the contract's Removes line and every other deletion-scope claim" "$(cat "$rigtmp/capture/payload-1")"
 check "DIRECT_PROBE preflight takes a direct call as the first probe" "first decisive probe as a direct call to the changed function" "$(cat "$rigtmp/capture/payload-1")"
-check "DELETED_CODE_EXEMPT preflight asks no decisive contexts of code the request deletes" "(not code the request itself deletes)" "$(cat "$rigtmp/capture/payload-1")"
+check_absent "DELETED_CODE_EXEMPT_REVERTED preflight asks decisive contexts of every removed condition" "not code the request itself deletes" "$(cat "$rigtmp/capture/payload-1")"
 final_payload=$(cat "$rigtmp/capture/payload-4")
 check "FINDINGS_EXECUTED final asks for a runnable probe" '"probe":{"path":"...","content":"...","command":"..."}' "$final_payload"
 check "FINDINGS_EXECUTED final asks for a deletion-only change" "only deletes code or replaces it with one call to an existing function" "$final_payload"

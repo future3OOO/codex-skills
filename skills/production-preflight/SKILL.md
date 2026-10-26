@@ -30,8 +30,8 @@ choosing the architecture; a plan may reference it but owns no copy.
 
 ### `authoritativeContract`
 
-It opens with three lines, which the recorder requires: `Objective:` the desired behaviour in the request's terms; `Adds:` and `Removes:` what the change adds and removes, in plain words, or `nothing`.
-A condition the diff removes that Removes does not name keeps readiness open, and the open line shows its code: restore it, or record the whole Removes line with that code added through `record tdd-map` `{"removes": "..."}`.
+It opens with three lines, which the recorder requires: `Objective:` the desired behaviour in the request's terms; `Adds:` what the change adds, in plain words; `Removes:` each condition or function the change removes by its `backticked code`, or `nothing`.
+Removes is frozen once preflight records: a condition the diff removes that it does not name keeps readiness open until restored.
 
 Before choosing an implementation or writing tests, investigate each behavioral
 predicate that decides an outcome:

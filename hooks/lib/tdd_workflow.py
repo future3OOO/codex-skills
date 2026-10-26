@@ -504,7 +504,7 @@ def _run_tdd(values: list[str]) -> int:
                              "key": key}
             arm = held[key]
         arms.append({**arm, "requestedTree": source})
-    removes = _removes(identity, state, current)
+    removes = _removes(identity, state)
     arms[0]["conditions"] = [{"label": label, "declared": _declared(label, removes)} for label in removed]
     outcomes = [arm["outcome"] for arm in arms]
     valid = outcomes[-1] == "passed" and all(outcome in {"passed", "failed"} for outcome in outcomes[:-1])
@@ -523,7 +523,7 @@ def _run_tdd(values: list[str]) -> int:
     for item in mapped:
         item["comparison"] = {**run, "obligation": behavior_map.obligation(item)}
     document = {"workflowId": workflow_id, "slug": slug, "kind": "comparison", "behaviorMap": items,
-                "runs": [*runs, run], "removes": removes, "updatedAt": utc_timestamp()}
+                "runs": [*runs, run], "updatedAt": utc_timestamp()}
     state, evidence = commit_tdd(identity, slug, workflow_id, document,
                                 expected_evidence_id=state.get("tddEvidence"), tree_before=before)
     receipt = operation_receipt(state, identity, kind="tdd", **selection, **behavior_map.comparison_view(run),
@@ -532,10 +532,8 @@ def _run_tdd(values: list[str]) -> int:
     return 0 if run["valid"] else 2
 
 
-def _removes(identity: RepoIdentity, state: JsonObject, current: JsonObject | None) -> str:
-    """The contract's Removes line: a tdd-map update's, else the recorded preflight contract's."""
-    if isinstance((current or {}).get("removes"), str):
-        return str((current or {})["removes"])
+def _removes(identity: RepoIdentity, state: JsonObject) -> str:
+    """The recorded preflight contract's Removes line; it is frozen after preflight."""
     contract = str(((evidence_document(identity, state.get("preflightEvidence")) or {}).get("document") or {})
                    .get("authoritativeContract") or "")
     return next((line[len("Removes:"):].strip() for line in contract.splitlines() if line.startswith("Removes:")), "")
@@ -555,11 +553,9 @@ def _declared(label: str, removes: str) -> bool:
 
 
 def map_update(identity: RepoIdentity, state: JsonObject, value: JsonObject) -> JsonObject:
-    if set(value) not in ({"items"}, {"added"}, {"removes"}) or not isinstance(value.get("removes", ""), str):
-        raise ValueError("tdd-map takes items to update by id, or the contract's Removes line as {\"removes\": text}; "
-                         "statuses and dispositions are runner-owned")
+    if set(value) not in ({"items"}, {"added"}):
+        raise ValueError("tdd-map takes items to update by id; statuses and dispositions are runner-owned")
     previous, current = current_map(identity, state)
-    removes = value.get("removes", _removes(identity, state, current))
     recorded = {entry["id"]: entry for entry in previous or []}
     merged = value.get("items", value.get("added", []))
     if isinstance(merged, list):  # an item names only what changes: a given field replaces, null removes, an omitted field stays
@@ -579,18 +575,15 @@ def map_update(identity: RepoIdentity, state: JsonObject, value: JsonObject) -> 
         if prior and "comparison" in prior:  # a changed kind or obligation keeps its latest run and reads stale until rerun
             entry["comparison"] = {**prior["comparison"],
                                    "obligation": prior["comparison"].get("obligation", behavior_map.obligation(prior))}
-    if items == previous and removes == _removes(identity, state, current):
+    if items == previous:
         return operation_receipt(state, identity, summaryId=state.get("tddEvidence") or state["preflightEvidence"],
                                  pending=behavior_map.unresolved(items), reused=True)
-    for entry in items:  # a renamed Removes line re-judges every removal the comparisons recorded
-        for condition in ((entry.get("comparison") or {}).get("arms") or [{}])[0].get("conditions", []):
-            condition["declared"] = _declared(condition["label"], removes)
     try:
         tree_manifest(identity)
     except RuntimeError as exc:
         raise WorkflowError(str(exc)) from exc
     document = {"workflowId": state["workflowId"], "slug": state["slug"], "kind": "comparison",
-                "behaviorMap": items, "runs": (current or {}).get("runs", []), "removes": removes, "updatedAt": utc_timestamp()}
+                "behaviorMap": items, "runs": (current or {}).get("runs", []), "updatedAt": utc_timestamp()}
     state, evidence = commit_tdd(identity, str(state["slug"]), str(state["workflowId"]), document,
                                 expected_evidence_id=state.get("tddEvidence"), review_changed=True)
     return operation_receipt(state, identity, summaryId=evidence, pending=behavior_map.unresolved(items))

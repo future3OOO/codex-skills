@@ -1991,10 +1991,10 @@ class ChangedCodeTests(unittest.TestCase):
     CONDITION = ("def admit(enabled, name, created):\n    if enabled and name not in created:\n        return 'gap'\n"
                  "    return 'none'\n")
 
-    def condition_setup(self, original, candidate, cases, kind="preservation", expected="same results"):
+    def condition_setup(self, original, candidate, cases, kind="preservation", expected="same results", removes="nothing"):
         self.commit({"app.py": original})
         self.case.begin_with_map([pending_behavior("BM_GUARD", kind=kind, behavior="admit results stay",
-                                                   expected=expected, boundaryInputs=[name for name, _ in cases])])
+                                                   expected=expected, boundaryInputs=[name for name, _ in cases])], removes=removes)
         (self.repo / "app.py").write_text(candidate)
         (self.repo / "test_probe.py").write_text(
             "import app\ndef run(call):\n    try:\n        return call()\n    except Exception as error:\n        return type(error).__name__\n"
@@ -2006,9 +2006,8 @@ class ChangedCodeTests(unittest.TestCase):
         receipt = self.condition_setup(self.CONDITION, self.CONDITION.replace(" and name not in created", ""),
                                        [("absent", "(True, 'x', set())"), ("present", "(True, 'x', {'x'})")],
                                        kind="contract", expected="removes `name not in created` (app.py:2)")
-        self.assertIn("removed condition `name not in created` (app.py:2) is not in the contract's Removes line: restore it, or record "
-                      'the whole line with its backticked code added through record tdd-map {"removes": "..."}', receipt["open"],
-                      marker + json.dumps(receipt))
+        self.assertIn("removed condition `name not in created` (app.py:2) is not in the preflight Removes line: restore it",
+                      receipt["open"], marker + json.dumps(receipt))
 
     def test_a_removal_named_in_removes_opens_nothing(self):
         marker = "DECLARED_REMOVAL_OPEN"
@@ -2020,15 +2019,22 @@ class ChangedCodeTests(unittest.TestCase):
             self.assertTrue(tdd_workflow._declared(f"`name not in created` ({path}:2)", "`name not in created`"), f"{marker} {path}")
         quoted = "`name == 'x` (y'` (src` (z)/app.py:2)"
         self.assertEqual([tdd_workflow._declared(quoted, removes) for removes in ("`name == 'x`", "`name == 'x` (y'`")], [False, True], marker)
-        self.condition_setup(self.CONDITION, self.CONDITION.replace(" and name not in created", ""), [("absent", "(True, 'x', set())")])
+        named = self.condition_setup(self.CONDITION, self.CONDITION.replace(" and name not in created", ""), [("absent", "(True, 'x', set())")],
+                                     removes="the guard `name not in created`")
+        self.assertFalse([line for line in named["open"] if "removed condition" in line], f"{marker} preflight: {named}")
         update = self.repo.parent / "removes.json"
-        for removes, closed in (("the guard `name not in created`.", True), ("nothing", False)):
-            update.write_text(json.dumps({"removes": removes}))
-            mapped = json.loads(self.case.cli("record", "tdd-map", "--repo", str(self.repo), "--input", str(update)).stdout)
-            self.assertEqual(not [line for line in mapped["pending"] if "removed condition" in line], closed, f"{marker} {removes}: {mapped}")
-            if closed:  # the next comparison keeps the recorded line, not the preflight's `nothing`
-                receipt = self.tdd("BM_GUARD", command=(sys.executable, "test_probe.py"))
-                self.assertFalse([line for line in receipt["open"] if "removed condition" in line], f"{marker} rerun: {receipt}")
+        update.write_text(json.dumps({"removes": "`name not in created`"}))
+        amended = self.case.cli("record", "tdd-map", "--repo", str(self.repo), "--input", str(update))
+        self.assertNotEqual(amended.returncode, 0, "REMOVES_AMENDED: " + amended.stdout)
+
+    def test_tdd_map_refuses_mixed_and_unknown_updates(self):
+        self.condition_setup(self.CONDITION, self.CONDITION, [("absent", "(True, 'x', set())")])
+        update, kept = self.repo.parent / "update.json", {"id": "BM_GUARD", "expected": "same results"}
+        for value, accepted in (({}, False), ({"items": [], "extra": True}, False), ({"items": [], "added": []}, False),
+                                ({"items": [kept]}, True), ({"added": [kept]}, True)):
+            update.write_text(json.dumps(value))
+            result = self.case.cli("record", "tdd-map", "--repo", str(self.repo), "--input", str(update))
+            self.assertEqual(result.returncode == 0, accepted, f"MAP_SHAPE_MISJUDGED {value}: {result.stdout}{result.stderr}")
 
     def test_removed_operands_are_detected_per_decision(self):
         cases = {
@@ -2056,8 +2062,6 @@ class ChangedCodeTests(unittest.TestCase):
             return subprocess.run(["git", "-C", str(repo), "write-tree"], check=True, capture_output=True, text=True).stdout.strip()
         for name, (original, candidate, labels) in cases.items():
             found = changed_code.analyse(identity, tree(original), tree(candidate))[1]
-            if found and isinstance(found[0], dict):  # the original reports labels inside its traced decisions
-                found = [removed["label"] for decision in found for removed in decision["removed"]]
             self.assertEqual(sorted(found), labels, "REMOVED_OPERAND_MISSED: " + name)
 
     def test_tracing_the_original_leaves_its_operation_unchanged(self):

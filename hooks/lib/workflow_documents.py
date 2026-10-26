@@ -43,13 +43,15 @@ def preflight_document(path: str) -> JsonObject:
         raise ValueError(f"cannot read preflight JSON: {exc}") from exc
     if not isinstance(value, dict):
         raise ValueError("preflight document must be a JSON object")
+    opening = (str(value.get("authoritativeContract") or "").strip().splitlines() + ["", "", ""])[:3]
     errors = [message for message, bad in (
         (f"preflight document has unknown sections: {', '.join(sorted(set(value) - PREFLIGHT_SECTIONS))}",
          set(value) - PREFLIGHT_SECTIONS),
         ("preflight authoritativeContract must be non-empty text", not _text(value.get("authoritativeContract"))),
         ("preflight authoritativeContract must open with Objective:, Adds: and Removes: lines",
-         [re.match(r"(\w+):\s*\S", line) and line.split(":")[0] for line in str(value.get("authoritativeContract") or "").strip().splitlines()[:3]]
-         != ["Objective", "Adds", "Removes"]),
+         [re.match(r"(\w+):\s*\S", line) and line.split(":")[0] for line in opening] != ["Objective", "Adds", "Removes"]),
+        ("preflight Removes: line must be `nothing` or name each removed condition or function by its `backticked code`",
+         opening[2].partition(":")[2].strip() != "nothing" and not any(span.strip() for span in re.findall(r"`([^`]*)`", opening[2]))),
     ) if bad] + map_errors(value.get("behaviorMap"), allow_runtime=False)
     if errors:
         raise ValueError("; ".join(errors))
@@ -141,8 +143,7 @@ RECORD_SHAPES = {
                        ' and VERDICT commit-ready|fix-before-commit|context-mismatch'),
     "advisor-disposition": ("--finding F --fixed [--behavior-id BM]; a preflight finding also "
                             "--rejected|--report-only|--follow-up REF --reason TEXT; or --findings none"),
-    "tdd-map": (f'{{"items":[{ITEM_SHAPE}]}}; a recorded item needs only id and the changed fields, null removes an optional one; '
-                '{"removes":"..."} replaces the contract\'s Removes line'),
+    "tdd-map": f'{{"items":[{ITEM_SHAPE}]}}; a recorded item needs only id and the changed fields, null removes an optional one',
 }
 
 

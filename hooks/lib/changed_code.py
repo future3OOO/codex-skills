@@ -156,4 +156,3 @@ def changed_tests(identity: RepoIdentity, original: str, candidate: str) -> dict
     return {path: set(_functions(_blob(identity, candidate, path)))
             for raw in _git(identity, "diff", "--name-only", "--diff-filter=M", "-z", original, candidate).split(b"\0")
             if raw and (path := os.fsdecode(raw)).endswith(".py") and is_test_path(path)}
-

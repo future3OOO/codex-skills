@@ -97,7 +97,7 @@ class MappedTddRepairTests(unittest.TestCase):
 
     def begin_with_map(
         self, items: list[dict[str, object]], slug: str = "mapped-repair",
-        intent: str = "exercise mapped TDD behavior",
+        intent: str = "exercise mapped TDD behavior", removes: str = "nothing",
     ) -> tuple[str, str]:
         begun = self.cli(
             "begin",
@@ -117,7 +117,7 @@ class MappedTddRepairTests(unittest.TestCase):
         advisor_disposition(identity, slug, workflow_id, "preflight", "none")
         preflight = self.tmp / f"{slug}-preflight.json"
         preflight.write_text(
-            json.dumps(build_document("mapped TDD", behavior_map=items)),
+            json.dumps(build_document("mapped TDD", behavior_map=items, removes=removes)),
             encoding="utf-8",
         )
         approve_preflight(self.repo, json.loads(preflight.read_text()))

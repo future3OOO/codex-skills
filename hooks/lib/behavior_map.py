@@ -375,11 +375,9 @@ def open_obligations(items: list[JsonObject]) -> list[str]:
               "of a contract item whose request removes it"
               for case in dict.fromkeys(case for run in current for case in run.get("renamed") or [])
               if not any(re.search(rf"(?<![^\s`'\"(,;]){re.escape(case)}(?![^\s`'\"),;.]|\.\S)", text) for text in expected)]
-    # A condition the candidate removes stays open until the contract's Removes line names it.
     undeclared = dict.fromkeys(condition["label"] for run in current for condition in run["arms"][0].get("conditions", [])
                                if not condition.get("declared"))
-    return lines + [f"removed condition {label} is not in the contract's Removes line: restore it, or record the whole line "
-                    'with its backticked code added through record tdd-map {"removes": "..."}' for label in undeclared]
+    return lines + [f"removed condition {label} is not in the preflight Removes line: restore it" for label in undeclared]
 
 
 def obligation(entry: JsonObject) -> list[object]:
