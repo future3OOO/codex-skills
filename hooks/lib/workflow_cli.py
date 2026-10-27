@@ -31,7 +31,6 @@ from .workflow_state import (
     _evidence_ready,
     _require_instance,
     _tree_drift,
-    advisor_disposition,
     begin,
     bound_state,
     checkpoint,
@@ -52,7 +51,6 @@ from .workflow_state import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
-DISPOSITION_FLAGS = {"fixed": "fixed", "rejected": "rejected-with-evidence", "report_only": "report-only"}
 # Failing checks' first five locations, then the first six active findings with three each. Each location
 # prints as at most 100 bytes of JSON, escapes included (file:line tail kept), so the whole stays under 4,200.
 REPORT_PROJECTION = (
@@ -119,9 +117,8 @@ def parser() -> argparse.ArgumentParser:
         command = _repo(kinds.add_parser(kind, epilog=f"accepted shape: {shape}",
                                          formatter_class=argparse.RawDescriptionHelpFormatter), instance=True)
         command.add_argument("--check", action="store_true", help="validate against the ledger without recording")
-        if kind != "advisor-disposition":
-            command.add_argument("--input", help="document path, or - for stdin" + (
-                "; defaults to the retained approved draft" if kind == "preflight" else ""))
+        command.add_argument("--input", help="document path, or - for stdin" + (
+            "; defaults to the retained approved draft" if kind == "preflight" else ""))
         if kind == "advisor-result":
             command.add_argument("--stage", required=True)
             command.add_argument("--source", default="codex-advisor")
@@ -131,18 +128,6 @@ def parser() -> argparse.ArgumentParser:
             command.add_argument("--expected-candidate-tree")
             command.add_argument("--preflight-file")
             command.add_argument("--submitted-draft", help="the draft as submitted, before the advisor's in-place edits")
-        elif kind == "advisor-disposition":
-            command.add_argument("--stage", choices=("preflight", "final"),
-                                 type=lambda value: {"preflight-advice": "preflight", "final-review": "final"}.get(value, value),
-                                 help="defaults to the referenced intake's stage; workflow phase names are accepted")
-            command.add_argument("--findings", choices=("none", "addressed"))
-            command.add_argument("--finding")
-            status = command.add_mutually_exclusive_group()
-            for flag in DISPOSITION_FLAGS:
-                status.add_argument(f"--{flag.replace('_', '-')}", action="store_true")
-            status.add_argument("--follow-up", metavar="REFERENCE")
-            command.add_argument("--behavior-id")
-            command.add_argument("--reason")
 
     command = commands.add_parser("prune", help="report or apply workflow-state retirement")
     command.add_argument("--apply", action="store_true")
@@ -372,51 +357,33 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
         emit(map_update(identity, state, _document(args, "TDD map update")))
         return 0
     candidate = _active_candidate_tree(identity)
-    if args.kind == "advisor-result":
-        if args.input == "-" and args.design_declaration == "-":
-            raise ValueError("only one of --input and --design-declaration can read stdin")
-        intake, verdict = None, args.verdict
-        if args.input is not None:
-            if args.verdict is not None or args.reason is not None:
-                raise ValueError("record advisor-result --input derives the verdict; --verdict/--reason are for unavailable")
-            intake, verdict = advisor_envelope(args.input, slug=slug, workflow_id=workflow_id,
-                                               stage=args.stage, producer=args.source)
-        elif verdict is None:
-            raise ValueError("record advisor-result requires --input or --verdict unavailable --reason")
-        expected = args.expected_candidate_tree
-        if args.stage != "preflight" and expected not in (None, candidate):  # a preflight verdict judges its draft
-            raise WorkflowError("active candidate changed after the advisor checkpoint")
-        execution = None
-        if args.stage == "final" and intake is not None:
-            from .tdd_workflow import execute_findings
-            execution = execute_findings(identity, state, intake["findings"])
-            intake["findings"] = execution["findings"]
-            if verdict != "context-mismatch":  # the executed result decides, not the producer's claim
-                verdict = intake["verdict"] = ("fix-before-commit" if any(item["material"] for item in intake["findings"])
-                                               else "commit-ready")
-        state = record_advisor_result(
-            identity, slug, workflow_id, args.stage, args.source, verdict, reason=args.reason,
-            design=design_declaration(args.design_declaration) if args.design_declaration else None,
-            intake=intake, expected_candidate_tree=expected or candidate, execution=execution,
-            preflight_draft=preflight_document(args.preflight_file) if args.preflight_file else None,
-            submitted_draft=preflight_document(args.submitted_draft) if args.submitted_draft else None)
-    else:
-        flag = None
-        if args.finding is not None:
-            status = next((DISPOSITION_FLAGS[name] for name in DISPOSITION_FLAGS if getattr(args, name)),
-                          "accepted-follow-up" if args.follow_up else None)
-            if status is None:
-                raise ValueError("--finding needs one of --fixed/--rejected/--report-only/--follow-up")
-            if status != "fixed" and not (args.reason and args.reason.strip()):
-                raise ValueError(f"{status} needs --reason with the measured judgment")
-            flag = {"finding": args.finding, "status": status,
-                    "reason": (args.reason or "").strip() or None, "reference": args.follow_up,
-                    "behaviorId": args.behavior_id}
-        elif args.behavior_id:
-            raise ValueError("--behavior-id belongs to --finding")
-        findings = args.findings or ("none" if flag is None else "addressed")
-        state = advisor_disposition(identity, slug, workflow_id, args.stage, findings,
-                                    flag=flag, expected_candidate_tree=candidate)
+    if args.input == "-" and args.design_declaration == "-":
+        raise ValueError("only one of --input and --design-declaration can read stdin")
+    intake, verdict = None, args.verdict
+    if args.input is not None:
+        if args.verdict is not None or args.reason is not None:
+            raise ValueError("record advisor-result --input derives the verdict; --verdict/--reason are for unavailable")
+        intake, verdict = advisor_envelope(args.input, slug=slug, workflow_id=workflow_id,
+                                           stage=args.stage, producer=args.source)
+    elif verdict is None:
+        raise ValueError("record advisor-result requires --input or --verdict unavailable --reason")
+    expected = args.expected_candidate_tree
+    if args.stage != "preflight" and expected not in (None, candidate):  # a preflight verdict judges its draft
+        raise WorkflowError("active candidate changed after the advisor checkpoint")
+    execution = None
+    if args.stage == "final" and intake is not None:
+        from .tdd_workflow import execute_findings
+        execution = execute_findings(identity, state, intake["findings"])
+        intake["findings"] = execution["findings"]
+        if verdict != "context-mismatch":  # the executed result decides, not the producer's claim
+            verdict = intake["verdict"] = ("fix-before-commit" if any(item["material"] for item in intake["findings"])
+                                           else "commit-ready")
+    state = record_advisor_result(
+        identity, slug, workflow_id, args.stage, args.source, verdict, reason=args.reason,
+        design=design_declaration(args.design_declaration) if args.design_declaration else None,
+        intake=intake, expected_candidate_tree=expected or candidate, execution=execution,
+        preflight_draft=preflight_document(args.preflight_file) if args.preflight_file else None,
+        submitted_draft=preflight_document(args.submitted_draft) if args.submitted_draft else None)
     emit(_receipt(state, identity))
     return 0
 

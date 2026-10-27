@@ -15,7 +15,7 @@ KINDS = frozenset({"contract", "preservation"})
 READING_FIELDS = frozenset({"interpretations", "interpretation", "authority"})
 # Judgement fields: a map update may change them without invalidating the executed
 # comparison, which is re-judged; a changed kind or obligation text requires a new comparison.
-JUDGEMENT_FIELDS = READING_FIELDS | {"kind", "basis", "boundaryInputs", "sourceRefs"}
+JUDGEMENT_FIELDS = READING_FIELDS | {"kind", "basis", "boundaryInputs"}
 IDENTIFIER = re.compile(r"^[A-Z][A-Z0-9_-]{1,63}$")
 UNITTEST_CASE = re.compile(r"^(\S+ \([^()\n]+\))((?: \[.*?\])?(?: \(.*\))?)$")
 STOPPED_NOTE = ("stopped: a test method that failed in its body skipped its remaining statements on that tree, "
@@ -31,32 +31,6 @@ def _strings(value: object) -> list[str] | None:
     if isinstance(value, list) and value and all(_text(item) for item in value):
         return [str(item).strip() for item in value]
     return None
-
-
-def _source_refs(value: object, identifier: str) -> list[str]:
-    if value is None:
-        return []
-    if not isinstance(value, list):
-        return [f"behavior {identifier} sourceRefs must be an array"]
-    errors: list[str] = []
-    seen: set[tuple[str, str, str]] = set()
-    for position, raw in enumerate(value, 1):
-        if not isinstance(raw, dict) or set(raw) != {"type", "evidenceId", "id"}:
-            errors.append(f"behavior {identifier} sourceRef {position} requires only type, evidenceId, and id")
-        fields = raw if isinstance(raw, dict) else {}
-        reference_type, evidence_id, label = fields.get("type"), _text(fields.get("evidenceId")), _text(fields.get("id"))
-        if evidence_id is None or label is None or reference_type not in ("design", "finding"):
-            errors.append(f"behavior {identifier} sourceRef {position} is not a valid design or finding reference")
-            continue
-        key = (str(reference_type), evidence_id, str(label))
-        if key in seen:
-            errors.append(f"behavior {identifier} repeats {reference_type} sourceRef {label}")
-        seen.add(key)
-    return errors
-
-
-def _refs(value: list[JsonObject]) -> list[JsonObject]:
-    return [{"type": ref["type"], "evidenceId": _text(ref["evidenceId"]), "id": _text(ref["id"])} for ref in value]
 
 
 def _field_errors(raw: JsonObject, identifier: str) -> list[str]:
@@ -111,8 +85,6 @@ def map_errors(value: object, *, allow_runtime: bool) -> list[str]:
             if extra := set(raw) - REQUIRED_FIELDS - JUDGEMENT_FIELDS:
                 errors.append(f"probe {identifier} has unknown fields: " + ", ".join(sorted(extra)))
             errors.extend(_field_errors(raw, identifier))
-        if "sourceRefs" in raw:
-            errors.extend(_source_refs(raw["sourceRefs"], identifier))
     return errors
 
 
@@ -121,8 +93,7 @@ def validate_items(value: object, *, allow_runtime: bool) -> list[JsonObject]:
         raise ValueError("; ".join(errors))
     items = []
     for raw in value:
-        item = {**{key: _text(raw[key]) for key in REQUIRED_FIELDS}, **_recorded_fields(raw),
-                "sourceRefs": _refs(raw.get("sourceRefs") or [])}
+        item = {**{key: _text(raw[key]) for key in REQUIRED_FIELDS}, **_recorded_fields(raw)}
         if allow_runtime and "comparison" in raw:
             item["comparison"] = copy.deepcopy(raw["comparison"])
         items.append(item)
@@ -142,19 +113,6 @@ def item(items: list[JsonObject], identifier: str) -> JsonObject:
         return next(entry for entry in items if entry["id"] == identifier)
     except StopIteration as exc:
         raise ValueError("probe id is not in the recorded map: " + identifier) from exc
-
-
-def apply_dispositions(items: list[JsonObject], dispositions: list[JsonObject]) -> None:
-    """Existing finding dispositions can attach an owning probe, never author proof."""
-    for disposition in dispositions:
-        if set(disposition) != {"id", "sourceRefs"}:
-            raise ValueError("probe edits use the complete items list; only finding references may be attached")
-        if errors := _source_refs(disposition["sourceRefs"], str(disposition["id"])):
-            raise ValueError("; ".join(errors))
-        entry = item(items, disposition["id"])
-        for reference in _refs(disposition["sourceRefs"]):
-            if reference not in entry["sourceRefs"]:
-                entry["sourceRefs"].append(reference)
 
 
 def readings_unsettled(entry: JsonObject) -> bool:
@@ -421,19 +379,18 @@ def never_compared(items: list[JsonObject]) -> list[str]:
 
 
 def contract_changes(items: list[JsonObject], recorded: list[JsonObject] | None) -> list[str]:
-    """What moved since the recorded preflight, each with the basis or finding it carries, for the
-    reviewer and final advisor to judge against the request or that finding: a changed kind, a
+    """What moved since the recorded preflight, each with the basis it carries, for the
+    reviewer and final advisor to judge against the request: a changed kind, a
     contract item added or re-worded, contract cases added and any case dropped. Listing authorizes
     nothing and never clears an open item."""
     before = {entry["id"]: entry for entry in recorded or []}
     lines = []
     for entry in items:
         prior, kind = before.get(entry["id"]), entry.get("kind")
-        findings = [str(ref["id"]) for ref in entry.get("sourceRefs", []) if ref.get("type") == "finding"]
         changes = []
         if prior is None:
             if kind == "contract":
-                changes.append("contract item added after preflight" + (f" (finding {', '.join(findings)})" if findings else ""))
+                changes.append("contract item added after preflight")
         else:
             inputs, earlier = set(entry.get("boundaryInputs") or []), set(prior.get("boundaryInputs") or [])
             if prior.get("kind") != kind:
@@ -551,11 +508,6 @@ def _changed_lines(original: JsonObject, current: JsonObject, report: bool = Fal
         return []
     hunks = list(difflib.unified_diff(before, after, lineterm="", n=0))[2:]  # the two file headers
     return [f"{line[0]} {line[1:]}" for line in hunks if line[:1] in "+-"]
-
-
-def executed_commands(entry: JsonObject) -> dict[str, str]:
-    command = (entry.get("comparison") or {}).get("command")
-    return {"comparison": command} if isinstance(command, str) else {}
 
 
 def obligation_digest(items: list[JsonObject]) -> str:

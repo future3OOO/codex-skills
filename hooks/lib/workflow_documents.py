@@ -72,7 +72,7 @@ def advisor_envelope(
     findings, verdict = value.get("findings"), value.get("verdict")
     if type(value.get("schemaVersion")) is not int or value.get("schemaVersion") != 1 or not isinstance(findings, list):
         raise ValueError("advisor envelope requires schemaVersion 1 and a findings array")
-    allowed = {"completed", "approved", "changes-required"} if stage == "preflight" else FINAL_ENVELOPE_VERDICTS if stage == "final" else set()
+    allowed = {"approved", "changes-required"} if stage == "preflight" else FINAL_ENVELOPE_VERDICTS if stage == "final" else set()
     if verdict not in allowed:
         raise ValueError(f"advisor envelope verdict {verdict!r} is incompatible with stage {stage}")
     typed: list[JsonObject] = []
@@ -125,19 +125,16 @@ DESIGN_FILE_SHAPE = (
 )
 ITEM_SHAPE = ('{"id":"BM_X","kind":"contract|preservation","basis":"original request or preservation",'
               '"behavior":"...","seam":"...","expected":"...","boundaryInputs":["executed case name"],'
-              '"interpretations":["reading a","reading b"],"interpretation":"...","authority":"...",'
-              '"sourceRefs":[{"type":"finding","evidenceId":"<intake>","id":"SPEC-1"}]}')
+              '"interpretations":["reading a","reading b"],"interpretation":"...","authority":"..."}')
 # A finding binds only through evidence the runner executes; anything else is a report line.
 EXECUTABLE = ('{"id":"R-1","claim":"...","probe":{"path":"tests/test_r1.py","content":"...","command":"python3 -m pytest tests/test_r1.py"}} or a deletion-only {"id":"R-2","claim":"...","change":"<unified diff>"}')
 RECORD_SHAPES = {
     "preflight": f'{{"authoritativeContract":"text","behaviorMap":[{ITEM_SHAPE}]}}',
     "review": '{"findings":[FINDING]} where FINDING is ' + EXECUTABLE,
     "advisor-result": ('the advisor envelope {"schemaVersion":1,"findings":[FINDING],"verdict":VERDICT}: at preflight '
-                       'FINDING is {"id":"SPEC-1","claim":"...","material":true} and VERDICT approved|changes-required|'
-                       'completed, or --verdict unavailable --reason TEXT; at final FINDING is ' + EXECUTABLE +
+                       'FINDING is {"id":"SPEC-1","claim":"...","material":true} and VERDICT approved|changes-required, '
+                       'or --verdict unavailable --reason TEXT; at final FINDING is ' + EXECUTABLE +
                        ' and VERDICT commit-ready|fix-before-commit|context-mismatch'),
-    "advisor-disposition": ("--finding F --fixed [--behavior-id BM]; a preflight finding also "
-                            "--rejected|--report-only|--follow-up REF --reason TEXT; or --findings none"),
     "tdd-map": f'{{"items":[{ITEM_SHAPE}]}}; a recorded item needs only id and the changed fields, null removes an optional one',
 }
 
