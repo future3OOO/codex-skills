@@ -22,6 +22,6 @@ Bound each claim to the inputs the batch executed. Equal failures, skips, setup 
 
 ## Review findings
 
-When review adds a probe, attach the finding as `sourceRefs`. The finding's own probe already ran on the reviewed tree when it was recorded. Do not revert edits to manufacture a failure. Deleting an owner cannot close a material finding.
+A binding review finding is a regression or a deletion: repair it, or apply the deletion, and the next intake re-executes it. Do not revert edits to manufacture a failure.
 
 After coherent repair and cleanup, follow the [verification step](../repo-production-workflow/SKILL.md#9-verification).

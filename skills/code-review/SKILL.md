@@ -68,7 +68,7 @@ expected/observed results under those same verification rules.
 
 ## 5. Review both axes
 
-Apply TDD's [MC/DC](../tdd/tests.md#mcdc) to the diff: for every condition the edit adds, removes, weakens, strengthens or rewrites, check that each feasible decisive context has its pair executed on both sources in the item owning its Interface, or an executed case showing on both sources that the context cannot be reached. Do not re-run the lead's recorded cases. Judge each listed contract change (a changed kind, a contract item added or re-worded, contract cases added, a case dropped) against the original request, and a finding-owned one against its owning finding's immutable claim; a listing authorizes nothing. A check that finds words in the request or confirms the observed difference does not refute a finding that the difference is unauthorized. Reuse applicable proof; the packet's `open` and `contractChanges` lines are the readiness result, not a second inventory.
+Look first for a regression the change introduced, then for code it added that a deletion removes with every recorded comparison still passing. Do not re-run the lead's recorded cases. Judge each listed contract change (a changed kind, a contract item added or re-worded, contract cases added, a case dropped) against the original request; a listing authorizes nothing. A check that finds words in the request or confirms the observed difference does not refute a finding that the difference is unauthorized. Reuse applicable proof; the packet's `open` and `contractChanges` lines are the readiness result, not a second inventory.
 
 Report one finding per owning Module and violated invariant: list every demonstrated input as a case of that finding and name the owner's class-wide correction, not one instance; a further input to an already-reported owner and invariant is a case of that finding (priorFinding), not a new finding.
 
@@ -82,16 +82,18 @@ Run **Standards** and **Spec** independently:
   implementation, acceptance criteria without proof, and Interface claims
   contradicted by caveats or implementation limits.
 
-Code is proof. A finding binds only through evidence the workflow runner executes
-itself when the lead records it; anything else is a report line. A Spec finding
-carries a `probe`: a new standalone test file that fails on the candidate and
-asserts a value taken from something executable (the request's own examples, the
-original code's result, or the engine's answer), never a reading. A bloat or
-duplication finding carries a `change`: a unified diff that only deletes code or
-replaces it with one call to an existing function; it binds when every recorded
-comparison still passes with it applied. A wrong lead test is a probe asserting
-the right value. Every finding cites its governing requirement and states the
-expected versus observed effect and consequence.
+Code is proof: the workflow runner executes each finding's evidence when the lead
+records it. Objective: maximum performance and efficiency of the delivered code
+with the requested behaviour held fixed. Acceptance order: (1) a regression, a
+probe that passes on the original and fails or times out on the candidate, binds
+and is repaired; (2) a request promise or benchmark binds only as a Behavior Map
+contract case; (3) a deletion-only change that every recorded batch still passes
+binds and is applied; (4) anything else is a report line. A `probe` is a new
+standalone test file asserting a value taken from something executable (the
+request's own examples, the original code's result, or the engine's answer),
+never a reading. A `change` is a unified diff that only deletes code or replaces
+it with one call to an existing function. Every finding cites its governing
+requirement and states the expected versus observed effect and consequence.
 
 ## 6. Return structured output
 
@@ -106,6 +108,5 @@ only new findings. An empty return cannot close an earlier unresolved finding:
              {"id":"STD-1","axis":"Standards","location":"path:line","claim":"duplicate of existing()","change":"<unified diff>"}]}
 ```
 
-Missing acceptance evidence is a Spec finding with a probe, never prose beside
-`{"findings":[]}`. The lead answers a finding only with a fix or an executed
-counter-probe.
+A request sentence no contract case covers is a report line naming it, never
+prose beside `{"findings":[]}`. The lead answers a binding finding only with a fix.

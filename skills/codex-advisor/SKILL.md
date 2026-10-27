@@ -17,19 +17,23 @@ phase belongs in `--phase`, not in the slug.
 
 Review the drafted production preflight before it is recorded. Supply it with
 `--preflight-file <draft.json>`; the wrapper snapshots it before consultation.
-The checkpoint sends the exact artifact, including its Behavior Map. Challenge
-materially different readings with concrete discriminating probes and the original request: an item whose readings diverge records them as `interpretations` with `boundaryInputs`; unambiguous items need no extra fields. Identify the decisive contexts of the planned change; each feasible one is a case, with its inputs and required result, of the item owning its Interface (one contract and one preservation item per owner); its executed cases are attached after implementation.
+The checkpoint sends the exact artifact, including its Behavior Map. The advisor is the
+designer: it compares the draft's architecture with at least one alternative by cheap probes
+(normal-path cost, reuse, estimated production lines) and keeps the cheapest that holds the
+request; each contract item quotes the request sentence it tests and takes its expected value
+from executing the original, the engine or a literal request example; a benchmark is a contract
+case with its workload, reference, repetitions, budget and noise tolerance fixed now.
 
 Return `approved` when the draft has no material gap, otherwise
 `changes-required`. The lead revises once and uses `--reconsult` in the same session;
 no per-cycle user permission is needed. That second consult is the last: it runs with write access, the advisor
-edits the wrapper's draft copy in place with the smallest edits that close any remaining
-gap, checks its answer with the recorder's dry run, and returns `approved`; `record
+writes the measured architecture into the wrapper's draft copy, closes any remaining gap and cuts
+what no request sentence needs, checks its answer with the recorder's dry run, and returns `approved`; `record
 preflight` records that edited copy. The checkpoint sends the delta from the
 last recorded draft with base and target content identities. A failed result does
 not advance that base; retries may repeat the delta. With no recorded base, the
 retry carries the full artifact. Draft findings stay in their consult intake;
-approval gates the single `record preflight`, without runtime finding dispositions.
+approval gates the single `record preflight`.
 After recording, initial preflight consultation is closed.
 
 Preflight records the governing-design declaration: `--design-file` with the
@@ -78,14 +82,11 @@ The consult runs in a disposable copy of the checkpoint candidate with workspace
 the copy first on `PYTHONPATH` and the venv of the recorded comparisons' interpreter first on
 `PATH`; the lead's checkout is not in it.
 
-Code is proof. The advisor states what the request and public Interface promise, finds the
-decisive inputs of each changed decision, runs them, and checks each changed test's expected
-value against the original code or the engine. It reports findings only as evidence the
-workflow runner re-executes: a `probe` (`{"path","content","command"}`, a new standalone test
-file asserting a value taken from something executable and failing on the copy) or a `change`
-(a diff that only deletes code or replaces it with one call to an existing function). The
-runner re-executes each open finding's probe itself; the advisor raises only what they do not
-already show:
+Code is proof. The prompt carries the shared objective and acceptance order: only a regression
+(a `probe` that passes on the original and fails or times out on the candidate) or a `change`
+(a diff that only deletes code or replaces it with one call to an existing function) that every
+recorded batch still passes binds; anything else is a report line. The runner re-executes each
+open finding's probe itself; the advisor raises only what they do not already show:
 
 ```json
 {"schemaVersion":1,"findings":[{"id":"SPEC-1","claim":"...","probe":{"path":"tests/test_spec1.py","content":"...","command":"python3 -m pytest tests/test_spec1.py"}}],"verdict":"fix-before-commit"}
@@ -191,6 +192,5 @@ If transport is genuinely unavailable, record the preflight result as
 review. No nonce, skip file, stamp, attestation, or audited exception authorizes
 completion.
 
-A repaired final finding needs no disposition: the re-check re-executes it and settles it once
-its evidence no longer binds. A lead who disputes a finding answers with an executed counter-probe
-mapped to it, never a prose disposition.
+A repaired final finding settles at the re-check that re-executes it, once its evidence no longer
+binds; there is no disposition command.

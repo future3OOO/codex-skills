@@ -4,8 +4,9 @@ A strong test is a real probe of one **independently-failable observable outcome
 
 A behavior test survives internal refactoring: if observable behavior is unchanged but the test breaks, the test is coupled to implementation. Several assertions are valid when they jointly prove one behavior; one assertion can still hide an over-broad behavior.
 
-Comparison probes need not be committed. Keep an uncommitted probe at a
-test path (for example `tests/probe_intent.py`) until pass completion; the
+Comparison probes need not be committed: the recorded run is the proof, so
+removing or editing a probe file after its comparison leaves it fresh. Keep the
+probe at a test path (for example `tests/probe_intent.py`) while comparing; the
 runner refuses non-test paths as production overlays. A test runner names its
 cases. A direct operation must print one `name: result` line per case and also
 check its results: an assertion alone names no case, and exit 0 alone proves nothing.

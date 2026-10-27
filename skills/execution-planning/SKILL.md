@@ -57,7 +57,7 @@ The wrapper records the design's declaration (its SHA-256, or a stated absence) 
 
 - The lead owns semantic completeness: every material preservation obligation and load-bearing assumption must be expressed.
 - The Preflight Advisor derives the load-bearing promises from the original request and challenges omissions and missing attacks.
-- Production preflight turns those obligations into Behavior Map falsifiers; findings own their attacks through finding `sourceRefs`.
+- Production preflight turns those obligations into Behavior Map falsifiers.
 - The Final Advisor re-derives the attack surface from the original request and public Interface before checking declared evidence.
 
 The design is a falsifiable hypothesis, not an immutable authority. Deepen it append-only in the same unpushed workflow and carry the current file to each consult; a changed declaration records as new workflow evidence and never by itself requires another `begin`, another preflight consult, or a Repo Context Forge rerun.

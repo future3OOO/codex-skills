@@ -54,8 +54,8 @@ Repo Context Forge analysis copy. For codex-skills installation, follow
   Module's Interface. Use an enclosing operation only when the assertion concerns
   that operation's behavior or integration.
 - **Attack probes first.** Unit tests must themselves probe real production
-  behavior. Maximize attack coverage across affected inputs, failures,
-  interactions, and preservation. Prove each changed line with a direct N/N+1
+  behavior. Cover each request promise and the preserved behavior the change
+  touches. Prove each changed line with a direct N/N+1
   probe that calls it. Add another existing test only when it calls the changed
   code directly. Never run whole files or classes, the full suite, or duplicate
   retained probes with a parallel unit-test suite.
@@ -72,8 +72,8 @@ Repo Context Forge analysis copy. For codex-skills installation, follow
   request keeps summarizes the original code, so the original's result stands.
   For new behavior, the code or engine that already defines a term is its
   authority: probe the new code against that owner's result.
-- If a material unknown cannot be safely discovered, ask the smallest question
-  needed to resolve it before dependent work.
+- Decide a material unknown from the code, the request and the recorded evidence,
+  record the decision in one line, and continue.
 
 ## Simplicity First
 
