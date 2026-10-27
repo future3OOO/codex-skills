@@ -76,7 +76,7 @@ Record the frozen evaluation of the change. TDD's [Behavior Map](../tdd/recorder
 [{"id":"BM_EXPIRY","kind":"contract","basis":"the deadline is inclusive","behavior":"expires at the deadline","seam":"Expiry.is_expired with a real clock","expected":"now equal to expiresAt is expired","boundaryInputs":["test_expires_at_deadline","test_not_expired_before_deadline"],"interpretations":["now > expiresAt","now >= expiresAt"],"interpretation":"now >= expiresAt","authority":"the request's 'at the deadline'"}]
 ```
 
-Name the architecture and the cheapest alternative you compared by probes, with each one's normal-path cost, reuse and estimated production lines. Bound every promise by what its reference does: where the engine itself discards state (SQLite rolls back the whole transaction on `SQLITE_FULL`), the promise is to fail and report it. Use real collaborators and observe results and state effects.
+Name the architecture and the cheapest alternative you compared by probes, with each one's normal-path cost, reuse and estimated production lines. Bound every promise by what its reference does: where the engine itself can discard state (on `SQLITE_FULL` SQLite may roll back the whole transaction), the promise is to fail and report it. Use real collaborators and observe results and state effects.
 
 Record materially different readings as the owning item's `interpretations` with concrete discriminating `boundaryInputs`; settle them from authority before dependent code, or leave them visibly unsettled, which keeps TDD incomplete. The existing advisor challenges the expectation itself against the request. No authored proof status exists; the runner derives it.
 
