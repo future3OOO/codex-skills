@@ -73,7 +73,8 @@ Repo Context Forge analysis copy. For codex-skills installation, follow
   For new behavior, the code or engine that already defines a term is its
   authority: probe the new code against that owner's result.
 - Decide a material unknown from the code, the request and the recorded evidence,
-  record the decision in one line, and continue.
+  record the decision in one line, and continue; stop only before a destructive,
+  irreversible or outside-the-worktree action.
 
 ## Simplicity First
 

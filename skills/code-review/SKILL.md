@@ -68,7 +68,7 @@ expected/observed results under those same verification rules.
 
 ## 5. Review both axes
 
-Look first for a regression the change introduced, then for code it added that a deletion removes with every recorded comparison still passing. Do not re-run the lead's recorded cases. Judge each listed contract change (a changed kind, a contract item added or re-worded, contract cases added, a case dropped) against the original request; a listing authorizes nothing. A check that finds words in the request or confirms the observed difference does not refute a finding that the difference is unauthorized. Reuse applicable proof; the packet's `open` and `contractChanges` lines are the readiness result, not a second inventory.
+Look first for a regression the change introduced: for each condition the edit adds, removes, weakens, strengthens or rewrites, run the decisive contexts ([MC/DC](../tdd/tests.md#mcdc)) the recorded cases do not already show. Then look for code it added that a deletion removes with every recorded comparison still passing. Do not re-run the lead's recorded cases. Judge each listed contract change (a changed kind, a contract item added or re-worded, contract cases added, a case dropped) against the original request; a listing authorizes nothing. A check that finds words in the request or confirms the observed difference does not refute a finding that the difference is unauthorized. Reuse applicable proof; the packet's `open` and `contractChanges` lines are the readiness result, not a second inventory.
 
 Report one finding per owning Module and violated invariant: list every demonstrated input as a case of that finding and name the owner's class-wide correction, not one instance; a further input to an already-reported owner and invariant is a case of that finding (priorFinding), not a new finding.
 
@@ -83,17 +83,13 @@ Run **Standards** and **Spec** independently:
   contradicted by caveats or implementation limits.
 
 Code is proof: the workflow runner executes each finding's evidence when the lead
-records it. Objective: maximum performance and efficiency of the delivered code
-with the requested behaviour held fixed. Acceptance order: (1) a regression, a
-probe that passes on the original and fails or times out on the candidate, binds
-and is repaired; (2) a request promise or benchmark binds only as a Behavior Map
-contract case; (3) a deletion-only change that every recorded batch still passes
-binds and is applied; (4) anything else is a report line. A `probe` is a new
-standalone test file asserting a value taken from something executable (the
-request's own examples, the original code's result, or the engine's answer),
-never a reading. A `change` is a unified diff that only deletes code or replaces
-it with one call to an existing function. Every finding cites its governing
-requirement and states the expected versus observed effect and consequence.
+records it, and the workflow's [objective and acceptance order](../repo-production-workflow/SKILL.md#10-delegate-code-review)
+decide what binds. A `probe` is a new standalone test file asserting a value taken
+from something executable (the request's own examples, the original code's result,
+or the engine's answer), never a reading. A `change` is a unified diff that only
+deletes code or replaces it with one call to an existing function. Every finding
+cites its governing requirement and states the expected versus observed effect and
+consequence.
 
 ## 6. Return structured output
 

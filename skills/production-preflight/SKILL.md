@@ -63,22 +63,20 @@ is explicit. Unambiguous predicates need no additional fields or inventory.
 
 ### Unknowns
 
-Decide every material unknown one of three ways: resolve it from the packet,
-repository, runtime, governing artifact or verified source; interview with
-`/grilling`, one question at a time, when it can change Module shape, public
-Interface, Seam placement, data contract or irreversible scope; or block honestly
-and do not record. A settled choice still needing falsification, or unsettled
+Decide every material unknown from the packet, repository, runtime, governing
+artifact or verified source and record the decision in one line; stop only before
+a destructive, irreversible or outside-the-worktree action. A settled choice still needing falsification, or unsettled
 readings of one behavior, is a pending `behaviorMap` item, not an unknown.
 
 ### `behaviorMap`
 
-Record the frozen evaluation of the change. TDD's [Behavior Map](../tdd/recorder.md#behavior-map) defines the fields and what readiness enforces by execution. IDs are stable uppercase identifiers. The basis ties the expectation to the original request or affected preservation; select the `seam` under AGENTS.md's Real-Seam proof invariant, naming the responsible production Interface and its real setup for the assertion being proved. Each contract item quotes the request sentence it tests and takes its expected value from executing a reference: the original code, the engine's own primitive on the same input, or a literal request example. A normal-path benchmark is a contract case running the operation beside the nearest existing one, with its workload, repetitions, budget and noise tolerance fixed now. Each preservation item takes the original's result on the behaviour the change touches. Attach the executed cases to that item's `boundaryInputs` after implementation.
+Record the frozen evaluation of the change. TDD's [Behavior Map](../tdd/recorder.md#behavior-map) defines the fields and what readiness enforces by execution. IDs are stable uppercase identifiers. The basis ties the expectation to the original request or affected preservation; select the `seam` under AGENTS.md's Real-Seam proof invariant, naming the responsible production Interface and its real setup for the assertion being proved. Each load-bearing request promise gets a contract item that quotes the request sentence it tests and takes its expected value from executing a reference: an existing operation of the original code, the engine's own primitive on the same input, or a literal request example. A normal-path benchmark is a contract case running the operation beside the nearest existing one, with its workload, repetitions, budget and noise tolerance fixed now. Each preservation item takes the original's result on the behaviour the change touches. Attach the executed cases to that item's `boundaryInputs` after implementation.
 
 ```json
 [{"id":"BM_EXPIRY","kind":"contract","basis":"the deadline is inclusive","behavior":"expires at the deadline","seam":"Expiry.is_expired with a real clock","expected":"now equal to expiresAt is expired","boundaryInputs":["test_expires_at_deadline","test_not_expired_before_deadline"],"interpretations":["now > expiresAt","now >= expiresAt"],"interpretation":"now >= expiresAt","authority":"the request's 'at the deadline'"}]
 ```
 
-Name the architecture and the cheapest alternative you compared by probes, with each one's normal-path cost, reuse and estimated production lines. Bound every promise by its reference: where the engine itself discards state, the promise is to fail and report it. Use real collaborators and observe results and state effects.
+Name the architecture and the cheapest alternative you compared by probes, with each one's normal-path cost, reuse and estimated production lines. Bound every promise by what its reference does: where the engine itself discards state (SQLite rolls back the whole transaction on `SQLITE_FULL`), the promise is to fail and report it. Use real collaborators and observe results and state effects.
 
 Record materially different readings as the owning item's `interpretations` with concrete discriminating `boundaryInputs`; settle them from authority before dependent code, or leave them visibly unsettled, which keeps TDD incomplete. The existing advisor challenges the expectation itself against the request. No authored proof status exists; the runner derives it.
 

@@ -20,8 +20,9 @@ Review the drafted production preflight before it is recorded. Supply it with
 The checkpoint sends the exact artifact, including its Behavior Map. The advisor is the
 designer: it compares the draft's architecture with at least one alternative by cheap probes
 (normal-path cost, reuse, estimated production lines) and keeps the cheapest that holds the
-request; each contract item quotes the request sentence it tests and takes its expected value
-from executing the original, the engine or a literal request example; a benchmark is a contract
+request; each load-bearing request promise has a contract item quoting the request sentence it
+tests, its expected value from executing an existing operation of the original, the engine or a
+literal request example; a benchmark is a contract
 case with its workload, reference, repetitions, budget and noise tolerance fixed now.
 
 Return `approved` when the draft has no material gap, otherwise

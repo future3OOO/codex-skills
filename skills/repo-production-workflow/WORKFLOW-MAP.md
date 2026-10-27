@@ -75,9 +75,10 @@ Repo Context Forge, preflight, TDD, verification and review record their native
 documents as logical evidence in the same SQLite transaction as the accepted event.
 Review and final findings carry a `probe` or a deletion-only `change` that the runner
 executes when they are recorded; the executed result, never the producer's claim,
-decides whether a finding binds: a regression or a deletion every batch passes. The preflight document
-owns the initial Behavior Map; mapped TDD evidence carries its stable IDs,
-source comparisons. A plan may show
+decides whether a finding binds: a regression (the original passes, the candidate fails or times out)
+or a change that every recorded batch passes or times out on. The preflight document
+owns the initial Behavior Map; mapped TDD evidence carries its stable IDs
+and source comparisons. A plan may show
 the map but is not an evidence owner.
 
 Exit 2 alone does not prove a refusal: verification and TDD can commit first

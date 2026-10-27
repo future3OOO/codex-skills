@@ -163,10 +163,10 @@ Record the delegate's intake. Code is proof: the runner executes each finding's 
 candidate and the original, and each `change` (a unified diff that only deletes code or replaces
 it with one call to an existing function) against every retained comparison batch. Objective:
 maximum performance and efficiency of the delivered code with the requested behaviour held
-fixed. Acceptance order: (1) a regression, a probe that passes on the original and fails or
-times out on the candidate, binds and is repaired; (2) a request promise or benchmark binds only
-as a Behavior Map contract case; (3) a deletion-only change that every recorded batch still
-passes binds and is applied; (4) anything else is a report line.
+fixed. Acceptance order: (1) a regression, a probe of behaviour the request keeps that passes on
+the original and fails or times out on the candidate, binds and is repaired; (2) a request
+promise or benchmark binds only as a Behavior Map contract case; (3) a change that every recorded
+batch still passes binds and is applied; (4) anything else is a report line.
 
 ```bash
 python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" record review --input <review.json>
