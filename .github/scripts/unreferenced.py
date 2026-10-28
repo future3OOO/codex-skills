@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 """Fail on dead production Python: `unreferenced.py <repo>`.
 
-Reports on stderr, and exits 1 for, each def or class, and each name the module binds
-outside def, class, lambda and comprehension syntax, that no other word of the tracked
-files' UTF-8 text (symlinks read through) names; and each dataclass field no text reads
-as `.field` or a getattr literal, unless a module naming its class reads objects whole
-(asdict, astuple, fields, vars, __dict__). A field only generated methods, match patterns
-or aliased readers use is reported: read it to keep it. Python files are `.py` or
-python-shebang files. Test-like paths neither define nor reference, so code only a test
-calls is dead. Skipped: `__x__` methods and the `visit_<AST class>` methods of a class
-with a base, which Python and ast.NodeVisitor call by name.
+Reports on stderr, and exits 1 for, each def, class and module-level assignment target
+(outside def, class, lambda and comprehension syntax) no other word of the tracked files'
+UTF-8 text names (symlinks read through), and each annotated name in the body of a class
+whose decorator mentions `dataclass` that no text reads as `.name` or a getattr literal,
+unless a module naming the class calls asdict, astuple, fields or vars or reads __dict__.
+Python files are `.py` or python-shebang files; test-like paths neither define nor
+reference. Skipped: `__x__` methods and the `visit_<AST class>` methods of a class with a
+base, which Python and ast.NodeVisitor call by name.
 """
 import ast
 import collections
