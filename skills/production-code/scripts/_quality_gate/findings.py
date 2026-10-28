@@ -76,7 +76,6 @@ class Hunk:
     """One diff hunk, kept whole: separate hunks are never joined."""
 
     added: tuple[tuple[int, str], ...]
-    deleted: tuple[tuple[int, str], ...]
 
 
 @dataclass(frozen=True)
@@ -101,7 +100,6 @@ class SnapshotEntry:
     classification: PathClass
     base_text: str | None
     current_text: str | None
-    untracked: bool
     added: int
     deleted: int
     hunks: tuple[Hunk, ...]
@@ -109,9 +107,6 @@ class SnapshotEntry:
 
     def added_lines(self) -> list[tuple[int, str]]:
         return [line for hunk in self.hunks for line in hunk.added]
-
-    def deleted_lines(self) -> list[tuple[int, str]]:
-        return [line for hunk in self.hunks for line in hunk.deleted]
 
 
 @dataclass(frozen=True)

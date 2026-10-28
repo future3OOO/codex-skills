@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import difflib
 import contextlib
-import hashlib
 import json
 import os
 import re
@@ -401,9 +400,6 @@ def set_phase(
         )
 
 
-TDD_ACTIONS = {"reopen", "in-progress", "passed", "not-required"}
-
-
 def _map_items(
     document: JsonObject | None,
 ) -> list[JsonObject] | None:
@@ -581,16 +577,6 @@ def record_base_oid(identity: RepoIdentity, slug: str, workflow_id: str | None, 
             return state
         state["baseOid"] = oid
         return _commit(transaction, state, "record-base-oid")
-
-
-def execution_digest(run: object) -> str | None:
-    """Stable identity of a stored execution across reference spellings and
-    cumulative evidence-document copies: the canonical run record."""
-    if not isinstance(run, dict):
-        return None
-    return hashlib.sha256(
-        json.dumps(run, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
 
 
 def commit_verification(

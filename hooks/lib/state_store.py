@@ -25,11 +25,6 @@ _PATH_POLICY_FILE = (
 )
 _path_policy = None
 
-CODE_SUFFIXES = {
-    ".py", ".pyi", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".sh", ".bash",
-    ".go", ".rs", ".rb", ".java", ".kt", ".kts", ".swift", ".c", ".cc", ".cpp",
-    ".h", ".hpp", ".cs", ".php", ".scala", ".sql", ".proto",
-}
 DOC_SUFFIXES = {".md", ".markdown", ".rst", ".adoc"}
 SCRATCH_PARTS = {"scratchpad", ".scratch", ".gitnexus"}
 
@@ -179,12 +174,6 @@ def untracked_paths(identity: RepoIdentity) -> list[str]:
     return _paths(identity, "ls-files", "--others", "--exclude-standard", "-z")
 
 
-def production_changes(identity: RepoIdentity, base: str) -> list[str]:
-    """Production (non-test reviewable) paths that differ from ``base``, tracked or untracked."""
-    changed = [*_paths(identity, "diff", "--name-only", "-z", base), *untracked_paths(identity)]
-    return sorted({path for path in changed if is_reviewable_path(path) and not is_test_path(path)})
-
-
 def analysis_unchanged(identity: RepoIdentity, before: str, after: str) -> bool:
     """Compare real Git inputs for graph reuse; code positions remain significant."""
     try:
@@ -216,11 +205,6 @@ def is_docs_or_scratch(path: str) -> bool:
     return Path(normalized).suffix.lower() in DOC_SUFFIXES or bool(parts & SCRATCH_PARTS) or normalized.startswith("docs/")
 
 
-def is_code_path(path: str) -> bool:
-    normalized = path.replace("\\", "/")
-    return not is_docs_or_scratch(normalized) and Path(normalized).suffix.lower() in CODE_SUFFIXES
-
-
 def is_reviewable_path(path: str) -> bool:
     return not is_docs_or_scratch(path.replace("\\", "/"))
 
@@ -250,10 +234,6 @@ def is_governance_path(path: str) -> bool:
 
 def reviewable_paths(paths: Iterable[str]) -> list[str]:
     return sorted({path for path in paths if is_reviewable_path(path)})
-
-
-def code_paths(paths: Iterable[str]) -> list[str]:
-    return sorted({path for path in paths if is_code_path(path)})
 
 
 def _file_mode(path: Path) -> str | None:

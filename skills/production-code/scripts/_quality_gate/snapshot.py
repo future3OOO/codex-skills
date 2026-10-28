@@ -171,8 +171,6 @@ class EvaluationSnapshot:
     capture_gaps: tuple[str, ...]
     # Caller-supplied evidence, parsed once and frozen here with everything
     # else a detector reads.
-    packet_paths: frozenset[str]
-    gitnexus_boosts: dict[str, int]
     gitnexus_warnings: tuple[str, ...]
     # The two external data Interfaces #77 versions, captured and frozen: the
     # graph evidence's snapshot binding (empty gap when it names this exact
@@ -199,10 +197,9 @@ class EvaluationSnapshot:
         changed = set(scope["changed_files"])
         renamed = dict(scope["renamed"])
         counts = _merge_numstats(list(scope["numstats"]))
-        untracked = set(scope["untracked"])
         capture_gaps = tuple(str(error) for error in scope["errors"])
         entries = tuple(
-            _entry(repo, path, renamed.get(path, path), base, tree, hunks, counts, path in untracked)
+            _entry(repo, path, renamed.get(path, path), base, tree, hunks, counts)
             for path in sorted(changed)
         )
         packet_paths = frozenset(parse_repo_context_packet(repo_context_packet))
@@ -212,8 +209,6 @@ class EvaluationSnapshot:
         )
         graph_gap, graph_files = _graph_binding(repo, gitnexus_context_json, base, tree)
         return cls(
-            packet_paths=packet_paths,
-            gitnexus_boosts=boosts,
             gitnexus_warnings=tuple(warnings),
             graph_gap=graph_gap,
             graph_files=graph_files,
@@ -281,7 +276,6 @@ def _entry(
     tree: str,
     hunks: dict[str, tuple[Hunk, ...]],
     counts: dict[str, Numstat],
-    untracked: bool,
 ) -> SnapshotEntry:
     classification = classify_path(rel_path)
     # Candidate text is read for every entry: a temp artifact is detected by its
@@ -296,7 +290,6 @@ def _entry(
         classification=classification,
         base_text=base_text,
         current_text=current_text,
-        untracked=untracked,
         added=added,
         deleted=deleted,
         hunks=hunks.get(rel_path, ()),
@@ -389,16 +382,15 @@ def _collect_hunks(raw_diff: str) -> dict[str, tuple[Hunk, ...]]:
     """One hunk-preserving walk of the captured diff, keyed by literal path."""
     collected: dict[str, list[Hunk]] = {}
     base_path = key = ""
-    base_line = current_line = 0
+    current_line = 0
     added: list[tuple[int, str]] = []
-    deleted: list[tuple[int, str]] = []
     in_hunk = False
 
     def close() -> None:
-        nonlocal in_hunk, added, deleted
+        nonlocal in_hunk, added
         if in_hunk and key:
-            collected.setdefault(key, []).append(Hunk(tuple(added), tuple(deleted)))
-        in_hunk, added, deleted = False, [], []
+            collected.setdefault(key, []).append(Hunk(tuple(added)))
+        in_hunk, added = False, []
 
     # Split on Git's actual record delimiter only: splitlines() would also
     # break on vertical tab, form feed, and Unicode separators inside a
@@ -423,7 +415,7 @@ def _collect_hunks(raw_diff: str) -> dict[str, tuple[Hunk, ...]]:
         match = _HUNK_HEADER.match(line)
         if match:
             close()
-            base_line, current_line = int(match.group(1)), int(match.group(3))
+            current_line = int(match.group(3))
             in_hunk = True
             continue
         if not in_hunk or not key:
@@ -431,11 +423,7 @@ def _collect_hunks(raw_diff: str) -> dict[str, tuple[Hunk, ...]]:
         if line.startswith("+"):
             added.append((current_line, line[1:]))
             current_line += 1
-        elif line.startswith("-"):
-            deleted.append((base_line, line[1:]))
-            base_line += 1
         elif line.startswith(" "):
-            base_line += 1
             current_line += 1
     close()
     return {path: tuple(items) for path, items in collected.items()}
