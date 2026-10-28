@@ -165,7 +165,7 @@ it with one call to an existing function) against every retained comparison batc
 maximum performance and efficiency of the delivered code with the requested behaviour held
 fixed. Acceptance order: (1) a regression, a probe of behaviour the request keeps that passes on
 the original and fails or times out on the candidate, binds and is repaired; (2) a request
-promise or benchmark binds only as a approved Behavior Map case; (3) a change that every recorded
+promise or benchmark binds only as an approved Behavior Map case; (3) a change that every recorded
 batch still passes binds and is applied; (4) anything else is a report line.
 
 ```bash

@@ -245,7 +245,9 @@ def _judge(entry: JsonObject, items: list[JsonObject], cases: dict[str, dict[str
                 reasons.append(ambiguity or f"{name} missing on original, current")
             attributable.update(dict.fromkeys(matched, name))
         unclaimed = {case: case_label(case) for case, by_tree in cases.items()
-                     if not conformance and case not in attributable and case not in claimed | deferred and not short_ids(case) & set(inputs)
+                     if case not in attributable and case not in claimed | deferred and not short_ids(case) & set(inputs)
+                     and not (conformance and by_tree.get("current") is None
+                              and (by_tree.get("original") or {}).get("execution") == "unavailable")
                      and _differs(by_tree.get("original"), by_tree.get("current"))}
         if contract:
             found.extend(f"{label} differs and no item names it" for label in unclaimed.values())
@@ -272,6 +274,8 @@ def _judge(entry: JsonObject, items: list[JsonObject], cases: dict[str, dict[str
             if not _passed(current, current_outcome):
                 found.append(f"{label} {_state(current)} on current")
             if conformance:
+                if not unverified(original) and _passed(original, original_outcome):
+                    found.append(f"{label} already passed on original: not new conformance")
                 continue
             if original is None or original.get("outcome") in {"skipped", "error"}:
                 reasons.append(f"{label} {_state(original)} on original")

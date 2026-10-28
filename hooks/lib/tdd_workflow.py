@@ -215,7 +215,7 @@ def _execute_tree(identity: RepoIdentity, source_tree: str, candidate_tree: str,
                     evaluations.setdefault(index, []).extend(found)
         timing = {"totalSeconds": time.perf_counter() - started,
                   "executionSeconds": time.perf_counter() - process_started}
-        cases = tdd_surface.case_results(surface, output)
+        cases = tdd_surface.case_results(surface, output, code)
         proof, error = None, "command timed out" if timed_out else ""
         if not timed_out:
             if code == 0:
@@ -343,6 +343,8 @@ def _run_probe(identity: RepoIdentity, probe: object, candidate: str, original: 
             return {"kind": "probe", "error": "probe path must be a new test file"}
         if not command:
             return {"kind": "probe", "error": "probe command must name an executable"}
+        if tdd_surface.identify(command).get("runner") not in {"pytest", "unittest"} and Path(identity.root, path).resolve() not in (Path(identity.root, arg).resolve() for arg in command):
+            return {"kind": "probe", "error": "probe command must name its probe file"}
         blob = _git(identity, "hash-object", "-w", "--stdin", stdin=probe["content"].encode()).decode().strip()
         tree = _indexed(identity, candidate, (("update-index", "--add", "--cacheinfo", f"100644,{blob},{path}"), None))
         result: JsonObject = {"kind": "probe", "candidate": _probe_outcome(identity, candidate, tree, path, command)}

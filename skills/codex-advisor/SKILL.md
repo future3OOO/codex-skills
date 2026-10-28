@@ -20,17 +20,14 @@ Review the drafted production preflight before it is recorded. Supply it with
 The advisor designs against [Production Preflight's frozen evaluation and architecture rules](../production-preflight/SKILL.md#behaviormap),
 challenging the supplied expectations and cost comparison before approval.
 
-Return `approved` when the draft has no material gap, otherwise
-`changes-required`. The lead revises once and uses `--reconsult` in the same session;
-no per-cycle user permission is needed. The second initial consult runs with write access; the advisor
-writes the measured architecture into the wrapper's draft copy, closes any remaining gap and cuts
-what no request sentence needs, checks its answer with the recorder's dry run, and returns `approved`; `record
-preflight` records that edited copy. The checkpoint sends the delta from the
-last recorded draft with base and target content identities. A failed result does
-not advance that base; retries may repeat the delta. With no recorded base, the
-retry carries the full artifact. Draft findings stay in their consult intake;
-approval gates the single `record preflight`.
-After recording, [amendments](../tdd/recorder.md#map-updates) reuse `--reconsult` and its full-access mode to edit the replacement draft.
+Initial preflight allows two consults, with four preflight rounds total per pass.
+The first returns `approved` or `changes-required`; on the second, the advisor
+edits the draft copy, closes gaps and cuts unnecessary work, runs the recorder's
+dry run until valid, and returns `approved`. `record preflight` records that copy.
+The checkpoint sends changes since the last recorded draft with both content
+identities; failed results retain that base, and the first request sends it whole.
+After recording, [amendments](../tdd/recorder.md#map-updates) reuse `--reconsult`
+and its full-access mode to edit replacement drafts within the remaining budget.
 
 Preflight records the governing-design declaration: `--design-file` with the
 durable design artifact of a planned stack, or `--design-absent` with a reason; a

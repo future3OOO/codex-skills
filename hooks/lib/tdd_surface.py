@@ -427,7 +427,7 @@ def _unittest_terminal_failures(output: str) -> list[tuple[str, list[str], list[
     return failures
 
 
-def case_results(surface: Mapping[str, object], output: str) -> dict[str, dict[str, str]]:
+def case_results(surface: Mapping[str, object], output: str, returncode: int = 0) -> dict[str, dict[str, str]]:
     """Attribute native terminal results; missing names are never inferred as passes. A command
     the runner does not recognise is attributed by the native report its output carries, else by
     its printed `name: result` lines outside interpreter tracebacks. A failing case reads `error` when a failure
@@ -446,7 +446,9 @@ def case_results(surface: Mapping[str, object], output: str) -> dict[str, dict[s
         for header, frames, assertion in failures:
             name = header.split(": ", 1)[1]
             cases[name] = {"outcome": "error" if name.split(")")[0] in unreached else "failed", "assertion": "\n".join(assertion)}
-            if re.fullmatch(r"\S+ \([^()\n]+\)", name) and name.split()[0] in frames:
+            if " (unittest.loader._FailedTest." in name or name.split()[0] in {"setUpClass", "setUpModule"}:
+                cases[name]["execution"] = "unavailable"
+            elif re.fullmatch(r"\S+ \([^()\n]+\)", name) and name.split()[0] in frames:
                 cases[name]["execution"] = "stopped"  # failed in its own body: later statements did not run
     elif runner == "pytest":
         # A test collected from another file's definition is reported `id <- file`; an ERROR is never overwritten.
@@ -465,6 +467,8 @@ def case_results(surface: Mapping[str, object], output: str) -> dict[str, dict[s
             # A setup or teardown ERROR beside the test's own FAILED leaves it unreached in either summary order.
             outcome = "error" if "error" in (kind.lower(), cases.get(name, {}).get("outcome")) else kind.lower()
             cases[name] = {"outcome": outcome, **({"assertion": joined} if joined else {})}
+            if kind == "ERROR" and "::" not in name:
+                cases[name]["execution"] = "unavailable"
         # pytest prints one FAILURES block per failing report, in the order of its summary records and of its progress
         # lines; a block is attributed through such a list naming each block's test in turn, and a case reads error when
         # one of its blocks ends in an import or syntax error. A report no such list attributes keeps the original's
@@ -484,6 +488,8 @@ def case_results(surface: Mapping[str, object], output: str) -> dict[str, dict[s
                     PRE_INTERFACE_FAILURE.match(exception) for listed, (_, exception, _) in zip(names, blocks) if listed == name)):
                 cases[name]["outcome"] = "error"
     else:
+        if returncode and (lines := clean.splitlines()) and lines[-1].startswith("Node.js v") and PRE_INTERFACE_FAILURE.match(diagnostic := _final_diagnostic(lines)):
+            clean = "".join(clean.rsplit(diagnostic, 1))
         # An operation probe names its cases itself: one `name: result` line each.
         for name, result in PRINTED_CASE.findall(PYTHON_TRACEBACK.sub("", clean)):
             # A repeated name cannot carry two results; neither may stand as proof.
