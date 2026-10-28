@@ -1,6 +1,6 @@
 ---
 name: code-quality
-description: Compact quality rubric: the seven principles for judging a change. Use when reviewing or challenging a diff, as an advisor or review rubric, or when another skill needs the quality-rule vocabulary; for implementing production changes use production-code.
+description: "Compact quality rubric: the seven principles for judging a change. Use when reviewing or challenging a diff, as an advisor or review rubric, or when another skill needs the quality-rule vocabulary; for implementing production changes use production-code."
 ---
 
 # Code Quality Rubric
