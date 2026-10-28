@@ -1,69 +1,57 @@
-# Writing Issues and Agent Briefs
+# Agent Brief Contract
 
-Write one compact, authoritative contract for issues and `ready-for-agent` briefs.
-Reconcile the request, body and comments; replace superseded instructions.
-Preserve requested outcomes and proof while removing unnecessary workflow ceremony.
+Start with **Objective**. Complete the [confirmation pause](SKILL.md#author-a-brief)
+before drafting, including shared-contract callers.
 
-Link to the applicable `AGENTS.md`; it owns execution and review corrections.
-Triage starts no pass and invents no phases, approvals, reviews, budgets or stopping
-rules. Apply user restrictions only to their stated scope. Distinguish repair from
-completed-code review under the existing workflow.
-Resolve contradictory instructions instead of layering another policy over them.
+## Objective / Evidence / Change / Acceptance
 
-## Establish the contract
+- **Objective:** State the confirmed behavior, trigger and governing contract.
+  Optimize performance while satisfying that behavior; invent no targets.
+- **Evidence:** Trace the root cause/limitation through current behavior, callers
+  and real probes. Reproduce bugs; verify prerequisites, not methodology labels.
+  Missing required cause blocks readiness.
+- **Change:** Specify only the minimum causal change needed for the confirmed
+  behavior at the existing owning Module, Interface and Seam. Reuse its capability;
+  if it already meets the objective, cite the proof and request no edit.
+  Follow [codebase-design](../codebase-design/SKILL.md) and applicable `AGENTS.md`.
+  Small functions are not automatically shallow Modules; add no wrapper or
+  extraction merely for the template. Preserve working contributions; exclude
+  unrelated cleanup and speculative flexibility.
+- **Acceptance:** Define expected results from the confirmed objective or applicable
+  conformance contract, never the candidate output. Prove the desired behavior and
+  affected preservation before comparing performance. Always name the baseline,
+  workload and metric; compare equally correct work, including repairs/retries.
+  Missing proof blocks readiness; required proof must be obtainable.
 
-1. **Objective:** state the observable result when the relevant trigger occurs.
-   Completing a map, producing artifacts or running tests is not the objective.
-2. **Evidence:** inspect current behavior and callers; reproduce bugs and link
-   decisive evidence. Verify any prerequisite you name. A methodology reference
-   is not an existing runnable checkpoint or seed.
-3. **Change:** search by domain concept for the owner to reuse and describe the
-   smallest sufficient correction. Paths guide discovery, not a fixed edit script.
-   For a PR, scope only the remaining gaps and preserve its working contribution.
-4. **Acceptance:** specify independently falsifiable outcomes and affected behavior
-   to preserve. Leave implementation and proof methods to the agent under the
-   repository workflow. Prescribe a method only when explicitly requested or
-   necessary to establish the outcome; state why it is necessary.
+For code changes, require the same targeted probes or applicable conformance cases
+through the production Interface on unchanged N and edited N+1, with real
+collaborators. Verify loaded sources, equivalent inputs and isolated mutable state;
+cover the actual changed code, affected cases and interactions. Follow
+[production-code's comparison rules](../production-code/SKILL.md#minimum-implementation-decision).
+Require the CLI for CLI claims and real agents for agent/workflow claims; compare
+actual artifacts for non-behavioral changes. Neither artifact nor component checks prove
+workflow speed.
 
-Include another issue only for a concrete dependency, shared interface or needed
-piece of evidence. Use historical examples as regression cases, not implementation templates.
-Resolve material unknowns before `ready-for-agent`; ask only what cannot be discovered.
+Reuse evidence; add no harnesses, metadata or tests per bullet. Historical examples
+are cases, not templates. Include only concrete dependencies or shared Interfaces;
+settle conflicts and unknowns, ask only what cannot be discovered, and keep
+user restrictions scoped.
 
-## Match proof to the claim
-
-Require real before/after observations of the changed behavior and affected
-preservation. Agent decisions need observed agent behavior; a CLI defect needs
-its actual CLI exercised. Neither implies replaying an entire production workflow.
-Use the least costly valid evidence, including applicable retained observations.
-Component checks cannot establish an unobserved agent outcome. For non-behavioral
-changes, compare the actual artifacts; do not invent a failing product baseline.
-
-When efficiency improvement is requested, compare the stated baseline and
-candidate doing equivalent work to the same correct outcome, including necessary
-repair or retry work. Measure the relevant cost or time; faster component tests
-cannot establish a workflow-efficiency claim. Do not invent performance targets.
-
-Keep necessary proof explicit and reconcile it before delivery under the existing
-workflow. Missing evidence remains work to complete. Check that the brief permits
-obtaining its required proof; do not require a measurement while forbidding it.
-Do not prescribe extra harnesses, metadata conventions, reports or a test per
-acceptance bullet unless the objective requires them.
-
-## Compact contract
+## Compact form
 
 ```markdown
-Follow the applicable `AGENTS.md` for execution.
-
-**Objective:** When [trigger], [observable result].
-**Evidence:** [Current gap and decisive evidence.]
-**Change:** [Existing owner, smallest correction, necessary scope boundary.]
+**Objective:** [Confirmed behavior, trigger, governing contract; performance goal.]
+**Evidence:** [Cause/limitation, measured probes and output references.]
+**Change:** [Existing Module/Interface/Seam; minimum required edit, or proven no edit.]
+Follow [applicable AGENTS.md] for execution and verification.
 **Acceptance:**
-
-- [ ] [Observable before/after outcome and affected preservation.]
-- [ ] [Another independently failing outcome, only if needed.]
+- [ ] [Objective proven by targeted N/N+1 probes or conformance cases for code
+      changes; artifact proof otherwise. Affected behavior preserved separately.]
+- [ ] [Baseline, workload, metric; equivalent correct work, no regression.]
+- [ ] No shallow helpers, fake unit tests, or performance regressions. On violation,
+      stop the task, retain/report evidence, reject delivery; the supervisor
+      cancels the run when it controls it.
 ```
 
-Remove repeated objectives, workflow boilerplate and unrelated history. Retain
-`## Agent Brief`, category/state and the AI disclaimer for `ready-for-agent`.
-Handovers need only the issue link and workflow/worktree instruction unless a
-task-specific exception is necessary.
+Include these bans and stop consequence in every brief. Remove repetition,
+superseded instructions, and unrelated history.
