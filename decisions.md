@@ -1982,3 +1982,39 @@ Decisions:
   commands; such a command still runs, without a receipt).
 
 Delivery status: in progress on `fix/pr102-review-followup`; merge awaits explicit authorization.
+
+## 2026-09-27 — Advisory proof-gap check at GREEN
+
+Decisions:
+
+- A valid mapped, runner-executed GREEN (`workflow.py tdd --phase green`) reruns its proof on scratch
+  copies with up to 12 small breaks (negate a condition, flip a comparison, drop a statement, return None)
+  on the changed production `.py` lines since the pass start that the proof runs and that fewer than
+  max(2, 25% of) other items' current GREEN proofs ran (stored on each item's map binding, so it commits
+  with the GREEN and leaves when the item does). Each break is caught, survived (the values or errors the
+  proof received differ from the unchanged run), survived with no difference detected, inconclusive (timed
+  out) or skipped (budget). The lead sees a summary and one location-and-mutation line per survivor with a
+  difference; the GREEN run entry keeps every survivor. GREEN never changes. A survivor is a lead, not a
+  confirmed gap.
+- Jev removed from this path (supersedes the Jev judgment above; PR #116 review, 2026-09-29). Blind-labelled
+  survivors: on armSX-none (272) the p >= 0.5 filter kept 20 of 70 useful difference survivors; on held-out
+  codex-skills passes (57) it kept 0 of 6, and ordering by score reached no more useful findings per GREEN
+  than file order. On PR121 it scored the survivors that exposed a missing history assertion 0.15 ("0 gaps").
+  Broader question sets (owner Choice, equivalence, impact) did not beat it; no cutoff transferred across
+  repos. Difference text is not shown: on PR121 the observer's 300-character cap and noise filter made it
+  misleading. Selection and review cost remain unvalidated on codex-skills: 6 of 57 listed survivors were
+  labelled useful.
+- Owned lines, not lines since the item's RED (supersedes SPEC-5's rule): replaying armSX-none's 71
+  GREENs, since-RED flagged 3 of 24 labelled weak items; owned lines 9/24 and 7/24 (two runs) with no
+  flagged item labelled not weak, median 4.4 s per GREEN (shipped map-binding version, after the PR #116
+  review fixes: 10/24, 0 false, median 4.5 s, max 13.8 s); all changed lines 9/24 with 1 false flag and a
+  28 s maximum. 30 breaks instead of 12 caught 10/24 at twice the time.
+- Only returned and raised values are observed: 113 of 114 labelled real gaps and every flagged replay
+  line came through them, so printed-output and database observation were removed.
+- `WORKFLOW_PROOF_GAPS=off` skips it: the rerun repeats a proof's effects outside the checkout.
+- Split agreed with the Jev-gate lead (#115 / PR #111 branch): this is a record-time check; the gate keeps
+  text judgments and owns the broad-catch rule. proof_gaps owns the only tracer (sys.monitoring tool id 4 on
+  Python 3.12+, sys.settrace on older interpreters: the proof keeps its own interpreter; without the fallback 132
+  benchmark GREENs on Python 3.11 got no check at all).
+
+Delivery status: in progress on `feat/proof-gaps-record-time`.
