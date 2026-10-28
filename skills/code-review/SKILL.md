@@ -82,13 +82,12 @@ Run **Standards** and **Spec** independently:
   implementation, acceptance criteria without proof, and Interface claims
   contradicted by caveats or implementation limits.
 
-Code is proof: the workflow runner executes each finding's evidence when the lead
-records it, and the workflow's [objective and acceptance order](../repo-production-workflow/SKILL.md#10-delegate-code-review)
-decide what binds. A `probe` is a new standalone test file whose oracle is the
-request's example, the original's result, the engine's answer, or a frozen
-requirement-grounded property; never invent an expectation. A `change` is a
-unified diff deleting code or replacing it with one call to an existing function.
-Cite the requirement, expected and observed effects, and consequence.
+The runner executes recorded findings; the workflow's [objective and acceptance order](../repo-production-workflow/SKILL.md#10-delegate-code-review) decide what binds.
+A `probe` is a new standalone test file asserting a request example, original
+result, engine answer or frozen requirement-grounded property; never invent an
+expectation. A `change` is a unified diff that only deletes code or replaces it
+with one call to an existing function. Cite the requirement, expected and
+observed effects, and consequence.
 
 ## 6. Return structured output
 
