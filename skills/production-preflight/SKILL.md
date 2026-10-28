@@ -70,7 +70,7 @@ readings of one behavior, is a pending `behaviorMap` item, not an unknown.
 
 ### `behaviorMap`
 
-Freeze requirement meaning and scope in TDD's [Behavior Map](../tdd/recorder.md#behavior-map). Quote each load-bearing promise and name its responsible production Interface and real setup. Ground expectations in executed original operations, engine primitives, literal request examples, or request-grounded properties and relations. A round-trip or idempotence law must also establish the requested effect. Use the recorder's kind and witness rules. Run benchmarks only when authorized, with workload, reference, budget and noise rule frozen.
+Freeze requirement meaning and scope in TDD's [Behavior Map](../tdd/recorder.md#behavior-map). Quote each load-bearing promise and name its responsible production Interface and real setup. Ground expectations in executed original operations, engine primitives, literal request examples, or request-grounded properties and relations. A round-trip or idempotence law must also establish the requested effect. Use the recorder's kind and witness rules. An authorized benchmark is a contract case beside the nearest existing operation; freeze its workload, repetitions, budget and noise rule.
 
 ```json
 [{"id":"BM_EXPIRY","kind":"contract","basis":"the deadline is inclusive","behavior":"expires at the deadline","seam":"Expiry.is_expired with a real clock","expected":"now equal to expiresAt is expired","boundaryInputs":["test_expires_at_deadline","test_not_expired_before_deadline"],"interpretations":["now > expiresAt","now >= expiresAt"],"interpretation":"now >= expiresAt","authority":"the request's 'at the deadline'"}]

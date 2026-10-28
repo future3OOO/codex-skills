@@ -30,7 +30,7 @@ last recorded draft with base and target content identities. A failed result doe
 not advance that base; retries may repeat the delta. With no recorded base, the
 retry carries the full artifact. Draft findings stay in their consult intake;
 approval gates the single `record preflight`.
-After recording, reuse `--reconsult` only for the [recorder's amendments](../tdd/recorder.md#map-updates).
+After recording, [amendments](../tdd/recorder.md#map-updates) reuse `--reconsult` and its full-access mode to edit the replacement draft.
 
 Preflight records the governing-design declaration: `--design-file` with the
 durable design artifact of a planned stack, or `--design-absent` with a reason; a
