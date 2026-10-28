@@ -20,7 +20,6 @@ if str(ROOT) not in sys.path:
 
 from hooks.lib.hook_input import advise, edited_path, read_hook_payload, working_directory  # noqa: E402
 from hooks.lib.repo_identity import RepoIdentityError, resolve_repo_identity  # noqa: E402
-from hooks.lib.state_store import is_reviewable_path, is_test_path  # noqa: E402
 from hooks.lib.workflow_state import invalidate_after_edit  # noqa: E402
 
 
@@ -57,22 +56,11 @@ def main() -> int:
     except (RepoIdentityError, ValueError):
         return 0
 
-    state, changed = invalidate_after_edit(identity, relative)
+    _, changed = invalidate_after_edit(identity, relative)
 
     lint = _ruff_lines([identity.root / path for path in changed])
     advisories = {f"lint:{identity.key}": "python lint findings:\n" + "\n".join(f"- {line}" for line in lint)
                   if lint else ""}
-    # Issue #212's single automatic trigger: after a successful production edit
-    # in an active pass, the map-ownership advisory runs once here and its
-    # bounded notice rides this same PostToolUse additionalContext. Eligibility
-    # follows ready_for_edit's complete/revalidation exclusions and
-    # production_changes' test exclusion. map_advisory never raises and never
-    # changes the edit outcome or the workflow state.
-    if (state is not None and state.get("phase") != "complete"
-            and not state.get("revalidation")
-            and any(is_reviewable_path(path) and not is_test_path(path) for path in changed)):
-        from hooks.lib.tdd_workflow import map_advisory
-        advisories[f"{identity.key}:map:{state.get('workflowId')}"] = map_advisory(identity, state) or ""
     advise("PostToolUse", payload.get("session_id"), advisories)
     return 0
 

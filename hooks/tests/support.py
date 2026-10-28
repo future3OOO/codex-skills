@@ -9,7 +9,7 @@ import sys
 import time
 from pathlib import Path
 
-from hooks.lib.behavior_map import initial_items, map_errors, no_change_item
+from hooks.lib.behavior_map import initial_items, map_errors
 from hooks.lib.repo_identity import RepoIdentity, resolve_repo_identity
 from hooks.lib.state_store import _active_candidate_tree
 from hooks.lib.workflow_documents import graph_evidence_document
@@ -64,23 +64,6 @@ def fixture_env(state_root: Path) -> dict[str, str]:
     return env
 
 
-def run_git(repo: Path, env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
-    """One git command in the fixture repository; the caller asserts the result."""
-    return subprocess.run(
-        ["git", *args], cwd=repo, env=env, text=True,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
-    )
-
-
-def run_workflow(repo: Path, env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
-    """The real workflow CLI against the fixture repository."""
-    return subprocess.run(
-        [sys.executable, str(WORKFLOW), *args, "--repo", str(repo)],
-        cwd=repo, env=env, text=True,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
-    )
-
-
 def run_post_edit(
     repo: Path, env: dict[str, str], relative: str, *, session: str | None,
     env_extra: dict[str, str] | None = None,
@@ -98,29 +81,6 @@ def run_post_edit(
     )
 
 
-def run_intake(
-    repo: Path, env: dict[str, str], slug: str, intent: str, *extra: str, timeout: int = 900
-) -> subprocess.CompletedProcess[str]:
-    """One real governed intake against a dirty dependent, so the index is real.
-
-    Local mode needs a dirty dependent; the overlay becomes part of the indexed
-    baseline, so it never touches the fixture's own changed symbol.
-    """
-    (repo / "caller.py").write_text(
-        "from app import compute\n\n\ndef run():\n    return compute(2)\n", encoding="utf-8"
-    )
-    return subprocess.run(
-        [
-            sys.executable, str(BOOTSTRAP), "--repo", str(repo),
-            "--workflow-slug", slug, "--mode", "local", "--intent", intent,
-            "--map-build", "never", "--gitnexus-mode", "auto", "--top", "5",
-            "--out", os.devnull, *extra,
-        ],
-        cwd=repo, env=env, text=True,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, timeout=timeout,
-    )
-
-
 def wait_for_trace_writes(path: Path, count: int = 2) -> int:
     deadline, found = time.monotonic() + 10, 0
     while found < count and time.monotonic() < deadline:
@@ -135,18 +95,13 @@ def pending_behavior(
     behavior: str = "value becomes two",
     seam: str = "public application behavior",
     expected: str = "value is two",
-    red_failure: str = "VALUE_NOT_TWO",
-    kind: str = "contract",
 ) -> dict[str, object]:
     return {
         "id": identifier,
-        "kind": kind,
         "basis": "test fixture behavior",
         "behavior": behavior,
         "seam": seam,
         "expected": expected,
-        "redFailure": red_failure,
-        "status": "pending",
         "sourceRefs": [],
     }
 
@@ -158,17 +113,12 @@ def build_document(
 ) -> dict[str, object]:
     """A structurally valid preflight document with explicit TDD scope."""
     return {"authoritativeContract": f"contract: {fill}",
-            "behaviorMap": [{**item, "sourceRefs": item.get("sourceRefs", [])} for item in behavior_map]}
+            "behaviorMap": [{key: value for key, value in item.items() if key in {"id", "basis", "behavior", "seam", "expected", "sourceRefs"}} for item in behavior_map]}
 
 
 def build_no_change_document(fill: str) -> dict[str, object]:
     """A preflight fixture that explicitly declares no production behavior work."""
-    return build_document(
-        fill,
-        behavior_map=[
-            no_change_item("test fixture declares no production behavior change")
-        ],
-    )
+    return build_document(fill, behavior_map=[])
 
 
 def graph_packet(root: str, candidate: str, head: str) -> dict[str, object]:

@@ -69,7 +69,17 @@ jobs:
         # public pytest RED-reach contract through the real runner and would
         # silently skip those checks if the dependency vanished.
         run: |
-          pip install pytest==8.4.1
+          sudo apt-get update -qq && sudo apt-get install -y bubblewrap
+          # Ubuntu 24.04 restricts unprivileged user namespaces; grant them to
+          # bwrap alone, which mounts each comparison arm at the repository path,
+          # and stop here if it still cannot create one.
+          printf '%s\n' 'abi <abi/4.0>,' 'include <tunables/global>' \
+            'profile bwrap /usr/bin/bwrap flags=(unconfined) {' '  userns,' '}' \
+            | sudo tee /etc/apparmor.d/bwrap >/dev/null
+          sudo apparmor_parser -r /etc/apparmor.d/bwrap
+          bwrap --dev-bind / / -- true
+          # setuptools: the editable-install comparison builds a real package.
+          pip install pytest==8.4.1 setuptools
           bash hooks/tests/run.sh
       - name: Package gate against the pull-request delta
         if: steps.scope.outputs.lane != 'docs'

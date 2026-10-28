@@ -53,7 +53,7 @@ class CompleteHelpContractTests(unittest.TestCase):
                 )
                 self.assertEqual(result.stdout, bare.stdout, "POSITIONED_HELP_LOST")
 
-    def test_tdd_help_presents_the_dual_flag_surface(self) -> None:
+    def test_tdd_help_presents_the_comparison_surface(self) -> None:
         for flag in ("--help", "-h"):
             with self.subTest(flag=flag):
                 result = self.run_help("tdd", flag)
@@ -63,8 +63,8 @@ class CompleteHelpContractTests(unittest.TestCase):
                 )
                 self.assertIn("usage:", result.stdout, "TDD_HELP_REGRESSED")
                 self.assertIn("--behavior-id", result.stdout, "TDD_HELP_REGRESSED")
-                self.assertIn("--behavior", result.stdout, "TDD_HELP_REGRESSED")
-                self.assertIn("--seam", result.stdout, "TDD_HELP_REGRESSED")
+                self.assertIn("--support", result.stdout, "TDD_HELP_REGRESSED")
+                self.assertNotIn("--phase", result.stdout, "TDD_HELP_REGRESSED")
 
     def test_json_emission_has_one_owner(self) -> None:
         # The reporting-failure policy lives once, in command_runner: neither

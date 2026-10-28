@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""PreToolUse: advise on edits; gate delegation on the lead's current proof.
+"""PreToolUse: advise on edits; gate turn-starting delegation on the lead's current proof.
 
-For edits, it names what the pass has not recorded yet and lets
-the edit through; the recorder binds every later RED to the tree it ran on,
-so order of proof is evidence the reviews weigh, not a verdict on keystrokes.
+For edits, it names what the pass has not recorded yet and lets the edit
+through; comparisons run on recorded source trees, so edit order needs no gate.
 A shell command that is exactly one pytest/unittest invocation is rewritten to
 run through `workflow verify --observed`, which keeps its receipt in the
 checkout where it runs and returns its exit code; while it keeps a receipt,
@@ -34,6 +33,7 @@ from hooks.lib.workflow_state import (  # noqa: E402
     read_workflow,
     ready_for_edit,
     review_blockers,
+    same_agent,
 )
 
 
@@ -41,8 +41,6 @@ WORKFLOW = ROOT / "skills" / "repo-production-workflow" / "scripts" / "workflow.
 SHELL_SYNTAX = re.compile(r"[;&|<>`$()\n\r\\]")
 # Unquoted, these the shell would expand or drop; quoted, they reach the runner verbatim.
 SHELL_EXPANSION = re.compile(r"[*?\[\]{}~#]")
-
-
 def observed(command: object) -> str | None:
     """The receipt-keeping form of a lone pytest/unittest command, else None."""
     if not isinstance(command, str) or SHELL_SYNTAX.search(command):
@@ -64,10 +62,11 @@ def main() -> int:
     tool_name = payload.get("tool_name")
     tool_name = tool_name.removeprefix("collaboration") if isinstance(tool_name, str) else ""
     inputs = payload.get("tool_input")
-    if tool_name == "Bash" and isinstance(inputs, dict) and (rewritten := observed(inputs.get("command"))):
-        emit("PreToolUse", permissionDecision="allow", updatedInput={**inputs, "command": rewritten})
-        return 0
-    if tool_name in {"Agent", "spawn_agent", "followup_task", "send_input", "send_message", "resume_agent"}:
+    if tool_name == "Bash" and isinstance(inputs, dict):
+        if rewritten := observed(inputs.get("command")):
+            emit("PreToolUse", permissionDecision="allow", updatedInput={**inputs, "command": rewritten})
+            return 0
+    if tool_name in {"Agent", "spawn_agent", "followup_task", "send_input", "resume_agent"}:
         missing: list[str] = []
         try:
             identity = try_resolve_repo_identity(working_directory(payload))
@@ -90,8 +89,8 @@ def main() -> int:
                            and owner.get("implementerContextId") and owner.get("reviewerContextId")
                            and owner["implementerContextId"] != owner["reviewerContextId"]]
                 if repairs:
-                    if not (tool_name in {"followup_task", "send_input", "send_message", "resume_agent"}
-                            and any(target is not None and target == owner.get("implementerContextId")
+                    if not (tool_name in {"followup_task", "send_input", "resume_agent"}
+                            and any(same_agent(owner.get("implementerContextId"), target)
                                     and session is not None and session == owner.get("reviewerContextId") for owner in repairs)):
                         missing.append("second recurrence requires continuation of the retained reviewer for repair")
                 else:
@@ -130,7 +129,7 @@ def main() -> int:
                                   "Admitted; nothing records this edit until it is repaired."]
     advise("PreToolUse", payload.get("session_id"), {
         f"{identity.key}:intake": "workflow intake: missing before this production edit: " + ", ".join(missing)
-        + ". Admitted; a RED taken after it is recorded as late." if missing else "",
+        + ". Admitted." if missing else "",
         f"{identity.key}:obligations": "\n".join(reminders)})
     return 0
 

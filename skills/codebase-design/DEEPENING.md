@@ -12,7 +12,7 @@ Pure computation, in-memory state, no I/O. Always deepenable: merge the modules 
 
 ### 2. Local Runtime Equivalent
 
-Dependencies with a real local runtime that executes the same contract, such as PGLite for Postgres or a temporary filesystem. Deepen only when it exercises the production Interface. A programmed stand-in is diagnostic-only and cannot satisfy RED/GREEN or production verification.
+Dependencies with a real local runtime that executes the same contract, such as PGLite for Postgres or a temporary filesystem. Deepen only when it exercises the production Interface. A programmed stand-in is diagnostic-only and cannot satisfy a comparison or production verification.
 
 ### 3. Remote But Owned
 

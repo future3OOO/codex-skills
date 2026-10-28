@@ -25,7 +25,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Bash|apply_patch|Agent|spawn_agent|followup_task|send_input|send_message|resume_agent|collaborationspawn_agent|collaborationfollowup_task|collaborationsend_message",
+        "matcher": "Bash|apply_patch|Agent|spawn_agent|followup_task|send_input|resume_agent|collaborationspawn_agent|collaborationfollowup_task",
         "hooks": [
           {
             "type": "command",

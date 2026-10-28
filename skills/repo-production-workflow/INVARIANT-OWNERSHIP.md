@@ -10,11 +10,13 @@ second source of truth that drifts on its own.
 
 | Contract | Canonical owner | Other consumers |
 |---|---|---|
-| Mock ban / real-Seam proof | `AGENTS.md` Hard Production Invariants | Local consequences and pointers only; one delegate copy in the advisor wrapper |
+| Mock ban / real-Seam proof, including project probe selection | `AGENTS.md` Hard Production Invariants | Pointers only: preflight `seam`, `tdd`, diagnose step 1, workflow step 6; one delegate copy in the advisor wrapper |
+| Workflow coordination and evidence reuse | `repo-production-workflow/SKILL.md` | `code-review`, advisor wrapper; implementation owner: `hooks/lib/tdd_workflow.py` |
 | Imaginary-risk rule | `AGENTS.md` Hard Production Invariants | Local consequences and one isolated-delegate copy |
 | Root-cause-first | `AGENTS.md` Hard Production Invariants | `diagnose` owns the tracing procedure |
 | GitNexus context/impact doctrine | `AGENTS.md` — GitNexus | The workflow supplies packet-specific facts |
 | Execution sequence and phase order | `repo-production-workflow/SKILL.md` | `AGENTS.md` — Production Repo Workflow owns only when skills fire |
+| Direct probe construction and post-edit comparison loop | `tdd/SKILL.md` | Workflow step 8 invokes it; Production Code owns outcome authority; the existing runner owns source execution and receipts |
 | Review ownership | `repo-production-workflow/SKILL.md` | `code-review` is the forked delegate's task; the lead records and dispositions; the final Codex Advisor review follows |
 | Terminal state and the governance-revalidation exception | `WORKFLOW-MAP.md` | `workflow.py` exposes the operator-facing Interface; `hooks/lib/workflow_state.py` implements shared transitions consumed by the CLI and hooks; legacy scripts are compatibility shims |
 | Public workflow status JSON | `WORKFLOW-MAP.md` | `workflow.py status` emits the canonical `schemaVersion: 1` projection; hooks and advisor automation consume semantic fields only |
@@ -29,8 +31,8 @@ second source of truth that drifts on its own.
 | Module / Interface / Seam vocabulary | `codebase-design/SKILL.md` | Architecture and preflight skills consume it |
 
 A markdown owner owns the canonical description of a contract, never its
-executable behavior. Where a row names both, the code is authoritative and the
-document must be corrected to match it.
+executable behavior. Where a row names both, code establishes what executes;
+the user's contract decides whether that behavior is correct.
 
 Workflow state records continuity only. It owns no Git, tree, attestation,
 approval, or security contract.
