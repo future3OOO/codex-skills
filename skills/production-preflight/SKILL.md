@@ -26,7 +26,7 @@ invariants and proof surface; an unnamed material part blocks recording.
 ## What To Produce
 
 Two fields: `authoritativeContract` (concise prose for the reviewers who read it;
-the recorder checks only that it is present) and `behaviorMap`. `behaviorMap` is authoritative for the obligations TDD must reconcile, not for
+the recorder checks only that it is non-empty text) and `behaviorMap`. `behaviorMap` is authoritative for the obligations TDD must reconcile, not for
 choosing the architecture; a plan may reference it but owns no copy. Keep ordinary
 local work short; transaction-sensitive work names the full surrounding surface.
 
