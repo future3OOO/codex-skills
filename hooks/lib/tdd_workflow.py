@@ -532,22 +532,21 @@ def _run_tdd(values: list[str]) -> int:
         arms.append({**arm, "requestedTree": source})
     outcomes = [arm["outcome"] for arm in arms]
     original_valid = all(outcome in {"passed", "failed"} for outcome in outcomes[:-1])
-    valid = outcomes[-1] == "passed" and (original_valid or any(item.get("kind") == "conformance" for item in mapped))
+    valid = outcomes[-1] == "passed" and not any(arm["timedOut"] for arm in arms[:-1]) and (original_valid or any(item.get("kind") == "conformance" for item in mapped))
     preserved = all(outcome == "passed" for outcome in outcomes)
     if preserved and surface.get("runner") not in {"pytest", "unittest"}:
         preserved = len({arm["output"].replace(arm["loadedRoot"], "<source>") for arm in arms}) == 1
-    comparison = "incomplete" if not valid else "preserved" if preserved else "changed"
     # The candidate's own tests run on every arm, so renamed ids are collected apart.
     renamed = {"renamed": _renamed_tests(identity, original, candidate, files, surface, args.timeout)} if surface.get("runner") == "pytest" else {}
     run = {"runIndex": len(runs), "command": shlex.join(command), "candidateTree": candidate, "originalTree": original,
            "probeFiles": files, "support": args.support, "timeout": args.timeout, "candidateKey": keys[-1],
            "named": named, "added": added,
            "sourceDelta": _source_delta(identity, original, candidate), **renamed,
-           "comparison": comparison, "arms": arms, "valid": valid, "execution": execution,
+           "comparison": "incomplete" if not valid else "preserved" if preserved else "changed", "arms": arms, "valid": valid, "execution": execution,
            "exitCode": 0 if valid else 1, "timedOut": any(arm["timedOut"] for arm in arms)}
     for item in mapped:
         item["comparison"] = {**run, "obligation": behavior_map.obligation(item),
-                              "valid": outcomes[-1] == "passed" and (original_valid or item.get("kind") == "conformance")}
+                              "valid": valid and (original_valid or item.get("kind") == "conformance")}
     document = {"workflowId": workflow_id, "slug": slug, "kind": "comparison", "behaviorMap": items,
                 "runs": [*runs, run], "updatedAt": utc_timestamp()}
     state, evidence = commit_tdd(identity, slug, workflow_id, document,

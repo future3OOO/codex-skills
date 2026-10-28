@@ -20,7 +20,7 @@ Review the drafted production preflight before it is recorded. Supply it with
 The advisor designs against [Production Preflight's frozen evaluation and architecture rules](../production-preflight/SKILL.md#behaviormap),
 challenging the supplied expectations and cost comparison before approval.
 
-Initial preflight allows two consults and four preflight rounds per pass.
+Initial preflight allows two consults; four preflight rounds total per pass.
 After `changes-required`, revise once and use `--reconsult` in the same session.
 That second round gives the advisor write access to close gaps, cut unnecessary
 work, dry-run the edited draft and return `approved`; `record preflight` records it.
