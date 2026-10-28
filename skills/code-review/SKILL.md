@@ -86,7 +86,7 @@ Code is proof: the workflow runner executes each finding's evidence when the lea
 records it, and the workflow's [objective and acceptance order](../repo-production-workflow/SKILL.md#10-delegate-code-review)
 decide what binds. A `probe` is a new standalone test file asserting a value taken
 from something executable (the request's own examples, the original code's result,
-or the engine's answer), never a reading. A `change` is a unified diff that only
+the engine's answer, or a frozen requirement-grounded property), never an invented expectation. A `change` only
 deletes code or replaces it with one call to an existing function. Every finding
 cites its governing requirement and states the expected versus observed effect and
 consequence.
@@ -104,5 +104,5 @@ only new findings. An empty return cannot close an earlier unresolved finding:
              {"id":"STD-1","axis":"Standards","location":"path:line","claim":"duplicate of existing()","change":"<unified diff>"}]}
 ```
 
-A request sentence no contract case covers is a report line naming it, never
+A request sentence no Behavior Map case covers is a report line naming it, never
 prose beside `{"findings":[]}`. The lead answers a binding finding only with a fix.

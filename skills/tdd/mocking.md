@@ -16,7 +16,7 @@ those paths; calling an internal function cannot establish that they work.
 
 When proving an application failure or adversarial input, drive the real reachable precondition through the production Seam.
 
-When proving a dependency or runtime failure, drive a real reachable condition that causes the production dependency or runtime to fail naturally. Do not replace an internal function merely to make it raise when the real Seam can produce that condition.
+When proving a dependency or runtime failure, drive a real reachable condition that causes it to fail naturally, such as a SQLite page limit producing SQLITE_FULL, then check the production operation's specified error and durable state. Do not replace an internal function merely to make it raise when the real Seam can produce that condition.
 
 The dependency's relevant semantics are part of the Seam. When correctness depends on transaction, filesystem, process, protocol, concurrency, scheduling, timing, or serialization behavior, exercise those semantics in the real runtime using the strongest deterministic harness available rather than reproducing an approximation.
 

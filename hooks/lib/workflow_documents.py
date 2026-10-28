@@ -123,7 +123,7 @@ DESIGN_FILE_SHAPE = (
     '{"schemaVersion":1,"status":"present","sha256":"<64 hex>"} or '
     '{"schemaVersion":1,"status":"absent","reason":"..."}'
 )
-ITEM_SHAPE = ('{"id":"BM_X","kind":"contract|preservation","basis":"original request or preservation",'
+ITEM_SHAPE = ('{"id":"BM_X","kind":"conformance|contract|preservation","basis":"original request or preservation",'
               '"behavior":"...","seam":"...","expected":"...","boundaryInputs":["executed case name"],'
               '"interpretations":["reading a","reading b"],"interpretation":"...","authority":"..."}')
 # A finding binds only through evidence the runner executes; anything else is a report line.

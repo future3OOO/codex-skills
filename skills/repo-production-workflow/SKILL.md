@@ -88,7 +88,7 @@ Continue to recording only after `approved`.
 
 ### 5. Record approved preflight once
 
-Record the approved contract and probe list with `record preflight` (no input: it records the advisor-approved draft). Keep this workflow pass when scope changes; update changed items by identity through `record tdd-map`; untouched items and valid proof remain.
+Record the approved contract and probe list with `record preflight` (no input: it records the advisor-approved draft). Keep this workflow pass when scope changes; use `record tdd-map` for witnesses and the recorder's existing advisor reconsult for required-scope amendments; untouched proof remains.
 
 ### 6. Select the probe batch
 
@@ -159,13 +159,13 @@ Historical receipts retain their original identity. Every review must describe
 the current candidate.
 
 Record the delegate's intake. Code is proof: the runner executes each finding's `probe`
-(`{"path","content","command"}`, a new standalone test file run by pytest or unittest) on the
+(`{"path","content","command"}`, a new standalone probe run by a direct project command) on the
 candidate and the original, and each `change` (a unified diff that only deletes code or replaces
 it with one call to an existing function) against every retained comparison batch. Objective:
 maximum performance and efficiency of the delivered code with the requested behaviour held
 fixed. Acceptance order: (1) a regression, a probe of behaviour the request keeps that passes on
 the original and fails or times out on the candidate, binds and is repaired; (2) a request
-promise or benchmark binds only as a Behavior Map contract case; (3) a change that every recorded
+promise or benchmark binds only as a approved Behavior Map case; (3) a change that every recorded
 batch still passes binds and is applied; (4) anything else is a report line.
 
 ```bash
@@ -175,9 +175,9 @@ python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" recor
 A no-finding intake binds the reviewed tree and passes immediately. Each later review intake
 and final re-check re-executes the stage's open binding findings on the current candidate: a
 finding settles when its evidence no longer binds, so the only answer is the repair. A report
-line naming a request sentence no contract case covers is a defect in the evaluation: decide
-whether the sentence demands it, record the decision in one line, and either add the contract
-case (`record tdd-map`) and implement it or continue. Verification, the typed gate, and a new
+line naming a request sentence no Behavior Map case covers is a defect in the evaluation: decide
+whether the sentence demands it, record the decision in one line, and either use the recorder's approved amendment
+path and implement it or continue. Verification, the typed gate, and a new
 review all run while findings are open; open findings block completion only.
 
 ### 11. Final Codex Advisor review

@@ -316,13 +316,15 @@ def _blob(identity: RepoIdentity, tree: str, path: str) -> str | None:
 
 
 def _probe_outcome(identity: RepoIdentity, source: str, tree: str, path: str, command: list[str]) -> str:
-    """passed or failed only when the probe file's own cases ran; a failure is the runner's red proof; past the limit, timed-out."""
+    """Reuse the executor's outcome; native probes must run their own cases."""
     surface = tdd_surface.identify(command)
     files = [name for raw in _git(identity, "ls-tree", "-r", "--name-only", "-z", tree).split(b"\0")
              if raw and is_test_path(name := os.fsdecode(raw))]
     arm = _execute_tree(identity, source, tree, files, command, surface, PROBE_TIMEOUT, {}, [])
     if arm["timedOut"]:
         return "timed-out"
+    if surface.get("runner") not in {"pytest", "unittest"}:
+        return str(arm["outcome"])
     cases = [case for name, case in (arm.get("cases") or {}).items() if _from_file(name, path)]
     if arm["outcome"] == "passed" and cases:
         return "passed"
@@ -339,8 +341,8 @@ def _run_probe(identity: RepoIdentity, probe: object, candidate: str, original: 
         path, command = os.path.normpath(probe["path"]), shlex.split(probe["command"])
         if os.path.isabs(path) or path.startswith("..") or not is_test_path(path) or _blob(identity, candidate, path) not in (None, probe["content"]):
             return {"kind": "probe", "error": "probe path must be a new test file"}
-        if tdd_surface.identify(command).get("runner") not in {"pytest", "unittest"}:
-            return {"kind": "probe", "error": "probe command must run pytest or unittest"}
+        if not command:
+            return {"kind": "probe", "error": "probe command must name an executable"}
         blob = _git(identity, "hash-object", "-w", "--stdin", stdin=probe["content"].encode()).decode().strip()
         tree = _indexed(identity, candidate, (("update-index", "--add", "--cacheinfo", f"100644,{blob},{path}"), None))
         result: JsonObject = {"kind": "probe", "candidate": _probe_outcome(identity, candidate, tree, path, command)}
@@ -404,12 +406,12 @@ def _run_change(identity: RepoIdentity, batches: list[JsonObject], change: objec
 
 def binds(execution: JsonObject) -> bool:
     """The acceptance order: a regression (a probe the original passes that fails or runs past its limit on the
-    candidate) binds and is repaired; a deletion every recorded batch still passes, or one running past its limit, binds;
+    candidate) binds and is repaired; a deletion every recorded batch still passes binds;
     anything else, a probe the original also fails included, asks for unrecorded behaviour: a report line."""
     if "error" in execution:
         return False
     if execution["kind"] == "change":
-        return execution.get("candidate") in {"passed", "timed-out"}
+        return execution.get("candidate") == "passed"
     return execution.get("candidate") in {"failed", "timed-out"} and execution.get("original") == "passed"
 
 
@@ -527,7 +529,8 @@ def _run_tdd(values: list[str]) -> int:
             arm = held[key]
         arms.append({**arm, "requestedTree": source})
     outcomes = [arm["outcome"] for arm in arms]
-    valid = outcomes[-1] == "passed" and all(outcome in {"passed", "failed"} for outcome in outcomes[:-1])
+    original_valid = all(outcome in {"passed", "failed"} for outcome in outcomes[:-1])
+    valid = outcomes[-1] == "passed" and (original_valid or any(item.get("kind") == "conformance" for item in mapped))
     preserved = all(outcome == "passed" for outcome in outcomes)
     if preserved and surface.get("runner") not in {"pytest", "unittest"}:
         preserved = len({arm["output"].replace(arm["loadedRoot"], "<source>") for arm in arms}) == 1
@@ -541,7 +544,8 @@ def _run_tdd(values: list[str]) -> int:
            "comparison": comparison, "arms": arms, "valid": valid, "execution": execution,
            "exitCode": 0 if valid else 1, "timedOut": any(arm["timedOut"] for arm in arms)}
     for item in mapped:
-        item["comparison"] = {**run, "obligation": behavior_map.obligation(item)}
+        item["comparison"] = {**run, "obligation": behavior_map.obligation(item),
+                              "valid": outcomes[-1] == "passed" and (original_valid or item.get("kind") == "conformance")}
     document = {"workflowId": workflow_id, "slug": slug, "kind": "comparison", "behaviorMap": items,
                 "runs": [*runs, run], "updatedAt": utc_timestamp()}
     state, evidence = commit_tdd(identity, slug, workflow_id, document,
@@ -570,11 +574,14 @@ def map_update(identity: RepoIdentity, state: JsonObject, value: JsonObject) -> 
     items = list({item["id"]: item for item in [*(previous or []), *updates]}.values())
     for entry in updates:
         prior = recorded.get(entry["id"])
-        if prior is not None and prior.get("boundaryInputs") == [] and "boundaryInputs" not in entry:
-            entry["boundaryInputs"] = []  # unmapped recorded inputs stay until executed case names replace them
+        if prior is not None and "boundaryInputs" in prior and "boundaryInputs" not in entry:
+            entry["boundaryInputs"] = []  # removing every witness cannot fall back to unrelated batch cases
         if prior and "comparison" in prior:  # a changed kind or obligation keeps its latest run and reads stale until rerun
-            entry["comparison"] = {**prior["comparison"],
-                                   "obligation": prior["comparison"].get("obligation", behavior_map.obligation(prior))}
+            proof = prior["comparison"]
+            entry["comparison"] = {**proof, "obligation": (behavior_map.obligation(prior)
+                if any(entry.get(key) != prior.get(key) for key in fields)
+                and proof.get("obligation") == behavior_map.obligation(prior)[:4]
+                else proof.get("obligation", behavior_map.obligation(prior)))}
     if items == previous:
         return operation_receipt(state, identity, summaryId=state.get("tddEvidence") or state["preflightEvidence"],
                                  pending=behavior_map.unresolved(items), reused=True)

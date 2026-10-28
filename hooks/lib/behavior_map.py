@@ -11,10 +11,9 @@ from . import tdd_surface
 
 JsonObject = dict[str, object]
 REQUIRED_FIELDS = frozenset({"id", "basis", "behavior", "seam", "expected"})
-KINDS = frozenset({"contract", "preservation"})
+KINDS = frozenset({"conformance", "contract", "preservation"})
 READING_FIELDS = frozenset({"interpretations", "interpretation", "authority"})
-# Judgement fields: a map update may change them without invalidating the executed
-# comparison, which is re-judged; a changed kind or obligation text requires a new comparison.
+# Optional map fields; semantic and witness-set changes require fresh proof.
 JUDGEMENT_FIELDS = READING_FIELDS | {"kind", "basis", "boundaryInputs"}
 IDENTIFIER = re.compile(r"^[A-Z][A-Z0-9_-]{1,63}$")
 UNITTEST_CASE = re.compile(r"^(\S+ \([^()\n]+\))((?: \[.*?\])?(?: \(.*\))?)$")
@@ -34,7 +33,7 @@ def _strings(value: object) -> list[str] | None:
 
 
 def _field_errors(raw: JsonObject, identifier: str) -> list[str]:
-    errors = [f"probe {identifier} kind must be contract or preservation"] if "kind" in raw and not (
+    errors = [f"probe {identifier} kind must be conformance, contract or preservation"] if "kind" in raw and not (
         isinstance(raw["kind"], str) and raw["kind"] in KINDS) else []
     if "boundaryInputs" in raw and _strings(raw["boundaryInputs"]) is None:
         errors.append(f"probe {identifier} boundaryInputs must name executed cases as non-empty strings")
@@ -81,7 +80,7 @@ def map_errors(value: object, *, allow_runtime: bool) -> list[str]:
         errors.extend(f"probe {identifier} requires {field}" for field in REQUIRED_FIELDS if not _text(raw.get(field)))
         if not allow_runtime:
             if "kind" not in raw:
-                errors.append(f"probe {identifier} requires kind: contract for a requested change, preservation for an invariant")
+                errors.append(f"probe {identifier} requires kind: conformance, contract or preservation")
             if extra := set(raw) - REQUIRED_FIELDS - JUDGEMENT_FIELDS:
                 errors.append(f"probe {identifier} has unknown fields: " + ", ".join(sorted(extra)))
             errors.extend(_field_errors(raw, identifier))
@@ -232,7 +231,8 @@ def _judge(entry: JsonObject, items: list[JsonObject], cases: dict[str, dict[str
     reasons: list[str] = []
     found: list[str] = []
     attributable: dict[str, str] = {}
-    contract = entry.get("kind") == "contract"
+    contract = entry.get("kind") in {"conformance", "contract"}
+    conformance = entry.get("kind") == "conformance"
     claimed = _claimed(entry, items, cases)
     # a sibling that has not run defers the cases its names select here: not this item's failure
     deferred = {case for other in items if other is not entry and not (other.get("comparison") or {}).get("arms")
@@ -245,7 +245,7 @@ def _judge(entry: JsonObject, items: list[JsonObject], cases: dict[str, dict[str
                 reasons.append(ambiguity or f"{name} missing on original, current")
             attributable.update(dict.fromkeys(matched, name))
         unclaimed = {case: case_label(case) for case, by_tree in cases.items()
-                     if case not in attributable and case not in claimed | deferred and not short_ids(case) & set(inputs)
+                     if not conformance and case not in attributable and case not in claimed | deferred and not short_ids(case) & set(inputs)
                      and _differs(by_tree.get("original"), by_tree.get("current"))}
         if contract:
             found.extend(f"{label} differs and no item names it" for label in unclaimed.values())
@@ -256,7 +256,7 @@ def _judge(entry: JsonObject, items: list[JsonObject], cases: dict[str, dict[str
     elif contract and len(cases) > 1:
         return ["several cases executed: name the requested ones in boundaryInputs"]
     else:
-        requested = _claimed(entry, items, cases, lambda other: other.get("kind") == "contract")
+        requested = _claimed(entry, items, cases, lambda other: other.get("kind") in {"conformance", "contract"})
         attributable = {name: case_label(name) for name in cases if name not in requested | deferred}
     if not contract and _unnamed_changes(run):
         found.append("unnamed output differs between original and current: name the cases "
@@ -266,21 +266,24 @@ def _judge(entry: JsonObject, items: list[JsonObject], cases: dict[str, dict[str
     differing = []
     for case, label in attributable.items():
         original, current = cases[case].get("original"), cases[case].get("current")
-        if unverified(original) or unverified(current):
+        if unverified(current) or not conformance and unverified(original):
             reasons.append(f"{label} unverified: measurement unavailable is not proof")
         elif contract:
             if not _passed(current, current_outcome):
                 found.append(f"{label} {_state(current)} on current")
+            if conformance:
+                continue
             if original is None or original.get("outcome") in {"skipped", "error"}:
                 reasons.append(f"{label} {_state(original)} on original")
             elif _passed(current, current_outcome) and _differs(original, current):
                 differing.append(label)
         elif not (_passed(original, original_outcome) and _passed(current, current_outcome)) or _differs(original, current):
             found.append(f"{label} differs (original={_state(original)}, current={_state(current)})")
-    if contract and not differing and not reasons and not found:
+    if entry.get("kind") == "contract" and not differing and not reasons and not found:
         found.append("no attributable case differs between original and current")
     if found:
-        found.append(("name every differing case in its owning item and show the requested change on it" if contract
+        found.append(("conformance cases must pass on current" if conformance
+                      else "name every differing case in its owning item and show the requested change on it" if contract
                       else "preservation cases must pass unchanged on both trees")
                      + ": repair the code or the probe")
     return reasons + found
@@ -312,7 +315,7 @@ def open_obligations(items: list[JsonObject]) -> list[str]:
             folded[comparison.get("runIndex")] = folded_cases(comparison)[0]
         cases = folded.get(comparison.get("runIndex"), {}) if comparison.get("arms") else {}
         if entry.get("kind") not in KINDS:
-            reason = "declare kind (contract or preservation) through record tdd-map"
+            reason = "declare kind (conformance, contract or preservation) through record tdd-map"
         elif entry.get("boundaryInputs") == []:
             reason = "recorded boundary inputs are not executed case names: map them through record tdd-map"
         elif readings_unsettled(entry):
@@ -360,13 +363,14 @@ def open_obligations(items: list[JsonObject]) -> list[str]:
 
 
 def obligation(entry: JsonObject) -> list[object]:
-    return [entry.get(key) for key in ("kind", "behavior", "seam", "expected")]
+    return [entry.get(key) for key in ("kind", "behavior", "seam", "expected", "basis", *sorted(READING_FIELDS))] + [
+        sorted(set(entry.get("boundaryInputs") or []))]
 
 
 def producer_proved(entry: JsonObject) -> bool:
     comparison = entry.get("comparison")
     return (isinstance(comparison, dict) and comparison.get("valid") is True and comparison.get("fresh", True) is True
-            and comparison.get("obligation", obligation(entry)) == obligation(entry))
+            and comparison.get("obligation", obligation(entry)) in (obligation(entry), obligation(entry)[:4]))
 
 
 def unresolved(items: list[JsonObject]) -> list[str]:
