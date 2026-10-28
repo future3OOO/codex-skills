@@ -909,8 +909,8 @@ def record_advisor_result(
             if verdict in {"approved", "changes-required"}:
                 if intake is None or preflight_draft is None:
                     raise WorkflowError("draft advice requires its reviewed preflight artifact")
-                if state.get("preflightRounds", 0) >= 4:
-                    raise WorkflowError("preflight consultation budget exhausted (4 rounds)")
+                if state.get("preflightRounds", 0) >= (4 if state.get("preflightEvidence") else 2):
+                    raise WorkflowError("preflight consultation budget exhausted")
                 if verdict == "changes-required" and state.get("preflightRounds") and not state.get("preflightEvidence"):
                     raise WorkflowError("the second preflight consult is the last: the advisor edits the draft "
                                         "in place and returns approved")
@@ -1171,8 +1171,8 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
     if phase == "preflight-advice":
         if preflight_draft is None:
             missing.append("preflight draft (--preflight-file)")
-        if state.get("preflightRounds", 0) >= 4:
-            missing.append("preflight consultation budget exhausted (4 rounds)")
+        if state.get("preflightRounds", 0) >= (4 if state.get("preflightEvidence") else 2):
+            missing.append("preflight consultation budget exhausted")
         if state.get("preflightLatestEvidence") and not reconsult:
             missing.append("preflight already recorded; use --reconsult for an amendment")
     evidence_id = state.get("repoContextForgeEvidence")

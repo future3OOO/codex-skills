@@ -20,14 +20,13 @@ Review the drafted production preflight before it is recorded. Supply it with
 The advisor designs against [Production Preflight's frozen evaluation and architecture rules](../production-preflight/SKILL.md#behaviormap),
 challenging the supplied expectations and cost comparison before approval.
 
-Initial preflight allows two consults, with four preflight rounds total per pass.
-The first returns `approved` or `changes-required`; on the second, the advisor
-edits the draft copy, closes gaps and cuts unnecessary work, runs the recorder's
-dry run until valid, and returns `approved`. `record preflight` records that copy.
-The checkpoint sends changes since the last recorded draft with both content
-identities; failed results retain that base, and the first request sends it whole.
-After recording, [amendments](../tdd/recorder.md#map-updates) reuse `--reconsult`
-and its full-access mode to edit replacement drafts within the remaining budget.
+Initial preflight allows two consults and four preflight rounds per pass.
+After `changes-required`, revise once and use `--reconsult` in the same session.
+That second round gives the advisor write access to close gaps, cut unnecessary
+work, dry-run the edited draft and return `approved`; `record preflight` records it.
+The checkpoint sends the delta with both content identities; failed results keep
+that base, and the first request sends it whole. Recorded-scope [amendments](../tdd/recorder.md#map-updates)
+reuse `--reconsult` and write access within the remaining budget.
 
 Preflight records the governing-design declaration: `--design-file` with the
 durable design artifact of a planned stack, or `--design-absent` with a reason; a

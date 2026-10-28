@@ -268,16 +268,15 @@ def _judge(entry: JsonObject, items: list[JsonObject], cases: dict[str, dict[str
     differing = []
     for case, label in attributable.items():
         original, current = cases[case].get("original"), cases[case].get("current")
-        if unverified(current) or not conformance and unverified(original):
+        if unverified(current) or unverified(original):
             reasons.append(f"{label} unverified: measurement unavailable is not proof")
         elif contract:
             if not _passed(current, current_outcome):
                 found.append(f"{label} {_state(current)} on current")
             if conformance:
-                if not unverified(original) and _passed(original, original_outcome):
-                    found.append(f"{label} already passed on original: not new conformance")
-                continue
-            if original is None or original.get("outcome") in {"skipped", "error"}:
+                if _passed(original, original_outcome):
+                    found.append(f"{label} already passed on original: use preservation")
+            elif original is None or original.get("outcome") in {"skipped", "error"}:
                 reasons.append(f"{label} {_state(original)} on original")
             elif _passed(current, current_outcome) and _differs(original, current):
                 differing.append(label)
@@ -286,7 +285,7 @@ def _judge(entry: JsonObject, items: list[JsonObject], cases: dict[str, dict[str
     if entry.get("kind") == "contract" and not differing and not reasons and not found:
         found.append("no attributable case differs between original and current")
     if found:
-        found.append(("conformance cases must pass on current" if conformance
+        found.append(("conformance needs original failure or inability and current success" if conformance
                       else "name every differing case in its owning item and show the requested change on it" if contract
                       else "preservation cases must pass unchanged on both trees")
                      + ": repair the code or the probe")
