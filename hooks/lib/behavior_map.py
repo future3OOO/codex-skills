@@ -313,7 +313,7 @@ def _judge(entry: JsonObject, items: list[JsonObject], cases: dict[str, dict[str
         elif contract:
             if not _passed(current, current_outcome):
                 found.append(f"{label} {_state(current)} on current")
-            if original is None or original.get("outcome") == "skipped":
+            if original is None or original.get("outcome") in {"skipped", "error"}:
                 reasons.append(f"{label} {_state(original)} on original")
             elif _passed(current, current_outcome) and _differs(original, current):
                 differing.append(label)
