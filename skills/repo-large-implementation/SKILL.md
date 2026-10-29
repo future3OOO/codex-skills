@@ -1,6 +1,6 @@
 ---
 name: repo-large-implementation
-description: Govern large planned repo work — anything spanning multiple PRs, needing a durable governing design, or exceeding the review budget. Begins repo-production-workflow and Repo Context Forge before delivery-governance and execution-planning, continues that pass for first implementation, and uses new passes for later slices. Use before broad plans, PR restructuring, or stacked-branch recovery.
+description: Govern large planned repo work — anything spanning multiple PRs or needing a durable governing design. Begins repo-production-workflow and Repo Context Forge before delivery-governance and execution-planning, continues that pass for first implementation, and uses new passes for later slices. Use before broad plans, PR restructuring, or stacked-branch recovery.
 ---
 
 # Repo Large Implementation
@@ -64,7 +64,7 @@ owns, and no review-local plan may narrow that surrounding surface.
 - Detached review worktrees are for inspection only unless they are deliberately realigned and used as the implementation checkout.
 - Keep active dependent stack depth as low as possible. If the plan would create more than `3` active dependent PRs, stop and regroup.
 - Keep each PR near the review budget (target ~500 net lines; measurement and split threshold in the delivery-governance skill).
-- If a planned or active PR is likely to exceed the split threshold, stop adding scope and either split by integration boundary, remove nonessential changes, or ask the user for explicit approval to exceed it for a concrete reason.
+- If a planned or active PR is likely to exceed the split threshold, stop adding scope and apply delivery-governance's split threshold rule.
 - When drift appears, preserve behavior, not branch archaeology.
 
 ## Required Planning Output
@@ -101,6 +101,6 @@ A large implementation is not complete until:
 
 - the governing design exists and was followed
 - the owning PR is green under the repo quality gate
-- the owning PR is within the review budget, or the user explicitly approved a justified exception before the oversize work continued
+- the owning PR is within the review budget, or below the split threshold with its overage justified in the governing artifact
 - coupled tests/docs/contracts moved with the code
 - drift or supersession status is recorded honestly

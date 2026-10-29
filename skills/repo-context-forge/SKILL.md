@@ -16,13 +16,12 @@ Governed production pass (an active workflow exists):
 
 ```bash
 python3 "$HOME/.codex/skills/repo-context-forge/scripts/bootstrap.py" \
-  --repo "$PWD" --workflow-slug "<active-pass-slug>" --intent "<user request>"
+  --repo "$PWD" --workflow-slug "<active-pass-slug>"
 ```
 
-`--workflow-slug` must be the active workflow's slug and `--intent` its
-intent; the adapter records the Repo Context Forge step on that workflow and
-refuses a mismatched slug. Shell-quote the `--intent` text and any slug
-placeholder — intents contain spaces and punctuation that split unquoted.
+`--workflow-slug` must be the active workflow's slug; the adapter records the
+Repo Context Forge step on that workflow and refuses a mismatched slug. The lead
+runs the command `begin` returns. Shell-quote any slug placeholder.
 When the packet resolves a real base (its base ref is not the head-ref
 sentinel), the adapter also records the packet's fork-point commit as the
 pass's immutable base OID (`baseOid` in the status projection): the first
@@ -214,9 +213,10 @@ On a governed pass, use `workflow.py summary` to check the retained graph's
 applicability. Documentation and Python comment corrections with unchanged
 parsed code and source positions can reuse it; the projection keeps its original
 indexed tree and names the current reuse candidate. Current quality and review
-still run. Changed code, positions, paths, modes or dependencies require the
-bootstrap wrapper with the same `--workflow-slug` and `--revalidate` before typed
-quality-gate verification. That wrapper owns the governed candidate index and
+still run. Changed code, positions, paths, modes or dependencies are re-analyzed
+automatically: typed quality-gate verification and the advisor checkpoint run the
+bootstrap wrapper's `--revalidate` themselves when the recorded projection is stale,
+so do not run it by hand. That wrapper owns the governed candidate index and
 executed checks: do not also force-index the source checkout or repeat those
 checks. Use the refreshed packet's exact repo selector for any remaining gap.
 `detect_changes` is optional supplemental evidence for a named question; scope

@@ -25,8 +25,7 @@ flowchart LR
     C -->|behavioral correction| TM2[tdd-map adds the item]
     TM2 --> I
     C -->|non-behavioral correction| I
-    C -->|evidence-backed rejection| AP[one appeal on the same session]
-    AP --> C
+    C -->|executed counter-probe| TM2
     C -->|yes, PR| DL[delivery]
     C -->|yes, no PR| WC[workflow complete]
     DL --> PR{reviewer gate closed?}
@@ -46,19 +45,16 @@ workflow history               # ordered accepted receipts and logical reference
 workflow evidence [--full]     # one evidence record's metadata, or its document
 workflow set-phase             # trivial code review only
 workflow record <kind> [--check] [--input -|path]
-                               # preflight|review|advisor-result|tdd-map;
-                               # `record <kind> --help` prints the accepted shape
+                               # preflight|review|advisor-result|tdd-map
 workflow record advisor-disposition --finding ID --fixed|--rejected|--report-only|--follow-up REFERENCE --reason TEXT
-workflow tdd                   # compare probes on original, reviewed and candidate sources
-workflow verify                # generic commands, typed quality gate, --observed, --from-evidence
+workflow tdd                   # compare probes on the original and candidate sources
+workflow verify                # the typed quality gate; an unchanged tree and base reuse its receipt
 workflow pause|checkpoint|complete|prune
 ```
 
 Mutation receipts include identity, the operation result and `next`: its bound
-`command`, any authored `input`, optional producer `help` and finding bindings.
-Summary derives recovery guidance from the current checkout. Observed execution identifies its kind and
-supplies a ready verification-binding command on success; a failed observation
-leaves verification unchanged. Dry-run recording publishes no continuation or
+`command`, any authored `input` and finding bindings.
+Summary derives recovery guidance from the current checkout. Dry-run recording publishes no continuation or
 committed reference. `status` returns full state. Identity defaults to the active workflow; an explicit
 `--slug`/`--workflow-id` that disagrees refuses. Every refusal names all of a
 document's violations at once and mutates nothing.
@@ -79,10 +75,9 @@ returns exit 2, names `no active workflow`, and creates no state.
 
 Repo Context Forge, preflight, TDD, verification and review record their native
 documents as logical evidence in the same SQLite transaction as the accepted event.
-Finding dispositions take the identifier, decision and substantive reason; the
-workflow supplies recorded intake, stage, source binding and linked comparison
-results. A judgment without runnable checks needs no execution reference. A
-findings-none disposition carries no document. The preflight document
+Review and final findings carry a `probe` or a deletion-only `change` that the runner
+executes when they are recorded; the executed result, never the producer's claim,
+decides whether a finding binds. A findings-none disposition carries no document. The preflight document
 owns the initial Behavior Map; mapped TDD evidence carries its stable IDs,
 source comparisons and finding references. A plan may show
 the map but is not an evidence owner.
@@ -105,15 +100,16 @@ the transcript audit.
 
 The database and its containing directory are private and agent-writable. Committed transactions provide continuity across process restart and compaction; it is not tamper-proof and does not authorize Git. A normal
 commit or HEAD change does not invalidate it. The edit hook advises, never
-refuses (hook table below). The runner compares original, reviewed and candidate sources and retains bound results. Update the list only when obligations change. A normally
+refuses (hook table below). The runner compares the original and candidate sources and retains bound results. Update the list only when obligations change. A normally
 completed workflow is terminal: every mutation except `begin` is rejected.
 
 The edit hook runs no impacted-test scan: a file-level list sent agents into
 whole test modules without naming the tests a change breaks.
 
 A governance-document edit after completion is the sole controlled revalidation exception: it opens a window in
-which only verification, code review, the final advisor review, and completion
-are accepted, production editing stays closed, and completing again restores
+which only context refresh, verification, reruns of mapped comparisons a governance edit left stale,
+code review, the final advisor review, and completion are accepted, the Behavior Map
+and production editing stay closed, and completing again restores
 the terminal state. The read-only `checkpoint` query reports consult
 readiness for the advisor phases without mutating anything.
 
@@ -140,17 +136,12 @@ resume at the first unsatisfied phase in the same ordered workflow. A
 pass with an empty approved probe list resumes verification; an unresolved
 comparison resumes TDD.
 
-Behavioral findings return to the same workflow: attach the finding reference to its owning probe, implement the repair and execute the comparison against the recorded reviewed source. The runner supplies current proof; existing review judges the requirement and finding closure. List edits cannot discharge material findings. Separate work starts a new pass.
+Behavioral findings return to the same workflow: attach the finding reference to its owning probe, implement the repair and execute the comparison against the original. The runner supplies current proof; existing review judges the requirement and finding closure. List edits cannot discharge material findings. Separate work starts a new pass.
 
-A finding envelope is one correction batch. A pending behavioral finding rides
-the pass as a map-owned attack obligation; dispositions may cover any subset,
-and later documents preserve append-only history. Until every material finding is dispositioned and the map is closed, the final
-checkpoint and `complete` refuse; verification, the typed gate, and lead
-review run regardless. Targeted TDD and direct changed-Seam
-probes remain available. Final rejections use one context-matched appeal response:
-omission or same-ID `material:false` concedes, a material re-raise reopens
-the finding for one more lead disposition, which then stands, and new IDs form
-their own immutable intake.
+A finding envelope is one correction batch. Until every binding finding settles by
+re-execution and the map is closed, the final checkpoint and `complete` refuse;
+verification, the typed gate, and lead review run regardless. Targeted TDD and direct
+changed-Seam probes remain available. New IDs form their own immutable intake.
 
 ## Approval freshness
 
@@ -197,7 +188,6 @@ session and defers the rest here.
 | Hook | Role |
 |---|---|
 | `PreToolUse(Edit\|Write\|apply_patch)` | Advise, never refuse: name what the pass has not recorded and admit the edit; docs, scratch, and non-repository paths are silent; test-like paths skip only the comparison advice |
-| `PreToolUse(Bash)` | Rewrite a lone pytest/unittest command to `workflow.py verify --observed -- <command>`: the same exit code, plus a receipt in the checkout of the command's own working directory; while it records, the command's stderr is merged into stdout |
 | `PostToolUse(Edit\|Write\|apply_patch\|Bash)` | Observe explicit edit paths and actual Git changes, invalidate downstream readiness, then return batched lint |
 | `PostCompact` | Forget which advisories this session has heard, so each returns once after compaction |
 | `SessionStart(compact)` | Restore the discipline line and the pass's open work from committed SQLite state |
@@ -218,6 +208,16 @@ Behavior Map, test command, or live review. The review-time manifest above is
 workflow state rather than one of these summaries, and it identifies working-tree
 file mode and content, plus each submodule's checked-out commit — never this
 repository's own HEAD, and never an attestation.
+
+## Finding batches
+
+Findings and map items batch by owner. A finding names one owning Module and violated invariant and lists every demonstrated input as its cases; a later input to the same owner and invariant is a case of that finding through `priorFinding`, and its repair is the owner's class-wide correction. The map carries one contract and one preservation item per owning Interface, each decisive context a case of it.
+
+Both intake paths reconcile retained namespace/ID and exact behavioral claims
+(outer whitespace only). Changed wording/identity can use an owned
+`priorFinding: {"evidenceId":"...","id":"..."}`; ambiguous matches require one.
+Distinct findings need distinct IDs. Pending retries preserve progress; a settled
+finding raised again opens a new obligation. Observations and proof stay immutable.
 
 ## Delivery is separate
 

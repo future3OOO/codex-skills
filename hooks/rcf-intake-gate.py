@@ -3,16 +3,10 @@
 
 For edits, it names what the pass has not recorded yet and lets the edit
 through; comparisons run on recorded source trees, so edit order needs no gate.
-A shell command that is exactly one pytest/unittest invocation is rewritten to
-run through `workflow verify --observed`, which keeps its receipt in the
-checkout where it runs and returns its exit code; while it keeps a receipt,
-the command's stderr is merged into stdout.
 """
 from __future__ import annotations
 
 import os
-import re
-import shlex
 import sqlite3
 import sys
 from pathlib import Path
@@ -25,36 +19,13 @@ from hooks.lib._workflow_db import LedgerError  # noqa: E402
 from hooks.lib.hook_input import advise, edited_path, emit, is_explorer_continuation, read_hook_payload, working_directory  # noqa: E402
 from hooks.lib.repo_identity import RepoIdentityError, resolve_repo_identity, try_resolve_repo_identity  # noqa: E402
 from hooks.lib.state_store import is_reviewable_path, is_test_path  # noqa: E402
-from hooks.lib.tdd_surface import identify  # noqa: E402
 from hooks.lib.tdd_workflow import edit_blockers  # noqa: E402
 from hooks.lib.workflow_state import (  # noqa: E402
     WorkflowError,
-    _finding_unresolved,
     read_workflow,
     ready_for_edit,
     review_blockers,
-    same_agent,
 )
-
-
-WORKFLOW = ROOT / "skills" / "repo-production-workflow" / "scripts" / "workflow.py"
-SHELL_SYNTAX = re.compile(r"[;&|<>`$()\n\r\\]")
-# Unquoted, these the shell would expand or drop; quoted, they reach the runner verbatim.
-SHELL_EXPANSION = re.compile(r"[*?\[\]{}~#]")
-def observed(command: object) -> str | None:
-    """The receipt-keeping form of a lone pytest/unittest command, else None."""
-    if not isinstance(command, str) or SHELL_SYNTAX.search(command):
-        return None
-    try:
-        tokens = shlex.split(command)
-        bare = shlex.split(re.sub(r"'[^']*'|\"[^\"]*\"", "''", command))
-    except ValueError:
-        return None
-    if any(SHELL_EXPANSION.search(token) for token in bare):
-        return None
-    if identify(tokens).get("runner") not in {"pytest", "unittest"}:
-        return None
-    return shlex.join([sys.executable, str(WORKFLOW), "verify", "--observed", "--", *tokens])
 
 
 def main() -> int:
@@ -62,10 +33,6 @@ def main() -> int:
     tool_name = payload.get("tool_name")
     tool_name = tool_name.removeprefix("collaboration") if isinstance(tool_name, str) else ""
     inputs = payload.get("tool_input")
-    if tool_name == "Bash" and isinstance(inputs, dict):
-        if rewritten := observed(inputs.get("command")):
-            emit("PreToolUse", permissionDecision="allow", updatedInput={**inputs, "command": rewritten})
-            return 0
     if tool_name in {"Agent", "spawn_agent", "followup_task", "send_input", "resume_agent"}:
         missing: list[str] = []
         try:
@@ -80,21 +47,7 @@ def main() -> int:
                             return 0
                     elif is_explorer_continuation(payload):
                         return 0
-                raw_session = payload.get("session_id")
-                session = raw_session if isinstance(raw_session, str) and raw_session.strip() else None
-                target = inputs.get("target") or inputs.get("id") if isinstance(inputs, dict) else None
-                repairs = [owner for entry in state.get("findingStates", [])
-                           if isinstance(entry, dict) and _finding_unresolved(entry)
-                           and int(entry.get("recurrence", 0)) >= 2 and (owner := entry.get("repairOwner"))
-                           and owner.get("implementerContextId") and owner.get("reviewerContextId")
-                           and owner["implementerContextId"] != owner["reviewerContextId"]]
-                if repairs:
-                    if not (tool_name in {"followup_task", "send_input", "resume_agent"}
-                            and any(same_agent(owner.get("implementerContextId"), target)
-                                    and session is not None and session == owner.get("reviewerContextId") for owner in repairs)):
-                        missing.append("second recurrence requires continuation of the retained reviewer for repair")
-                else:
-                    missing = review_blockers(identity, state)
+                missing = review_blockers(identity, state)
                 if missing:
                     missing = [f"{identity.root} [{state['slug']}/{state['workflowId']}]: " + ", ".join(missing)]
 

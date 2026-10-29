@@ -160,8 +160,6 @@ Diverged files (manual merge — sync will not overwrite):
 - `skills/codex-advisor/` — codex's own advisor skill (upstream's
   `codex-advisor` is the same role under the other harness's name)
 - `skills/code-review/SKILL.md` — codex delegate frontmatter
-- `skills/production-code/scripts/test_code_quality_gate.py` — captured historical
-  calibration literals must retain their original spelling and pinned digests
 
 ## Session relocation
 

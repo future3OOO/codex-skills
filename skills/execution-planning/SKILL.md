@@ -111,7 +111,7 @@ Name:
 
 If the design cannot answer “which PR owns this behavior,” it is not ready.
 
-If any PR slice is likely to run past the review-budget target (~500 net lines), record the reason and shrink it where practical. If any slice is likely to exceed the split threshold (1,000 net lines), split it before implementation or record explicit user approval for the exception.
+If any PR slice is likely to run past the review-budget target (~500 net lines), record the reason and shrink it where practical. If any slice is likely to exceed the split threshold (1,000 net lines), apply delivery-governance's split threshold rule before implementation.
 
 If the work updates an existing PR, also name:
 
@@ -191,7 +191,7 @@ Do not call the design ready unless it names all of the following:
 - PR ownership
 - PR order
 - commit structure
-- net-line budget per PR, with no unapproved slice above the split threshold
+- net-line budget per PR, with no slice above the split threshold
 - verification commands
 - regroup or consolidation rule
 - every material preservation obligation and load-bearing assumption in prose
@@ -238,7 +238,7 @@ Rules for that prompt:
 - say explicitly: do not create a new plan or re-plan this pass
 - say explicitly: deepen the design append-only when new obligations surface; use workflow history and GitHub PR state for durable progress, with Tasks only as session-local convenience
 - when the work targets an existing PR, require realignment of the exact checkout to the live PR head before edits, then commit and push before resolving review threads as fixed
-- keep the PR near the review-budget target unless the user approved a concrete exception
+- keep the PR near the review-budget target; any overage stays below the split threshold, justified in the governing artifact
 - require [Production Code’s Minimum Implementation Decision](../production-code/SKILL.md#minimum-implementation-decision) before edits and completion, including its [transaction doctrine](../production-code/references/transaction-doctrine.md) when applicable
 - direct each execution pass through [repo-production-workflow](../repo-production-workflow/SKILL.md), which records this prompt verbatim as that pass's intent
 - keep the prompt compact; do not duplicate the design

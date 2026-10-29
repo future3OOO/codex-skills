@@ -14,7 +14,7 @@ from hooks.lib._workflow_db import LedgerError  # noqa: E402
 from hooks.lib.repo_identity import RepoIdentityError, try_resolve_repo_identity  # noqa: E402
 from hooks.lib.workflow_state import WorkflowError, summary  # noqa: E402
 
-DISCIPLINE = """Discipline re-arm: resume the active repo-production-workflow pass at its next unmet requirement, using retained contract, context and bound evidence. Load only missing or changed context. Production edits reopen verification and review; independent review remains required. The mock ban, demonstrated-risk and root-cause rules still apply. State records proof, never Git authorization; missing evidence is pending."""
+DISCIPLINE = """Discipline re-arm: resume the active repo-production-workflow pass at its next unmet requirement, using retained contract, context and bound evidence. Load only missing or changed context. The mock ban, demonstrated-risk and root-cause rules still apply. State records proof, never Git authorization; missing evidence is pending."""
 
 
 def main() -> int:

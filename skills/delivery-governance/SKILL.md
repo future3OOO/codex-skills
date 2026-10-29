@@ -53,7 +53,7 @@ Use this unless there is a strong reason not to:
 - Max 2 branch classes mixed in one PR.
 - The **review budget**: target ~500 net lines of code per PR, measured as additions minus deletions in human-authored source files and excluding generated files, lockfiles, vendored code, and pure docs. This is the canonical definition other skills reference.
 - Treat a planned slice tracking materially above the target as a preflight warning that requires shrinking or a written justification in the governing artifact.
-- The **split threshold** is 1,000 net lines: a planned PR likely to exceed it must be split by integration boundary or descoped before coding, absent explicit user approval for a concrete exception. Do not rely on review to catch oversize after the branch is built.
+- The **split threshold** is 1,000 net lines: in a planned stack, a PR likely to exceed it is split by integration boundary before coding. Any other change over it is bloated: apply AGENTS.md's Simplicity First until it fits; never ask for an exception. Do not rely on review to catch oversize after the branch is built.
 - If the same file appears in 4 or more open branches, stop and regroup.
 - If a lower branch needs a second significant rewrite after reviews start, stop stacking upward.
 

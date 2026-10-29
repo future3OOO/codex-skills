@@ -45,7 +45,7 @@ UNITTEST_FIXTURES = frozenset({
     "setUp", "asyncSetUp", "tearDown", "asyncTearDown",
     "setUpClass", "tearDownClass", "setUpModule", "tearDownModule",
 })
-PYTEST_FAILURE_HEADER = re.compile(r"^_+ .+ _+$")
+PYTEST_FAILURE_HEADER = re.compile(r"^_+ (.+?) _+$")
 PYTEST_CAPTURED_HEADER = re.compile(r"^-+ Captured .+ -+$")
 # pytest closes each traceback frame with `path:line:` (the exception class only
 # on the last); unittest frames are `File "..."` lines. Object reprs carry the
@@ -61,6 +61,32 @@ PYTEST_SUMMARY_RECORDS = (
     "RERUN ",
 )
 PYTEST_TB_SUPPRESSED = ("--tb=no", "--tb=line")
+PRINTED_CASE = re.compile(r"(?m)^([^\s:][^:\n]*): (.*)$")
+NATIVE_RUNNERS = frozenset({"unittest", "pytest"})
+# unittest's own report lines: a verbose status line, the equals rule opening a FAIL/ERROR
+# section, or the dash rule before its `Ran N tests` footer; any one survives a cut report.
+UNITTEST_REPORT = re.compile(r"(?m)^\S+ \([^\n]+?\) \.\.\. (?:ok|FAIL|ERROR|skipped[^\n]*)$|^={70}\n(?:FAIL|ERROR): |^-{70}\nRan \d+ tests? in ")
+# pytest's session header (printed first), short-summary header or terminal summary line identifies its report.
+PYTEST_REPORT = re.compile(r"(?m)^=+ test session starts =+$"
+                           r"|^=+ short test summary info =+$"
+                           r"|^(?:=+ )?\d+ (?:failed|passed|errors?|skipped|deselected|xfailed|xpassed)\b.* in \d+(?:\.\d+)?s\b")
+# The interpreter's own diagnostic: header, indented frames, then the exception with its message
+# continuation lines: indented text and an assertion's diff lines (`- `, `+ `, `? `), which a blank
+# line may separate.
+PYTHON_TRACEBACK = re.compile(r"(?m)^Traceback \(most recent call last\):\n(?:[ \t].*\n)*.*"
+                              r"(?:\n(?:[-+?] .*|[ \t]+\S.*)|\n(?=\n[-+?] ))*$")
+SELECTION_OPTIONS = frozenset({"-k", "-m", "--deselect"})
+# Where a runner's report starts (a unittest status line, pytest's progress line, session header, node
+# id or failure banner) and ends (unittest's `Ran N tests` footer and result line, or pytest's final
+# summary); outside it is the command's own. A bare progress line, a 70-character rule or a bare
+# `name (dotted.id)` line, which printed output can also be, starts a report only when the line after
+# its run is report structure: a start, a status line, a FAIL/ERROR header or a footer.
+REPORT_START = re.compile(r"^\S*[^\s:] \([^\n]+?\) \.\.\. |^[.FEsxXu]+ +\[ *\d+%\]$"
+                          r"|^=+ (?:test session starts|FAILURES|ERRORS) =+$|^\S+::\S*[^\s:] ")
+AMBIGUOUS_START = re.compile(r"^\w+ \(\w+(?:\.\w+)+\)$|^[.FEsxXu]+$|^={70}$|^-{70}$")
+REPORT_STATUS = re.compile(r"(?:FAIL|ERROR): |.* \.\.\. (?:ok|FAIL|ERROR|skipped|expected failure|unexpected success)\b")
+UNITTEST_RESULT = re.compile(r"^(?:OK|FAILED)(?: \([^)]*\))?$")
+PYTEST_FINAL = re.compile(r"^(?:=+ )?\d+ (?:failed|passed|errors?|skipped|deselected|xfailed|xpassed)\b.* in \d+(?:\.\d+)?s\b")
 
 
 def identify(command: Sequence[str]) -> dict[str, object]:
@@ -126,9 +152,10 @@ PYTEST_VALUE_OPTIONS = frozenset({
 
 def proof_targets(
     surface: Mapping[str, object], root: object
-) -> tuple[list[str], bool, list[str], str | None]:
+) -> tuple[list[str], bool, list[str], list[str]]:
     """The test targets a unittest or pytest surface names, whether it is a
-    discover run, the ambiguous path tokens, and what this parse cannot resolve.
+    discover run, the ambiguous path tokens, and the -k, -m and --deselect
+    expressions that narrow the selection further.
 
     Option values are skipped by each runner's value-taking option table; a
     pytest bare word or number that names nothing under ``root`` is an unknown
@@ -136,13 +163,6 @@ def proof_targets(
     unknown option (a plugin's) may be one of its values, so they are returned as
     ambiguous: resolved fail-closed by callers, never a named target. A discover
     run with no start directory targets ``.``.
-
-    The fourth value describes what this parse cannot resolve into named scope,
-    or None: an option beyond the discovery routing and the verbosity and
-    fail-fast ones `identify` removes, a discovery pattern after the start
-    directory, or a command naming no target, which selects implicitly from the
-    runner's own working directory or configuration. Callers publish named
-    ownership only when it is None.
     """
     runner = surface.get("runner")
     top = Path(str(root)).resolve()
@@ -155,15 +175,17 @@ def proof_targets(
     )
     targets: list[str] = []
     ambiguous: list[str] = []
-    unresolved: str | None = None
+    selections: list[str] = []
     pending_start = False
-    pending_value = False
+    pending_value: str | None = None
     after_unknown_option = False
     for token in tokens[1 if discover else 0:]:
         if pending_value:
             if pending_start:
                 targets.append(token)
-            pending_start = pending_value = False
+            elif pending_value in SELECTION_OPTIONS:
+                selections.append(f"{pending_value} {token}")
+            pending_start, pending_value = False, None
             continue
         if token == "--":
             continue
@@ -173,7 +195,6 @@ def proof_targets(
             # -k= carries an empty value and does not take the next token.
             has_value = bool(separator)
             known_cluster = False
-            all_ignored = False
             if runner == "pytest" and name[1:2] != "-" and len(name) > 2:
                 # A short cluster reads left to right: no-value flags, then at
                 # most one value option whose value is the rest of the token or
@@ -184,10 +205,6 @@ def proof_targets(
                     head += 1
                 if head == len(letters) and not separator:
                     known_cluster = True
-                    # Only when every letter is one identify already treats as
-                    # irrelevant: `-xq` changes nothing about which tests run,
-                    # while `-xqh` is the same arity and runs none of them.
-                    all_ignored = all(_ignored_class(runner, f"-{letter}") for letter in letters)
                 elif head < len(letters) and f"-{letters[head]}" in value_options:
                     rest = token[2 + head:]
                     name, has_value = f"-{letters[head]}", bool(rest)
@@ -200,16 +217,15 @@ def proof_targets(
                 and name not in PYTEST_FLAG_OPTIONS and not known_cluster
                 and not REPEATED_VERBOSITY.match(name)
             )
-            # After cluster normalization, so `-kfast` reports as `-k`. Discovery
-            # routing is the only option this parse turns into a target.
-            if not (discover and name in UNITTEST_START_OPTIONS) and not REPEATED_VERBOSITY.match(name) and not all_ignored:
-                unresolved = unresolved or f"the option {name}"
+            # After cluster normalization, so `-kfast` and `-qk fast` report as `-k fast`.
             if name in value_options:
                 if has_value:
                     if discover and name in UNITTEST_START_OPTIONS:
                         targets.append(inline)
+                    elif name in SELECTION_OPTIONS:
+                        selections.append(f"{name} {inline}")
                 else:
-                    pending_value = True
+                    pending_value = name
                     pending_start = discover and name in UNITTEST_START_OPTIONS
             continue
         if runner == "pytest" and not (
@@ -217,17 +233,29 @@ def proof_targets(
             or token.endswith(".py") or (top / token).exists()
         ):
             continue
-        if discover and targets:
-            # `discover <start> <pattern>`: only the start is routing.
-            unresolved = unresolved or f"the discovery pattern {token}"
         (ambiguous if after_unknown_option else targets).append(token)
-    if not targets:
-        # Nothing named: both runners then select implicitly, discovery from the
-        # working directory and pytest from its own rootdir and configuration.
-        unresolved = unresolved or "an implicit whole-suite selection"
-        if discover:
-            targets.append(".")
-    return targets, discover, ambiguous, unresolved
+    if not targets and discover:
+        targets.append(".")
+    return targets, discover, ambiguous, selections
+
+
+def narrowing(surface: Mapping[str, object], root: object) -> str | None:
+    """How a test-runner command narrows below whole modules: -k, -m and --deselect
+    expressions, test ids and unittest classes. Tests outside that selection are not compared."""
+    if surface.get("runner") not in NATIVE_RUNNERS:
+        return None
+    targets, discover, _, selections = proof_targets(surface, root)
+    top = Path(str(root))
+    below = [target for target in targets if "::" in target or (
+        surface["runner"] == "unittest" and not discover and "/" not in target and not target.endswith(".py")
+        and _below_module(target.split("."), top))]
+    return ", ".join([*selections, *below]) or None
+
+
+def _below_module(parts: list[str], top: Path) -> bool:
+    """Whether a dotted unittest name continues past the module or package it resolves to."""
+    return next((size < len(parts) for size in range(len(parts), 0, -1)
+                 if top.joinpath(*parts[:size]).with_suffix(".py").is_file() or top.joinpath(*parts[:size]).is_dir()), False)
 
 
 def repository_resolution(surface: Mapping[str, object], root: object) -> str | None:
@@ -276,22 +304,25 @@ def repository_resolution(surface: Mapping[str, object], root: object) -> str | 
     return None
 
 
-def evaluate_red(surface: Mapping[str, object], output: str) -> tuple[dict[str, object] | None, str]:
+def evaluate_red(surface: Mapping[str, object], output: str, cases: Mapping[str, Mapping[str, str]]) -> tuple[dict[str, object] | None, str]:
     runner = surface.get("runner")
     output = ANSI_ESCAPE.sub("", output)
     lines = [line for line in output.splitlines() if line.strip()]
     diagnostic = _final_diagnostic(lines)
-    if runner not in {"unittest", "pytest"} and (refusal := _pre_interface_refusal(diagnostic)):
-        return None, refusal
+    if runner not in {"unittest", "pytest"} and PRE_INTERFACE_FAILURE.match(diagnostic):
+        return None, "the operation failed before reaching the production Interface: " + diagnostic
     if runner == "unittest":
-        return _with_observation(_unittest_red(output))
-    if runner == "pytest":
+        result = _with_observation(_unittest_red(output))
+    elif runner == "pytest":
         arguments = surface.get("arguments")
-        return _with_observation(
-            _pytest_red(output, arguments if isinstance(arguments, list) else ()),
-        )
-    return {"quality": "failure-observed", "reach": "unresolved", "runner": str(runner),
-            "observedFailure": diagnostic, "observation": [diagnostic]}, ""
+        result = _with_observation(_pytest_red(output, arguments if isinstance(arguments, list) else ()))
+    else:
+        result = {"quality": "failure-observed", "reach": "unresolved", "runner": str(runner),
+                  "observedFailure": diagnostic, "observation": [diagnostic]}, ""
+    unreached = [name for name, case in cases.items() if case["outcome"] == "error"]
+    if result[0] and unreached and not any(case["outcome"] == "failed" for case in cases.values()):
+        return None, "every failing case stopped before the production Interface: " + ", ".join(unreached[:3])
+    return result
 
 
 def _with_observation(
@@ -315,11 +346,6 @@ def _final_diagnostic(lines: list[str]) -> str:
         if lines[index].strip() == "Traceback (most recent call last):":
             return next((line.strip() for line in lines[index + 1:] if not line[0].isspace()), last)
     return last
-
-
-def _pre_interface_refusal(diagnostic: str) -> str | None:
-    prefix = "the operation failed before reaching the production Interface: "
-    return prefix + diagnostic if PRE_INTERFACE_FAILURE.match(diagnostic) else None
 
 
 def _unittest_red(output: str) -> tuple[dict[str, object] | None, str]:
@@ -352,37 +378,26 @@ def _unittest_red(output: str) -> tuple[dict[str, object] | None, str]:
         )
     if summary_counts.get("failures", 0) + summary_counts.get("errors", 0) < 1:
         return None, "unittest did not report a failed test"
-    unreached = next((reason for reason in (_unittest_unreached(*block[:2]) for block in failures) if reason), None)
-    if unreached is not None:
-        return None, "the operation failed before reaching the production Interface: " + unreached
     rendering = [line for _, _, block in failures for line in block]
     if not rendering:
         return None, "unittest reported no terminal failure"
-    observed = rendering[0]
-    refusal = _pre_interface_refusal(observed)
-    if refusal is not None:
-        return None, refusal
     return {
-        "quality": "assertion-reached",
+        "quality": "failure-observed",
         "runner": "unittest",
         "testsExecuted": int(ran.group(1)),
-        "observedFailure": observed,
+        "observedFailure": rendering[0],
         "rendering": rendering,
     }, ""
 
 
-def _unittest_unreached(header: str, frames: list[str]) -> str | None:
-    """Why the block's test body never ran, when the report shows it: loader stand-in,
-    a class/module fixture named in the header, or a fixture-named frame before any
-    frame named after the test. The test's name is only ever positive evidence it ran."""
+def _unittest_unreached(header: str, frames: list[str], exception: list[str]) -> bool:
+    """Whether the block's case stopped before the production code: the loader stand-in, a fixture named in the
+    header or framed before the test's own frame, no exception, or an import or syntax exception. The test's name
+    is only ever positive evidence it ran."""
     name = header.split()[1]
-    if "unittest.loader._FailedTest" in header:
-        return f"unittest could not load {name}"
     entered = frames.index(name) if name in frames else len(frames)
-    fixture = name if name in UNITTEST_FIXTURES else next(
-        (frame for frame in frames[:entered] if frame in UNITTEST_FIXTURES), None
-    )
-    return f"unittest failed in {fixture} before the test body" if fixture else None
+    return ("unittest.loader._FailedTest" in header or not UNITTEST_FIXTURES.isdisjoint([name, *frames[:entered]])
+            or not exception or bool(PRE_INTERFACE_FAILURE.match(exception[0])))
 
 
 def _unittest_terminal_failures(output: str) -> list[tuple[str, list[str], list[str]]]:
@@ -413,24 +428,107 @@ def _unittest_terminal_failures(output: str) -> list[tuple[str, list[str], list[
 
 
 def case_results(surface: Mapping[str, object], output: str) -> dict[str, dict[str, str]]:
-    """Attribute native terminal results; missing names are never inferred as passes."""
+    """Attribute native terminal results; missing names are never inferred as passes. A command
+    the runner does not recognise is attributed by the native report its output carries, else by
+    its printed `name: result` lines outside interpreter tracebacks. A failing case reads `error` when a failure
+    printed for it (a unittest method's subtests included) stopped before the production code; a pytest failure
+    the report does not attribute to its test keeps pytest's own result."""
     cases = {}
     clean = ANSI_ESCAPE.sub("", output)
-    if surface.get("runner") == "unittest":
+    runner = native_runner(surface, clean)
+    if runner == "unittest":
         for name, status in re.findall(r"(?m)^(\S+ \([^\n]+?\)) \.\.\. (ok|FAIL|ERROR|skipped[^\n]*)$", clean):
             cases[name] = {"outcome": "passed" if status == "ok" else "failed" if status == "FAIL" else "error" if status == "ERROR" else "skipped"}
-        for header, frames, assertion in _unittest_terminal_failures(clean):
-            kind, name = header.split(": ", 1)
-            cases[name] = {"outcome": "failed" if kind == "FAIL" else "error", "assertion": "\n".join(assertion)}
+        failures = _unittest_terminal_failures(clean)
+        # A method's own name ends at its first `)`; its subtests' names extend it.
+        unreached = {header.split(": ", 1)[1].split(")")[0] for header, frames, assertion in failures
+                     if _unittest_unreached(header, frames, assertion)}
+        for header, frames, assertion in failures:
+            name = header.split(": ", 1)[1]
+            cases[name] = {"outcome": "error" if name.split(")")[0] in unreached else "failed", "assertion": "\n".join(assertion)}
             if re.fullmatch(r"\S+ \([^()\n]+\)", name) and name.split()[0] in frames:
-                cases[name]["execution"] = "stopped"
-    elif surface.get("runner") == "pytest":
-        for name, status in re.findall(r"(?m)^(\S+::\S+) (PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS)\b", clean):
-            cases[name] = {"outcome": {"PASSED": "passed", "FAILED": "failed", "ERROR": "error"}.get(status, "skipped")}
+                cases[name]["execution"] = "stopped"  # failed in its own body: later statements did not run
+    elif runner == "pytest":
+        # A test collected from another file's definition is reported `id <- file`; an ERROR is never overwritten.
+        progress = re.findall(r"(?m)^(\S+::\S+)(?: <- \S+)? (PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS)\b", clean)
+        for name, status in progress:
+            if cases.get(name, {}).get("outcome") != "error":
+                cases[name] = {"outcome": {"PASSED": "passed", "FAILED": "failed", "ERROR": "error"}.get(status, "skipped")}
         summary = clean.rsplit("short test summary info", 1)[-1] if "short test summary info" in clean else ""
-        for kind, name, assertion in re.findall(r"(?m)^(FAILED|ERROR) (\S+) - (.*)$", summary):
-            cases[name] = {"outcome": kind.lower(), "assertion": assertion}
+        # A failing subtest leaves its test PASSED in the progress lines; its SUBFAILED record fails it.
+        # A subtest label is an optional `[message]` then optional ` (parameters)`; either may contain
+        # `)`, `] ` or ` - `, so the node id (a `::` id or a collected file) anchors the match.
+        for kind, name, assertion in re.findall(
+                r"(?m)^(?:SUB)?(FAILED|ERROR)(?:\[.*?\])?(?: ?\(.*?\))? (\S+::\S+|\S+\.py)(?: - (.*))?$", summary):
+            known = cases.get(name, {}).get("assertion", "") if cases.get(name, {}).get("outcome") == kind.lower() else ""
+            joined = "\n".join(dict.fromkeys(filter(None, [*known.split("\n"), assertion])))
+            # A setup or teardown ERROR beside the test's own FAILED leaves it unreached in either summary order.
+            outcome = "error" if "error" in (kind.lower(), cases.get(name, {}).get("outcome")) else kind.lower()
+            cases[name] = {"outcome": outcome, **({"assertion": joined} if joined else {})}
+        # pytest prints one FAILURES block per failing report, in the order of its summary records and of its progress
+        # lines; a block is attributed through such a list naming each block's test in turn, and a case reads error when
+        # one of its blocks ends in an import or syntax error. A report no such list attributes keeps the original's
+        # decision for every failed case: unreached when pytest ran it natively and its first E line is.
+        def heading(name: str) -> str:  # `tests/a.py::Class::test[x::y]` heads its block `Class.test[x::y]`
+            test, bracket, parameters = name.partition("::")[2].partition("[")
+            return (test.replace("::", ".") + bracket + parameters).partition(" ")[0]
+        blocks = _pytest_failures(clean.rsplit("short test summary info", 1)[0].splitlines())
+        lists = (re.findall(r"(?m)^(?:SUB)?FAILED(?:\[.*?\])?(?: ?\(.*?\))? (\S+::\S+|\S+\.py)", summary),
+                 re.findall(r"(?m)^(\S+::\S+)(?: <- \S+)? (?:SUB)?FAILED\b", re.split(r"(?m)^=+ (?:ERRORS|FAILURES) =+$", clean)[0]))
+        names = next((names for names in lists if len(names) == len(blocks)
+                      and all(header.partition(" ")[0] == heading(name) for name, (header, _, _) in zip(names, blocks))), [])
+        first = next((lines[0].strip() for _, _, lines in blocks if lines), "")
+        unattributed = not names and surface.get("runner") == "pytest" and PRE_INTERFACE_FAILURE.match(first)
+        for name, case in cases.items():
+            if case["outcome"] == "failed" and (unattributed or any(
+                    PRE_INTERFACE_FAILURE.match(exception) for listed, (_, exception, _) in zip(names, blocks) if listed == name)):
+                cases[name]["outcome"] = "error"
+    else:
+        # An operation probe names its cases itself: one `name: result` line each.
+        for name, result in PRINTED_CASE.findall(PYTHON_TRACEBACK.sub("", clean)):
+            # A repeated name cannot carry two results; neither may stand as proof.
+            repeated = name.strip() in cases
+            cases[name.strip()] = {"outcome": "printed", "result": "unverified - repeated printed case name" if repeated else result.strip()}
     return cases
+
+
+def native_runner(surface: Mapping[str, object], output: str) -> str | None:
+    """The test runner whose report `output` is: the recognised command's, else the unittest or
+    pytest report a wrapping command (a shell, env or timeout) printed."""
+    if surface.get("runner") in NATIVE_RUNNERS:
+        return str(surface["runner"])
+    clean = ANSI_ESCAPE.sub("", output)
+    return "unittest" if UNITTEST_REPORT.search(clean) else "pytest" if PYTEST_REPORT.search(clean) else None
+
+
+def outside_report(output: str) -> list[str]:
+    """The lines of `output` outside every test runner report it carries. Each report runs from its
+    first line to its footer, and every line after the last footer is the command's own; only output
+    with no footer at all lets its first report, cut before its footer, run to the end."""
+    lines = ANSI_ESCAPE.sub("", output).splitlines()
+    footers = [index for index, line in enumerate(lines) if PYTEST_FINAL.match(line) or UNITTEST_RAN.match(line)]
+    last = footers[-1] if footers else len(lines)
+    outside: list[str] = []
+    index = 0
+    while index < len(lines):
+        if index > last or not _starts_report(lines, index):
+            outside.append(lines[index])
+            index += 1
+            continue
+        while index < len(lines) and not (PYTEST_FINAL.match(lines[index]) or UNITTEST_RAN.match(lines[index])):
+            index += 1
+        if index < len(lines) and UNITTEST_RAN.match(lines[index]):
+            following = next((position for position in range(index + 1, len(lines)) if lines[position].strip()), None)
+            index = following if following is not None and UNITTEST_RESULT.match(lines[following]) else index
+        index += 1
+    return outside
+
+
+def _starts_report(lines: list[str], index: int) -> bool:
+    if not AMBIGUOUS_START.match(lines[index]):
+        return bool(REPORT_START.match(lines[index]))
+    following = next((line for line in lines[index + 1:] if not AMBIGUOUS_START.match(line)), "")
+    return any(pattern.match(following) for pattern in (REPORT_START, REPORT_STATUS, UNITTEST_RAN, PYTEST_FINAL))
 
 
 def _pytest_red(
@@ -441,55 +539,44 @@ def _pytest_red(
             "the recorded command suppresses tracebacks; rerun without "
             "--tb=no/--tb=line so the assertion can be observed"
         )
-    lines = output.splitlines()
-    counts, summary_start = _pytest_summary(lines)
+    counts = _pytest_summary(output.splitlines())
     if counts is None:
         return None, (
             "pytest did not print its short failure summary; rerun without "
             "summary suppression so the failure is observable"
         )
-    if counts["no_tests"] or counts["errors"] or counts["failed"] < 1:
+    if counts["no_tests"] or counts["failed"] < 1:
         return None, "pytest failed during collection/setup or executed no tests"
-    failure_rules = [
-        index
-        for index, line in enumerate(lines[:summary_start])
-        if line.startswith("=") and " FAILURES " in line
-    ]
-    if not failure_rules:
-        return None, "pytest printed no FAILURES section containing the mapped assertion"
-    failures = lines[failure_rules[-1] + 1 : summary_start]
     # pytest prints one header per failed test; any extra header-shaped line
     # is printed text, and the marker can no longer be attributed to a test.
-    headers = sum(1 for line in failures if PYTEST_FAILURE_HEADER.match(line))
-    if headers != counts["failed"]:
+    blocks = _pytest_failures(output.rsplit("short test summary info", 1)[0].splitlines())
+    if len(blocks) != counts["failed"]:
         return None, (
             f"pytest reported {counts['failed']} failed but its FAILURES section "
-            f"holds {headers} header-shaped lines; printed header-shaped text "
+            f"holds {len(blocks)} header-shaped lines; printed header-shaped text "
             "cannot be attributed to a test - remove it or narrow the command"
         )
-    rendering = [line for block in _pytest_terminal_renderings(failures) for line in block]
+    rendering = [line.strip() for _, _, block in blocks for line in block]
     if not rendering:
         return None, "pytest reported no terminal failure"
-    observed = rendering[0]
-    refusal = _pre_interface_refusal(observed)
-    if refusal is not None:
-        return None, refusal
+    if all(not exception or PRE_INTERFACE_FAILURE.match(exception) for _, exception, _ in blocks):
+        return None, "no failure reached the production Interface: " + rendering[0]
     return {
-        "quality": "assertion-reached",
+        "quality": "failure-observed",
         "runner": "pytest",
         "testsExecuted": counts["failed"] + counts["passed"],
-        "observedFailure": observed,
+        "observedFailure": rendering[0],
         "rendering": rendering,
     }, ""
 
 
-def _pytest_summary(lines: list[str]) -> tuple[dict[str, int | bool] | None, int]:
+def _pytest_summary(lines: list[str]) -> dict[str, int | bool] | None:
     start = None
     for index, line in enumerate(lines):
         if "short test summary info" in line:
             start = index
     if start is None:
-        return None, len(lines)
+        return None
     for line in lines[start + 1 :]:
         if line.startswith(PYTEST_SUMMARY_RECORDS):
             continue
@@ -506,23 +593,20 @@ def _pytest_summary(lines: list[str]) -> tuple[dict[str, int | bool] | None, int
                 int(value)
                 for value in re.findall(r"(?<!\d)(\d+) passed\b", lowered)
             ),
-            "errors": sum(
-                int(value)
-                for value in re.findall(r"(?<!\d)(\d+) errors?\b", lowered)
-            ),
             "no_tests": "no tests ran" in lowered,
-        }, start
-    return None, start
+        }
+    return None
 
 
-def _pytest_terminal_renderings(lines: list[str]) -> list[list[str]]:
-    """Terminal E-prefixed exceptions, excluding earlier chain segments and captured output."""
-    blocks: list[list[str]] = []
+def _pytest_failures(lines: list[str]) -> list[tuple[str, str, list[str]]]:
+    """Each block of the last FAILURES section: its header, its exception (the least-indented E line, below a
+    SyntaxError's location and source) and the E lines of its last chained exception, excluding captured output."""
+    rules = [index for index, line in enumerate(lines) if line.startswith("=") and " FAILURES " in line]
+    blocks: list[tuple[str, list[str]]] = []
     captured = False
-    for line in lines:
-        # Every header is genuine here: _pytest_red matched the header count already.
-        if PYTEST_FAILURE_HEADER.match(line):
-            blocks.append([])
+    for line in lines[rules[-1] + 1:] if rules else []:
+        if header := PYTEST_FAILURE_HEADER.match(line):
+            blocks.append((header.group(1), []))
             captured = False
         elif not blocks:
             continue
@@ -531,10 +615,10 @@ def _pytest_terminal_renderings(lines: list[str]) -> list[list[str]]:
         elif captured:
             continue
         elif line.startswith(("During handling of the above exception", "The above exception was")):
-            blocks[-1] = []
+            blocks[-1][1].clear()
         elif line.startswith("E "):
-            blocks[-1].append(line[1:].strip())
-    return blocks
+            blocks[-1][1].append(line[1:])
+    return [(header, min(lines, key=lambda line: len(line) - len(line.lstrip()), default="").strip(), lines) for header, lines in blocks]
 
 
 def _rule(line: str, character: str) -> bool:
