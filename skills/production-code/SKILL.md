@@ -79,7 +79,7 @@ for changed behavior/bindings, unreliable evidence or missing coverage, not for 
 different reviewer or handoff. Disclose unavailable comparisons; never undo/reapply
 a repair to manufacture a failure. A cause witness fails on N and passes on N+1 at the deciding Interface; a catch,
 retry or default that merely hides the failure cannot satisfy it. Preservation
-assertions stay unchanged on both sources; changed requirements or expectations use the [advisor amendment path](../tdd/recorder.md#map-updates).
+assertions stay unchanged on both sources; requirement changes remain visible for review against the request.
 For sensitivity, reuse that N failure or plant only the relevant defect in a
 disposable copy: the clean candidate passes and the unchanged assertion rejects
 the defect. A setup failure proves no sensitivity; mutation proves no oracle.

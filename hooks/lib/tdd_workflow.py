@@ -201,6 +201,11 @@ def _execute_tree(identity: RepoIdentity, source_tree: str, candidate_tree: str,
         if surface.get("runner") in {"pytest", "unittest"}:
             position = actual.index("--") if "--" in actual else len(actual)
             actual.insert(position, "-vv" if surface["runner"] == "pytest" else "-v")
+        entry = tdd_surface.python_entry(actual)
+        if surface.get("runner") == "unittest" and entry and entry[:2] == ("m", "unittest"):
+            # Keep native lifecycle frames: filtered setup and cleanup reports can be identical.
+            option = entry[2] - (2 if actual[entry[2] - 1] == "unittest" else 1)
+            actual[option:entry[2]] = [actual[option].split("m", 1)[0] + "c", "import runpy,unittest.case,unittest.async_case;unittest.case.__dict__.pop('__unittest',None);unittest.async_case.__dict__.pop('__unittest',None);runpy.run_module('unittest',run_name='__main__',alter_sys=True)"]
         process_started = time.perf_counter()
         try:
             raw, code, timed_out = _run([*binding, "--chdir", identity.root, "--", *actual], snapshot, timeout, env=env)
@@ -341,10 +346,8 @@ def _run_probe(identity: RepoIdentity, probe: object, candidate: str, original: 
         path, command = os.path.normpath(probe["path"]), shlex.split(probe["command"])
         if os.path.isabs(path) or path.startswith("..") or not is_test_path(path) or _blob(identity, candidate, path) not in (None, probe["content"]):
             return {"kind": "probe", "error": "probe path must be a new test file"}
-        if not command:
-            return {"kind": "probe", "error": "probe command must name an executable"}
-        if tdd_surface.identify(command).get("runner") not in {"pytest", "unittest"} and Path(identity.root, path).resolve() not in (Path(identity.root, arg).resolve() for arg in command):
-            return {"kind": "probe", "error": "probe command must name its probe file"}
+        if not command or (tdd_surface.identify(command).get("runner") not in {"pytest", "unittest"} and Path(identity.root, path).resolve() not in (Path(identity.root, arg).resolve() for arg in command)):
+            return {"kind": "probe", "error": "probe command must name its probe file" if command else "probe command must name an executable"}
         blob = _git(identity, "hash-object", "-w", "--stdin", stdin=probe["content"].encode()).decode().strip()
         tree = _indexed(identity, candidate, (("update-index", "--add", "--cacheinfo", f"100644,{blob},{path}"), None))
         result: JsonObject = {"kind": "probe", "candidate": _probe_outcome(identity, candidate, tree, path, command)}
@@ -578,11 +581,7 @@ def map_update(identity: RepoIdentity, state: JsonObject, value: JsonObject) -> 
         if prior is not None and "boundaryInputs" in prior and "boundaryInputs" not in entry:
             entry["boundaryInputs"] = []  # removing every witness cannot fall back to unrelated batch cases
         if prior and "comparison" in prior:  # a changed kind or obligation keeps its latest run and reads stale until rerun
-            proof = prior["comparison"]
-            entry["comparison"] = {**proof, "obligation": (behavior_map.obligation(prior)
-                if any(entry.get(key) != prior.get(key) for key in fields)
-                and proof.get("obligation") == behavior_map.obligation(prior)[:4]
-                else proof.get("obligation", behavior_map.obligation(prior)))}
+            entry["comparison"] = {**prior["comparison"], "obligation": prior["comparison"].get("obligation", behavior_map.obligation(prior))}
     if items == previous:
         return operation_receipt(state, identity, summaryId=state.get("tddEvidence") or state["preflightEvidence"],
                                  pending=behavior_map.unresolved(items), reused=True)

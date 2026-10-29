@@ -426,23 +426,6 @@ def commit_tdd(identity: RepoIdentity, slug: str, workflow_id: str | None,
         if state.get("tddEvidence") != expected_evidence_id:
             raise WorkflowError("probe obligations changed during execution; retry against current evidence")
         items = _map_items(summary_doc) or []
-        if review_changed:
-            previous = {item["id"]: item for item in behavior_map.recorded_map(
-                transaction.evidence(state.get("tddEvidence")), transaction.evidence(state.get("preflightEvidence"))) or []}
-            fields = behavior_map.REQUIRED_FIELDS | behavior_map.READING_FIELDS | {"kind"}
-            amendments = [item for item in items if item["id"] not in previous
-                          or any(item.get(key) != previous[item["id"]].get(key) for key in fields)
-                          or set(previous[item["id"]].get("boundaryInputs") or []) - set(item.get("boundaryInputs") or [])]
-            if amendments:
-                advice = state.get("advisorPreflight") or {}
-                approved = transaction.evidence(advice.get("intakeEvidence")) or {}
-                allowed = {item["id"]: item for item in _map_items(approved.get("preflightDraft")) or []}
-                if (advice.get("status") != "approved" or approved.get("verdict") != "approved" or any(
-                        item["id"] not in allowed
-                        or any(item.get(key) != allowed[item["id"]].get(key) for key in fields)
-                        or set(item.get("boundaryInputs") or []) != set(allowed[item["id"]].get("boundaryInputs") or [])
-                        for item in amendments)):
-                    raise WorkflowError("requirement or required witness changed: reconsult the designer with the replacement draft")
         from .tdd_workflow import refresh_proof
         refresh_proof(identity, items)
         manifests = []
@@ -904,12 +887,14 @@ def record_advisor_result(
                 raise WorkflowIncomplete("advisor-preflight requires repo-context-forge")
             if source != "codex-advisor":
                 raise ValueError("preflight advisor source must be codex-advisor")
+            if state.get("preflightLatestEvidence") and verdict in {"approved", "changes-required"}:
+                raise WorkflowError("preflight is already recorded; draft consultations are closed")
             if verdict not in {"unavailable", "approved", "changes-required"}:
                 raise ValueError("preflight verdict must be approved, changes-required or unavailable")
             if verdict in {"approved", "changes-required"}:
                 if intake is None or preflight_draft is None:
                     raise WorkflowError("draft advice requires its reviewed preflight artifact")
-                if state.get("preflightRounds", 0) >= (4 if state.get("preflightEvidence") else 2):
+                if state.get("preflightRounds", 0) >= 2:
                     raise WorkflowError("preflight consultation budget exhausted")
                 if verdict == "changes-required" and state.get("preflightRounds") and not state.get("preflightEvidence"):
                     raise WorkflowError("the second preflight consult is the last: the advisor edits the draft "
@@ -1171,10 +1156,10 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
     if phase == "preflight-advice":
         if preflight_draft is None:
             missing.append("preflight draft (--preflight-file)")
-        if state.get("preflightRounds", 0) >= (4 if state.get("preflightEvidence") else 2):
+        if state.get("preflightRounds", 0) >= 2:
             missing.append("preflight consultation budget exhausted")
-        if state.get("preflightLatestEvidence") and not reconsult:
-            missing.append("preflight already recorded; use --reconsult for an amendment")
+        if state.get("preflightLatestEvidence"):
+            missing.append("preflight is already recorded; draft consultations are closed")
     evidence_id = state.get("repoContextForgeEvidence")
     graph_document = evidence_document(
         identity, evidence_id if isinstance(evidence_id, str) else None,

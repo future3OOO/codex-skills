@@ -13,7 +13,7 @@ JsonObject = dict[str, object]
 REQUIRED_FIELDS = frozenset({"id", "basis", "behavior", "seam", "expected"})
 KINDS = frozenset({"conformance", "contract", "preservation"})
 READING_FIELDS = frozenset({"interpretations", "interpretation", "authority"})
-# Optional map fields; semantic and witness-set changes require fresh proof.
+# Optional map fields; witness and reading updates re-judge retained proof.
 JUDGEMENT_FIELDS = READING_FIELDS | {"kind", "basis", "boundaryInputs"}
 IDENTIFIER = re.compile(r"^[A-Z][A-Z0-9_-]{1,63}$")
 UNITTEST_CASE = re.compile(r"^(\S+ \([^()\n]+\))((?: \[.*?\])?(?: \(.*\))?)$")
@@ -273,12 +273,12 @@ def _judge(entry: JsonObject, items: list[JsonObject], cases: dict[str, dict[str
         elif contract:
             if not _passed(current, current_outcome):
                 found.append(f"{label} {_state(current)} on current")
-            if conformance:
-                if _passed(original, original_outcome):
-                    found.append(f"{label} already passed on original: use preservation")
-            elif original is None or original.get("outcome") in {"skipped", "error"}:
+            if conformance and _passed(original, original_outcome):
+                found.append(f"{label} already passed on original: use preservation")
+            elif (original is None or original.get("outcome") in {"skipped", "error"}) and not (
+                    conformance and (original is None or original.get("outcome") == "error" and original.get("execution") == "unavailable")):
                 reasons.append(f"{label} {_state(original)} on original")
-            elif _passed(current, current_outcome) and _differs(original, current):
+            elif not conformance and _passed(current, current_outcome) and _differs(original, current):
                 differing.append(label)
         elif not (_passed(original, original_outcome) and _passed(current, current_outcome)) or _differs(original, current):
             found.append(f"{label} differs (original={_state(original)}, current={_state(current)})")
@@ -366,14 +366,14 @@ def open_obligations(items: list[JsonObject]) -> list[str]:
 
 
 def obligation(entry: JsonObject) -> list[object]:
-    return [entry.get(key) for key in ("kind", "behavior", "seam", "expected", "basis", *sorted(READING_FIELDS))] + [
-        sorted(set(entry.get("boundaryInputs") or []))]
+    return [entry.get(key) for key in ("kind", "behavior", "seam", "expected")]
 
 
 def producer_proved(entry: JsonObject) -> bool:
     comparison = entry.get("comparison")
     return (isinstance(comparison, dict) and comparison.get("valid") is True and comparison.get("fresh", True) is True
-            and comparison.get("obligation", obligation(entry)) in (obligation(entry), obligation(entry)[:4]))
+            and isinstance(recorded := comparison.get("obligation", obligation(entry)), list)
+            and len(recorded) in (4, 9) and recorded[:4] == obligation(entry))
 
 
 def unresolved(items: list[JsonObject]) -> list[str]:
@@ -388,24 +388,25 @@ def never_compared(items: list[JsonObject]) -> list[str]:
 def contract_changes(items: list[JsonObject], recorded: list[JsonObject] | None) -> list[str]:
     """What moved since the recorded preflight, each with the basis it carries, for the
     reviewer and final advisor to judge against the request: a changed kind, a
-    contract item added or re-worded, contract cases added and any case dropped. Listing authorizes
+    required item added or re-worded, required cases added and any case dropped. Listing authorizes
     nothing and never clears an open item."""
     before = {entry["id"]: entry for entry in recorded or []}
     lines = []
     for entry in items:
         prior, kind = before.get(entry["id"]), entry.get("kind")
+        contract = kind in {"contract", "conformance"}
         changes = []
         if prior is None:
-            if kind == "contract":
-                changes.append("contract item added after preflight")
+            if contract:
+                changes.append(f"{kind} item added after preflight")
         else:
             inputs, earlier = set(entry.get("boundaryInputs") or []), set(prior.get("boundaryInputs") or [])
             if prior.get("kind") != kind:
                 changes.append(f"{prior.get('kind')} -> {kind}")
-            elif kind == "contract" and any(prior.get(key) != entry.get(key) for key in ("behavior", "expected")):
-                changes.append("contract expectation re-worded")
-            if kind == "contract" and inputs - earlier:
-                changes.append("contract cases added: " + ", ".join(sorted(inputs - earlier)))
+            elif contract and any(prior.get(key) != entry.get(key) for key in ("behavior", "expected")):
+                changes.append(f"{kind} expectation re-worded")
+            if contract and inputs - earlier:
+                changes.append(f"{kind} cases added: " + ", ".join(sorted(inputs - earlier)))
             if earlier - inputs:
                 changes.append(f"{prior.get('kind')} cases dropped: " + ", ".join(sorted(earlier - inputs)))
         lines.extend(f"{entry['id']}: {change}: {entry['basis']}" for change in changes)

@@ -390,14 +390,20 @@ def _unittest_red(output: str) -> tuple[dict[str, object] | None, str]:
     }, ""
 
 
-def _unittest_unreached(header: str, frames: list[str], exception: list[str]) -> bool:
-    """Whether the block's case stopped before the production code: the loader stand-in, a fixture named in the
-    header or framed before the test's own frame, no exception, or an import or syntax exception. The test's name
-    is only ever positive evidence it ran."""
+def _unittest_case(header: str, frames: list[str], exception: list[str]) -> dict[str, str]:
+    """Normalize a native failure; fixture inability needs the engine's setup phase."""
     name = header.split()[1]
     entered = frames.index(name) if name in frames else len(frames)
-    return ("unittest.loader._FailedTest" in header or not UNITTEST_FIXTURES.isdisjoint([name, *frames[:entered]])
-            or not exception or bool(PRE_INTERFACE_FAILURE.match(exception[0])))
+    phase = next((frame for frame in frames[:entered] if frame in {"unittest._callSetUp", "unittest._callTestMethod", "unittest._callTearDown", "unittest._callCleanup"}), "")
+    setup = "unittest.loader._FailedTest" in header or name in {"setUpClass", "setUpModule"} or phase == "unittest._callSetUp"
+    error = (setup or phase in {"unittest._callTearDown", "unittest._callCleanup"} or not UNITTEST_FIXTURES.isdisjoint([name, *frames[:entered]])
+             or not exception or bool(PRE_INTERFACE_FAILURE.match(exception[0])))
+    case = {"outcome": "error" if error else "failed", "assertion": "\n".join(exception)}
+    if setup or phase == "unittest._callTestMethod" and exception and PRE_INTERFACE_FAILURE.match(exception[0]):
+        case["execution"] = "unavailable"
+    elif re.fullmatch(r"\S+ \([^()\n]+\)", header.split(": ", 1)[1]) and name in frames:
+        case["execution"] = "stopped"
+    return case
 
 
 def _unittest_terminal_failures(output: str) -> list[tuple[str, list[str], list[str]]]:
@@ -420,7 +426,8 @@ def _unittest_terminal_failures(output: str) -> list[tuple[str, list[str], list[
         elif stripped == "Traceback (most recent call last):":
             failures[-1] = (failures[-1][0], [], [])
         elif line.startswith('  File "'):
-            failures[-1][1].append(line.rsplit(", in ", 1)[-1])
+            frame = line.rsplit(", in ", 1)[-1]
+            failures[-1][1].extend((["unittest." + frame] if re.search(r'[/\\]unittest[/\\](?:async_)?case\.py",', line) else []) + [frame])
         elif failures[-1][1] and (failures[-1][2] or (line and not line[0].isspace())):
             failures[-1][2].append(stripped)
         previous = line
@@ -439,17 +446,14 @@ def case_results(surface: Mapping[str, object], output: str, returncode: int = 0
     if runner == "unittest":
         for name, status in re.findall(r"(?m)^(\S+ \([^\n]+?\)) \.\.\. (ok|FAIL|ERROR|skipped[^\n]*)$", clean):
             cases[name] = {"outcome": "passed" if status == "ok" else "failed" if status == "FAIL" else "error" if status == "ERROR" else "skipped"}
-        failures = _unittest_terminal_failures(clean)
+        failures = [(header.split(": ", 1)[1], _unittest_case(header, frames, assertion))
+                    for header, frames, assertion in _unittest_terminal_failures(clean)]
         # A method's own name ends at its first `)`; its subtests' names extend it.
-        unreached = {header.split(": ", 1)[1].split(")")[0] for header, frames, assertion in failures
-                     if _unittest_unreached(header, frames, assertion)}
-        for header, frames, assertion in failures:
-            name = header.split(": ", 1)[1]
-            cases[name] = {"outcome": "error" if name.split(")")[0] in unreached else "failed", "assertion": "\n".join(assertion)}
-            if " (unittest.loader._FailedTest." in name or name.split()[0] in {"setUpClass", "setUpModule"}:
-                cases[name]["execution"] = "unavailable"
-            elif re.fullmatch(r"\S+ \([^()\n]+\)", name) and name.split()[0] in frames:
-                cases[name]["execution"] = "stopped"  # failed in its own body: later statements did not run
+        unreached = {name.split(")")[0] for name, case in failures if case["outcome"] == "error"}
+        for name, case in failures:
+            cases[name] = case
+            if name.split(")")[0] in unreached:
+                case["outcome"] = "error"
     elif runner == "pytest":
         # A test collected from another file's definition is reported `id <- file`; an ERROR is never overwritten.
         progress = re.findall(r"(?m)^(\S+::\S+)(?: <- \S+)? (PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS)\b", clean)
@@ -457,6 +461,7 @@ def case_results(surface: Mapping[str, object], output: str, returncode: int = 0
             if cases.get(name, {}).get("outcome") != "error":
                 cases[name] = {"outcome": {"PASSED": "passed", "FAILED": "failed", "ERROR": "error"}.get(status, "skipped")}
         summary = clean.rsplit("short test summary info", 1)[-1] if "short test summary info" in clean else ""
+        setup_errors = {name for name, status in progress if status == "ERROR"} - {name for name, status in progress if status != "ERROR"}
         # A failing subtest leaves its test PASSED in the progress lines; its SUBFAILED record fails it.
         # A subtest label is an optional `[message]` then optional ` (parameters)`; either may contain
         # `)`, `] ` or ` - `, so the node id (a `::` id or a collected file) anchors the match.
@@ -467,7 +472,7 @@ def case_results(surface: Mapping[str, object], output: str, returncode: int = 0
             # A setup or teardown ERROR beside the test's own FAILED leaves it unreached in either summary order.
             outcome = "error" if "error" in (kind.lower(), cases.get(name, {}).get("outcome")) else kind.lower()
             cases[name] = {"outcome": outcome, **({"assertion": joined} if joined else {})}
-            if kind == "ERROR" and "::" not in name:
+            if kind == "ERROR" and ("::" not in name or name in setup_errors):
                 cases[name]["execution"] = "unavailable"
         # pytest prints one FAILURES block per failing report, in the order of its summary records and of its progress
         # lines; a block is attributed through such a list naming each block's test in turn, and a case reads error when
@@ -486,7 +491,7 @@ def case_results(surface: Mapping[str, object], output: str, returncode: int = 0
         for name, case in cases.items():
             if case["outcome"] == "failed" and (unattributed or any(
                     PRE_INTERFACE_FAILURE.match(exception) for listed, (_, exception, _) in zip(names, blocks) if listed == name)):
-                cases[name]["outcome"] = "error"
+                case.update(outcome="error", execution="unavailable")
     else:
         if returncode and (lines := clean.splitlines()) and lines[-1].startswith("Node.js v") and PRE_INTERFACE_FAILURE.match(diagnostic := _final_diagnostic(lines)):
             clean = "".join(clean.rsplit(diagnostic, 1))
