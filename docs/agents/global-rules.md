@@ -117,8 +117,7 @@ Do not use repeated passive sleep loops. State the deadline, current timestamp,
 and remaining seconds; wait once for the remaining time plus a small buffer,
 unless external completion requires polling. Immediately audit when the wait
 returns. For PR quiet windows, calculate the deadline from the latest
-reviewer/check event and re-query head SHA, checks, merge state, and unresolved
-non-outdated threads before merging.
+reviewer/check event and repeat the reviewer re-query below before merging.
 
 ## Repo Context Forge
 
@@ -164,8 +163,9 @@ the review loop. Fix valid findings through the applicable workflow; update the
 task contract when scope changes. Resolve threads only after the fix is pushed
 or the evidence posted.
 
-After each push, wait for reviews/checks; re-query the current head SHA, checks,
-merge state, and unresolved non-outdated threads. Older-head output is stale.
+After each push, wait for reviews/checks; for the PR and every open PR below it in
+its stack, re-query the current head SHA, checks, merge state, and every unresolved
+non-outdated thread. Older-head output is stale.
 Do not declare completion or switch tasks until task acceptance is reconciled,
 legitimate findings are fixed or rejected with evidence, no unresolved
 non-outdated threads remain, and required checks pass. Unrelated failures are blockers.
