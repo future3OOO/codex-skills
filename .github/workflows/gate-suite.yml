@@ -38,13 +38,14 @@ jobs:
           echo "$lane" | tee -a "$GITHUB_OUTPUT"
       # Anything but a decided documentation lane runs the production lane, so a
       # missing or unexpected scope output can never skip the suite.
-      - name: Python lint (ruff E9,F)
+      - name: Python lint (ruff E9,F) and unreferenced definitions
         if: steps.scope.outputs.lane != 'docs'
         # Pinned and isolated so the linted rule set never moves without an
         # operator choice.
         run: |
           pip install ruff==0.16.2
           ruff check --isolated --select E9,F .
+          python3 .github/scripts/unreferenced.py .
       - name: Package gate against the pull-request delta
         if: steps.scope.outputs.lane != 'docs'
         run: |

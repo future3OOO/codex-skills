@@ -69,12 +69,6 @@ def edit_blockers(identity: RepoIdentity, state: JsonObject, *, reminders=None) 
     return []
 
 
-def completion_blockers(identity: RepoIdentity, state: JsonObject) -> list[str]:
-    items, _ = current_map(identity, state)
-    pending = behavior_map.unresolved(items or [])
-    return ["unresolved probes: " + ", ".join(pending)] if pending else []
-
-
 def _active_candidate(identity: RepoIdentity, value: str | None) -> tuple[JsonObject, str, str]:
     state = bound_state(identity, value)
     if state.get("preflight") != "passed" or not state.get("preflightEvidence"):

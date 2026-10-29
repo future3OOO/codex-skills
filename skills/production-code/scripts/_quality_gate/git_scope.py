@@ -54,12 +54,6 @@ def read_git_file(repo: Path, ref: str, rel_path: str) -> str | None:
     return None if failure else text
 
 
-def parse_z_names(raw: str) -> set[str]:
-    # -z transports carry literal names: no stripping, or a filename with
-    # leading or trailing whitespace would be keyed under a different path.
-    return {item for item in raw.split("\0") if item}
-
-
 def parse_numstat_z(raw: str) -> list[Numstat]:
     records: list[Numstat] = []
     tokens = raw.split("\0")
@@ -192,13 +186,6 @@ def collect_scope(repo: Path, base_ref: str | None, *, staged_only: bool = False
         scope_name = unresolved if staged_only else f"commit-range:{base}...worktree"
         return _scope(base, base_source, scope_name, capture_errors, candidate_source=source)
     changed, renamed, raw_diff, numstats, errors = _diff_scope(repo, base, tree)
-    untracked: set[str] = set()
-    if not staged_only:
-        listed, failure = git_read(repo, ["ls-files", "--others", "--exclude-standard", "-z"])
-        if failure:
-            # Failed discovery is not an absence of untracked files.
-            errors.append(f"untracked discovery failed: {failure}")
-        untracked = parse_z_names(listed) & changed
     scope_name = f"index-tree:{base[:12]}...{tree[:12]}" if staged_only else f"commit-range:{base[:12]}...worktree-snapshot"
     return _scope(
         base,
@@ -207,7 +194,6 @@ def collect_scope(repo: Path, base_ref: str | None, *, staged_only: bool = False
         errors,
         changed_files=changed,
         renamed=renamed,
-        untracked=untracked,
         raw_diff=raw_diff,
         numstats=numstats,
         candidate_source=source,
@@ -223,7 +209,6 @@ def _scope(
     *,
     changed_files: set[str] | None = None,
     renamed: dict[str, str] | None = None,
-    untracked: set[str] | None = None,
     raw_diff: str = "",
     numstats: list[Numstat] | None = None,
     candidate_source: str = "worktree-snapshot",
@@ -235,7 +220,6 @@ def _scope(
         "changed_scope": changed_scope,
         "changed_files": changed_files or set(),
         "renamed": renamed or {},
-        "untracked": untracked or set(),
         "raw_diff": raw_diff,
         "numstats": numstats or [],
         "errors": errors,
