@@ -143,8 +143,16 @@ def _execution_key(identity: RepoIdentity, source: str, probe: str, files: list[
     production = [entry for entry in entries if entry and not is_test_path(os.fsdecode(entry.split(b"\t", 1)[1]))]
     support = _git(identity, "ls-tree", "-r", "-z", probe, "--", *files) if files else b""
     executable_state = os.stat(execution["executable"])
-    config = json.dumps([command, timeout, execution,
-                         executable_state.st_size, executable_state.st_mtime_ns], sort_keys=True).encode()
+    # Installed packages of each runtime the command names: any path (from the root or a named directory), any Python on a PATH.
+    roots = [identity.root, *(argument for argument in command if os.path.isabs(argument) and os.path.isdir(argument))]
+    searches = [os.pathsep.join(os.get_exec_path()), *(argument[5:] for argument in command if argument.startswith("PATH="))]
+    paths = [os.pathsep.join(os.path.join(identity.root, entry) for entry in search.split(os.pathsep)) for search in searches]
+    runtimes = {execution["executable"], *(os.path.join(root, argument) for argument in command if "/" in argument for root in roots),
+                *filter(None, (shutil.which(argument, path=path) for argument in command
+                               if tdd_surface.INTERPRETER.fullmatch(argument) for path in paths))}
+    packages = sorted({path for runtime in runtimes for path in Path(runtime).parent.parent.glob("lib/python*/*-packages")})
+    config = json.dumps([command, timeout, execution, executable_state.st_size, executable_state.st_mtime_ns,
+                         [os.stat(path).st_mtime_ns for path in packages]], sort_keys=True).encode()
     producer = b"".join((Path(__file__).parent / name).read_bytes()
                        for name in ("tdd_workflow.py", "tdd_surface.py", "command_runner.py", "changed_code.py",
                                     "condition_trace/sitecustomize.py"))
@@ -207,15 +215,16 @@ def _execute_tree(identity: RepoIdentity, source_tree: str, candidate_tree: str,
                     evaluations.setdefault(index, []).extend(found)
         timing = {"totalSeconds": time.perf_counter() - started,
                   "executionSeconds": time.perf_counter() - process_started}
+        cases = tdd_surface.case_results(surface, output)
         proof, error = None, "command timed out" if timed_out else ""
         if not timed_out:
             if code == 0:
                 proof, error = _pass_proof(surface, output, named)
             else:
-                proof, error = tdd_surface.evaluate_red(surface, output)
+                proof, error = tdd_surface.evaluate_red(surface, output, cases)
         outcome = ("passed" if code == 0 else "failed") if proof else "incomplete"
         return _run_entry(raw, code, timed_out, sourceTree=source_tree, outcome=outcome, proof=proof, error=error,
-                          output=output, loadedRoot=identity.root, cases=tdd_surface.case_results(surface, output),
+                          output=output, loadedRoot=identity.root, cases=cases,
                           executedCommand=actual, timing=timing,
                           **({"conditions": changed_code.judge(decisions, evaluations)} if decisions else {}))
 
@@ -317,7 +326,7 @@ def _probe_outcome(identity: RepoIdentity, source: str, tree: str, path: str, co
     cases = [case for name, case in (arm.get("cases") or {}).items() if _from_file(name, path)]
     if arm["outcome"] == "passed" and cases:
         return "passed"
-    failed = arm["outcome"] == "failed" and any(case["outcome"] in {"failed", "error"} for case in cases)
+    failed = arm["outcome"] == "failed" and any(case["outcome"] == "failed" for case in cases)
     return "failed" if failed else "incomplete"
 
 
