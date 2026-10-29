@@ -25,7 +25,6 @@ flowchart LR
     C -->|behavioral correction| TM2[tdd-map adds the item]
     TM2 --> I
     C -->|non-behavioral correction| I
-    C -->|executed counter-probe| TM2
     C -->|yes, PR| DL[delivery]
     C -->|yes, no PR| WC[workflow complete]
     DL --> PR{reviewer gate closed?}
@@ -46,7 +45,6 @@ workflow evidence [--full]     # one evidence record's metadata, or its document
 workflow set-phase             # trivial code review only
 workflow record <kind> [--check] [--input -|path]
                                # preflight|review|advisor-result|tdd-map
-workflow record advisor-disposition --finding ID --fixed|--rejected|--report-only|--follow-up REFERENCE --reason TEXT
 workflow tdd                   # compare probes on the original and candidate sources
 workflow verify                # the typed quality gate; an unchanged tree and base reuse its receipt
 workflow pause|checkpoint|complete|prune
@@ -77,9 +75,10 @@ Repo Context Forge, preflight, TDD, verification and review record their native
 documents as logical evidence in the same SQLite transaction as the accepted event.
 Review and final findings carry a `probe` or a deletion-only `change` that the runner
 executes when they are recorded; the executed result, never the producer's claim,
-decides whether a finding binds. A findings-none disposition carries no document. The preflight document
-owns the initial Behavior Map; mapped TDD evidence carries its stable IDs,
-source comparisons and finding references. A plan may show
+decides whether a finding binds: a regression (the original passes, the candidate fails or times out)
+or a change that every recorded batch passes or times out on. The preflight document
+owns the initial Behavior Map; mapped TDD evidence carries its stable IDs
+and source comparisons. A plan may show
 the map but is not an evidence owner.
 
 Exit 2 alone does not prove a refusal: verification and TDD can commit first
@@ -116,7 +115,7 @@ readiness for the advisor phases without mutating anything.
 `complete` requires every step in the step table (`STEPS` in
 `hooks/lib/workflow_state.py`, the one source for sequence, readiness, blockers and
 completion) with its producer evidence, a closed Behavior Map judged inside the
-transaction, dispositioned material findings, a context-matched final review whose
+transaction, settled binding findings, a context-matched final review whose
 effective findings are terminal, and an unchanged reviewable tree since the lead review.
 
 ## Edit invalidation
@@ -136,7 +135,7 @@ resume at the first unsatisfied phase in the same ordered workflow. A
 pass with an empty approved probe list resumes verification; an unresolved
 comparison resumes TDD.
 
-Behavioral findings return to the same workflow: attach the finding reference to its owning probe, implement the repair and execute the comparison against the original. The runner supplies current proof; existing review judges the requirement and finding closure. List edits cannot discharge material findings. Separate work starts a new pass.
+A binding finding returns to the same workflow: repair it, and the next intake or final re-check re-executes it and settles it. Separate work starts a new pass.
 
 A finding envelope is one correction batch. Until every binding finding settles by
 re-execution and the map is closed, the final checkpoint and `complete` refuse;

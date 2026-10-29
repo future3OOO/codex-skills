@@ -42,8 +42,8 @@ def current_map(identity: RepoIdentity, state: JsonObject) -> tuple[list[JsonObj
 
 
 def refresh_proof(identity: RepoIdentity, items: list[JsonObject]) -> None:
-    """Re-judge each recorded comparison's freshness against the current tree; a map with
-    no comparison captures nothing."""
+    """Re-judge each recorded comparison's freshness against the current production tree. The proof is the
+    recorded run: its probe tree and files, never the checkout's, so a probe removed after it ran still proves."""
     execution_keys: dict[str, str | None] = {}
     candidate: str | None = None
     for item in items:
@@ -52,10 +52,10 @@ def refresh_proof(identity: RepoIdentity, items: list[JsonObject]) -> None:
             command = shlex.split(proof["command"])
             try:
                 candidate = candidate or _active_candidate_tree(identity)
-                binding = json.dumps([command, proof["timeout"], proof.get("support", []), proof.get("execution")], sort_keys=True)
+                binding = json.dumps([command, proof["timeout"], proof.get("execution"), proof.get("candidateTree"),
+                                      proof.get("probeFiles")], sort_keys=True)
                 if binding not in execution_keys:
-                    files = _probe_files(tdd_surface.identify(command), Path(identity.root), proof.get("support", []))
-                    execution_keys[binding] = (_execution_key(identity, candidate, candidate, files,
+                    execution_keys[binding] = (_execution_key(identity, candidate, proof["candidateTree"], proof["probeFiles"],
                         command, proof["timeout"], proof["execution"]) if proof.get("execution") else None)
                 proof["fresh"] = bool(proof.get("execution")) and proof.get("candidateKey") == execution_keys[binding]
             except (WorkflowError, OSError, RuntimeError):
@@ -352,7 +352,7 @@ def _run_probe(identity: RepoIdentity, probe: object, candidate: str, original: 
         result: JsonObject = {"kind": "probe", "candidate": _probe_outcome(identity, candidate, tree, path, command)}
         if original is not None:
             result["original"] = _probe_outcome(identity, original, tree, path, command)
-        if "timed-out" in result.values():  # visible and binding: a slow probe never fades into a report line
+        if "timed-out" in result.values():  # visible: binding only when the original passed within the limit
             result["timedOut"] = f"`{path}` ran past {PROBE_TIMEOUT:g} s: not a direct probe; rewrite it to call the changed code"
     except (RuntimeError, ValueError) as exc:
         return {"kind": "probe", "error": f"probe: {exc}"}
@@ -409,26 +409,27 @@ def _run_change(identity: RepoIdentity, batches: list[JsonObject], change: objec
 
 
 def binds(execution: JsonObject) -> bool:
-    """A probe failing on the candidate, a deletion every recorded batch still passes, or a run past its limit."""
-    return "error" not in execution and execution.get("candidate") in {"timed-out", "passed" if execution["kind"] == "change" else "failed"}
+    """The acceptance order: a regression (a probe the original passes that fails or runs past its limit on the
+    candidate) binds and is repaired; a deletion every recorded batch still passes, or one running past its limit, binds;
+    anything else, a probe the original also fails included, asks for unrecorded behaviour: a report line."""
+    if "error" in execution:
+        return False
+    if execution["kind"] == "change":
+        return execution.get("candidate") in {"passed", "timed-out"}
+    return execution.get("candidate") in {"failed", "timed-out"} and execution.get("original") == "passed"
 
 
 def _retained(identity: RepoIdentity, state: JsonObject) -> list[tuple[JsonObject, JsonObject]]:
-    """Each binding observation of every review or final finding: a finding settles only with all of them.
-    A timed-out case stands until a later case of the same finding runs to a result within the limit: its rewrite."""
+    """Each observation of every review or final finding that binds by the current rule: a finding settles only with
+    all of them; one recorded under an earlier rule that no longer binds is re-executed as a report line."""
     retained = []
     for entry in state.get("findingStates") or []:
-        cases = []
         for ref in [{"evidenceId": entry["intakeEvidenceId"], "id": entry["findingId"]}, *entry.get("observations", [])]:
             ref = {"evidenceId": ref["evidenceId"], "id": ref["id"]}
             intake = evidence_document(identity, ref["evidenceId"]) or {}
             finding = next((item for item in intake.get("findings", []) if item["id"] == ref["id"]), None)
-            if intake.get("stage") in {"code-review", "final"} and finding and "execution" in finding:
-                cases.append({**finding, "ref": ref})
-        timed = [case["execution"].get("candidate") == "timed-out" for case in cases]
-        ran = [case["execution"].get("candidate") in {"passed", "failed"} for case in cases]
-        retained += [(entry, case) for index, case in enumerate(cases)  # a rewrite that runs replaces the timed-out case
-                     if case["material"] and not (timed[index] and any(ran[index + 1:])) or ran[index] and any(timed[:index])]
+            if intake.get("stage") in {"code-review", "final"} and finding and "execution" in finding and binds(finding["execution"]):
+                retained.append((entry, {**finding, "ref": ref}))
     return retained
 
 

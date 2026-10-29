@@ -21,7 +21,6 @@ The recorded preflight owns the initial map. `record tdd-map` changes items by i
 - `kind`: `contract` for a requested change, `preservation` for an invariant the change must keep. Each contract case must pass on the current source, and at least one must give a different result on the original, so the requested difference shows. Each preservation case must pass on both trees with the same result.
 - `boundaryInputs`: the executed case names the item requires: a unittest method, a pytest id with its parameter, or the `name` of a printed `name: result` line. A name matches its case exactly, or as the short id of one test. A short id that several tests share matches none of them; name the full id. A name that only appears in probe source, a skipped case, or a case outside a narrowed selection keeps the item open. Preflight states each required input and result in the item's text; attach the cases that execute them after implementation, and change the names whenever the written tests differ. Each case is judged under the item that names it, whichever item's comparison ran the batch; items without names that share a batch must each name their cases. A differing case that no item names keeps open each item whose comparison ran it, except a contract item without names whose comparison ran only that case: it is that item's requested change.
 - `interpretations`: two or more competing readings. The item stays open until `interpretation` and `authority` are recorded; new readings clear both.
-- `sourceRefs`: the finding that an attack owns.
 
 Readiness enforces declared cases and their outcomes; finding every context, unreachable ones included, is the lead's work under [context completeness](tests.md#context-completeness).
 
@@ -40,9 +39,9 @@ The compact receipt is the same rendering the review packet carries: each compar
 Submit only the changed or new items through `record tdd-map --input FILE`:
 
 ```json
-{"items":[{"id":"BM_X","kind":"contract","basis":"original request","behavior":"requested observable behavior","seam":"owning Module's Interface","expected":"observable result","boundaryInputs":["test_case_name"],"sourceRefs":[{"type":"finding","evidenceId":"INTAKE","id":"R-1"}]}]}
+{"items":[{"id":"BM_X","kind":"contract","basis":"original request","behavior":"requested observable behavior","seam":"owning Module's Interface","expected":"observable result","boundaryInputs":["test_case_name"]}]}
 ```
 
-Changing `boundaryInputs`, readings or `sourceRefs` re-judges the retained comparison; changing `kind` or the obligation text requires a new comparison. The runner refuses deletion of the only material finding owner. An unchanged list writes no event. Use existing review dispositions for measured rejections; changing a list is not a finding disposition.
+Changing `boundaryInputs` or readings re-judges the retained comparison; changing `kind` or the obligation text requires a new comparison. An unchanged list writes no event.
 
 For nonbehavioral work, an empty approved list carries no behavior claim. Preserve affected behavior with actual comparisons when production is exercised. Summary and completion derive readiness from current runner evidence, never authored statuses.

@@ -54,8 +54,8 @@ Repo Context Forge analysis copy. For codex-skills installation, follow
   Module's Interface. Use an enclosing operation only when the assertion concerns
   that operation's behavior or integration.
 - **Attack probes first.** Unit tests must themselves probe real production
-  behavior. Maximize attack coverage across affected inputs, failures,
-  interactions, and preservation. Prove each changed line with a direct N/N+1
+  behavior. Cover each request promise and the preserved behavior the change
+  touches. Prove each changed line with a direct N/N+1
   probe that calls it. Add another existing test only when it calls the changed
   code directly. Never run whole files or classes, the full suite, or duplicate
   retained probes with a parallel unit-test suite.
@@ -72,8 +72,9 @@ Repo Context Forge analysis copy. For codex-skills installation, follow
   request keeps summarizes the original code, so the original's result stands.
   For new behavior, the code or engine that already defines a term is its
   authority: probe the new code against that owner's result.
-- If a material unknown cannot be safely discovered, ask the smallest question
-  needed to resolve it before dependent work.
+- Decide a material unknown from the code, the request and the recorded evidence,
+  record the decision in one line, and continue; stop only before a destructive,
+  irreversible or outside-the-worktree action.
 
 ## Simplicity First
 
@@ -116,8 +117,7 @@ Do not use repeated passive sleep loops. State the deadline, current timestamp,
 and remaining seconds; wait once for the remaining time plus a small buffer,
 unless external completion requires polling. Immediately audit when the wait
 returns. For PR quiet windows, calculate the deadline from the latest
-reviewer/check event and re-query head SHA, checks, merge state, and unresolved
-non-outdated threads before merging.
+reviewer/check event and repeat the reviewer re-query below before merging.
 
 ## Repo Context Forge
 
@@ -163,8 +163,9 @@ the review loop. Fix valid findings through the applicable workflow; update the
 task contract when scope changes. Resolve threads only after the fix is pushed
 or the evidence posted.
 
-After each push, wait for reviews/checks; re-query the current head SHA, checks,
-merge state, and unresolved non-outdated threads. Older-head output is stale.
+After each push, wait for reviews/checks; for the PR and every open PR below it in
+its stack, re-query the current head SHA, checks, merge state, and every unresolved
+non-outdated thread. Older-head output is stale.
 Do not declare completion or switch tasks until task acceptance is reconciled,
 legitimate findings are fixed or rejected with evidence, no unresolved
 non-outdated threads remain, and required checks pass. Unrelated failures are blockers.
