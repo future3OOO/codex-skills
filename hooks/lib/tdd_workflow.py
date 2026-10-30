@@ -122,7 +122,7 @@ def _probe_files(surface: JsonObject, root: Path, support: list[str]) -> list[st
 
 def _environment() -> dict[str, str]:
     owned = {"SHLVL", "_", "PWD", "OLDPWD", "PYTHONHOME", "TMPDIR", "CODEX_WORKFLOW_STATE_ROOT", "PYTHONDONTWRITEBYTECODE",
-             "PYTEST_ADDOPTS", "WORKFLOW_CONDITION_PROBES", "WORKFLOW_CONDITION_RESULTS"}
+             "PYTEST_ADDOPTS", "WORKFLOW_CONDITION_PROBES", "WORKFLOW_CONDITION_RESULTS", "CODEX_TOOL_CALL_ID"}
     return {**{key: value for key, value in os.environ.items() if key not in owned},
             "SHLVL": "0", "PYTHONDONTWRITEBYTECODE": "1", "PYTEST_ADDOPTS": ""}
 
