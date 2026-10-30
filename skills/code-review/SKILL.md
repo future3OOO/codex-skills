@@ -83,7 +83,7 @@ Run **Standards** and **Spec** independently:
   contradicted by caveats or implementation limits.
 
 The runner executes recorded findings; the workflow's [objective and acceptance order](../repo-production-workflow/SKILL.md#10-delegate-code-review) decide what binds.
-A `probe` is a new standalone test file asserting a request example, original
+A `probe` is a new repository-relative test file asserting a request example, original
 result, engine answer or frozen requirement-grounded property; never invent an
 expectation. A `change` is a unified diff that only deletes code or replaces it
 with one call to an existing function. Cite the requirement, expected and

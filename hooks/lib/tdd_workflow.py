@@ -127,10 +127,10 @@ def _environment() -> dict[str, str]:
             "SHLVL": "0", "PYTHONDONTWRITEBYTECODE": "1", "PYTEST_ADDOPTS": ""}
 
 
-def _executable(identity: RepoIdentity, command: str) -> str:
+def _executable(identity: RepoIdentity, command: str, environment: dict[str, str] | None = None) -> str:
     if os.path.dirname(command):
         return os.path.normpath(os.path.join(identity.root, command))
-    search = os.pathsep.join(os.path.join(identity.root, entry) for entry in os.get_exec_path())
+    search = os.pathsep.join(os.path.join(identity.root, entry) for entry in os.get_exec_path(environment))
     executable = shutil.which(command, path=search)
     if executable is None:
         raise WorkflowError("probe executable is unavailable: " + command)
@@ -161,7 +161,7 @@ def _execution_key(identity: RepoIdentity, source: str, probe: str, files: list[
 
 def _execute_tree(identity: RepoIdentity, source_tree: str, candidate_tree: str, files: list[str],
                   command: list[str], surface: JsonObject, timeout: float, named: dict[str, str],
-                  decisions: list[JsonObject]) -> JsonObject:
+                  decisions: list[JsonObject], environment: dict[str, str] | None = None) -> JsonObject:
     started = time.perf_counter()
     with tempfile.TemporaryDirectory(prefix="workflow-proof-") as temporary:
         root = Path(temporary) / "source"
@@ -180,7 +180,8 @@ def _execute_tree(identity: RepoIdentity, source_tree: str, candidate_tree: str,
             _git(snapshot, "--literal-pathspecs", "restore", "--worktree", "--source=" + candidate_tree,
                  "--pathspec-from-file=-", "--pathspec-file-nul",
                  stdin=b"".join(os.fsencode(name) + b"\0" for name in files))
-        env = _environment()
+        runner_env = _environment()
+        env = runner_env | (environment or {})
         env.update(PYTHONPATH=os.pathsep.join(filter(None, (identity.root, env.get("PYTHONPATH")))), PWD=identity.root,
                    TMPDIR=temporary, CODEX_WORKFLOW_STATE_ROOT=str(Path(temporary) / "state"))
         traced = Path(temporary) / "conditions.jsonl"
@@ -190,8 +191,9 @@ def _execute_tree(identity: RepoIdentity, source_tree: str, candidate_tree: str,
             env.update(PYTHONPATH=os.pathsep.join([str(trace), env["PYTHONPATH"]]),
                        WORKFLOW_CONDITION_PROBES=str(Path(temporary) / "conditions.json"),
                        WORKFLOW_CONDITION_RESULTS=str(traced))
-        actual = [_executable(identity, command[0]), *command[1:]]
+        actual = [_executable(identity, command[0], env), *command[1:]]
         binding = ["bwrap", "--die-with-parent", "--dev-bind", "/", "/", "--bind", str(root), identity.root]
+        binding.extend(arg for key, value in env.items() if runner_env.get(key) != value for arg in ("--setenv", key, value))
         runtime = Path(actual[0]).parent.parent
         if runtime.is_relative_to(identity.root) and (runtime / "pyvenv.cfg").is_file():
             binding.extend(["--ro-bind", str(runtime), str(runtime)])
@@ -208,7 +210,7 @@ def _execute_tree(identity: RepoIdentity, source_tree: str, candidate_tree: str,
             actual[option:entry[2]] = [actual[option].split("m", 1)[0] + "c", "import runpy,unittest.case,unittest.async_case;unittest.case.__dict__.pop('__unittest',None);unittest.async_case.__dict__.pop('__unittest',None);runpy.run_module('unittest',run_name='__main__',alter_sys=True)"]
         process_started = time.perf_counter()
         try:
-            raw, code, timed_out = _run([*binding, "--chdir", identity.root, "--", *actual], snapshot, timeout, env=env)
+            raw, code, timed_out = _run([*binding, "--chdir", identity.root, "--", *actual], snapshot, timeout, env=runner_env)
         except OSError as exc:
             raw, code, timed_out = str(exc).encode(), 127, False
         output = raw.decode("utf-8", errors="replace")
@@ -320,12 +322,12 @@ def _blob(identity: RepoIdentity, tree: str, path: str) -> str | None:
         return None
 
 
-def _probe_outcome(identity: RepoIdentity, source: str, tree: str, path: str, command: list[str]) -> str:
+def _probe_outcome(identity: RepoIdentity, source: str, tree: str, path: str, command: list[str], environment: dict[str, str]) -> str:
     """Reuse the executor's outcome; native probes must run their own cases."""
     surface = tdd_surface.identify(command)
     files = [name for raw in _git(identity, "ls-tree", "-r", "--name-only", "-z", tree).split(b"\0")
              if raw and is_test_path(name := os.fsdecode(raw))]
-    arm = _execute_tree(identity, source, tree, files, command, surface, PROBE_TIMEOUT, {}, [])
+    arm = _execute_tree(identity, source, tree, files, command, surface, PROBE_TIMEOUT, {}, [], environment)
     if arm["timedOut"]:
         return "timed-out"
     if surface.get("runner") not in {"pytest", "unittest"}:
@@ -338,21 +340,24 @@ def _probe_outcome(identity: RepoIdentity, source: str, tree: str, path: str, co
 
 
 def _run_probe(identity: RepoIdentity, probe: object, candidate: str, original: str | None) -> JsonObject:
-    """A standalone test file added to the candidate's tests, run on the candidate and, first time, the original.
-    Producer text git or the runner cannot take is an error, a report line, never an aborted intake."""
+    """Run a new in-repository probe; malformed findings return errors."""
     if not (isinstance(probe, dict) and all(isinstance(probe.get(key), str) and probe[key] for key in ("path", "content", "command"))):
         return {"kind": "probe", "error": "probe needs path, content and command"}
     try:
         path, command = os.path.normpath(probe["path"]), shlex.split(probe["command"])
+        environment = {}
+        while command and re.match(r"[A-Za-z_][A-Za-z_0-9]*=", command[0]):
+            name, value = command.pop(0).split("=", 1)
+            environment[name] = value
         if os.path.isabs(path) or path.startswith("..") or not is_test_path(path) or _blob(identity, candidate, path) not in (None, probe["content"]):
-            return {"kind": "probe", "error": "probe path must be a new test file"}
+            return {"kind": "probe", "error": "probe path must name a new test file inside the repository"}
         if not command or (tdd_surface.identify(command).get("runner") not in {"pytest", "unittest"} and Path(identity.root, path).resolve() not in (Path(identity.root, arg).resolve() for arg in command)):
             return {"kind": "probe", "error": "probe command must name its probe file" if command else "probe command must name an executable"}
         blob = _git(identity, "hash-object", "-w", "--stdin", stdin=probe["content"].encode()).decode().strip()
         tree = _indexed(identity, candidate, (("update-index", "--add", "--cacheinfo", f"100644,{blob},{path}"), None))
-        result: JsonObject = {"kind": "probe", "candidate": _probe_outcome(identity, candidate, tree, path, command)}
+        result: JsonObject = {"kind": "probe", "candidate": _probe_outcome(identity, candidate, tree, path, command, environment)}
         if original is not None:
-            result["original"] = _probe_outcome(identity, original, tree, path, command)
+            result["original"] = _probe_outcome(identity, original, tree, path, command, environment)
         if "timed-out" in result.values():  # visible: binding only when the original passed within the limit
             result["timedOut"] = f"`{path}` ran past {PROBE_TIMEOUT:g} s: not a direct probe; rewrite it to call the changed code"
     except (RuntimeError, ValueError) as exc:
