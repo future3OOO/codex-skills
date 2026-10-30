@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import fcntl
 import filecmp
+import hashlib
 import json
 import os
 import pwd
@@ -21,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from hooks.lib.repo_identity import RepoIdentity, RepoIdentityError, resolve_repo_identity  # noqa: E402
-from hooks.lib.state_store import _active_candidate_tree  # noqa: E402
+from hooks.lib.state_store import _active_candidate_tree, atomic_write_bytes  # noqa: E402
 from hooks.lib.workflow_documents import graph_evidence_document  # noqa: E402
 from hooks.lib.workflow_state import (  # noqa: E402
     NO_INSTANCE_ID,
@@ -45,6 +46,7 @@ _MEMINFO = Path("/proc/meminfo")
 INTAKE_MEM_RESERVE_MB = 6000
 INTAKE_PRODUCER_PEAK_MB = 1700
 INTAKE_POLL_SECONDS = 0.25
+PACKET_BLOCKS = re.compile(rb"^[ \t]*<(coverage_plan|gitnexus_analysis)[ >].*?^[ \t]*</\1>\n", re.M | re.S)
 
 
 def _real_home() -> Path:
@@ -213,9 +215,24 @@ def _run_producer(args: list[str]) -> int:
             )
         finally:
             os.close(slot)
-    sys.stdout.buffer.write(result.stdout)
+    _emit_packet(result.returncode, result.stdout)
     sys.stderr.buffer.write(result.stderr)
     return result.returncode
+
+
+def _emit_packet(code: int, output: bytes) -> None:
+    """A lead reading past 6-7k tokens loses the middle, where the analysis sits (V44 leads saw 0-3 of 20 checks): print
+    the banner, coverage plan and analysis, and save the packet whole under its content hash in the account's own
+    cache, which a HOME override cannot move; print anything else as it came."""
+    marker = b"\nEND_REPO_CONTEXT_FORGE_REQUIRED_INTAKE\n"
+    end = output.find(marker) + len(marker)
+    if code or end < len(marker):
+        sys.stdout.buffer.write(output)
+        return
+    saved = _real_home() / ".cache" / "repo-context-forge" / "packets" / f"{hashlib.sha256(output).hexdigest()[:16]}.txt"
+    atomic_write_bytes(saved, output)
+    blocks = [match.group(0) for match in PACKET_BLOCKS.finditer(output, end)]
+    sys.stdout.buffer.write(b"".join([output[:end], *blocks, b"full_packet: " + os.fsencode(saved) + b"\n"]))
 
 
 def _git(root: Path, *args: str, env: dict[str, str] | None = None) -> tuple[str, str]:

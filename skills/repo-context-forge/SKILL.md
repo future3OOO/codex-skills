@@ -53,10 +53,11 @@ returns as soon as the bootstrap exits. In code mode, make both calls in one
 cell whose first line is `// @exec: {"yield_time_ms": 120000}`; a cell without
 it stops waiting at about 30 s.
 
-2. Treat the script output as the initial repository context packet for the
-current task. The output begins with `REPO_CONTEXT_FORGE_REQUIRED_INTAKE`; that
-banner is the enforced startup contract and must be reported before any code
-reasoning, review findings, edits, or GitNexus claims.
+2. The script prints the packet's intake banner, `<coverage_plan>` and
+`<gitnexus_analysis>`, then `full_packet: <path>`: the whole packet, saved
+outside the checkout, where the other elements are read as needed. The banner,
+`REPO_CONTEXT_FORGE_REQUIRED_INTAKE`, is the enforced startup contract and must
+be reported before any code reasoning, review findings, edits, or GitNexus claims.
 
 If the script exits non-zero and emits a `<blocker>`, stop normal repo analysis
 and surface the blocker. Do not continue with an empty or detached checkout
@@ -114,7 +115,7 @@ rerun the bootstrap.
 - use `<semantic_summaries>` and each symbol's summary source as injected
   context; `full_cached` means cached LLM/LSP/AST/native summaries are used
   first and deterministic synthetic fill is used without live LLM calls
-- use `<gitnexus_status><repo>` as the repo value for every GitNexus MCP call
+- use the banner's `gitnexus` repo as the repo value for every GitNexus MCP call
 - in `pr` mode, do not treat dirty source-worktree files as PR targets
 - read `<gitnexus_analysis>` as the first GitNexus validation step before
   editing production code: the bootstrap already executed the packet-scoped
@@ -175,7 +176,7 @@ When you do call out:
   them there; report only the relevant direct consumers, risk, gaps and evidence
   path. Never dump transitive graphs or truncated JSON into agent context.
 - if a GitNexus MCP call says the repo is missing or stale, rerun the bootstrap
-  with `--gitnexus-mode auto`, then retry using the new `<gitnexus_status><repo>`
+  with `--gitnexus-mode auto`, then retry using the new banner's `gitnexus` repo
 - do not call `gitnexus_list_repos` during normal recovery; the packet repo is
   authoritative
 - cite SoulForge impact separately from GitNexus impact when reporting review
