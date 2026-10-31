@@ -16,6 +16,8 @@ done
 
 rsync -a "${EXCLUDES[@]}" "$SRC/hooks" "$SRC/skills" "$DEST/"
 cp "$SRC/docs/agents/global-rules.md" "$DEST/AGENTS.md"
+printf '\n' >> "$DEST/AGENTS.md"
+cat "$SRC/docs/agents/SIMP.md" >> "$DEST/AGENTS.md"
 chmod +x "$DEST"/hooks/*.py
 
 # rsync excludes stop new copies only; remove matching artifacts already live.

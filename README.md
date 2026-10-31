@@ -12,9 +12,9 @@ The project is the source of truth; the estate is an install artifact.
 
 ## Layout
 
-- `docs/agents/global-rules.md` — global Codex rules, installed as
-  `~/.codex/AGENTS.md`. Not named `AGENTS.md`, so sessions in this repo load
-  the rules once.
+- `docs/agents/global-rules.md` and `docs/agents/SIMP.md` — rules and voice,
+  assembled into `~/.codex/AGENTS.md`. Source files use different names so
+  sessions in this repo load the instructions once.
 - `decisions.md` — tracked project decisions; not installed globally.
 - `skills/` — custom skills, one directory per skill. Codex-only extras that
   do not exist upstream: `codex-advisor` (the codex-side advisor name),
@@ -72,8 +72,9 @@ For a full project installation:
 ```
 
 Backs up touched paths to `~/.codex-backups/<ts>/`, rsyncs `hooks/` and
-`skills/` (excluding tests), copies the global rules, merges `hooks.json` entries,
-and appends `[mcp_servers.gitnexus]` to `config.toml` when absent. Codex
+`skills/` (excluding tests), assembles global rules and SIMP into `AGENTS.md`,
+merges `hooks.json` entries, and appends `[mcp_servers.gitnexus]` to `config.toml`
+when absent. Codex
 requires hook trust: approve the hooks once via `/hooks` in an interactive
 session, or run automation with `--dangerously-bypass-hook-trust`.
 
@@ -93,11 +94,14 @@ rsync -acR --backup --backup-dir="$backup" -- "${paths[@]}" "$estate/" &&
   for path in "${paths[@]}"; do cmp -- "$path" "$estate/$path" || exit 1; done
 ```
 
-The global rules install under a different name, so never list them in `paths`:
+The global rules and SIMP install together under a different name, so never list
+them in `paths`:
 
 ```bash
-rsync -a --backup --backup-dir="$backup" -- docs/agents/global-rules.md "$estate/AGENTS.md" &&
-  cmp -- docs/agents/global-rules.md "$estate/AGENTS.md"
+rsync -aI --backup --backup-dir="$backup" -- docs/agents/global-rules.md "$estate/AGENTS.md" &&
+  printf '\n' >> "$estate/AGENTS.md" &&
+  cat docs/agents/SIMP.md >> "$estate/AGENTS.md" &&
+  cmp -- <(cat docs/agents/global-rules.md; printf '\n'; cat docs/agents/SIMP.md) "$estate/AGENTS.md"
 ```
 
 Back up and remove only explicitly owned obsolete files. Record the source SHA,
