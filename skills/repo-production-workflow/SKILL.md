@@ -131,8 +131,7 @@ Completion requires the typed `quality-gate` run over the current reviewable tre
 
 Do not spawn or task the reviewer until the lead has completed the investigation,
 repair, real outcome assessment and verification in steps 2–9. Missing lead proof
-is work for the lead, not an investigation to offload to the reviewer. This also
-applies before return review; preflight exploration is confined to before preflight.
+is work for the lead before initial or return review.
 The existing tool hook blocks governed delegation while prerequisites or the
 verified tree are stale; readiness does not substitute for assessing real outcomes.
 
@@ -160,8 +159,8 @@ the current candidate.
 
 Record the delegate's intake. Code is proof: the runner executes each finding's `probe`
 (`{"path","content","command"}`, a new standalone probe run by a direct project command) on the
-candidate and the original, and each `change` (a unified diff that only deletes code or replaces
-it with one call to an existing function) against every retained comparison batch. Objective:
+candidate and the original, and each `change` (a net-reducing unified diff that leaves
+tests untouched) against every retained comparison batch. Objective:
 maximum performance and efficiency of the delivered code with the requested behaviour held
 fixed. Acceptance order: (1) a regression, a probe of behaviour the request keeps that passes on
 the original and fails or times out on the candidate, binds and is repaired; (2) a request

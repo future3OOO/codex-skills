@@ -32,7 +32,7 @@ local work short; transaction-sensitive work names the full surrounding surface.
 
 ### `authoritativeContract`
 
-Before editing, trace the shared responsibilities visible in the original code and derive distinguishing inputs for affected preservation, reusing existing items and probes. TDD's [required probe loop](../tdd/SKILL.md#required-probe-loop) revisits them against the actual diff.
+`d* = argmin C(d)` over designs satisfying the fixed request and preservation. Derive `C` analytically from the production path before choosing a mechanism: repeated calls and scans, copies, retained state and how work grows with input size. Identify the responsible owners and system limits; distinguish observations from estimates. Compare the least sufficient change with a materially different architecture by necessary production work and code at fixed behavior. Explore the deciding feasibility and cost assumptions with small scratch prototypes or direct probes; do not build competing production implementations. Record the cheapest feasible design, deciding evidence and superseded code here; a missing cost model is a material gap. Derive preservation from required outcomes, not a chosen mechanism's intermediate state. TDD's [required probe loop](../tdd/SKILL.md#required-probe-loop) revisits affected decisions against the actual diff.
 
 Before choosing an implementation or writing tests, investigate each behavioral
 predicate that decides an outcome:
@@ -76,7 +76,7 @@ Freeze requirement meaning and scope in TDD's [Behavior Map](../tdd/recorder.md#
 [{"id":"BM_EXPIRY","kind":"contract","basis":"the deadline is inclusive","behavior":"expires at the deadline","seam":"Expiry.is_expired with a real clock","expected":"now equal to expiresAt is expired","boundaryInputs":["test_expires_at_deadline","test_not_expired_before_deadline"],"interpretations":["now > expiresAt","now >= expiresAt"],"interpretation":"now >= expiresAt","authority":"the request's 'at the deadline'"}]
 ```
 
-Name the architecture and the cheapest alternative you compared by probes, by normal-path operation and maintenance cost, reuse and production lines; line count alone cannot outweigh fixed behavior or performance obligations. Use real collaborators and observe results and state effects.
+Remove every element whose deletion preserves required behavior and distinct necessary proof without increasing whole-system cost. Use real collaborators and observe results and state effects.
 
 Record materially different readings as the owning item's `interpretations` with concrete discriminating `boundaryInputs`; settle them from authority before dependent code, or leave them visibly unsettled, which keeps TDD incomplete. The existing advisor challenges the expectation itself against the request. No authored proof status exists; the runner derives it.
 

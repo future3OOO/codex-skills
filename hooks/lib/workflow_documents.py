@@ -126,8 +126,7 @@ DESIGN_FILE_SHAPE = (
 ITEM_SHAPE = ('{"id":"BM_X","kind":"conformance|contract|preservation","basis":"original request or preservation",'
               '"behavior":"...","seam":"...","expected":"...","boundaryInputs":["executed case name"],'
               '"interpretations":["reading a","reading b"],"interpretation":"...","authority":"..."}')
-# A finding binds only through evidence the runner executes; anything else is a report line.
-EXECUTABLE = ('{"id":"R-1","claim":"...","probe":{"path":"tests/test_r1.py","content":"...","command":"python3 -m pytest tests/test_r1.py"}} or a deletion-only {"id":"R-2","claim":"...","change":"<unified diff>"}')
+EXECUTABLE = ('{"id":"R-1","claim":"...","probe":{"path":"tests/test_r1.py","content":"...","command":"python3 -m pytest tests/test_r1.py"}} or a net-reducing {"id":"R-2","claim":"...","change":"<unified diff>"}')
 RECORD_SHAPES = {
     "preflight": f'{{"authoritativeContract":"text","behaviorMap":[{ITEM_SHAPE}]}}',
     "review": '{"findings":[FINDING]} where FINDING is ' + EXECUTABLE,
