@@ -17,25 +17,15 @@ phase belongs in `--phase`, not in the slug.
 
 Review the drafted production preflight before it is recorded. Supply it with
 `--preflight-file <draft.json>`; the wrapper snapshots it before consultation.
-The checkpoint sends the exact artifact, including its Behavior Map. The advisor is the
-designer: it compares the draft's architecture with at least one alternative by cheap probes
-(normal-path cost, reuse, estimated production lines) and keeps the cheapest that holds the
-request; each load-bearing request promise has a contract item quoting the request sentence it
-tests, its expected value from executing an existing operation of the original, the engine or a
-literal request example; a benchmark is a contract
-case with its workload, reference, repetitions, budget and noise tolerance fixed now.
+The advisor designs against [Production Preflight's frozen evaluation and architecture rules](../production-preflight/SKILL.md#behaviormap),
+challenging the supplied expectations and cost comparison before approval.
 
-Return `approved` when the draft has no material gap, otherwise
-`changes-required`. The lead revises once and uses `--reconsult` in the same session;
-no per-cycle user permission is needed. That second consult is the last: it runs with write access, the advisor
-writes the measured architecture into the wrapper's draft copy, closes any remaining gap and cuts
-what no request sentence needs, checks its answer with the recorder's dry run, and returns `approved`; `record
-preflight` records that edited copy. The checkpoint sends the delta from the
-last recorded draft with base and target content identities. A failed result does
-not advance that base; retries may repeat the delta. With no recorded base, the
-retry carries the full artifact. Draft findings stay in their consult intake;
-approval gates the single `record preflight`.
-After recording, initial preflight consultation is closed.
+Preflight allows two consults before recording.
+After `changes-required`, revise once and use `--reconsult` in the same session.
+The second round edits only the wrapper's draft copy, cuts unnecessary work,
+dry-runs it and returns `approved`; `record preflight` records it.
+The checkpoint sends the delta with both content identities; failed results keep
+that base, and the first request sends it whole.
 
 Preflight records the governing-design declaration: `--design-file` with the
 durable design artifact of a planned stack, or `--design-absent` with a reason; a

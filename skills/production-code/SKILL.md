@@ -77,13 +77,13 @@ results, persisted effects and cleanup. Exercise the affected forms and interact
 not just the reported example. Reuse applicable drivers and evidence; execute again
 for changed behavior/bindings, unreliable evidence or missing coverage, not for a
 different reviewer or handoff. Disclose unavailable comparisons; never undo/reapply
-a repair to manufacture a failure. For new or changed regression checks and existing
-checks relied on for the repair, establish that the claimed defect makes the check
-fail. Reuse an applicable N failure; when sensitivity remains uncertain, introduce
-only that contract-breaking behavior in a disposable copy and run the retained
-check. Injection proves sensitivity, not historical N. Correct or replace an
-insensitive check, retaining distinct useful coverage; preservation checks may
-correctly pass on both versions. Missing material acceptance remains unresolved,
+a repair to manufacture a failure. A cause witness fails on N and passes on N+1 at the deciding Interface; a catch,
+retry or default that merely hides the failure cannot satisfy it. Preservation
+assertions stay unchanged on both sources; requirement changes remain visible for review against the request.
+For sensitivity, reuse that N failure or plant only the relevant defect in a
+disposable copy: the clean candidate passes and the unchanged assertion rejects
+the defect. A setup failure proves no sensitivity; mutation proves no oracle.
+Ground expectations in the frozen evaluation before judging sensitivity. Missing material acceptance remains unresolved,
 regardless of passing examples, suite totals, CI or recorder readiness.
 
 When efficiency is part of the objective, use those operations for an A/B comparison

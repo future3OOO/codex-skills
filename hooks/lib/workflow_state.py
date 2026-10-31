@@ -106,13 +106,10 @@ def _effective(identity: RepoIdentity, state: JsonObject | None,
     item open) reads in-progress, with the next action that follows."""
     if not state or state.get("tdd") != "passed" or state.get("phase") == "complete":
         return state
-    items = behavior_map.recorded_map(evidence(state.get("tddEvidence")), evidence(state.get("preflightEvidence"))) or []
-    if any(item.get("comparison") for item in items):
-        from .tdd_workflow import refresh_proof
-        refresh_proof(identity, items)
-        if behavior_map.unresolved(items):
-            state["tdd"] = "in-progress"
-            state["nextAction"] = _derive_next_action(state)
+    documents = (evidence(state.get("tddEvidence")), evidence(state.get("preflightEvidence")))
+    if _readiness_lines(identity, state, documents=documents)["open"]:
+        state["tdd"] = "in-progress"
+        state["nextAction"] = _derive_next_action(state)
     return state
 
 
@@ -400,18 +397,6 @@ def set_phase(
         )
 
 
-def _map_items(
-    document: JsonObject | None,
-) -> list[JsonObject] | None:
-    if not isinstance(document, dict):
-        return None
-    value = document.get("behaviorMap")
-    if value is None:
-        inner = document.get("document")
-        value = inner.get("behaviorMap") if isinstance(inner, dict) else None
-    return behavior_map.runtime_items(value) if value is not None else None
-
-
 def commit_tdd(identity: RepoIdentity, slug: str, workflow_id: str | None,
                summary_doc: JsonObject, *, expected_evidence_id=None,
                tree_before=None, review_changed=False) -> tuple[JsonObject, str]:
@@ -425,9 +410,7 @@ def commit_tdd(identity: RepoIdentity, slug: str, workflow_id: str | None,
             raise WorkflowError("comparison requires this workflow's recorded preflight")
         if state.get("tddEvidence") != expected_evidence_id:
             raise WorkflowError("probe obligations changed during execution; retry against current evidence")
-        items = _map_items(summary_doc) or []
-        from .tdd_workflow import refresh_proof
-        refresh_proof(identity, items)
+        items = behavior_map.recorded_map(summary_doc) or []
         manifests = []
         if tree_before is not None:
             run = summary_doc["runs"][-1]
@@ -442,7 +425,15 @@ def commit_tdd(identity: RepoIdentity, slug: str, workflow_id: str | None,
             measured = manifest_write(str(state["workflowId"]), "tdd-tree", tree_before)
             manifests.append(measured)
             run["treeManifestId"] = measured.manifest_id
-        pending = set(behavior_map.unresolved(items))
+        from .tdd_workflow import _evaluation, refresh_proof
+        if "evaluation" not in summary_doc:
+            summary_doc["evaluation"] = _evaluation(identity, state, transaction.evidence(state.get("tddEvidence")))
+        preflight = transaction.evidence(state.get("preflightEvidence"))
+        required = {item["id"] for item in behavior_map.recorded_map(None, preflight) or []}
+        if required - summary_doc["evaluation"].keys():
+            refresh_proof(identity, items)
+            behavior_map.retain_evaluation(items, required, summary_doc["evaluation"])
+        pending = set(_readiness_lines(identity, state, items, documents=(summary_doc, preflight))["open"])
         summary_doc["behaviorMap"] = items
         write = evidence_write(str(state["workflowId"]), "tdd", summary_doc)
         state["tddEvidence"] = write.evidence_id
@@ -547,7 +538,7 @@ def commit_evidence_phase(
         state[latest_field] = write.evidence_id
         if status == "passed":
             state[f"{field}Evidence"] = write.evidence_id
-            if phase == "preflight" and _map_items(evidence_doc) == []:
+            if phase == "preflight" and behavior_map.recorded_map(evidence_doc) == []:
                 state["tdd"] = "passed"
             state["nextAction"] = _derive_next_action(state)
         return _commit(
@@ -894,7 +885,9 @@ def record_advisor_result(
             if verdict in {"approved", "changes-required"}:
                 if intake is None or preflight_draft is None:
                     raise WorkflowError("draft advice requires its reviewed preflight artifact")
-                if verdict == "changes-required" and state.get("preflightRounds"):
+                if state.get("preflightRounds", 0) >= 2:
+                    raise WorkflowError("preflight consultation budget exhausted")
+                if verdict == "changes-required" and state.get("preflightRounds") and not state.get("preflightEvidence"):
                     raise WorkflowError("the second preflight consult is the last: the advisor edits the draft "
                                         "in place and returns approved")
                 intake["preflightDraft"] = preflight_draft
@@ -927,7 +920,8 @@ def record_advisor_result(
                 "reason": recorded_reason,
                 **({"intakeEvidence": intake_reference} if intake_write is not None else {}),
             }
-            state["phase"] = "advisor-preflight"
+            if not state.get("preflightEvidence"):
+                state["phase"] = "advisor-preflight"
         elif stage == "final":
             state.pop("paused", None)
             _require_predecessor(state, "final-review")
@@ -1055,24 +1049,6 @@ def completion_missing(state: JsonObject) -> list[str]:
 CHECKPOINT_PHASES = {"preflight-advice", "code-review", "final-review"}
 
 
-def _recorded_items(
-    identity: RepoIdentity, state: JsonObject,
-) -> list[JsonObject]:
-    """Read the current map, falling back only when absent, not when corrupt."""
-    fields = ("preflightLatestEvidence",) if state.get("preflight") == "pending" else ()
-    for field in (*fields, "tddEvidence", "preflightEvidence"):
-        evidence_id = state.get(field)
-        items = _map_items(evidence_document(identity, evidence_id if isinstance(evidence_id, str) else None))
-        if items is not None:
-            from .tdd_workflow import refresh_proof
-            refresh_proof(identity, items)
-            return items
-    return []
-
-
-
-
-
 def _finding_ledger(
     identity: RepoIdentity, state: JsonObject, items: list[JsonObject],
 ) -> list[JsonObject]:
@@ -1153,8 +1129,10 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
     if phase == "preflight-advice":
         if preflight_draft is None:
             missing.append("preflight draft (--preflight-file)")
+        if state.get("preflightRounds", 0) >= 2:
+            missing.append("preflight consultation budget exhausted")
         if state.get("preflightLatestEvidence"):
-            missing.append("preflight already recorded; draft consultations are closed")
+            missing.append("preflight is already recorded; draft consultations are closed")
     evidence_id = state.get("repoContextForgeEvidence")
     graph_document = evidence_document(
         identity, evidence_id if isinstance(evidence_id, str) else None,
@@ -1180,9 +1158,10 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
             validate_design_declaration(evidence_document(identity, design_evidence_id))
         except ValueError as exc:
             missing.append(str(exc))
-    items = _recorded_items(identity, state)
+    from .tdd_workflow import current_map
+    items = current_map(identity, state)[0] or []
     if phase == "final-review":
-        pending = [] if state.get("nextAction") == "re-consult-final-review" else behavior_map.unresolved(items)
+        pending = [] if state.get("nextAction") == "re-consult-final-review" else _readiness_lines(identity, state, items)["open"]
         missing.extend(["unresolved Behavior Map items: " + ", ".join(pending)] if pending else [])
         if not state.get("finalStarted") and (drift := _binding_drift(identity, state, "review")):
             missing.append(drift)
@@ -1267,10 +1246,7 @@ def complete(
         # this transaction sees, so a concurrent map change cannot slip through.
         tdd_document = transaction.evidence(state.get("tddEvidence"))
         preflight_document = transaction.evidence(state.get("preflightEvidence"))
-        from .tdd_workflow import refresh_proof
-        items = behavior_map.recorded_map(tdd_document, preflight_document) or []
-        refresh_proof(identity, items)
-        missing = behavior_map.unresolved(items) + _finding_state_blockers(state) + completion_missing(state)
+        missing = _readiness_lines(identity, state, documents=(tdd_document, preflight_document))["open"] + _finding_state_blockers(state) + completion_missing(state)
         graph_id = state.get("repoContextForgeEvidence")
         graph_document = transaction.evidence(graph_id) if isinstance(graph_id, str) else None
         if (
@@ -1434,7 +1410,8 @@ def public_status(state: JsonObject, identity: RepoIdentity | None = None, *,
 
 
 def _earned_split(identity: RepoIdentity, state: JsonObject, labels: bool) -> str:
-    items = _recorded_items(identity, state)
+    from .tdd_workflow import current_map
+    items = current_map(identity, state)[0] or []
     return f" Probes compared={sum(behavior_map.producer_proved(entry) for entry in items)}/{len(items)}." if items else ""
 
 
@@ -1449,15 +1426,22 @@ def _map_listing(identity: RepoIdentity, state: JsonObject) -> str:
     return " Open map: " + "; ".join(groups) + "." if groups else ""
 
 
-def _readiness_lines(identity: RepoIdentity, state: JsonObject, items: list[JsonObject] | None = None) -> JsonObject:
-    """The one readiness result every consumer renders: open questions and contract changes.
-    A caller that already loaded the current map passes it rather than loading it again."""
-    try:
-        items = _recorded_items(identity, state) if items is None else items
-        recorded = behavior_map.recorded_map(None, evidence_document(identity, state.get("preflightEvidence")))
-    except (WorkflowError, LedgerError, ValueError):
-        return {}
-    opened = behavior_map.open_obligations(items)
+def _readiness_lines(identity: RepoIdentity, state: JsonObject, items: list[JsonObject] | None = None, *,
+                     documents: tuple[JsonObject | None, JsonObject | None] | None = None) -> JsonObject:
+    """Judge current and retained proofs; supplied documents stay within the caller's transaction."""
+    from .tdd_workflow import _evaluation, current_map, refresh_proof
+    if documents is None:
+        items, document = current_map(identity, state, fresh=False) if items is None else (items, evidence_document(identity, state.get("tddEvidence")))
+        preflight = evidence_document(identity, state.get("preflightEvidence"))
+    else:
+        document, preflight = documents
+        items = behavior_map.recorded_map(*documents) if items is None else items
+    items = items or []
+    recorded = behavior_map.recorded_map(None, preflight)
+    evaluation = [{**entry, "comparison": dict(document["runs"][entry["runIndex"]])}
+                  for entry in _evaluation(identity, state, document).values()]
+    refresh_proof(identity, [*items, *evaluation])
+    opened = behavior_map.open_obligations(items, evaluation)
     return {"open": opened, "openCount": len(opened), "never": behavior_map.never_compared(items),
             "contractChanges": behavior_map.contract_changes(items, recorded)}
 
@@ -1542,7 +1526,7 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
         command = [*cli, *producer, *bound] if "record" in producer else [*cli, *producer, *bound[:4]]
         pending = [{"findingId": f["findingId"]}
                    for f in state.get("findingStates", []) if _finding_unresolved(f)]
-        ids = [str(entry["id"]) for entry in _map_items(evidence_document(
+        ids = [str(entry["id"]) for entry in behavior_map.recorded_map(evidence_document(
             identity, state.get("tddEvidence") or state.get("preflightEvidence"))) or []] if producer == ["tdd"] else []
         operation: JsonObject = {"command": shlex.join(command + (["--input", "-"] if producer[-1] == "review" else [])),
                                 "input": {
