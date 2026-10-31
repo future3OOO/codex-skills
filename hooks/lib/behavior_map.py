@@ -253,7 +253,8 @@ def _judge(entry: JsonObject, items: list[JsonObject], cases: dict[str, dict[str
             found.extend(f"{label} differs and no item names it" for label in unclaimed.values())
         else:
             attributable.update(unclaimed)
-    elif owners := _owners(entry, items):
+    elif owners := [other for other in items if other is not entry
+                    and (other.get("comparison") or {}).get("runIndex") == run.get("runIndex")]:
         return [f"shares its batch with {', '.join(owner['id'] for owner in owners)}: name its cases in boundaryInputs"]
     elif contract and len(cases) > 1:
         return ["several cases executed: name the requested ones in boundaryInputs"]
@@ -292,11 +293,6 @@ def _judge(entry: JsonObject, items: list[JsonObject], cases: dict[str, dict[str
     return reasons + found
 
 
-def _owners(entry: JsonObject, items: list[JsonObject]) -> list[JsonObject]:
-    index = (entry.get("comparison") or {}).get("runIndex")
-    return [other for other in items if other is not entry and (other.get("comparison") or {}).get("runIndex") == index]
-
-
 def _claimed(entry: JsonObject, items: list[JsonObject], cases: dict[str, dict[str, JsonObject]],
              keep: Callable[[JsonObject], bool] = lambda other: True) -> set[str]:
     """The exact cases other items' names select, each in that item's own executed comparison; an item
@@ -305,33 +301,49 @@ def _claimed(entry: JsonObject, items: list[JsonObject], cases: dict[str, dict[s
             for name in other.get("boundaryInputs") or [] for case in _matched(name, folded_cases(other["comparison"])[0])[0]}
 
 
-def open_obligations(items: list[JsonObject]) -> list[str]:
-    """The single readiness result: one question per item whose required proof is missing.
-    Items sharing one comparison fold its cases once. The current comparisons then answer for the
-    existing test ids the candidate renames and the conditions it removes."""
+def _question(entry: JsonObject, items: list[JsonObject], cases: dict[str, dict[str, JsonObject]]) -> list[str]:
+    if entry.get("kind") not in KINDS:
+        return ["declare kind (conformance, contract or preservation) through record tdd-map"]
+    if entry.get("boundaryInputs") == []:
+        return ["recorded boundary inputs are not executed case names: map them through record tdd-map"]
+    if readings_unsettled(entry):
+        return ["readings unsettled: " + " | ".join(entry["interpretations"]) + " - record interpretation and authority"]
+    if not producer_proved(entry):
+        reason = ("comparison stale (production, probe or obligation changed): rerun it" if (entry.get("comparison") or {}).get("valid")
+                  else "no current valid comparison")
+        if cases and entry.get("boundaryInputs"):
+            reason += "; " + "; ".join(
+                f"{name} " + ", ".join(f"{_state(cases.get(case, {}).get(label))} on {label}" for label in ("original", "current"))
+                for name in entry["boundaryInputs"] for case in [next(iter(_matched(name, cases)[0]), None)])
+        return [reason]
+    return _judge(entry, items, cases)
+
+
+def open_obligations(items: list[JsonObject], evaluation: list[JsonObject] | None = None) -> list[str]:
+    """Judge current and retained checks, renamed tests and removed conditions, folding each run once."""
     lines: list[str] = []
+    retained = {entry["id"]: entry for entry in (evaluation if evaluation is not None else
+                [entry for item in items for entry in (item.get("comparison") or {}).get("evaluation", [])])}
+    proofs = [*items, *retained.values()]
     folded: dict[object, dict[str, dict[str, JsonObject]]] = {}
-    for entry in items:
-        head = f"{entry['id']} ({entry.get('kind') or 'kind?'}): "
+    decided: dict[str, set[bool | None]] = {}
+    for entry in proofs:
+        head = ("retained " if entry is retained.get(entry["id"]) else "") + f"{entry['id']} ({entry.get('kind') or 'kind?'}): "
         comparison = entry.get("comparison") or {}
         if comparison.get("arms") and comparison.get("runIndex") not in folded:
             folded[comparison.get("runIndex")] = folded_cases(comparison)[0]
         cases = folded.get(comparison.get("runIndex"), {}) if comparison.get("arms") else {}
-        if entry.get("kind") not in KINDS:
-            reason = "declare kind (conformance, contract or preservation) through record tdd-map"
-        elif entry.get("boundaryInputs") == []:
-            reason = "recorded boundary inputs are not executed case names: map them through record tdd-map"
-        elif readings_unsettled(entry):
-            reason = "readings unsettled: " + " | ".join(entry["interpretations"]) + " - record interpretation and authority"
-        elif not producer_proved(entry):
-            reason = ("comparison stale (production, probe or obligation changed): rerun it" if comparison.get("valid")
-                      else "no current valid comparison")
-            if cases and entry.get("boundaryInputs"):
-                reason += "; " + "; ".join(
-                    f"{name} " + ", ".join(f"{_state(cases.get(case, {}).get(label))} on {label}" for label in ("original", "current"))
-                    for name in entry["boundaryInputs"]
-                    for case in [next(iter(_matched(name, cases)[0]), None)])
-        elif reasons := _judge(entry, items, cases):
+        if producer_proved(entry):
+            eligible = {case for case, arms in cases.items() if not _differs(arms.get("original"), arms.get("current"))
+                        and all(_passed(arms.get(label), comparison["arms"][index]["outcome"]) for label, index in (("original", 0), ("current", -1)))}
+            if entry is retained.get(entry["id"]) and entry.get("kind") in {"contract", "conformance"}:
+                eligible.update(case for name in entry.get("boundaryInputs") or cases for case in _matched(name, cases)[0])
+            for condition in comparison["arms"][0].get("conditions", []):
+                sensitive = condition["decided"]
+                if sensitive is True:
+                    sensitive = any(possible and _ran(case, test) for test, possible in (condition.get("reached") or {}).items() for case in eligible)
+                decided.setdefault(condition["label"], set()).add(sensitive)
+        if reasons := _question(entry, list(retained.values()) if entry is retained.get(entry["id"]) else items, cases):
             reason = "; ".join(reasons)
         else:
             continue
@@ -339,30 +351,24 @@ def open_obligations(items: list[JsonObject]) -> list[str]:
         unnamed = [str(name) for name in entry.get("boundaryInputs") or []
                    if not re.search(rf"(?:^|[\s,;(]){re.escape(str(name))}(?=$|[\s,;)])", reason)]
         lines.append(head + reason + ("; its cases: " + ", ".join(unnamed) if unnamed else ""))
-    current = [entry["comparison"] for entry in items if producer_proved(entry)]
-    expected = [str(entry.get("expected", "")) for entry in items if entry.get("kind") == "contract"]
+    current = [entry["comparison"] for entry in proofs if producer_proved(entry)]
+    expected = [str(entry.get("expected", "")) for entry in proofs if entry is retained.get(entry["id"], entry) and entry.get("kind") == "contract"]
     lines += [f"existing test `{case}` is missing on the candidate: restore it, or name it in the expected result "
               "of a contract item whose request removes it"
               for case in dict.fromkeys(case for run in current for case in run.get("renamed") or [])
               if not any(re.search(rf"(?<![^\s`'\"(,;]){re.escape(case)}(?![^\s`'\"),;.]|\.\S)", text) for text in expected)]
-    decided: dict[str, set[bool | None]] = {}
-    for run in current:
-        for condition in run["arms"][0].get("conditions", []):
-            decided.setdefault(condition["label"], set()).add(condition["decided"])
-    # A removal a contract item names closes on one of its own cases whose result changed and whose test
-    # evaluated the condition at its deciding value on the original, not shown to keep the decision.
-    claimed = set()
+    return lines + [f"removed condition {label} lacks decisive proof: restore it or compare an additional preservation case; "
+                    "keep the request fixed and continue through review"
+                    for label, seen in decided.items() if False in seen and True not in seen]
+
+
+def retain_evaluation(items: list[JsonObject], required: set[str], retained: JsonObject) -> None:
+    """Freeze each original item's first proved cases, without waiting for global deletion coverage."""
     for entry in items:
-        if entry.get("kind") == "contract" and producer_proved(entry):
-            cases = folded[entry["comparison"].get("runIndex")]
-            own = {case for name in entry.get("boundaryInputs") or [] for case in _matched(name, cases)[0]
-                   if _state(cases[case].get("original")) != _state(cases[case].get("current"))}
-            for condition in entry["comparison"]["arms"][0].get("conditions", []):
-                if condition["label"] in str(entry.get("expected", "")) and any(
-                        possible and _ran(case, test) for test, possible in (condition.get("reached") or {}).items() for case in own):
-                    claimed.add(condition["label"])
-    return lines + [f"removed condition {label} never decided a compared case"
-                    for label, seen in decided.items() if False in seen and True not in seen and label not in claimed]
+        if (entry["id"] in required - retained.keys() and not _question(entry, items,
+                folded_cases(entry["comparison"])[0] if (entry.get("comparison") or {}).get("arms") else {})):
+            retained[entry["id"]] = {**copy.deepcopy({key: value for key, value in entry.items() if key != "comparison"}),
+                                      "runIndex": entry["comparison"]["runIndex"]}
 
 
 def obligation(entry: JsonObject) -> list[object]:
@@ -376,9 +382,9 @@ def producer_proved(entry: JsonObject) -> bool:
             and len(recorded) in (4, 9) and recorded[:4] == obligation(entry))
 
 
-def unresolved(items: list[JsonObject]) -> list[str]:
+def unresolved(items: list[JsonObject], opened: list[str] | None = None) -> list[str]:
     ids = {str(entry["id"]) for entry in items}
-    return [head if (head := line.split(" ", 1)[0]) in ids else line for line in open_obligations(items)]
+    return [head if (head := line.split(" ", 1)[0]) in ids else line for line in (open_obligations(items) if opened is None else opened)]
 
 
 def never_compared(items: list[JsonObject]) -> list[str]:
@@ -427,12 +433,7 @@ def _unnamed_changes(run: JsonObject) -> list[str]:
     report is judged, whatever the report's cases show."""
     if tdd_surface.identify(shlex.split(run.get("command") or "")).get("runner") in tdd_surface.NATIVE_RUNNERS:
         return []
-    return _changed_lines(run["arms"][0], run["arms"][-1], report=_reports(run))
-
-
-def _reports(run: JsonObject) -> bool:
-    """Whether the command prints a test runner's report beside its own output."""
-    return _runner(run) in tdd_surface.NATIVE_RUNNERS
+    return _changed_lines(run["arms"][0], run["arms"][-1], report=_runner(run) in tdd_surface.NATIVE_RUNNERS)
 
 
 def comparison_view(run: JsonObject) -> JsonObject:
@@ -518,16 +519,13 @@ def _changed_lines(original: JsonObject, current: JsonObject, report: bool = Fal
     return [f"{line[0]} {line[1:]}" for line in hunks if line[:1] in "+-"]
 
 
-def obligation_digest(items: list[JsonObject]) -> str:
-    return "Probe obligations: " + "; ".join(f"{entry['id']}: {entry['behavior']} => {entry['expected']}" for entry in items)[:1800]
-
-
 def recorded_map(
-    tdd_document: JsonObject | None, preflight_document: JsonObject | None
+    tdd_document: JsonObject | None, preflight_document: JsonObject | None = None
 ) -> list[JsonObject] | None:
     """The current map: TDD evidence's, else the recorded preflight's, else none."""
     value = tdd_document.get("behaviorMap") if isinstance(tdd_document, dict) else None
-    if value is None and isinstance(preflight_document, dict):
-        inner = preflight_document.get("document")
+    fallback = preflight_document if preflight_document is not None else tdd_document
+    if value is None and isinstance(fallback, dict):
+        inner = fallback.get("document")
         value = inner.get("behaviorMap") if isinstance(inner, dict) else None
     return runtime_items(value) if value is not None else None
