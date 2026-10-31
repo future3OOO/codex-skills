@@ -352,7 +352,7 @@ def open_obligations(items: list[JsonObject], evaluation: list[JsonObject] | Non
                    if not re.search(rf"(?:^|[\s,;(]){re.escape(str(name))}(?=$|[\s,;)])", reason)]
         lines.append(head + reason + ("; its cases: " + ", ".join(unnamed) if unnamed else ""))
     current = [entry["comparison"] for entry in proofs if producer_proved(entry)]
-    expected = [str(entry.get("expected", "")) for entry in (retained.values() if retained else items) if entry.get("kind") == "contract"]
+    expected = [str(entry.get("expected", "")) for entry in proofs if entry is retained.get(entry["id"], entry) and entry.get("kind") == "contract"]
     lines += [f"existing test `{case}` is missing on the candidate: restore it, or name it in the expected result "
               "of a contract item whose request removes it"
               for case in dict.fromkeys(case for run in current for case in run.get("renamed") or [])

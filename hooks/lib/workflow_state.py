@@ -1429,21 +1429,18 @@ def _map_listing(identity: RepoIdentity, state: JsonObject) -> str:
 def _readiness_lines(identity: RepoIdentity, state: JsonObject, items: list[JsonObject] | None = None, *,
                      documents: tuple[JsonObject | None, JsonObject | None] | None = None) -> JsonObject:
     """Judge current and retained proofs; supplied documents stay within the caller's transaction."""
-    try:
-        from .tdd_workflow import _evaluation, current_map, refresh_proof
-        if documents is None:
-            items, document = current_map(identity, state, fresh=False) if items is None else (items, evidence_document(identity, state.get("tddEvidence")))
-            preflight = evidence_document(identity, state.get("preflightEvidence"))
-        else:
-            document, preflight = documents
-            items = behavior_map.recorded_map(*documents) if items is None else items
-        items = items or []
-        recorded = behavior_map.recorded_map(None, preflight)
-        evaluation = [{**entry, "comparison": dict(document["runs"][entry["runIndex"]])}
-                      for entry in _evaluation(identity, state, document).values()]
-        refresh_proof(identity, [*items, *evaluation])
-    except (WorkflowError, LedgerError, ValueError):
-        return {}
+    from .tdd_workflow import _evaluation, current_map, refresh_proof
+    if documents is None:
+        items, document = current_map(identity, state, fresh=False) if items is None else (items, evidence_document(identity, state.get("tddEvidence")))
+        preflight = evidence_document(identity, state.get("preflightEvidence"))
+    else:
+        document, preflight = documents
+        items = behavior_map.recorded_map(*documents) if items is None else items
+    items = items or []
+    recorded = behavior_map.recorded_map(None, preflight)
+    evaluation = [{**entry, "comparison": dict(document["runs"][entry["runIndex"]])}
+                  for entry in _evaluation(identity, state, document).values()]
+    refresh_proof(identity, [*items, *evaluation])
     opened = behavior_map.open_obligations(items, evaluation)
     return {"open": opened, "openCount": len(opened), "never": behavior_map.never_compared(items),
             "contractChanges": behavior_map.contract_changes(items, recorded)}
