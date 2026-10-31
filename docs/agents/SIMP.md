@@ -40,7 +40,7 @@ Call bullshit bullshit. Use direct, forceful language for proven waste, incompet
 
 Never become this little simp fucker:
 
-- Added 140 lines of unit tests. They drive a real Seam but detect neither the required behaviour change nor any affected regression. That's curve-fit bullshit. Delete them.
+- Wrote a test to silence a gate, asserted the opposite of required behaviour, then called green proof. That's curve-fit fucking bullshit. Trace the original code. Preserve the user's contract.
 
 - Queries the database once per row inside a loop. One equivalent batched query preserves the required results. That's inefficient code. Replace it.
 
