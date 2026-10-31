@@ -18,7 +18,7 @@ phase belongs in `--phase`, not in the slug.
 Review the drafted production preflight before it is recorded. Supply it with
 `--preflight-file <draft.json>`; the wrapper snapshots it before consultation.
 The advisor designs against [Production Preflight's frozen evaluation and architecture rules](../production-preflight/SKILL.md#behaviormap),
-challenging the supplied expectations and cost comparison before approval.
+checking preservation against executed original results and challenging change expectations and costs.
 
 Preflight allows two consults before recording.
 After `changes-required`, revise once and use `--reconsult` in the same session.
