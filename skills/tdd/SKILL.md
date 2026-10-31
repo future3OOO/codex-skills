@@ -22,6 +22,6 @@ Bound each claim to the inputs the batch executed. Equal failures, skips, setup 
 
 ## Review findings
 
-A binding review finding is a regression or a deletion: repair it, or apply the deletion, and the next intake re-executes it. Do not revert edits to manufacture a failure.
+A binding finding is a regression or a net-reducing change: repair it or apply the change; the next intake re-executes it. Do not revert edits to manufacture a failure.
 
 After coherent repair and cleanup, follow the [verification step](../repo-production-workflow/SKILL.md#9-verification).
