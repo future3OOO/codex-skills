@@ -1456,8 +1456,7 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
              "--workflow-id", str(state["workflowId"])]
     action = state.get("nextAction")
     questions = ""
-    if (receipt is not None and receipt.get("kind") == "tdd"
-            or action in {"tdd", "run-mapped-tdd", "verification", "repo-context-forge", "code-review"}):
+    if ((receipt or {}).get("kind") == "tdd" or action in {"tdd", "run-mapped-tdd", "verification", "code-review"}):
         comparison = receipt or {}
         if "arms" not in comparison:
             runs = (evidence_document(identity, state.get("tddEvidence")) or {}).get("runs", [])
