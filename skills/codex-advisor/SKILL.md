@@ -15,15 +15,17 @@ phase belongs in `--phase`, not in the slug.
 
 ### `preflight-advice`
 
-Review the drafted production preflight before it is recorded. Supply it with
+Investigate the lead candidate design before production preflight is recorded. Supply it with
 `--preflight-file <draft.json>`; the wrapper snapshots it before consultation.
 The advisor designs against [Production Preflight's frozen evaluation and architecture rules](../production-preflight/SKILL.md#behaviormap),
 checking preservation against executed original results and challenging change expectations and costs.
 
-Preflight allows two consults before recording.
-After `changes-required`, revise once and use `--reconsult` in the same session.
-The second round edits only the wrapper's draft copy, cuts unnecessary work,
-dry-runs it and returns `approved`; `record preflight` records it.
+Preflight requires two consults in the same session.
+Round 1 investigates with full access and returns its model and design as findings;
+even `approved` cannot record preflight. Supply any response with `--reconsult`.
+Round 2 incorporates that investigation and response into the existing draft copy,
+cuts unnecessary work and code, and dry-runs the result.
+It closes the remaining design gaps and returns `approved`; no third consult is allowed.
 The checkpoint sends the delta with both content identities; failed results keep
 that base, and the first request sends it whole.
 
@@ -62,9 +64,12 @@ or delegate verdict. The wrapper sends the recorded original request once, the c
 retained advisor projection, the current governing-design declaration (a deepened design
 records as new evidence), the finding ledger, and one direct `passStartOid^{tree} ->
 activeCandidateTree` diff, each deleted file as its header and line count.
-The consult runs in a disposable copy of the checkpoint candidate with workspace-write access,
-the copy first on `PYTHONPATH` and the venv of the recorded comparisons' interpreter first on
-`PATH`; the lead's checkout is not in it.
+The consult runs in the lead checkout with full execution access and its installed estate.
+The wrapper supplies and cleans an original snapshot at passStartOid and scratch for probes.
+Use the supplied source prefixes and recorded project executable; check imported source paths.
+Run new preservation probes on original and candidate; test new behavior against the request.
+Leave candidate files, Git state and workflow state unchanged. This is trusted access;
+preflight skips the candidate-staleness check, which neither restores nor confines writes.
 
 Findings follow the workflow's [executable evidence and acceptance order](../repo-production-workflow/SKILL.md#10-delegate-code-review).
 The wrapper records the runner's derived verdict and prints each execution with
@@ -95,5 +100,4 @@ If transport is genuinely unavailable, record the preflight result as
 review. No nonce, skip file, stamp, attestation, or audited exception authorizes
 completion.
 
-A repaired final finding settles at the re-check that re-executes it, once its evidence no longer
-binds; there is no disposition command.
+Rechecks settle repairs, passing applied changes and proposal-caused failures against a passing baseline; shared failures stay pending. There is no disposition command.
