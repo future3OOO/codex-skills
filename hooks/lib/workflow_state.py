@@ -850,8 +850,7 @@ def record_advisor_result(
     with mutation(identity, expected_candidate_tree=None if stage == "preflight" else expected_candidate_tree) as transaction:
         state = _bound_instance_state(transaction.state, slug, workflow_id)
         writes: list[EvidenceWrite] = []
-        intake_write: EvidenceWrite | None = None
-        intake_reference: str | None = None
+        intake_reference: str | None = (state.get("advisorPreflight") or {}).get("intakeEvidence") if stage == "preflight" else None
         intakes: dict[str, JsonObject] = {}
         if intake is not None and any(intake.get(field) != expected for field, expected in (
             ("workflowId", state["workflowId"]), ("stage", stage),
@@ -916,9 +915,9 @@ def record_advisor_result(
             state["advisorPreflight"] = {
                 "source": source,
                 "status": "pending" if verdict == "approved" and state.get("preflightRounds") == 1 else verdict,
-                "findings": "pending" if verdict == "changes-required" else "none",
+                "findings": (current or {}).get("findings", "none") if verdict == "unavailable" and intake_reference else "pending" if verdict == "changes-required" else "none",
                 "reason": recorded_reason,
-                **({"intakeEvidence": intake_reference} if intake_write is not None else {}),
+                **({"intakeEvidence": intake_reference} if intake_reference else {}),
             }
             if not state.get("preflightEvidence"):
                 state["phase"] = "advisor-preflight"
