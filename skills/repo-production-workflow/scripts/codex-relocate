@@ -26,6 +26,7 @@ prefixes and scoped native UI rows. Existing target copies are refused.
 """
 import socket, base64, hashlib, os, struct, json, sys, time, glob, signal, shlex, subprocess, tomllib, sqlite3, tempfile
 from pathlib import Path
+from contextlib import ExitStack
 
 class WS:
     def __init__(self, path):
@@ -278,62 +279,65 @@ def _trust_dir(cwd, config=None):
         print(f"warning: could not persist trust for {cwd}: {e}", flush=True)
 
 def _history(origin: Path, target: Path, ranges: list[tuple[str, int, int | None]],
-             selected: str, publish: bool) -> None:
+             selected: str, publish: bool, transactions: ExitStack) -> None:
     """Copy native UI-history rows for the same ranges as the model rollouts."""
     for path in origin.glob("thread_history_*.sqlite"):
         uri = path.as_uri() + "?mode=ro"
-        with sqlite3.connect(uri, uri=True) as source:
-            definitions = source.execute("SELECT type,name,sql FROM sqlite_master WHERE type IN ('table','index') "
-                                         "AND sql IS NOT NULL AND name NOT LIKE 'sqlite_%' ORDER BY type DESC").fetchall()
         destination = target / path.name
+        if not destination.resolve().is_relative_to(target):
+            sys.exit(f"history destination escapes estate: {destination}")
         if not publish and not destination.exists():
-            continue
-        with sqlite3.connect(destination.as_uri() + ("?mode=rwc" if publish else "?mode=ro"), uri=True) as database:
-            if publish:
-                database.execute("BEGIN IMMEDIATE")
-            database.execute("ATTACH DATABASE ? AS original", (uri,))
-            existing = {row[0] for row in database.execute("SELECT name FROM sqlite_master")}
-            if publish:
-                for _, name, sql in definitions:
-                    if name not in existing:
-                        database.execute(sql)
-                if "_sqlx_migrations" not in existing:
-                    database.execute("INSERT INTO _sqlx_migrations SELECT * FROM original._sqlx_migrations")
-            for current, length, ordinal in ranges:
-                for kind, name, _ in definitions:
-                    if kind != "table" or name == "_sqlx_migrations" or (not publish and name not in existing):
-                        continue
-                    table = '"' + name.replace('"', '""') + '"'
-                    projection = name == "thread_history_projection_state"
-                    bounds = " AND rollout_ordinal < ?" if ordinal is not None and not projection else ""
-                    arguments = (current, ordinal) if bounds else (current,)
-                    query = f"SELECT * FROM original.{table} WHERE thread_id = ?{bounds}"
-                    if projection and ordinal is not None:
-                        query = (f"SELECT thread_id,min(next_rollout_byte_offset,?),min(next_rollout_ordinal,?) "
-                                 f"FROM original.{table} WHERE thread_id = ?")
-                        arguments = (length, ordinal, current)
-                    target_query = f"SELECT * FROM {table} WHERE thread_id = ?{bounds}"
-                    target_arguments = (current, ordinal) if bounds else (current,)
-                    if name in existing:
-                        if current == selected:
-                            if database.execute(f"SELECT 1 FROM {table} WHERE thread_id = ? LIMIT 1", (current,)).fetchone():
-                                sys.exit(f"target history already contains thread {current}; refusing overwrite")
-                        elif not projection and database.execute(
-                                f"SELECT 1 FROM ({target_query} EXCEPT {query}) LIMIT 1",
-                                (*target_arguments, *arguments)).fetchone():
-                            sys.exit(f"conflicting target UI history: {current}; refusing overwrite")
-                    if publish:
-                        if projection:
-                            database.execute(f"INSERT INTO {table} {query} ON CONFLICT(thread_id) DO UPDATE SET "
-                                             f"next_rollout_byte_offset=max(next_rollout_byte_offset,excluded.next_rollout_byte_offset), "
-                                             f"next_rollout_ordinal=max(next_rollout_ordinal,excluded.next_rollout_ordinal)", arguments)
-                        else:
-                            database.execute(f"INSERT INTO {table} {query} EXCEPT {target_query}",
-                                             (*arguments, *target_arguments))
+            with tempfile.TemporaryFile(dir=target):
+                continue
+        database = transactions.enter_context(sqlite3.connect(
+            destination.as_uri() + ("?mode=rwc" if publish else "?mode=rw"), uri=True))
+        database.execute("BEGIN IMMEDIATE")
+        if not publish:
+            database.execute("PRAGMA user_version=0")
+            database.rollback()
+        database.execute("ATTACH DATABASE ? AS original", (uri,))
+        definitions = database.execute("SELECT type,name,sql FROM original.sqlite_master WHERE type IN ('table','index') "
+                                       "AND sql IS NOT NULL AND name NOT LIKE 'sqlite_%' ORDER BY type DESC").fetchall()
+        existing = {row[0] for row in database.execute("SELECT name FROM sqlite_master")}
+        if publish:
+            for _, name, sql in definitions:
+                if name not in existing:
+                    database.execute(sql)
+            if "_sqlx_migrations" not in existing:
+                database.execute("INSERT INTO _sqlx_migrations SELECT * FROM original._sqlx_migrations")
+        for current, length, ordinal in ranges:
+            for kind, name, _ in definitions:
+                if kind != "table" or name == "_sqlx_migrations" or (not publish and name not in existing):
+                    continue
+                table = '"' + name.replace('"', '""') + '"'
+                projection = name == "thread_history_projection_state"
+                bounds = " AND rollout_ordinal < ?" if ordinal is not None and not projection else ""
+                arguments = target_arguments = (current, ordinal) if bounds else (current,)
+                query = f"SELECT * FROM original.{table} WHERE thread_id = ?{bounds}"
+                if projection and ordinal is not None:
+                    query = (f"SELECT thread_id,min(next_rollout_byte_offset,?),min(next_rollout_ordinal,?) "
+                             f"FROM original.{table} WHERE thread_id = ?")
+                    arguments = (length, ordinal, current)
+                target_query = f"SELECT * FROM {table} WHERE thread_id = ?{bounds}"
+                if name in existing:
+                    if current == selected:
+                        if database.execute(f"SELECT 1 FROM {table} WHERE thread_id = ? LIMIT 1", (current,)).fetchone():
+                            sys.exit(f"target history already contains thread {current}; refusing overwrite")
+                    elif not projection and database.execute(
+                            f"SELECT 1 FROM ({target_query} EXCEPT {query}) LIMIT 1",
+                            (*target_arguments, *arguments)).fetchone():
+                        sys.exit(f"conflicting target UI history: {current}; refusing overwrite")
+                if publish:
+                    if projection:
+                        database.execute(f"INSERT INTO {table} {query} ON CONFLICT(thread_id) DO UPDATE SET "
+                                         f"next_rollout_byte_offset=max(next_rollout_byte_offset,excluded.next_rollout_byte_offset), "
+                                         f"next_rollout_ordinal=max(next_rollout_ordinal,excluded.next_rollout_ordinal)", arguments)
+                    else:
+                        database.execute(f"INSERT INTO {table} {query} EXCEPT {target_query}",
+                                         (*arguments, *target_arguments))
 
 def _estate(cwd: str, tid: str, note: str, estate: str,
             launch: list[str] | None = None, source: str | None = None) -> str:
-    """Validate a target, or transfer the closed rollout and exec its native CLI."""
     target = Path(estate)
     if not target.is_absolute() or any(c.isspace() for c in estate):
         sys.exit("estate path must be absolute and contain no whitespace")
@@ -347,8 +351,9 @@ def _estate(cwd: str, tid: str, note: str, estate: str,
         sys.exit(f"prepared estate needs config.toml: {target}")
     if not (target / "skills/repo-production-workflow/scripts/codex-relocate").is_file():
         sys.exit(f"prepared estate needs its installed codex-relocate: {target}")
-    if target != origin and target.is_relative_to(origin):
-        sys.exit("target estate must be outside the source estate")
+    protected = {origin, controller, *(Path(path) for path in os.environ.get("CODEX_RELOC_READONLY", "").splitlines())}
+    if any(target != root and (target.is_relative_to(root) or root.is_relative_to(target)) for root in protected):
+        sys.exit("source and target estates must not overlap")
     same = os.path.samefile(target, origin)
     if same and launch is None:
         return ""
@@ -388,6 +393,8 @@ def _estate(cwd: str, tid: str, note: str, estate: str,
                         remaining -= len(chunk)
             else:
                 destination = target / path.relative_to(origin)
+                if not destination.resolve().is_relative_to(target):
+                    sys.exit(f"rollout destination escapes estate: {destination}")
                 parent = next(parent for parent in destination.parents if parent.exists() or parent.is_symlink())
                 with tempfile.TemporaryFile(dir=parent):
                     transfers.append((path, length))
@@ -396,12 +403,26 @@ def _estate(cwd: str, tid: str, note: str, estate: str,
             current, limit, ordinal = base.get("thread_id"), base.get("end_byte_offset"), base.get("end_ordinal_exclusive")
             if base and (not isinstance(current, str) or not current or type(ordinal) is not int or ordinal < 0):
                 sys.exit("invalid source history lineage")
-        _history(origin, target, ranges, tid, launch is not None)
+        with ExitStack() as cleanup:
+            with ExitStack() as transactions:
+                _history(origin, target, ranges, tid, launch is not None, transactions)
+                if launch is not None:
+                    for path, length in reversed(transfers):
+                        destination = target / path.relative_to(origin)
+                        destination.parent.mkdir(parents=True, exist_ok=True)
+                        with path.open("rb") as reader, destination.open("xb") as writer:
+                            cleanup.callback(destination.unlink)
+                            remaining = length
+                            while remaining:
+                                sent = os.sendfile(writer.fileno(), reader.fileno(), None, remaining)
+                                if not sent:
+                                    sys.exit(f"source history truncated during transfer: {path}")
+                                remaining -= sent
+            cleanup.pop_all()
     control = home / "reloc"
     control.mkdir(exist_ok=True)
     descriptor = os.open(control, os.O_PATH)
     binding = ["bwrap", "--dev-bind", "/", "/", "--die-with-parent"]
-    protected = {origin, controller, *(Path(path) for path in os.environ.get("CODEX_RELOC_READONLY", "").splitlines())}
     for departure in protected - {target}:
         binding += ["--ro-bind", str(departure), str(departure)]
     binding += ["--bind", str(target), str(home), "--bind-fd", str(descriptor), str(home / "reloc"),
@@ -413,16 +434,6 @@ def _estate(cwd: str, tid: str, note: str, estate: str,
             subprocess.run([*binding, "codex", "app-server", "--print-startup-config"],
                            pass_fds=(descriptor,), stdout=subprocess.DEVNULL, check=True)
             return str(target)
-        for path, length in reversed(transfers):
-            destination = target / path.relative_to(origin)
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            with path.open("rb") as reader, destination.open("xb") as writer:
-                remaining = length
-                while remaining:
-                    sent = os.sendfile(writer.fileno(), reader.fileno(), None, remaining)
-                    if not sent:
-                        sys.exit(f"source history truncated during transfer: {path}")
-                    remaining -= sent
         os.environ.update(CODEX_RELOC_LOOP="1", CODEX_RELOC_ESTATE="1",
                           CODEX_RELOC_SHELL_PID=str(os.getppid()))
         os.set_inheritable(descriptor, True)

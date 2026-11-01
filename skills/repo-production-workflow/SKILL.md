@@ -32,14 +32,6 @@ as the turn's last action. Native `codex`/`codexs` sessions resume the same thre
 through their owned launcher; without it, follow the printed `resume -C` command.
 An explicit app-server request remains pending until a subsequent turn confirms
 the target cwd and hook repository. Continue only in that confirmed checkout.
-For an explicitly requested private estate, use [README's estate setup](../../README.md#private-estate-relocation)
-and append `--estate /absolute/prepared-estate` to the command. The running launcher
-must advertise `CODEX_RELOC_ESTATE=1`; reload the wrapper before launching Codex
-when upgrading an older launcher. Editing its file cannot replace loaded functions.
-Run once as the final action; a resumed session needs no repeat relocation.
-On continuation verify the same thread, cwd/branch, `~/.codex` against
-`CODEX_ESTATE_PATH`, and installed skills/hooks against the recorded source.
-An armed request alone does not establish the estate switch.
 For a new task, choose one short slug; `begin` creates and activates its state
 for that worktree before bootstrap:
 
@@ -52,6 +44,25 @@ with the verbatim body of a document it names. Deep in a session, or outside Cod
 pass the task's exact requirements, in the user's words, with `--intent-file`.
 
 The repository-scoped SQLite event ledger remembers accepted transitions, logical evidence, phase, and next action across process restarts. Its disposable active projection is repaired from that history. It is agent-writable workflow continuity, not an attestation, approval, audit credential, or Git boundary.
+
+## Private-estate relocation
+
+Native Linux: append `--estate /absolute/prepared-estate` to relocation. Both paths must be whitespace-free.
+The running launcher must export `CODEX_RELOC_ESTATE=1`; reload `codex-reloc-loop.bashrc` before launching when upgrading. Editing its file cannot replace loaded functions. Remote relocation supports cwd only.
+Prepare outside the source estate; preserve config, authentication, extra skills and dependencies, excluding native history/state:
+
+```bash
+estate="$HOME/.local/share/codex-estates/my-task/estate"
+mkdir -p "$estate"; chmod 700 "$estate"
+rsync -a --exclude='/*.sqlite*' --exclude='*.sock' \
+  --exclude=/{sessions,archived_sessions,state,cache,log,backups,tmp,.tmp,reloc,app-server*}/ "$HOME/.codex/" "$estate/"
+bwrap --dev-bind / / --bind "$estate" "$HOME/.codex" \
+  --setenv CODEX_HOME "$HOME/.codex" -- bash ./install.sh
+```
+
+Run installation from the chosen source worktree and record its SHA. Bind a task-local directory at `~/.codex-backups` too when installer backups must remain private.
+Relocate once as the turn's final action. The original controller reaps Codex, transfers only the selected rollout, required ancestor prefixes and scoped UI rows, then resumes the same thread/terminal. It reuses equal ancestors and refuses conflicting history; unrelated target state remains. Departed estates stay read-only except shared relocation control. Later cwd relocations retain the estate without copying history.
+On continuation verify the thread, cwd/branch, `~/.codex` against `CODEX_ESTATE_PATH`, and installed skills/hooks against the recorded source. An armed request alone does not prove the switch; do not repeat relocation after resume.
 
 ## Continuation
 
