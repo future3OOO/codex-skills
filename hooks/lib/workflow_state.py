@@ -398,12 +398,11 @@ def set_phase(
 
 
 def commit_tdd(identity: RepoIdentity, slug: str, workflow_id: str | None,
-               summary_doc: JsonObject, *, expected_evidence_id=None,
-               tree_before=None, review_changed=False) -> tuple[JsonObject, str]:
+               summary_doc: JsonObject, *, expected_evidence_id=None, tree_before=None) -> tuple[JsonObject, str]:
     """Publish comparison results and readiness together under existing ledger ownership."""
     with mutation(identity) as transaction:
         state = _bound_instance_state(transaction.state, slug, workflow_id)
-        if state.get("revalidation") and (review_changed or tree_before is None):
+        if state.get("revalidation") and tree_before is None:
             raise WorkflowError(TDD_CLOSED)  # a rerun of the mapped items re-verifies; the map stays closed
         _require_predecessor(state, "tdd")
         if not state.get("preflightEvidence") or summary_doc.get("workflowId") != state["workflowId"]:
