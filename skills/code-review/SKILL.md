@@ -89,7 +89,7 @@ Return the reviewed checkout/workflow/tree and a Standards/Spec report with the
 actual receipt references in your reply. The intake must retain the workflowId, candidateTree and tddEvidence you assessed, and verdict complete only when the affected requirements and coverage are established; otherwise incomplete. Write the immutable
 intake as a JSON file for the lead's `--input`. Continuations report
 original identities as corrected, still present or awaiting evidence, and intake
-new material findings and each retained judgment’s answer in findings, including accepted IDs. An empty return cannot close an earlier unresolved finding:
+new findings and each retained judgment’s answer in findings, including accepted IDs. An empty return cannot close an earlier unresolved finding:
 
 ```json
 {"workflowId":"<workflowId>","candidateTree":"<activeCandidateTree>","tddEvidence":"<tddEvidence>","verdict":"complete|incomplete","findings":[{"id":"SPEC-1","axis":"Spec","location":"path:line","claim":"...","probe":{"path":"tests/test_spec1.py","content":"...","command":"python3 -m pytest tests/test_spec1.py::test_spec1"}},

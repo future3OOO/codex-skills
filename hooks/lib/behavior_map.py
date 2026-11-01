@@ -308,7 +308,7 @@ def _question(entry: JsonObject, items: list[JsonObject], cases: dict[str, dict[
         return ["readings unsettled: " + " | ".join(entry["interpretations"]) + " - record interpretation and authority"]
     if not producer_proved(entry):
         comparison = entry.get("comparison") or {}
-        reason = (f"{comparison.get('freshnessReason', 'comparison inputs or obligation changed')}; replay recorded batch: workflow.py tdd --behavior-id {entry['id']}"
+        reason = (f"{comparison.get('freshnessReason', 'comparison inputs changed') if comparison.get('fresh') is False else 'comparison obligation changed'}; replay recorded batch: workflow.py tdd --behavior-id {entry['id']}"
                   if comparison.get("valid") else "no current valid comparison")
         if cases and entry.get("boundaryInputs"):
             reason += "; " + "; ".join(

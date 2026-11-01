@@ -291,11 +291,8 @@ def _execute_tree(identity: RepoIdentity, source_tree: str, candidate_tree: str,
             option = entry[2] - (2 if actual[entry[2] - 1] == "unittest" else 1)
             actual[option:entry[2]] = [actual[option].split("m", 1)[0] + "c", "import runpy,unittest.case,unittest.async_case,tdd_surface;tdd_surface.unittest_scope();unittest.case.__dict__.pop('__unittest',None);unittest.async_case.__dict__.pop('__unittest',None);runpy.run_module('unittest',run_name='__main__',alter_sys=True)"]
         process_started = time.perf_counter()
-        try:
-            observer = [] if inherited else ["strace", "-f", "--seccomp-bpf", "-qq", "-ttt", "-e", "trace=execve,chdir,fchdir,clone,clone3,fork,vfork", "-e", "status=successful,failed", "-y", "-s", "0", "-o", str(trace)]
-            raw, code, timed_out = _run([*binding, "--chdir", identity.root, "--", *observer, *actual], snapshot, timeout, env=runner_env)
-        except OSError as exc:
-            raw, code, timed_out = str(exc).encode(), 127, False
+        observer = [] if inherited else ["strace", "-f", "--seccomp-bpf", "-qq", "-ttt", "-e", "trace=execve,chdir,fchdir,clone,clone3,fork,vfork", "-e", "status=successful,failed", "-y", "-s", "0", "-o", str(trace)]
+        raw, code, timed_out = _run([*binding, "--chdir", identity.root, "--", *observer, *actual], snapshot, timeout, env=runner_env)
         inputs = _observed_inputs(identity, root, Path(temporary), trace, offset, actual, env, binding, timeout, runtimes)
         output = raw.decode("utf-8", errors="replace")
         timing = {"totalSeconds": time.perf_counter() - started,
