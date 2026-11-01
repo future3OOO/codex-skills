@@ -73,9 +73,7 @@ returns exit 2, names `no active workflow`, and creates no state.
 
 Repo Context Forge, preflight, TDD, verification and review record their native
 documents as logical evidence in the same SQLite transaction as the accepted event.
-Review and final findings carry a `probe` or net-reducing `change`. The runner's
-result decides what binds: an original-pass, candidate-fail/timeout regression,
-or a change every recorded batch passes without touching tests. Preflight owns
+Review and final findings carry executable payloads under the workflow's [objective and acceptance order](SKILL.md#10-delegate-code-review); the runner decides what binds. Preflight owns
 the initial Behavior Map; TDD evidence carries its stable IDs and source comparisons. A plan may show
 the map but is not an evidence owner.
 

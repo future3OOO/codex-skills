@@ -239,25 +239,6 @@ def proof_targets(
     return targets, discover, ambiguous, selections
 
 
-def narrowing(surface: Mapping[str, object], root: object) -> str | None:
-    """How a test-runner command narrows below whole modules: -k, -m and --deselect
-    expressions, test ids and unittest classes. Tests outside that selection are not compared."""
-    if surface.get("runner") not in NATIVE_RUNNERS:
-        return None
-    targets, discover, _, selections = proof_targets(surface, root)
-    top = Path(str(root))
-    below = [target for target in targets if "::" in target or (
-        surface["runner"] == "unittest" and not discover and "/" not in target and not target.endswith(".py")
-        and _below_module(target.split("."), top))]
-    return ", ".join([*selections, *below]) or None
-
-
-def _below_module(parts: list[str], top: Path) -> bool:
-    """Whether a dotted unittest name continues past the module or package it resolves to."""
-    return next((size < len(parts) for size in range(len(parts), 0, -1)
-                 if top.joinpath(*parts[:size]).with_suffix(".py").is_file() or top.joinpath(*parts[:size]).is_dir()), False)
-
-
 def repository_resolution(surface: Mapping[str, object], root: object) -> str | None:
     """Why the mapped proof targets do not resolve inside ``root``, or None.
 
@@ -444,7 +425,7 @@ def case_results(surface: Mapping[str, object], output: str, returncode: int = 0
     clean = ANSI_ESCAPE.sub("", output)
     runner = native_runner(surface, clean)
     if runner == "unittest":
-        for name, status in re.findall(r"(?m)^(\S+ \([^\n]+?\)) \.\.\. (ok|FAIL|ERROR|skipped[^\n]*)$", clean):
+        for name, status in re.findall(r"(?m)^(\S+ \([^\n]+?\))(?:\n[^\n]*)? \.\.\. (ok|FAIL|ERROR|skipped[^\n]*)$", clean):
             cases[name] = {"outcome": "passed" if status == "ok" else "failed" if status == "FAIL" else "error" if status == "ERROR" else "skipped"}
         failures = [(header.split(": ", 1)[1], _unittest_case(header, frames, assertion))
                     for header, frames, assertion in _unittest_terminal_failures(clean)]
@@ -699,3 +680,23 @@ def _surface(
         "ignored": list(ignored),
         "fallbackReason": fallback,
     }
+
+
+def unittest_scope() -> None:
+    """Let the native loader resolve methods; refuse explicit module/class collection."""
+    import unittest
+
+    def refuse(*args, **kwargs):
+        raise ValueError("Name exact test methods, not a whole module or class")
+
+    unittest.defaultTestLoader.loadTestsFromModule = refuse
+    unittest.defaultTestLoader.loadTestsFromTestCase = refuse
+
+
+def pytest_collectstart(collector) -> None:
+    """Refuse an explicitly selected native collector before collecting its children."""
+    path, _, names = collector.nodeid.partition("::")
+    selected = {(Path(arg.partition("::")[0]).resolve(), arg.partition("::")[2]) for arg in collector.config.args}
+    if path and (Path(collector.config.rootpath, path).resolve(), names) in selected:
+        import pytest
+        raise pytest.UsageError("Name exact test functions/methods, not a whole file, class or suite")

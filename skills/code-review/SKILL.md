@@ -68,7 +68,7 @@ expected/observed results under those same verification rules.
 
 ## 5. Review both axes
 
-Attack the architecture against `d* = argmin C(d)` under the fixed request and preservation, using its production-path cost model. Compare a simpler correct mechanism; name the production work and code it eliminates, including superseded machinery. Validate changed decisions through uncovered decisive contexts ([MC/DC](../tdd/tests.md#mcdc)); do not re-run the lead's recorded cases. Judge each listed contract change (a changed kind, a contract item added or re-worded, contract cases added, a case dropped) against the original request; a listing authorizes nothing. A check that finds words in the request or confirms the observed difference does not refute a finding that the difference is unauthorized. Reuse applicable proof; the packet's `open` and `contractChanges` lines are the readiness result, not a second inventory.
+Attack the architecture against `d* = argmin C(d)` under the fixed request and preservation, using its whole-system cost model: production code, tests, scripts, documentation, maintenance and execution. Compare a simpler correct mechanism; name the production work and code it eliminates, including superseded machinery. A concrete replacement may carry the existing probe and change fields together: measure its real cost term on candidate and replacement; retained batches must pass. Prefer net reduction, including maintained test cleanup that preserves frozen proof and required regression coverage; directly run affected surviving named cases with current support and preserve recorded detector results. Only demonstrated cost improvement justifies necessary growth. Generate the diff from a scratch edit. Validate changed decisions through uncovered decisive contexts ([MC/DC](../tdd/tests.md#mcdc)); do not re-run the lead's recorded cases. Judge each listed contract change (required cases added or any case dropped) against the original request; a listing authorizes nothing. A check that finds words in the request or confirms the observed difference does not refute a finding that the difference is unauthorized. Reuse applicable proof; the packet's `open` and `contractChanges` lines are the readiness result, not a second inventory.
 
 Report one finding per owning Module and violated invariant: list every demonstrated input as a case of that finding and name the owner's class-wide correction, not one instance; a further input to an already-reported owner and invariant is a case of that finding (priorFinding), not a new finding.
 
@@ -83,22 +83,18 @@ Run **Standards** and **Spec** independently:
   contradicted by caveats or implementation limits.
 
 The runner executes recorded findings; the workflow's [objective and acceptance order](../repo-production-workflow/SKILL.md#10-delegate-code-review) decide what binds.
-A `probe` is a new standalone, repository-relative test file asserting a request example, original
-result, engine answer or frozen requirement-grounded property; never invent an
-expectation. A `change` is a unified diff that removes more lines than it adds
-without touching tests. Cite the requirement, expected and
-observed effects, and consequence.
+Echo candidateTree and tddEvidence from the checkpoint in the review JSON; inspect those exact sources and results. Answer each listed DIFF judgment specifically in existing findings (ids may share one owning-invariant finding). Reject omitted preservation; judge harmless/equivalent changes without demanding an impossible behavioral difference. Hunk reversion establishes sensitivity only, never coverage or authority. A scratch call investigates; a recorded probe is a named direct project operation focused on the changed Interface. Native case results or checked printed output name its cases. Never collect a whole test file, class, directory or suite; a focused direct script is allowed. Judge whether it calls that Interface and establishes the requirement. Use the recorder's existing executable payloads. Take expected values from an executed reference or frozen requirement-grounded property; never invent them. Cite the requirement, expected and observed effects, and consequence.
 
 ## 6. Return structured output
 
 Return the reviewed checkout/workflow/tree and a Standards/Spec report with the
-actual receipt references in your reply, not in the intake. Write the immutable
+actual receipt references in your reply. The intake must retain the workflowId, candidateTree and tddEvidence you assessed, and verdict complete only when the affected requirements and coverage are established; otherwise incomplete. Write the immutable
 intake as a JSON file for the lead's `--input`. Continuations report
 original identities as corrected, still present or awaiting evidence, and intake
 only new findings. An empty return cannot close an earlier unresolved finding:
 
 ```json
-{"findings":[{"id":"SPEC-1","axis":"Spec","location":"path:line","claim":"...","probe":{"path":"tests/test_spec1.py","content":"...","command":"python3 -m pytest tests/test_spec1.py"}},
+{"workflowId":"<workflowId>","candidateTree":"<activeCandidateTree>","tddEvidence":"<tddEvidence>","verdict":"complete|incomplete","findings":[{"id":"SPEC-1","axis":"Spec","location":"path:line","claim":"...","probe":{"path":"tests/test_spec1.py","content":"...","command":"python3 -m pytest tests/test_spec1.py::test_spec1"}},
              {"id":"STD-1","axis":"Standards","location":"path:line","claim":"duplicate of existing()","change":"<unified diff>"}]}
 ```
 
