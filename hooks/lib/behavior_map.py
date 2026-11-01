@@ -307,8 +307,9 @@ def _question(entry: JsonObject, items: list[JsonObject], cases: dict[str, dict[
     if readings_unsettled(entry):
         return ["readings unsettled: " + " | ".join(entry["interpretations"]) + " - record interpretation and authority"]
     if not producer_proved(entry):
-        reason = ("comparison stale (production, probe or obligation changed): rerun it" if (entry.get("comparison") or {}).get("valid")
-                  else "no current valid comparison")
+        comparison = entry.get("comparison") or {}
+        reason = (f"{comparison.get('freshnessReason', 'comparison inputs or obligation changed')}; replay recorded batch: workflow.py tdd --behavior-id {entry['id']}"
+                  if comparison.get("valid") else "no current valid comparison")
         if cases and entry.get("boundaryInputs"):
             reason += "; " + "; ".join(
                 f"{name} " + ", ".join(f"{_state(cases.get(case, {}).get(label))} on {label}" for label in ("original", "current"))
@@ -339,7 +340,7 @@ def open_obligations(items: list[JsonObject], evaluation: list[JsonObject] | Non
         unnamed = [str(name) for name in entry.get("boundaryInputs") or []
                    if not re.search(rf"(?:^|[\s,;(]){re.escape(str(name))}(?=$|[\s,;)])", reason)]
         lines.append(head + reason + ("; its cases: " + ", ".join(unnamed) if unnamed else ""))
-    if lines:
+    if lines and not any((entry.get("comparison") or {}).get("fresh") is False for entry in proofs):
         lines[0] += "; " + DECISION_GUIDANCE
     return lines
 

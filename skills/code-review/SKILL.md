@@ -58,8 +58,6 @@ coverage and preservation separately. Bound every claim to exercised inputs. Ins
 
 Challenge the expectation itself against the original request. Deleting implementation code does not authorize unrelated behavior changes. If an assertion expects an unrequested original-allow to candidate-block regression, reject the assertion and regression even when the comparison reports a clean failure-to-success change. Preserve original behavior where the request does not authorize a difference. Challenge omissions against changed predicates, callees, shared writers and mutation paths. Return findings through the existing workflow.
 
-
-
 On return review retain original finding identities/domains. Classify measured
 follow-ups as incomplete original repair, inherited missed defect, introduced
 regression or unresolved/unrelated concern. Attempt to falsify both expectation
@@ -83,7 +81,7 @@ Run **Standards** and **Spec** independently:
   contradicted by caveats or implementation limits.
 
 The runner executes recorded findings; the workflow's [objective and acceptance order](../repo-production-workflow/SKILL.md#10-delegate-code-review) decide what binds.
-Echo candidateTree and tddEvidence from the checkpoint in the review JSON; inspect those exact sources and results. Answer each listed DIFF judgment specifically in existing findings (ids may share one owning-invariant finding). Reject omitted preservation; judge harmless/equivalent changes without demanding an impossible behavioral difference. Hunk reversion establishes sensitivity only, never coverage or authority. A scratch call investigates; a recorded probe is a named direct project operation focused on the changed Interface. Native case results or checked printed output name its cases. Never collect a whole test file, class, directory or suite; a focused direct script is allowed. Judge whether it calls that Interface and establishes the requirement. Use the recorder's existing executable payloads. Take expected values from an executed reference or frozen requirement-grounded property; never invent them. Cite the requirement, expected and observed effects, and consequence.
+Echo candidateTree and tddEvidence from the checkpoint in the review JSON; inspect those exact sources and results. Answer each listed DIFF judgment specifically in existing findings (ids may share one owning-invariant finding). Reject omitted preservation; judge harmless/equivalent changes without demanding an impossible behavioral difference. A scratch call investigates; a recorded probe is a named direct project operation focused on the changed Interface. Native case results or checked printed output name its cases. Never collect a whole test file, class, directory or suite; a focused direct script is allowed. Judge whether it calls that Interface and establishes the requirement. Use the recorder's existing executable payloads. Take expected values from an executed reference or frozen requirement-grounded property; never invent them. Cite the requirement, expected and observed effects, and consequence.
 
 ## 6. Return structured output
 
@@ -91,7 +89,7 @@ Return the reviewed checkout/workflow/tree and a Standards/Spec report with the
 actual receipt references in your reply. The intake must retain the workflowId, candidateTree and tddEvidence you assessed, and verdict complete only when the affected requirements and coverage are established; otherwise incomplete. Write the immutable
 intake as a JSON file for the lead's `--input`. Continuations report
 original identities as corrected, still present or awaiting evidence, and intake
-only new findings. An empty return cannot close an earlier unresolved finding:
+new material findings and each retained judgment’s answer in findings, including accepted IDs. An empty return cannot close an earlier unresolved finding:
 
 ```json
 {"workflowId":"<workflowId>","candidateTree":"<activeCandidateTree>","tddEvidence":"<tddEvidence>","verdict":"complete|incomplete","findings":[{"id":"SPEC-1","axis":"Spec","location":"path:line","claim":"...","probe":{"path":"tests/test_spec1.py","content":"...","command":"python3 -m pytest tests/test_spec1.py::test_spec1"}},
