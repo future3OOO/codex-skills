@@ -107,7 +107,7 @@ Implement the chosen design, then execute TDD's
 contexts and boundary cases as map items, extend the existing direct batch, and compare
 the identical expanded batch on the recorded original and candidate sources.
 
-The lead resolves named-case obligations and unanswered DIFF questions during TDD by restoring unrequested changes, comparing nominated cases, or recording the explicit source/observed judgment allowed by the recorder. Then run verification and the existing independent review; answered judgments remain listed for review. After final review starts, targeted repair returns to that final advisor.
+The lead resolves named-case obligations against the original and request, then verifies and obtains the existing independent review. Historical source judgments remain review input, not coverage proof. After final review starts, targeted repair returns to that final advisor.
 
 ### 9. Verification
 
@@ -169,7 +169,7 @@ batch still passes binds and is applied; (4) anything else is a report line.
 python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" record review --input <review.json>
 ```
 
-An intake binds the source and evidence actually reviewed; it must answer each listed lead source judgment. Each later intake reevaluates retained binding findings, including resolved ones, reusing unchanged executions: a
+An intake binds the source and evidence actually reviewed; each retained source judgment needs its answer in findings, including acceptance. Each later intake reevaluates retained binding findings, including resolved ones, reusing unchanged executions: a
 finding settles on repair, an applied passing change or a proposal-caused failure against a passing baseline. Shared failures stay pending. For a report line naming an uncovered request sentence, record the decision and, when required,
 add the case with `record tdd-map` before implementing it. Verification and review can run
 with open findings; they block completion.

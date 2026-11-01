@@ -101,14 +101,13 @@ def mutation(identity: RepoIdentity, **binding: str | None):
 
 def _effective(identity: RepoIdentity, state: JsonObject | None,
                evidence: Callable[[str | None], JsonObject | None]) -> JsonObject | None:
-    """The one proof-readiness judgment every reader and transaction sees: a stored passed TDD
-    step whose map no longer proves the current tree (a comparison stale after an edit, or an
-    item open) reads in-progress, with the next action that follows."""
-    if not state or state.get("tdd") not in {"passed", "not-required"} or state.get("phase") == "complete":
+    """Derive readiness from bound proof, including reusable evidence after a reverted edit."""
+    if not state or state.get("phase") == "complete" or not (state.get("tddEvidence") or state.get("tdd") in {"passed", "not-required"}):
         return state
     documents = (evidence(state.get("tddEvidence")), evidence(state.get("preflightEvidence")))
-    if _readiness_lines(identity, state, documents=documents)["open"]:
-        state["tdd"] = "in-progress"
+    status = "in-progress" if _readiness_lines(identity, state, documents=documents)["open"] else "passed" if state.get("tddEvidence") else state["tdd"]
+    if state.get("tdd") != status:
+        state["tdd"] = status
         state["nextAction"] = _derive_next_action(state)
     return state
 
@@ -1379,8 +1378,7 @@ def invalidate_after_edit(identity: RepoIdentity, path: str | None) -> tuple[Jso
 def review_blockers(identity: RepoIdentity, state: JsonObject) -> list[str]:
     """Lead prerequisites for dispatch, without recording or rerunning proof."""
     missing = [phase for phase in SEQUENCE[:SEQUENCE.index("code-review")] if phase != "tdd" and not _allows_next(state, phase)]
-    if _readiness_lines(identity, state)["open"]:
-        missing.append("tdd")
+    missing.extend(_readiness_lines(identity, state)["open"])
     if not missing:
         if drift := _binding_drift(identity, state, "quality-gate"):
             missing.append(drift)
@@ -1465,14 +1463,14 @@ def _map_listing(identity: RepoIdentity, state: JsonObject) -> str:
     groups = [*(["pending: " + ", ".join(never)] if never else []),
               *(line for line in lines.get("open", []) if line.split(" ", 1)[0] not in never),
               *(f"contract change: {change}" for change in lines.get("contractChanges", []))]
-    return " Open map and diff questions: " + "; ".join(groups) + "." if groups else ""
+    return " Open map: " + "; ".join(groups) + "." if groups else ""
 
 
 def _readiness_lines(identity: RepoIdentity, state: JsonObject, items: list[JsonObject] | None = None, *,
                      documents: tuple[JsonObject | None, JsonObject | None] | None = None,
                      review: JsonObject | None = None, candidate: str | None = None) -> JsonObject:
-    """One readiness result: immutable named cases and lead-owned current-diff questions."""
-    from .tdd_workflow import _evaluation, current_map, refresh_proof, change_questions
+    """One readiness result: immutable named cases, with retained statements for review."""
+    from .tdd_workflow import _evaluation, current_map, refresh_proof
     candidate = candidate or _active_candidate_tree(identity)
     if documents is None:
         items, document = current_map(identity, state, fresh=False) if items is None else (items, evidence_document(identity, state.get("tddEvidence")))
@@ -1486,11 +1484,15 @@ def _readiness_lines(identity: RepoIdentity, state: JsonObject, items: list[Json
                   for entry in _evaluation(identity, state, document).values()]
     refresh_proof(identity, [*items, *evaluation], candidate=candidate)
     cases = behavior_map.open_obligations(items, evaluation)
-    questions = change_questions(identity, state, document, candidate)
-    opened = [*cases, *(f"{q['id']} {q['source']}: check request/original; restore unrequested behavior or compare an asserted named case with --change {q['id']}; use explicit --judgment only for the unmeasurable remainder." for q in questions if "judgment" not in q)]
+    # Historical statements remain review input, never a semantic-coverage certificate.
+    questions = {run["change"]: {"id": run["change"], "judgment": run.get("judgment") or "legacy nominated case; coverage requires review"}
+                 for run in (document or {}).get("runs", []) if run.get("change")}
+    note = (document or {}).get("sourceDelta") or {}
+    questions.update({identifier: {"id": identifier, "judgment": note["judgment"]}
+                      for identifier in note.get("changes", []) if note.get("judgment")})
     review = review if review is not None else evidence_document(identity, state.get("codeReviewEvidence"))
     current = bool(review and review.get("workflowId") == state["workflowId"] and review.get("candidateTree") == candidate and review.get("verdict") == "complete" and not any(_finding_unresolved(entry) for entry in state.get("findingStates") or []))
-    return {"open": opened, "reviewCurrent": current, "questions": [q for q in questions if "judgment" in q], "openCount": len(opened),
+    return {"open": cases, "reviewCurrent": current, "questions": list(questions.values()), "openCount": len(cases),
             "never": behavior_map.never_compared(items), "contractChanges": behavior_map.contract_changes(items, recorded)}
 
 def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObject | None = None, *,

@@ -19,7 +19,6 @@ from hooks.lib._workflow_db import LedgerError  # noqa: E402
 from hooks.lib.hook_input import advise, edited_path, emit, is_explorer_continuation, read_hook_payload, working_directory  # noqa: E402
 from hooks.lib.repo_identity import RepoIdentityError, resolve_repo_identity, try_resolve_repo_identity  # noqa: E402
 from hooks.lib.state_store import is_reviewable_path, is_test_path  # noqa: E402
-from hooks.lib.behavior_map import DECISION_GUIDANCE
 from hooks.lib.tdd_workflow import edit_blockers  # noqa: E402
 from hooks.lib.workflow_state import (  # noqa: E402
     WorkflowError,
@@ -36,7 +35,6 @@ def main() -> int:
     inputs = payload.get("tool_input")
     if tool_name in {"Agent", "spawn_agent", "followup_task", "send_input", "resume_agent"}:
         missing: list[str] = []
-        proof_pending = False
         try:
             identity = try_resolve_repo_identity(working_directory(payload))
             if identity is not None:
@@ -51,15 +49,13 @@ def main() -> int:
                         return 0
                 missing = review_blockers(identity, state)
                 if missing:
-                    proof_pending = "tdd" in missing
                     missing = [f"{identity.root} [{state['slug']}/{state['workflowId']}]: " + ", ".join(missing)]
 
         except (RepoIdentityError, WorkflowError, LedgerError, OSError, ValueError, sqlite3.Error) as exc:
             missing.append(str(exc))
         if missing:
             emit("PreToolUse", permissionDecision="deny", permissionDecisionReason=
-                 "Resolve lead named cases and current diff questions during TDD, then verify before reviewer dispatch. Pending: "
-                 + ", ".join(dict.fromkeys(missing)) + (" " + DECISION_GUIDANCE if proof_pending else ""))
+                 "Review dispatch blocked: " + ", ".join(dict.fromkeys(missing)))
         return 0
     path = edited_path(payload)
     if path is None:
