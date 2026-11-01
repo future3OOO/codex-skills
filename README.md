@@ -179,6 +179,8 @@ last action; the mechanism depends on session type:
   the `codex`/`codexs` wrapper from `codex-reloc-loop.bashrc` (same scripts
   directory); without it the script prints the manual `resume -C` command.
 
+Private native estates use the [installed relocation setup](skills/repo-production-workflow/SKILL.md#private-estate-relocation).
+
 ## Hook event map (Codex)
 
 Codex fires the full Claude event set with the same payload contract
