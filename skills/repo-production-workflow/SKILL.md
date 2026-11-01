@@ -84,7 +84,8 @@ Its map follows TDD's [Behavior Map](../tdd/recorder.md#behavior-map): each item
 the contract and planned attacks.
 
 Submit the exact draft through [Codex Advisor's preflight loop](../codex-advisor/SKILL.md#preflight-advice).
-Continue to recording only after `approved`.
+Complete both rounds in the same session: investigation findings, then an advisor-edited draft.
+Continue to recording only after round 2 returns `approved`.
 
 ### 5. Record approved preflight once
 
@@ -173,7 +174,7 @@ python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" recor
 
 A no-finding intake binds the reviewed tree and passes immediately. Each later review intake
 and final re-check re-executes the stage's open binding findings on the current candidate: a
-finding settles when its evidence no longer binds, so the only answer is the repair. For a report line naming an uncovered request sentence, record the decision and, when required,
+finding settles on repair, an applied passing change or a proposal-caused failure against a passing baseline. Shared failures stay pending. For a report line naming an uncovered request sentence, record the decision and, when required,
 add the case with `record tdd-map` before implementing it. Verification and review can run
 with open findings; they block completion.
 

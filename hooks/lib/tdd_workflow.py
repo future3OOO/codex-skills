@@ -387,6 +387,10 @@ def _run_change(identity: RepoIdentity, batches: list[JsonObject], change: objec
         arm = _compare(identity, after, after, run, [], cached, False)["arms"][-1]
         outcome = "timed-out" if arm["timedOut"] else arm["outcome"]
         if outcome != "passed":
+            if outcome == "failed" and after != candidate:
+                control = _compare(identity, candidate, candidate, run, [], cached, False)["arms"][-1]
+                if control["outcome"] != "passed":
+                    return {"kind": "change", "error": "current candidate does not pass the retained batch: " + run["command"]}
             reason = (f"recorded batch `{run['command']}` ran past {run['timeout']:g} s: replace it with direct probes of the changed code"
                       if arm["timedOut"] else f"recorded batch `{run['command']}` {outcome} with the change applied")
             return ({"kind": "change", "applied": after == candidate, "candidate": outcome,

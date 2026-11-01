@@ -915,8 +915,8 @@ def record_advisor_result(
             state.pop("paused", None)
             state["advisorPreflight"] = {
                 "source": source,
-                "status": verdict,
-                "findings": "pending" if _stage_unresolved(state, stage, source) else "none",
+                "status": "pending" if verdict == "approved" and state.get("preflightRounds") == 1 else verdict,
+                "findings": "pending" if verdict == "changes-required" else "none",
                 "reason": recorded_reason,
                 **({"intakeEvidence": intake_reference} if intake_write is not None else {}),
             }
