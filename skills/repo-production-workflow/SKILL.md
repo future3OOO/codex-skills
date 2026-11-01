@@ -32,6 +32,14 @@ as the turn's last action. Native `codex`/`codexs` sessions resume the same thre
 through their owned launcher; without it, follow the printed `resume -C` command.
 An explicit app-server request remains pending until a subsequent turn confirms
 the target cwd and hook repository. Continue only in that confirmed checkout.
+For an explicitly requested private estate, use [README's estate setup](../../README.md#private-estate-relocation)
+and append `--estate /absolute/prepared-estate` to the command. The running launcher
+must advertise `CODEX_RELOC_ESTATE=1`; reload the wrapper before launching Codex
+when upgrading an older launcher. Editing its file cannot replace loaded functions.
+Run once as the final action; a resumed session needs no repeat relocation.
+On continuation verify the same thread, cwd/branch, `~/.codex` against
+`CODEX_ESTATE_PATH`, and installed skills/hooks against the recorded source.
+An armed request alone does not establish the estate switch.
 For a new task, choose one short slug; `begin` creates and activates its state
 for that worktree before bootstrap:
 
