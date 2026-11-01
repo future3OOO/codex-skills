@@ -175,42 +175,7 @@ last action; the mechanism depends on session type:
   the `codex`/`codexs` wrapper from `codex-reloc-loop.bashrc` (same scripts
   directory); without it the script prints the manual `resume -C` command.
 
-### Private-estate relocation
-
-Native Linux launchers also accept `codex-relocate <worktree> [thread-id] [note]
---estate <prepared-estate>`. Both paths must be absolute and whitespace-free.
-Reload `codex-reloc-loop.bashrc` in the launching shell before starting Codex;
-`CODEX_RELOC_ESTATE=1` confirms support. Existing remote `turn/start` relocation
-continues to change cwd; the estate option requires an owned native launcher.
-
-Prepare the estate outside the source estate. Preserve config, authentication,
-extra skills and dependencies; exclude runtime history/state, caches and sockets:
-
-```bash
-estate="$HOME/.local/share/codex-estates/my-task/estate"
-mkdir -p "$estate"
-chmod 700 "$estate"
-rsync -a --exclude='/*.sqlite*' --exclude='/sessions/' --exclude='/archived_sessions/' \
-  --exclude='/state/' --exclude='/cache/' --exclude='/log/' --exclude='/backups/' \
-  --exclude='/tmp/' --exclude='/.tmp/' --exclude='/reloc/' --exclude='/app-server*/' \
-  --exclude='*.sock' "$HOME/.codex/" "$estate/"
-bwrap --dev-bind / / --bind "$estate" "$HOME/.codex" \
-  --setenv CODEX_HOME "$HOME/.codex" -- bash ./install.sh
-```
-
-Run the installer from the chosen source worktree and record its SHA. The installer
-backs up touched files under `~/.codex-backups`; bind a task-local backup directory
-there too when backups must remain private. Then relocate with `--estate "$estate"`
-as the turn's final action. The controller waits for Codex to exit, copies the
-selected rollout, referenced history prefixes and scoped native UI rows. It resumes
-the same thread in the same terminal. Identical existing ancestors are reused.
-Target copies of the selected thread or conflicting ancestors are refused;
-unrelated sessions remain. Whole native databases are never copied. Source files are
-read-only inside the target, except the controller's shared relocation directory.
-Later cwd relocations retain the active estate without copying its own rollout.
-
-Confirm the resumed thread/cwd, `~/.codex` binding against `CODEX_ESTATE_PATH`, and
-installed skills/hooks against the recorded source before declaring success.
+Private native estates use the [installed relocation setup](skills/repo-production-workflow/SKILL.md#private-estate-relocation).
 
 ## Hook event map (Codex)
 
