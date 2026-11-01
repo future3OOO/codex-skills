@@ -11,7 +11,7 @@ _codex_native() {
     [ "$a" = -- ] && break
     [ "$a" = --no-daemon ] && daemon=()
   done
-  CODEX_RELOC_LOOP=1 CODEX_RELOC_SHELL_PID=$BASHPID command codex "${daemon[@]}" "$@"
+  CODEX_RELOC_LOOP=1 CODEX_RELOC_ESTATE=1 CODEX_RELOC_SHELL_PID=$BASHPID command codex "${daemon[@]}" "$@"
 }
 
 # In-place relocation loop (any profile): a session that ran
@@ -20,11 +20,14 @@ _codex_native() {
 # the launch args (profile/model flags). CODEX_RELOC_LOOP is exported into the
 # session env so the agent can tell the loop is armed before killing.
 _codex_reloc_loop() {
-  local m="$HOME/.codex/reloc/$BASHPID" wt tid epoch note stuck=0
+  local m="$HOME/.codex/reloc/$BASHPID" wt tid epoch note requested estate="" source stuck=0
+  local launch=()
+  local -A protected=()
+  local readonly
   while [ -f "$m" ]; do
-    # Read target, thread and epoch, then the optional continuation note.
+    # The optional fourth field selects an estate; older markers omit it.
     note=""
-    { read -r wt tid epoch && { IFS= read -r -d '' note || true; } } < "$m" || break
+    { read -r wt tid epoch requested && { IFS= read -r -d '' note || true; } } < "$m" || break
     rm -f "$m" || stuck=1
     note="${note%$'\n'}"
     [ -n "$wt" ] && [ -n "$tid" ] || break
@@ -34,10 +37,24 @@ _codex_reloc_loop() {
     # under int64 — wider digits wrap and a bogus marker resumes
     # (measured: 99999999999999999999 resumed).
     # "--" keeps a flag-shaped note from being parsed as an option.
-    [[ "$epoch" =~ ^[0-9]{1,18}$ ]] && [ $(( $(date +%s) - 10#$epoch )) -le 900 ] &&
-      _codex_native "$@" resume -C "$wt" "$tid" ${note:+-- "$note"}
+    if [[ "$epoch" =~ ^[0-9]{1,18}$ ]] && [ $(( $(date +%s) - 10#$epoch )) -le 900 ]; then
+      source="${estate:-${CODEX_ESTATE_PATH:-$HOME/.codex}}"
+      estate="${requested:-$estate}"
+      if [ -n "$estate" ]; then
+        protected["$source"]=1
+        printf -v readonly '%s\n' "${!protected[@]}"
+        launch=(env "CODEX_RELOC_READONLY=$readonly" python3 "$HOME/.codex/skills/repo-production-workflow/scripts/codex-relocate"
+          --resume-estate "$source" "$estate" "$wt" "$tid" "$note" "$@")
+      else
+        launch=(_codex_native "$@" resume -C "$wt" "$tid" ${note:+-- "$note"})
+      fi
+      if ! "${launch[@]}"; then
+        [ -f "$m" ] || break
+      fi
+    fi
     [ "$stuck" = 1 ] && break
   done
+  return 0
 }
 # Interactive TUI launches only: bare `codex`/`codexs`, flags, and `resume`.
 # Any other bare token is a non-TUI subcommand (exec, mcp, review, apply,
@@ -63,8 +80,9 @@ _codex_is_tui() {
 codex() {
   _codex_is_tui "$@" || { command codex "$@"; return; }
   local rargs=() a; for a in "$@"; do [ "$a" = "resume" ] && break; rargs+=("$a"); done
-  _codex_native "$@"
-  local rc=$?
+  # SIGTERM is relocation's normal shutdown; errexit must not skip the loop.
+  local rc=0
+  _codex_native "$@" || rc=$?
   _codex_reloc_loop "${rargs[@]}"
   return $rc
 }

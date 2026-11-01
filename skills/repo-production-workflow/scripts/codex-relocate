@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Relocate the calling agent's session root to a new working directory.
 
-Usage: codex-relocate <abs-path> [thread-id] [note]
+Usage: codex-relocate <abs-path> [thread-id] [note] [--estate <prepared-dir>]
 
 Remote-hosted sessions (app-server socket): turn/start requests a new root.
 Acceptance is pending until a subsequent native turn confirms its cwd and
@@ -19,8 +19,13 @@ thread-id defaults to $CODEX_THREAD_ID, else 'self' (the loaded thread
 whose cwd matches the current directory). Socket auto-discovers
 ~/.codex/app-server-*.sock and ~/.codex/app-server-control/*.sock;
 override with CODEX_APP_SERVER_SOCK.
+
+--estate binds a prepared private estate at ~/.codex on native resume. It needs
+an updated launcher and transfers this thread's rollout, referenced history
+prefixes and scoped native UI rows. Existing target copies are refused.
 """
-import socket, base64, hashlib, os, struct, json, sys, time, glob, signal, shlex, subprocess, tomllib
+import socket, base64, hashlib, os, struct, json, sys, time, glob, signal, shlex, subprocess, tomllib, sqlite3, tempfile
+from pathlib import Path
 
 class WS:
     def __init__(self, path):
@@ -131,11 +136,20 @@ def find_thread(ws, tid, mycwd):
     return hits[0] if len(hits) == 1 else None
 
 def main():
-    if len(sys.argv) < 2:
+    argv = sys.argv[1:]
+    if argv and argv[0] == "--resume-estate":
+        source, estate, cwd, tid, note, *launch = argv[1:]
+        return _estate(cwd, tid, note, estate, launch, source)
+    estate = None
+    if len(argv) >= 3 and argv[-2] == "--estate":
+        estate, argv = argv[-1], argv[:-2]
+        if not estate:
+            sys.exit("estate path must be absolute and contain no whitespace")
+    if not argv:
         sys.exit(__doc__.strip().split("\n")[2])
-    cwd = sys.argv[1]
-    tid = sys.argv[2] if len(sys.argv) > 2 else os.environ.get("CODEX_THREAD_ID", "self")
-    note = sys.argv[3] if len(sys.argv) > 3 else f"continue from {cwd}"
+    cwd = argv[0]
+    tid = argv[1] if len(argv) > 1 else os.environ.get("CODEX_THREAD_ID", "self")
+    note = argv[2] if len(argv) > 2 else f"continue from {cwd}"
     if not os.path.isabs(cwd):
         sys.exit(f"worktree path must be absolute: {cwd}")
     if not os.path.isdir(cwd):
@@ -144,11 +158,16 @@ def main():
         sys.exit(f"worktree path must not contain whitespace: {cwd}")
     if tid != "self" and any(c.isspace() for c in tid):
         sys.exit(f"thread id must not contain whitespace: {tid}")
+    if estate and (os.environ.get("CODEX_RELOC_ESTATE") != "1"
+                   or os.environ.get("CODEX_APP_SERVER_SOCK")):
+        sys.exit("--estate requires an updated native launcher; reload codex-reloc-loop.bashrc before launching Codex")
     mycwd = os.getcwd()
     if (os.environ.get("CODEX_RELOC_LOOP") == "1"
             and os.environ.get("CODEX_RELOC_SHELL_PID")
             and not os.environ.get("CODEX_APP_SERVER_SOCK")):
-        return self_hosted(cwd, tid, note, "pane session: using its own resume loop")
+        return self_hosted(cwd, tid, note, "pane session: using its own resume loop", estate)
+    if estate:
+        sys.exit("--estate requires an owned native launcher")
     last_err = "no app-server socket found — session is not remote-hosted"
     for path in sockets():
         ws = None
@@ -172,7 +191,7 @@ def main():
                 ws.close()
     self_hosted(cwd, tid, note, last_err)
 
-def _trust_dir(cwd):
+def _trust_dir(cwd, config=None):
     """Persist trust for the relocate target in ~/.codex/config.toml so the
     resume-loop's `codex resume -C <dir>` skips the interactive trust prompt.
     Writes only a tomllib-validated candidate that proves the target's
@@ -181,7 +200,7 @@ def _trust_dir(cwd):
     if '"' in cwd or "\\" in cwd:
         print(f"warning: cannot persist trust for unquotable path: {cwd}", flush=True)
         return
-    cfg = os.path.expanduser("~/.codex/config.toml")
+    cfg = config or os.path.expanduser("~/.codex/config.toml")
     header = f'[projects."{cwd}"]'
     try:
         try:
@@ -258,7 +277,162 @@ def _trust_dir(cwd):
         # failures degrade to warn + continue rather than abort relocation.
         print(f"warning: could not persist trust for {cwd}: {e}", flush=True)
 
-def self_hosted(cwd, tid, note, why):
+def _history(origin: Path, target: Path, ranges: list[tuple[str, int, int | None]],
+             selected: str, publish: bool) -> None:
+    """Copy native UI-history rows for the same ranges as the model rollouts."""
+    for path in origin.glob("thread_history_*.sqlite"):
+        uri = path.as_uri() + "?mode=ro"
+        with sqlite3.connect(uri, uri=True) as source:
+            definitions = source.execute("SELECT type,name,sql FROM sqlite_master WHERE type IN ('table','index') "
+                                         "AND sql IS NOT NULL AND name NOT LIKE 'sqlite_%' ORDER BY type DESC").fetchall()
+        destination = target / path.name
+        if not publish and not destination.exists():
+            continue
+        with sqlite3.connect(destination.as_uri() + ("?mode=rwc" if publish else "?mode=ro"), uri=True) as database:
+            if publish:
+                database.execute("BEGIN IMMEDIATE")
+            database.execute("ATTACH DATABASE ? AS original", (uri,))
+            existing = {row[0] for row in database.execute("SELECT name FROM sqlite_master")}
+            if publish:
+                for _, name, sql in definitions:
+                    if name not in existing:
+                        database.execute(sql)
+                if "_sqlx_migrations" not in existing:
+                    database.execute("INSERT INTO _sqlx_migrations SELECT * FROM original._sqlx_migrations")
+            for current, length, ordinal in ranges:
+                for kind, name, _ in definitions:
+                    if kind != "table" or name == "_sqlx_migrations" or (not publish and name not in existing):
+                        continue
+                    table = '"' + name.replace('"', '""') + '"'
+                    projection = name == "thread_history_projection_state"
+                    bounds = " AND rollout_ordinal < ?" if ordinal is not None and not projection else ""
+                    arguments = (current, ordinal) if bounds else (current,)
+                    query = f"SELECT * FROM original.{table} WHERE thread_id = ?{bounds}"
+                    if projection and ordinal is not None:
+                        query = (f"SELECT thread_id,min(next_rollout_byte_offset,?),min(next_rollout_ordinal,?) "
+                                 f"FROM original.{table} WHERE thread_id = ?")
+                        arguments = (length, ordinal, current)
+                    target_query = f"SELECT * FROM {table} WHERE thread_id = ?{bounds}"
+                    target_arguments = (current, ordinal) if bounds else (current,)
+                    if name in existing:
+                        if current == selected:
+                            if database.execute(f"SELECT 1 FROM {table} WHERE thread_id = ? LIMIT 1", (current,)).fetchone():
+                                sys.exit(f"target history already contains thread {current}; refusing overwrite")
+                        elif not projection and database.execute(
+                                f"SELECT 1 FROM ({target_query} EXCEPT {query}) LIMIT 1",
+                                (*target_arguments, *arguments)).fetchone():
+                            sys.exit(f"conflicting target UI history: {current}; refusing overwrite")
+                    if publish:
+                        if projection:
+                            database.execute(f"INSERT INTO {table} {query} ON CONFLICT(thread_id) DO UPDATE SET "
+                                             f"next_rollout_byte_offset=max(next_rollout_byte_offset,excluded.next_rollout_byte_offset), "
+                                             f"next_rollout_ordinal=max(next_rollout_ordinal,excluded.next_rollout_ordinal)", arguments)
+                        else:
+                            database.execute(f"INSERT INTO {table} {query} EXCEPT {target_query}",
+                                             (*arguments, *target_arguments))
+
+def _estate(cwd: str, tid: str, note: str, estate: str,
+            launch: list[str] | None = None, source: str | None = None) -> str:
+    """Validate a target, or transfer the closed rollout and exec its native CLI."""
+    target = Path(estate)
+    if not target.is_absolute() or any(c.isspace() for c in estate):
+        sys.exit("estate path must be absolute and contain no whitespace")
+    target = target.resolve()
+    if any(c.isspace() for c in str(target)):
+        sys.exit("resolved estate path must contain no whitespace")
+    home = Path.home() / ".codex"
+    controller = Path(os.environ.get("CODEX_ESTATE_PATH", home)).resolve()
+    origin = Path(source).resolve() if source else controller
+    if not (target / "config.toml").is_file():
+        sys.exit(f"prepared estate needs config.toml: {target}")
+    if not (target / "skills/repo-production-workflow/scripts/codex-relocate").is_file():
+        sys.exit(f"prepared estate needs its installed codex-relocate: {target}")
+    if target != origin and target.is_relative_to(origin):
+        sys.exit("target estate must be outside the source estate")
+    same = os.path.samefile(target, origin)
+    if same and launch is None:
+        return ""
+    transfers = []
+    ranges = []
+    if not same:
+        indices = []
+        for root in (origin, target):
+            index = {}
+            for pattern in ("sessions/*/*/*/rollout-*.jsonl", "archived_sessions/rollout-*.jsonl"):
+                for path in root.glob(pattern):
+                    index.setdefault(path.stem[-36:], []).append(path)
+            indices.append(index)
+        source_index, target_index = indices
+        current, limit, ordinal, visited = tid, None, None, set()
+        while current:
+            matches = source_index.get(current, [])
+            if len(matches) != 1 or current in visited:
+                sys.exit(f"missing, ambiguous or cyclic source history: {current}")
+            visited.add(current)
+            path = matches[0]
+            size = path.stat().st_size
+            length = size if limit is None else limit
+            if type(length) is not int or not 0 <= length <= size:
+                sys.exit(f"invalid source history boundary: {current}")
+            ranges.append((current, length, ordinal))
+            existing = target_index.get(current, [])
+            if existing:
+                if current == tid or len(existing) != 1:
+                    sys.exit(f"target estate already contains thread {current}; refusing overwrite")
+                with path.open("rb") as left, existing[0].open("rb") as right:
+                    remaining = length
+                    while remaining:
+                        chunk = left.read(min(remaining, 1024 * 1024))
+                        if not chunk or chunk != right.read(len(chunk)):
+                            sys.exit(f"conflicting target history: {current}; refusing overwrite")
+                        remaining -= len(chunk)
+            else:
+                destination = target / path.relative_to(origin)
+                parent = next(parent for parent in destination.parents if parent.exists() or parent.is_symlink())
+                with tempfile.TemporaryFile(dir=parent):
+                    transfers.append((path, length))
+            with path.open(encoding="utf-8") as header:
+                base = json.loads(header.readline())["payload"].get("history_base") or {}
+            current, limit, ordinal = base.get("thread_id"), base.get("end_byte_offset"), base.get("end_ordinal_exclusive")
+            if base and (not isinstance(current, str) or not current or type(ordinal) is not int or ordinal < 0):
+                sys.exit("invalid source history lineage")
+        _history(origin, target, ranges, tid, launch is not None)
+    control = home / "reloc"
+    control.mkdir(exist_ok=True)
+    descriptor = os.open(control, os.O_PATH)
+    binding = ["bwrap", "--dev-bind", "/", "/", "--die-with-parent"]
+    protected = {origin, controller, *(Path(path) for path in os.environ.get("CODEX_RELOC_READONLY", "").splitlines())}
+    for departure in protected - {target}:
+        binding += ["--ro-bind", str(departure), str(departure)]
+    binding += ["--bind", str(target), str(home), "--bind-fd", str(descriptor), str(home / "reloc"),
+                "--setenv", "CODEX_HOME", str(home), "--setenv", "CODEX_ESTATE_PATH", str(target),
+                "--unsetenv", "CODEX_ESTATE_SOURCE_SHA", "--unsetenv", "CODEX_WORKFLOW_STATE_ROOT",
+                "--chdir", cwd, "--"]
+    try:
+        if launch is None:
+            subprocess.run([*binding, "codex", "app-server", "--print-startup-config"],
+                           pass_fds=(descriptor,), stdout=subprocess.DEVNULL, check=True)
+            return str(target)
+        for path, length in reversed(transfers):
+            destination = target / path.relative_to(origin)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("rb") as reader, destination.open("xb") as writer:
+                remaining = length
+                while remaining:
+                    sent = os.sendfile(writer.fileno(), reader.fileno(), None, remaining)
+                    if not sent:
+                        sys.exit(f"source history truncated during transfer: {path}")
+                    remaining -= sent
+        os.environ.update(CODEX_RELOC_LOOP="1", CODEX_RELOC_ESTATE="1",
+                          CODEX_RELOC_SHELL_PID=str(os.getppid()))
+        os.set_inheritable(descriptor, True)
+        daemon = [] if "--no-daemon" in launch else ["--no-daemon"]
+        command = ["codex", *daemon, *launch, "resume", "-C", cwd, tid]
+        os.execvp("bwrap", [*binding, *command, *(["--", note] if note else [])])
+    finally:
+        os.close(descriptor)
+
+def self_hosted(cwd, tid, note, why, estate=None):
     """Fallback for self-hosted TUI sessions: arm the resume loop in the
     launching shell and kill this host so the pane resumes the thread at
     the new root."""
@@ -280,8 +454,10 @@ def self_hosted(cwd, tid, note, why):
             comm = open(f"/proc/{p}/comm").read().strip()
         except OSError:
             break
+        if comm == "codex":
+            host = int(p)
         if p == launcher and comm in ("bash", "zsh", "fish", "sh"):
-            shell, host = int(p), child
+            shell, host = int(p), host or child
             break
         child = int(p)
         try:
@@ -293,20 +469,22 @@ def self_hosted(cwd, tid, note, why):
                  f"resume from your terminal: {hint}")
     if not tid:
         sys.exit("no thread id (pass it or export CODEX_THREAD_ID)")
-    _trust_dir(cwd)
+    if estate:
+        estate = _estate(cwd, tid, str(note).strip(), estate)
+    config = str(Path(estate) / "config.toml") if estate else None
+    _trust_dir(cwd, config)
     real = os.path.realpath(cwd)
     if real != cwd:
-        _trust_dir(real)
+        _trust_dir(real, config)
     d = os.path.expanduser("~/.codex/reloc")
     os.makedirs(d, exist_ok=True)
     # UTF-8 + surrogateescape: under a non-UTF-8 locale argv decodes to
     # surrogates; the note must write back byte-identical, never crash.
     with open(os.path.join(d, str(shell)), "w", encoding="utf-8",
               errors="surrogateescape") as f:
-        # Line 1 keeps the original 3-field format — older in-memory loops
-        # read only it (`read wt tid epoch` would swallow the note into
-        # `epoch`); the note lives on line 2+ where the updated loop looks.
-        f.write(f"{cwd} {tid} {int(time.time())}\n{str(note).strip()}\n")
+        # Directory-only requests retain the legacy three fields. The estate
+        # field requires the capability exported by the updated launcher.
+        f.write(f"{cwd} {tid} {int(time.time())}{' ' + estate if estate else ''}\n{str(note).strip()}\n")
     print(f"relocation armed: host TUI pid {host} will be terminated after "
           f"this turn closes; shell pid {shell} will resume thread {tid} "
           f"at {cwd}", flush=True)
