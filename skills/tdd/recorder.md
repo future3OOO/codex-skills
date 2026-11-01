@@ -6,9 +6,9 @@ Run this after TDD's [required probe loop](SKILL.md#required-probe-loop) has ext
 workflow.py tdd --behavior-id BM_X --timeout 900 -- COMMAND [ARG...]
 ```
 
-To capture edited probes, supply the command again. Commandless continuation
-replays the recorded command, frozen probe/support files and timeout, including
-after their maintained copies are removed. It does not capture checkout edits.
+To capture edited or new probes, supply their command. Commandless continuation
+replays the recorded command, frozen probe/support files and timeout after cleanup.
+It does not capture checkout edits.
 
 Repeat `--behavior-id` to share one command across behaviors. A failed batch does not mean every behavior failed: read the bound outcomes. Both sources execute at the checkout root with the repository on `PYTHONPATH`. Proof binds source, frozen files, command, effective environment, observed executable identities and their search paths. Readers revalidate that bound context; a new execution captures its actual environment. Cold runs use `strace` to observe executable filenames, including child tools and script interpreters; warm reads and unchanged replay start neither probes nor tracer. Python package-directory metadata and scoped/nested npm manifests detect installation changes. This does not trace arbitrary file/network inputs or detect every installed-source edit in place. Production files cannot be overlaid as probe support. Isolate mutable resources outside the runner's private checkout and workflow state.
 
