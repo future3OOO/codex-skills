@@ -454,7 +454,7 @@ def review_summary(path: str, *, slug: str, workflow_id: str) -> JsonObject:
         raise ValueError("review requires its candidateTree")
     if "tddEvidence" not in value or value["tddEvidence"] is not None and not _text(value["tddEvidence"]):
         raise ValueError("review requires the tddEvidence it assessed")
-    if value.get("verdict") not in {"complete", "incomplete"}:
+    if value.get("verdict") not in ("complete", "incomplete"):
         raise ValueError("review requires a source-evidence completeness verdict")
     errors = [f"review intake has unknown fields: {', '.join(unknown)}"] if unknown else []
     errors += [] if isinstance(findings, list) else ["review intake findings must be an array"]

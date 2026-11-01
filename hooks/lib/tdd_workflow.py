@@ -783,7 +783,7 @@ def map_update(identity: RepoIdentity, state: JsonObject, value: JsonObject) -> 
     document = {"workflowId": state["workflowId"], "slug": state["slug"], "kind": "comparison",
                 "behaviorMap": items, "runs": (current or {}).get("runs", []), "updatedAt": utc_timestamp()}
     state, evidence = commit_tdd(identity, str(state["slug"]), str(state["workflowId"]), document,
-                                expected_evidence_id=state.get("tddEvidence"), review_changed=True)
+                                expected_evidence_id=state.get("tddEvidence"))
     return operation_receipt(state, identity, summaryId=evidence, pending=behavior_map.unresolved(items, _readiness_lines(identity, state, items)["open"]))
 
 
