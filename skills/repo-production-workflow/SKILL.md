@@ -102,14 +102,12 @@ Invoke `production-code` for its standards and baseline gate. Reuse the existing
 
 ### 8. Implement and compare
 
-Make the smallest change, then execute TDD's
+Implement the chosen design, then execute TDD's
 [required probe loop](../tdd/SKILL.md#required-probe-loop): record the edit's decisive
 contexts and boundary cases as map items, extend the existing direct batch, and compare
 the identical expanded batch on the recorded original and candidate sources.
 
-The receipt's `open` lines are the questions the comparison leaves: answer each by
-repairing the code or the probe and rerunning the same batch. Readiness is that one
-result; `summary`, `verify`, reviewer dispatch and `complete` report it identically.
+The lead resolves named-case obligations and unanswered DIFF questions during TDD by restoring unrequested changes, comparing nominated cases, or recording the explicit source/observed judgment allowed by the recorder. Then run verification and the existing independent review; answered judgments remain listed for review. After final review starts, targeted repair returns to that final advisor.
 
 ### 9. Verification
 
@@ -159,9 +157,8 @@ Historical receipts retain their original identity. Every review must describe
 the current candidate.
 
 Record the delegate's intake. Code is proof: the runner executes each finding's `probe`
-(`{"path","content","command"}`, a new standalone probe run by a direct project command) on the
-candidate and the original, and each `change` (a net-reducing unified diff that leaves
-tests untouched) against every retained comparison batch. Objective:
+(`{"path","content","command"}`, a named focused project operation run by its direct command) on the
+candidate and the original, and each `change` against every retained comparison batch. Changes normally reduce net lines; maintained test cleanup must preserve frozen replay, required regression coverage, recorded detector results and affected surviving named tests with current support; a combined change/probe may justify growth only by a real cost improvement from candidate failure to replacement success. Objective:
 maximum performance and efficiency of the delivered code with the requested behaviour held
 fixed. Acceptance order: (1) a regression, a probe of behaviour the request keeps that passes on
 the original and fails or times out on the candidate, binds and is repaired; (2) a request
@@ -172,8 +169,7 @@ batch still passes binds and is applied; (4) anything else is a report line.
 python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" record review --input <review.json>
 ```
 
-A no-finding intake binds the reviewed tree and passes immediately. Each later review intake
-and final re-check re-executes the stage's open binding findings on the current candidate: a
+An intake binds the source and evidence actually reviewed; it must answer each listed lead source judgment. Each later intake reevaluates retained binding findings, including resolved ones, reusing unchanged executions: a
 finding settles on repair, an applied passing change or a proposal-caused failure against a passing baseline. Shared failures stay pending. For a report line naming an uncovered request sentence, record the decision and, when required,
 add the case with `record tdd-map` before implementing it. Verification and review can run
 with open findings; they block completion.
@@ -184,8 +180,7 @@ Before the consult, reconcile known material obligations using step 2's verifica
 and the delegate's findings. Reference the applicable observations and unresolved
 acceptance gaps; load only missing evidence, not the verification history.
 
-The final Codex Advisor verifies the candidate by running code in a disposable copy of it,
-with the project's interpreter. Invoke it against the live diff with wrapper phase
+The final Codex Advisor investigates in the lead checkout using the recorded project executable. The wrapper exposes the recorded original in scratch with source-specific commands. Invoke it against the live diff with wrapper phase
 `final-review` and the same slug; the checkpoint supplies the diff anchors. It returns findings
 in the same executable forms; the runner executes them and derives the verdict, and the wrapper
 returns each finding's execution with the recorded `next`; follow it. After the first final verdict, a correction

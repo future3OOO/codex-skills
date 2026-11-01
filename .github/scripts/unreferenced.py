@@ -8,7 +8,7 @@ whose decorator mentions `dataclass` that no text reads as `.name` or a getattr 
 unless a module naming the class calls asdict, astuple, fields or vars or reads __dict__.
 Python files are `.py` or python-shebang files; test-like paths neither define nor
 reference. Skipped: `__x__` methods and the `visit_<AST class>` methods of a class with a
-base, which Python and ast.NodeVisitor call by name.
+base and the registered tdd_surface.pytest_collectstart hook, called by name.
 """
 import ast
 import collections
@@ -47,8 +47,10 @@ def unreferenced(repo: str) -> list[str]:
                     for node in ast.walk(tree) if isinstance(node, ast.Call))
              or any(isinstance(node, ast.Attribute) and node.attr == "__dict__" for node in ast.walk(tree))]
     dispatched = {f"visit_{name}" for name in dir(ast) if isinstance(getattr(ast, name), type)}
-    found, fields = [], []
+    found, fields, registered = [], [], set()
     for path, tree in trees.items():
+        if path == "hooks/lib/tdd_surface.py":
+            registered.update((path, node.lineno, node.name) for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "pytest_collectstart")
         exempt = {id(item) for node in ast.walk(tree) if isinstance(node, ast.ClassDef) and node.bases
                   for item in node.body if getattr(item, "name", None) in dispatched}
         found += [(path, node.lineno, node.name) for node in ast.walk(tree) if id(node) not in exempt
@@ -61,7 +63,7 @@ def unreferenced(repo: str) -> list[str]:
                    and field.target.id not in reads]
     defined = collections.Counter(name for _, _, name in found)
     return [f"{path}:{line} {name}" for path, line, name in sorted(fields + [
-        entry for entry in found if words[entry[2]] <= defined[entry[2]] and not entry[2][:2] == entry[2][-2:] == "__"])]
+        entry for entry in found if words[entry[2]] <= defined[entry[2]] and entry not in registered and not entry[2][:2] == entry[2][-2:] == "__"])]
 
 
 if __name__ == "__main__":

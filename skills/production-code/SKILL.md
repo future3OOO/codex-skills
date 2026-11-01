@@ -11,7 +11,7 @@ Use the production-preflight skill first on before-edit turns that require expli
 In a governed production workflow, invoke this skill after planning the real probe and before production, configuration, or runtime implementation edits; the probe edit may precede it. Keep
 this doctrine active through implementation and final verification.
 
-Before editing, use the standards below to choose the smallest production-safe implementation path. In a governed pass, run the bundled gate before finalizing:
+Before editing, use the standards below to choose the best justified whole-system design found. In a governed pass, run the bundled gate before finalizing:
 
 ```bash
 python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" verify --kind quality-gate
@@ -105,10 +105,10 @@ Use the request/map already in context; load missing evidence once at implementa
 
 Resolve ownership placement inside that decision:
 
-1. Prove whether the required behavior already exists. If a named Interface already provides it and real test-surface evidence verifies the requirement, make no production change.
+1. Check the behavior and whole-system cost objective. Reuse an existing Interface when real evidence verifies both; otherwise implement the best justified design found.
 2. Choose the responsible owner. Consume production preflight's Module-shape decision (in `authoritativeContract`). When the turn required no preflight, deepen the existing Module; proposing a new Module or Seam requires preflight first. Delete every surface the change supersedes.
 3. Inside that owner, reuse a capability whose Interface already owns the required semantics, invariant, or failure policy: standard library; native platform, runtime, datastore, or protocol; or an already-installed dependency. These are peers; choose by authority, not list order.
-4. Treat the changed Implementation as bloated. **Reduce it first.** Delete duplication and consolidate existing owners before adding code. Every change targets fewer lines; justify necessary growth against the actual requirement. Preserve production behaviour and useful assertions. Moving complexity or compressing formatting does not count.
+4. Treat the whole change as bloated. **Reduce it first.** Whole-system cost includes production code, tests, scripts, documentation, maintenance and execution. Delete duplication and unnecessary maintained surfaces. Every change targets fewer lines; justify necessary growth against the requirement and demonstrated cost. Preserve required behavior, immutable proof, surviving tests and necessary regression coverage. Moving complexity or compressing formatting does not count.
 
 Implementation mechanism never chooses placement: a library or native capability does not justify a new Module or Seam. Every choice must preserve required behavior, boundary validation, security, accessibility, data-loss protection, cleanup, and affected-surface proof.
 
@@ -119,14 +119,14 @@ The decision is complete only when one outcome is recorded:
 
 ## Core Standard
 
-- Ship production code only.
-- Make the smallest correct change.
+- Ship only required production code, regression coverage and supporting files.
+- Build the best justified whole-system design, including tests, scripts, documentation, maintenance and execution; then cut what it does not need.
 - Delete lines that do not directly serve the requirement.
 - Remove dead code instead of hiding it behind flags or wrappers.
 - Apply [codebase-design](../codebase-design/SKILL.md) when judging Module depth and consolidation; file size is not the measure.
 - Do not add orchestration layers, control-plane hops, or indirection that the requirement does not need.
 - Prefer readable, direct code over verbose generated patterns.
-- Smallest change means the smallest final diff, not the smallest tool call: prepare coherent multi-hunk edits per file and batch independent edits in one message; consecutive single-line edits to one file are the smell this rule prevents.
+- Prepare coherent multi-hunk edits per file and batch independent edits in one message; consecutive single-line edits to one file are the smell this rule prevents.
 - If the current work is governed by a tracked plan or review artifact that includes an execution checklist, follow that artifact during implementation instead of drifting to an unwritten plan.
 
 ## Non-Negotiable Rules
