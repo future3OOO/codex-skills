@@ -347,6 +347,8 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
             raise ValueError("record review requires --input <path|->")
         from .tdd_workflow import execute_findings
         document = review_summary(args.input, slug=slug, workflow_id=workflow_id)
+        if document["candidateTree"] != _active_candidate_tree(identity):
+            raise WorkflowError("review names a different candidate tree; obtain a current review")
         execution = execute_findings(identity, state, document["findings"])
         document["findings"] = execution["findings"]
         state, evidence_id = commit_review(identity, slug, workflow_id, document, execution)
@@ -373,10 +375,12 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
     execution = None
     if args.stage == "final" and intake is not None:
         from .tdd_workflow import execute_findings
+        if intake["candidateTree"] != candidate:
+            raise WorkflowError("final review names a different candidate tree")
         execution = execute_findings(identity, state, intake["findings"])
         intake["findings"] = execution["findings"]
         if verdict != "context-mismatch":  # the executed result decides, not the producer's claim
-            verdict = intake["verdict"] = ("fix-before-commit" if any(item["material"] for item in intake["findings"])
+            verdict = ("fix-before-commit" if any(item["material"] for item in intake["findings"])
                                            else "commit-ready")
     state = record_advisor_result(
         identity, slug, workflow_id, args.stage, args.source, verdict, reason=args.reason,

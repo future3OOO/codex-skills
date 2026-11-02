@@ -37,7 +37,7 @@ sessions, caches and workflow state. Use Bubblewrap (`bwrap`) to bind each copy 
 `~/.codex`, keep the global estate read-only, and retain normal tool access;
 `CODEX_HOME` alone misses home-relative entrypoints.
 
-Proof comparisons also require `bwrap`: each child sees the recorded source at
+Proof comparisons require `bwrap`, `strace` and GNU `realpath`: each child sees the recorded source at
 the repository's original path, including imports through editable installations.
 On Ubuntu with AppArmor's unprivileged user-namespace restriction, `bwrap` also
 needs a profile allowing user namespaces (CI installs one in its preflight).

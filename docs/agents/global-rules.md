@@ -57,7 +57,7 @@ Repo Context Forge analysis copy. For codex-skills installation, follow
   behavior. Cover each request promise and the preserved behavior the change
   touches. Prove each changed line with a direct N/N+1
   probe that calls it. Add another existing test only when it calls the changed
-  code directly. Never run whole files or classes, the full suite, or duplicate
+  code directly. Never collect a whole test file, class, directory or suite; a focused direct script is allowed. Do not duplicate
   retained probes with a parallel unit-test suite.
 - **Imaginary-risk ban.** A theoretical risk with no demonstrated failure is a
   report line, not a system. Build nothing for it.
@@ -78,11 +78,11 @@ Repo Context Forge analysis copy. For codex-skills installation, follow
 
 ## Simplicity First
 
-- Assume your first implementation is bloated. Keep the least production code
-  that fully meets the objective and preserves affected behavior. Retain real
+- Assume your first implementation is bloated. Find the best justified whole-system design for the objective, including production code,
+  tests, scripts, documentation, maintenance and execution; keep only what it needs while preserving required behavior and proof. Retain real
   attack probes; cut redundant scaffolding and mocked unit-test bloat from this change.
 - Every change must remove unnecessary workflow ceremony. Reviewer-requested
-  follow-up commits must reduce net lines of code.
+  follow-up commits must reduce net lines of code unless a demonstrated lower whole-system cost at the same required behavior justifies necessary growth.
 - Preserve required behavior and proof when reducing lines or meeting the review
   budget. Every changed line must serve the request or cleanup caused by it.
 

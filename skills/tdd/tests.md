@@ -4,12 +4,19 @@ A strong test is a real probe of one **independently-failable observable outcome
 
 A behavior test survives internal refactoring: if observable behavior is unchanged but the test breaks, the test is coupled to implementation. Several assertions are valid when they jointly prove one behavior; one assertion can still hide an over-broad behavior.
 
-Comparison probes need not be committed: the recorded run is the proof, so
-removing or editing a probe file after its comparison leaves it fresh, unless the
-file is the command's own executable. Keep it at a test path (for example
-`tests/probe_intent.py`); the runner refuses non-test paths as production overlays. A test runner names its
-cases. A direct operation must print one `name: result` line per case and also
-check its results: an assertion alone names no case, and exit 0 alone proves nothing.
+Scratch work investigates; it is not recorded proof. A recorded probe is a named direct
+operation in the project's own language, focused on the changed Interface, recorded
+through `workflow.py tdd`. Never collect a whole test file, class, directory or suite; a focused direct script is allowed.
+Native case results or checked `name: result` output name its cases. The comparison
+records those results; no language-specific branch trace defines proof.
+Read the diff and map the affected decisions to preservation or contract cases, or
+an executed case and source argument showing the context is infeasible. Reaching a
+condition alone does not establish what it decides. Reviewers and advisors judge
+the Interface, authority, completeness and meaning of that evidence.
+
+Recorded comparison probes need not be committed: immutable `probeTree` files and
+support remain the proof when their maintained copies are removed. Removing support
+also requires running the affected surviving maintained tests as named cases.
 
 Commit a probe only for regression coverage no existing check has, as the
 smallest case calling that owner. Additional checks

@@ -67,8 +67,11 @@ def advisor_envelope(
         value = json.loads(text, object_pairs_hook=_unique)
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise ValueError(f"cannot read advisor envelope JSON: {exc}") from exc
-    if not isinstance(value, dict) or set(value) != {"schemaVersion", "findings", "verdict"}:
-        raise ValueError("advisor envelope requires only schemaVersion, findings, and verdict")
+    fields = {"schemaVersion", "findings", "verdict"} | ({"workflowId", "candidateTree", "tddEvidence"} if stage == "final" else set())
+    if not isinstance(value, dict) or set(value) != fields:
+        raise ValueError("advisor envelope fields do not match its stage: " + ", ".join(sorted(fields)))
+    if stage == "final" and (value.get("workflowId") != workflow_id or not isinstance(value.get("candidateTree"), str) or not re.fullmatch(r"[0-9a-f]{40}", value["candidateTree"]) or value["tddEvidence"] is not None and not _text(value["tddEvidence"])):
+        raise ValueError("final review must echo its workflow and candidate tree")
     findings, verdict = value.get("findings"), value.get("verdict")
     if type(value.get("schemaVersion")) is not int or value.get("schemaVersion") != 1 or not isinstance(findings, list):
         raise ValueError("advisor envelope requires schemaVersion 1 and a findings array")
@@ -109,6 +112,7 @@ def advisor_envelope(
         "stage": stage,
         "verdict": verdict,
         "findings": typed,
+        **({key: value[key] for key in ("candidateTree", "tddEvidence")} if stage == "final" else {}),
         "sha256": hashlib.sha256(raw).hexdigest(),
         "recordedAt": utc_timestamp(),
         "observationId": uuid.uuid4().hex,
@@ -126,10 +130,10 @@ DESIGN_FILE_SHAPE = (
 ITEM_SHAPE = ('{"id":"BM_X","kind":"conformance|contract|preservation","basis":"original request or preservation",'
               '"behavior":"...","seam":"...","expected":"...","boundaryInputs":["executed case name"],'
               '"interpretations":["reading a","reading b"],"interpretation":"...","authority":"..."}')
-EXECUTABLE = ('{"id":"R-1","claim":"...","probe":{"path":"tests/test_r1.py","content":"...","command":"python3 -m pytest tests/test_r1.py"}} or a net-reducing {"id":"R-2","claim":"...","change":"<unified diff>"}')
+EXECUTABLE = ('{"id":"R-1","claim":"...","probe":{"path":"tests/test_r1.py","content":"...","command":"python3 -m pytest tests/test_r1.py::test_r1"}} or a normally net-reducing {"id":"R-2","claim":"...","change":"<unified diff>"}, also carrying probe when a measured production-cost improvement justifies growth')
 RECORD_SHAPES = {
     "preflight": f'{{"authoritativeContract":"text","behaviorMap":[{ITEM_SHAPE}]}}',
-    "review": '{"findings":[FINDING]} where FINDING is ' + EXECUTABLE,
+    "review": '{"workflowId":"<reviewed workflow>","candidateTree":"<reviewed tree>","tddEvidence":"<reviewed evidence>","verdict":"complete|incomplete","findings":[FINDING]} where FINDING is ' + EXECUTABLE,
     "advisor-result": ('the advisor envelope {"schemaVersion":1,"findings":[FINDING],"verdict":VERDICT}: at preflight '
                        'FINDING is {"id":"SPEC-1","claim":"...","material":true} and VERDICT approved|changes-required, '
                        'or --verdict unavailable --reason TEXT; at final FINDING is ' + EXECUTABLE +
@@ -414,6 +418,7 @@ def graph_evidence_document(
         "slug": slug,
         "workflowId": workflow_id,
         "graph": graph,
+        "coverage_plan": packet.get("coverage_plan"),
         "advisorProjection": projection,
         "recordedAt": utc_timestamp(),
     }
@@ -441,8 +446,16 @@ def review_summary(path: str, *, slug: str, workflow_id: str) -> JsonObject:
         value = {"findings": []}
     if "findings" not in value:
         raise ValueError("review intake requires the reviewer's findings")
-    unknown = sorted(set(value) - {"findings"})
+    unknown = sorted(set(value) - {"findings", "candidateTree", "tddEvidence", "verdict", "workflowId"})
     findings = value["findings"]
+    if value.get("workflowId") != workflow_id:
+        raise ValueError("review names a different workflow")
+    if not isinstance(value.get("candidateTree"), str) or not re.fullmatch(r"[0-9a-f]{40}", value["candidateTree"]):
+        raise ValueError("review requires its candidateTree")
+    if "tddEvidence" not in value or value["tddEvidence"] is not None and not _text(value["tddEvidence"]):
+        raise ValueError("review requires the tddEvidence it assessed")
+    if value.get("verdict") not in ("complete", "incomplete"):
+        raise ValueError("review requires a source-evidence completeness verdict")
     errors = [f"review intake has unknown fields: {', '.join(unknown)}"] if unknown else []
     errors += [] if isinstance(findings, list) else ["review intake findings must be an array"]
     seen: set[str] = set()
@@ -465,4 +478,5 @@ def review_summary(path: str, *, slug: str, workflow_id: str) -> JsonObject:
         errors += [f"{label}: " + ", ".join(problems)] if problems else []
     if errors:
         raise ValueError("; ".join(errors))
-    return {**common, "kind": "intake", "findings": findings}
+    return {**common, "kind": "intake", "findings": findings,
+            "candidateTree": value["candidateTree"], "tddEvidence": value["tddEvidence"], "verdict": value["verdict"]}
