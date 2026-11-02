@@ -350,7 +350,16 @@ def retain_evaluation(items: list[JsonObject], required: set[str], retained: Jso
     """Keep the first evaluation and later proved named cases in the same evidence owner."""
     for entry in items:
         comparison = entry.get("comparison") or {}
-        if entry["id"] not in required or not comparison.get("arms") or _question(entry, items, folded_cases(comparison)[0]):
+        proof = entry
+        arms = comparison.get("arms") or []
+        keys = {arm.get("key") for arm in arms}
+        # A red original-only batch can still establish a passed preservation case.
+        if (entry.get("kind") == "preservation" and len(keys) == 1 and None not in keys
+                and not (comparison.get("timedOut") or comparison.get("bindingError"))
+                and all(arm["outcome"] in {"passed", "failed"} for arm in arms)):
+            proof = {**entry, "comparison": {**comparison, "valid": True}}
+        if (entry["id"] not in required or not arms
+                or _question(proof, [proof if other is entry else other for other in items], folded_cases(comparison)[0])):
             continue
         fixed = {**copy.deepcopy({key: value for key, value in entry.items() if key != "comparison"}),
                  "runIndex": entry["comparison"]["runIndex"]}

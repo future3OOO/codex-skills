@@ -94,7 +94,7 @@ Record the approved contract and probe list with `record preflight` (no input: i
 ### 6. Select the probe batch
 
 Invoke `tdd` before editing, then select the direct batch each map item will run through under
-AGENTS.md's Real-Seam proof and Attack probes first invariants. The comparison runs after the edit (step 8).
+AGENTS.md's Real-Seam proof and Attack probes first invariants. Record its original baseline before editing production.
 
 ### 7. Production code
 
@@ -102,10 +102,9 @@ Invoke `production-code` for its standards and baseline gate. Reuse the existing
 
 ### 8. Implement and compare
 
-Implement the chosen design, then execute TDD's
-[required probe loop](../tdd/SKILL.md#required-probe-loop): record the edit's decisive
-contexts and boundary cases as map items, extend the existing direct batch, and compare
-the identical expanded batch on the recorded original and candidate sources.
+Continue TDD's [required probe loop](../tdd/SKILL.md#required-probe-loop): implement the chosen
+design against the recorded baseline, reconcile the actual diff, and compare the same
+named cases on the candidate. Add uncovered cases to that batch; reuse unchanged proof.
 
 The lead resolves named-case obligations against the original and request, then verifies and obtains the existing independent review. Historical source judgments remain review input, not coverage proof. After final review starts, targeted repair returns to that final advisor.
 
