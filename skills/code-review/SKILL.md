@@ -43,11 +43,6 @@ Use `code-quality` for the seven quality principles and `codebase-design` for
 Module/Interface/Seam judgement. Apply the canonical mock, imaginary-risk, and
 root-cause invariants from `AGENTS.md`.
 
-Carry this smell baseline as judgement calls: Mysterious Name, Duplicated Code,
-Feature Envy, Data Clumps, Primitive Obsession, Repeated Switches, Shotgun
-Surgery, Divergent Change, Speculative Generality, Message Chains, Middle Man,
-and Refused Bequest.
-
 ## 4. Falsify the promises
 
 Apply [Production Code's outcome and verification rules](../production-code/SKILL.md#minimum-implementation-decision)
@@ -56,7 +51,7 @@ that objective is fulfilled, including materially wrong behavior the declared
 assertions would miss. Judge correction of the original failure, affected-domain
 coverage and preservation separately. Bound every claim to exercised inputs. Inspect the runner's recorded original and candidate outcomes, including public results and durable state effects. Preservation requires equivalent real operations on both sources; skipping the asserted original operation proves none. Equal failures, nonexecution and setup failures prove neither preservation nor a requested change.
 
-Challenge the expectation itself against the original request. Deleting implementation code does not authorize unrelated behavior changes. If an assertion expects an unrequested original-allow to candidate-block regression, reject the assertion and regression even when the comparison reports a clean failure-to-success change. Preserve original behavior where the request does not authorize a difference. Challenge omissions against changed predicates, callees, shared writers and mutation paths. Return findings through the existing workflow.
+Challenge the expectation itself against the original request. Deleting implementation code does not authorize unrelated behavior changes. If an assertion expects an unrequested original-allow to candidate-block regression, reject the assertion and regression even when the comparison reports a clean failure-to-success change. Preserve original behavior where the request does not authorize a difference. Trace removed guards and producers in the recorded original, including the other reachable results and state effects they control; probe a preservation decision the retained cases omit. Return findings through the existing workflow.
 
 On return review retain original finding identities/domains. Classify measured
 follow-ups as incomplete original repair, inherited missed defect, introduced
@@ -70,18 +65,18 @@ Attack the architecture against `d* = argmin C(d)` under the fixed request and p
 
 Report one finding per owning Module and violated invariant: list every demonstrated input as a case of that finding and name the owner's class-wide correction, not one instance; a further input to an already-reported owner and invariant is a case of that finding (priorFinding), not a new finding.
 
-Run **Standards** and **Spec** independently:
+Run **Spec**, then **Standards**, independently:
 
-- Standards: documented-standard violations, smell judgements, hard-invariant
-  violations, tooling issues only when the tool was unavailable or skipped, and
-  bloat: duplicated, ceremonial, or speculative code and tests to delete, with
-  the net line reduction each removal buys.
 - Spec: missing/partial requirements, unauthorized behavior, incorrect
   implementation, acceptance criteria without proof, and Interface claims
   contradicted by caveats or implementation limits.
+- Standards: documented-standard and hard-invariant violations, tooling issues
+  only when the tool was unavailable or skipped, and bloat: duplicated,
+  ceremonial, or speculative code and tests to delete, with the net line
+  reduction each removal buys.
 
 The runner executes recorded findings; the workflow's [objective and acceptance order](../repo-production-workflow/SKILL.md#10-delegate-code-review) decide what binds.
-Echo candidateTree and tddEvidence from the checkpoint in the review JSON; inspect those exact sources and results. Answer each listed DIFF judgment specifically in existing findings (ids may share one owning-invariant finding). Reject omitted preservation; judge harmless/equivalent changes without demanding an impossible behavioral difference. A scratch call investigates; a recorded probe is a named direct project operation focused on the changed Interface. Native case results or checked printed output name its cases. Never collect a whole test file, class, directory or suite; a focused direct script is allowed. Judge whether it calls that Interface and establishes the requirement. Use the recorder's existing executable payloads. Take expected values from an executed reference or frozen requirement-grounded property; never invent them. Cite the requirement, expected and observed effects, and consequence.
+Echo candidateTree and tddEvidence from the checkpoint in the review JSON; inspect those exact sources and results. Answer each listed DIFF judgment specifically in existing findings (ids may share one owning-invariant finding). Reject omitted preservation; judge harmless/equivalent changes without demanding an impossible behavioral difference. A scratch call investigates; a recorded probe is a named direct project operation focused on the changed Interface. Native case results or checked printed output name its cases. Never collect a whole test file, class, directory or suite; a focused direct script is allowed. Judge whether it calls that Interface and establishes the requirement. Submit the executable probe or scratch diff for a requested repair; a claim alone is a report line. Take expected values from an executed reference or frozen requirement-grounded property; never invent them. Cite the requirement, expected and observed effects, and consequence.
 
 ## 6. Return structured output
 
