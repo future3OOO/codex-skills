@@ -37,10 +37,11 @@ sessions, caches and workflow state. Use Bubblewrap (`bwrap`) to bind each copy 
 `~/.codex`, keep the global estate read-only, and retain normal tool access;
 `CODEX_HOME` alone misses home-relative entrypoints.
 
-Proof comparisons require `bwrap`, `strace` and GNU `realpath`: each child sees the recorded source at
-the repository's original path, including imports through editable installations.
-On Ubuntu with AppArmor's unprivileged user-namespace restriction, `bwrap` also
-needs a profile allowing user namespaces (CI installs one in its preflight).
+Proof comparisons require bubblewrap (`bwrap`) 0.11 or later for overlays,
+`strace` and GNU `realpath`. Each child sees the recorded source at the repository's
+original path, including imports through editable installations. On Ubuntu hosts
+with AppArmor's unprivileged user-namespace restriction, the binary's own path
+needs a profile allowing user namespaces.
 An error such as `bwrap: setting up uid map: Permission denied` means that host
 prerequisite is missing; the comparison is incomplete, not a failing probe.
 

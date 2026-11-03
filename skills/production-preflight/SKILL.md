@@ -57,7 +57,7 @@ predicate that decides an outcome:
 
 State the reachable values and decision rules concisely in this contract and the
 existing `behaviorMap`: competing readings go in the owning item's `interpretations`,
-and the discriminating inputs in its `boundaryInputs`. Investigation is complete when each
+and the commands asserting discriminating inputs in its `boundaryInputs`. Investigation is complete when each
 decision's meaning is established over its reachable values or its uncertainty
 is explicit. Unambiguous predicates need no additional fields or inventory.
 
@@ -72,9 +72,8 @@ readings of one behavior, is a pending `behaviorMap` item, not an unknown.
 
 Freeze requirement meaning and scope in TDD's [Behavior Map](../tdd/recorder.md#behavior-map). Quote each load-bearing promise and select its `seam` under AGENTS.md's Real-Seam proof invariant: the responsible production Interface and real setup. Ground expectations in executed original operations, engine primitives, literal request examples, or request-grounded properties and relations. Preservation takes the original's result on touched behavior. A round-trip or idempotence law must also establish the requested effect. Use the recorder's kind and witness rules. A deciding production cost is an additional contract case, never a replacement for the whole design obligation. The lead proposes metric ideas; round 1 investigates a challenger and recommends the metric, stretch and evidence-backed floor; the lead responds; round 2 freezes them. Prefer timing the real operation against an equivalent same-run reference; counts, memory and output quality may fit better. New behavior needs an equivalent reference or a justified resource target. Record workload, reference, repetitions, operation budget, tolerance, inclusive boundary, stretch and binding floor in behavior and expected. If no production cost term can affect the outcome, say why in one line and freeze no performance case. Explicit user restrictions still apply.
 
-```json
-[{"id":"BM_EXPIRY","kind":"contract","basis":"the deadline is inclusive","behavior":"expires at the deadline","seam":"Expiry.is_expired with a real clock","expected":"now equal to expiresAt is expired","boundaryInputs":["test_expires_at_deadline","test_not_expired_before_deadline"],"interpretations":["now > expiresAt","now >= expiresAt"],"interpretation":"now >= expiresAt","authority":"the request's 'at the deadline'"}]
-```
+Use the runtime form. Bind concrete discriminating case commands when known;
+running a case captures its command without a placeholder.
 
 Remove every element whose deletion preserves required behavior and distinct necessary proof without increasing whole-system cost. Use real collaborators and observe results and state effects.
 

@@ -6,19 +6,12 @@ from collections import namedtuple
 from pathlib import Path
 
 
-SOURCE_EXTENSIONS = {".cjs", ".cts", ".go", ".js", ".jsx", ".mjs", ".mts", ".php", ".py", ".rb", ".rs", ".sh", ".ts", ".tsx"}
-
 EXCLUDE_DIRS = {
     ".cache", ".git", ".hg", ".mypy_cache", ".next", ".pytest_cache", ".ruff_cache", ".svn", ".tox", ".venv",
     "build", "coverage", "dist", "node_modules", "target", "vendor", "venv",
 }
 
 VENDORED_DIRS = {"node_modules", "vendor"}
-
-TEST_MARKERS = (
-    "/__fixtures__/", "/__mocks__/", "/__snapshots__/", "/__tests__/", "/fixture/",
-    "/fixtures/", "/generated/", "/snapshots/", "/test/", "/tests/",
-)
 
 ROLE_PRODUCTION = "production"
 ROLE_TEST = "test"
@@ -28,7 +21,7 @@ ROLE_DOCS = "docs"
 ROLE_VENDORED = "vendored"
 ROLE_UNKNOWN = "unknown"
 
-DOC_EXTENSIONS = {".adoc", ".md", ".rst", ".txt"}
+DOC_EXTENSIONS = {".adoc", ".md", ".markdown", ".rst", ".txt"}
 
 # Dependency pins are configuration, not prose, under every spelling the
 # convention uses: requirements.txt, requirements-dev.txt, dev-requirements.txt,
@@ -58,7 +51,7 @@ def normalize_path(value: str) -> str:
 
 
 def is_binary_path(path: str) -> bool:
-    return Path(path).suffix.lower() in {
+    return Path(path).name.lower() in {"pnpm-lock.yaml", "package-lock.json", "go.sum", "bun.lockb"} or Path(path).suffix.lower() in {
         ".avif", ".bin", ".bmp", ".gif", ".ico", ".jpeg", ".jpg", ".lock",
         ".map", ".pdf", ".png", ".snap", ".svg", ".webp", ".zip",
     }
@@ -81,27 +74,20 @@ def is_test_like_path(path: str) -> bool:
 
 
 def _test_like(path: str) -> bool:
-    lowered = f"/{normalize_path(path).lower()}"
-    if any(marker in lowered for marker in TEST_MARKERS):
-        return True
-    name = Path(path).name.lower()
-    # pytest discovers test_*.py and *_test.py with no tests/ directory in the
-    # path, and reads conftest.py wherever it sits, so name alone decides those;
-    # .test./.spec. cover the JS convention.
-    if re.fullmatch(r"(?:test_.+|.+_test|conftest)\.py", name):
-        return True
-    return bool(re.search(r"\.(?:test|spec)\.", name)) or name.endswith(".schema.json")
+    # One boundary rule for names in every project language.
+    words = re.split(r"[^A-Za-z0-9]+|(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])", normalize_path(path))
+    return Path(path).name.casefold() == "conftest.py" or bool({word.casefold() for word in words} & {"test", "tests"}) or bool({part.casefold() for part in Path(normalize_path(path)).parts[:-1]} & {"spec", "specs"}) or ".spec." in Path(path).name.casefold() or any(
+        marker in "/" + normalize_path(path).lower() for marker in SUPPORT_MARKERS)
 
 
 def is_source_path(path: str) -> bool:
-    return bool(path) and not is_excluded_path(path) and not is_binary_path(path) and Path(path).suffix.lower() in SOURCE_EXTENSIONS
+    return bool(path) and not is_excluded_path(path) and not is_binary_path(path) and (Path(path).suffix.lower() not in DOC_EXTENSIONS or is_dependency_manifest(path))
 
 
 def classify_path(path: str) -> PathClass:
     """The single classification every quality-gate consumer reads.
 
-    Additive over the predicates above: the test-like truth keeps its exact
-    pre-existing meaning because workflow state classifies edits with it.
+    The same boundary rule governs test capture and quality roles.
     """
     test_like = _test_like(path)
     lowered = f"/{normalize_path(path).lower()}"

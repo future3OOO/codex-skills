@@ -83,14 +83,15 @@ Repo Context Forge analysis copy. For codex-skills installation, follow
   attack probes; cut redundant scaffolding and mocked unit-test bloat from this change.
 - Every change must remove unnecessary workflow ceremony. Reviewer-requested
   follow-up commits must reduce net lines of code unless a demonstrated lower whole-system cost at the same required behavior justifies necessary growth.
-- Preserve required behavior and proof when reducing lines or meeting the review
-  budget. Every changed line must serve the request or cleanup caused by it.
+- Preserve required behavior and proof. Every changed line must serve the request
+  or lower the whole-system cost of code the change touches.
 
 ## Surgical Changes
 
-- Match existing style; do not refactor adjacent code without necessity.
-- Mention unrelated dead code; remove code, tests, docs, and artifacts made
-  obsolete by this change.
+- Match existing style. Code the change edits or its requested operation runs
+  through is in scope: refactor or optimize inefficient, duplicated or dead code
+  there, with recorded cases proving preserved behavior. Outside that scope, report it.
+- Remove code, tests, docs and artifacts made obsolete by this change.
 - Do not leave TODO, FIXME, HACK, placeholders, dummy adapters, temporary
   bypasses, broad catch/pass, blanket suppressions, fake-green code,
   `eslint-disable`, `@ts-ignore`, or `@ts-expect-error`.
@@ -131,7 +132,7 @@ Delegated reviewers consume the lead's packet under `$code-review`; no bootstrap
 ## GitNexus
 
 Use FFF first for raw discovery; honor packet scope when present. Use GitNexus
-MCP for graph analysis; CLI only for indexing/admin. Follow `$repo-context-forge`
+MCP for agent graph analysis; harness runtime may use scoped Cypher CLI queries. Follow `$repo-context-forge`
 for repo selection, executed-check reuse, and required post-edit validation.
 
 Before edits, reuse applicable packet and graph results; query only what they
