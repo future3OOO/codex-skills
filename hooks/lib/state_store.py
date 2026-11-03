@@ -2,15 +2,13 @@
 from __future__ import annotations
 
 import contextlib
-import ast
 import importlib.util
-import io
 import json
 import os
 import stat
 import subprocess
 import tempfile
-import tokenize
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Iterator
@@ -109,6 +107,7 @@ def _git(
     *args: str,
     stdin: bytes | None = None,
     env: dict[str, str] | None = None,
+    accepted: tuple[int, ...] = (0,),
 ) -> bytes:
     try:
         result = subprocess.run(
@@ -122,10 +121,48 @@ def _git(
         )
     except subprocess.TimeoutExpired as exc:
         raise OSError(f"git {args[0]} timed out after {exc.timeout} seconds") from exc
-    if result.returncode:
+    if result.returncode not in accepted:
         message = (result.stderr or result.stdout or b"git command failed").decode("utf-8", errors="replace").strip()
         raise RuntimeError(message)
     return result.stdout
+
+
+@contextlib.contextmanager
+def blob_reader(repo: Path):
+    """One native Git object stream, reusable across bounded reads."""
+    with subprocess.Popen(["git", "cat-file", "--batch"], cwd=repo, stdin=subprocess.PIPE,
+                          stdout=subprocess.PIPE, stderr=subprocess.DEVNULL) as process:
+        assert process.stdin is not None and process.stdout is not None
+        lock = threading.Lock()
+        def read(oid: str) -> bytes | None:
+            with lock:
+                try:
+                    process.stdin.write((oid + "\n").encode("ascii"))
+                    process.stdin.flush()
+                    header = process.stdout.readline().split()
+                    if len(header) != 3 or header[1] != b"blob":
+                        return None
+                    size = int(header[2])
+                    data = process.stdout.read(size)
+                    return data if len(data) == size and process.stdout.read(1) == b"\n" else None
+                except BrokenPipeError:
+                    return None
+        try:
+            yield read
+        finally:
+            process.stdin.close()
+            process.stdout.close()
+
+
+
+
+def read_blobs(repo: Path, objects: list[str]) -> dict[str, str | None]:
+    """Read selected immutable blobs through the shared object reader."""
+    if not objects:
+        return {}
+    with blob_reader(repo) as read:
+        return {oid: data.decode("utf-8", "surrogateescape") if (data := read(oid)) is not None else None
+                for oid in dict.fromkeys(objects)}
 
 
 def _write_candidate_tree(identity: RepoIdentity) -> str:
@@ -182,17 +219,7 @@ def analysis_unchanged(identity: RepoIdentity, before: str, after: str) -> bool:
             old_mode, new_mode, old_oid, new_oid, status = header.split()
             if old_mode[1:] != new_mode or new_mode not in {b"100644", b"100755"} or status != b"M":
                 return False
-            suffix = Path(os.fsdecode(name)).suffix.lower()
-            if suffix in DOC_SUFFIXES:
-                continue
-            if suffix != ".py":
-                return False
-            old, new = (_git(identity, "cat-file", "blob", oid.decode()) for oid in (old_oid, new_oid))
-            if any(data.startswith(b"#!") for data in (old, new)) and old.splitlines()[:1] != new.splitlines()[:1]:
-                return False
-            if tokenize.detect_encoding(io.BytesIO(old).readline)[0] != tokenize.detect_encoding(io.BytesIO(new).readline)[0]:
-                return False
-            if ast.dump(ast.parse(old, type_comments=True), include_attributes=True) != ast.dump(ast.parse(new, type_comments=True), include_attributes=True):
+            if Path(os.fsdecode(name)).suffix.lower() not in DOC_SUFFIXES:
                 return False
         return True
     except (OSError, RuntimeError, SyntaxError, UnicodeError, ValueError):
@@ -209,8 +236,8 @@ def is_reviewable_path(path: str) -> bool:
     return not is_docs_or_scratch(path.replace("\\", "/"))
 
 
-def is_test_path(path: str) -> bool:
-    """Test-like per the quality gate's single classifier; unclassifiable fails closed as production."""
+def path_classification(path: str) -> object | None:
+    """The existing quality-gate classification, or None when unavailable."""
     global _path_policy
     if _path_policy is None:
         try:
@@ -218,9 +245,13 @@ def is_test_path(path: str) -> bool:
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
         except (OSError, AttributeError, ImportError, SyntaxError):
-            return False
+            return None
         _path_policy = module
-    return bool(_path_policy.is_test_like_path(path.replace("\\", "/")))
+    return _path_policy.classify_path(path.replace("\\", "/"))
+def is_test_path(path: str) -> bool:
+    """Test-like per the single classifier; unclassifiable stays production."""
+    classification = path_classification(path)
+    return bool(getattr(classification, "test_like_compat", False))
 
 
 def is_governance_path(path: str) -> bool:

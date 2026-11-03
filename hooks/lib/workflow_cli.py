@@ -23,7 +23,6 @@ from .workflow_documents import (
     design_declaration,
     load_json,
     preflight_document,
-    review_summary,
     validate_gate_result,
 )
 from .workflow_state import (
@@ -32,10 +31,9 @@ from .workflow_state import (
     _require_instance,
     _tree_drift,
     begin,
-    bound_state,
+    bound_state, gate_candidates,
     checkpoint,
     commit_evidence_phase,
-    commit_review,
     commit_verification,
     complete,
     evidence_document,
@@ -195,7 +193,7 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
             identity, state, field="qualityGateManifestId", missing="missing", stale="stale") is None:
         # The same gate on the same tree and base already passed: its receipt is the result.
         _emit_json(_receipt(state, identity, evidenceId=state["qualityGateEvidence"], kind="quality-gate", reused=True,
-                            verification="passed", valid=True, runIndex=last["runIndex"], workflowId=workflow_id))
+                            verification="passed", valid=True, runIndex=last["runIndex"], workflowId=workflow_id, qualityCandidates=gate_candidates(identity, state)))
         return 0
 
     # The tree this run's result will describe. The recorder compares it with
@@ -302,6 +300,7 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
         "runIndex": recorded["runIndex"],
         "workflowId": workflow_id,
         "treeManifestId": recorded.get("treeManifestId"),
+        "qualityCandidates": gate_candidates(identity, state),
     }))
     if recorded["valid"] is not True:
         reason = recorded.get("bindingError") or "the quality gate failed"
@@ -342,18 +341,6 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
         emit(_receipt(state, identity, evidenceId=evidence_id, status="passed",
                       **({"draftEdits": intake["draftEdits"]} if intake.get("draftEdits") else {})))
         return 0
-    if args.kind == "review":
-        if not args.input:
-            raise ValueError("record review requires --input <path|->")
-        from .tdd_workflow import execute_findings
-        document = review_summary(args.input, slug=slug, workflow_id=workflow_id)
-        if document["candidateTree"] != _active_candidate_tree(identity):
-            raise WorkflowError("review names a different candidate tree; obtain a current review")
-        execution = execute_findings(identity, state, document["findings"])
-        document["findings"] = execution["findings"]
-        state, evidence_id = commit_review(identity, slug, workflow_id, document, execution)
-        emit(_receipt(state, identity, summaryId=evidence_id, status=state["codeReview"]["status"]))
-        return 0
     if args.kind == "tdd-map":
         from .tdd_workflow import map_update
         emit(map_update(identity, state, _document(args, "TDD map update")))
@@ -379,9 +366,10 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
             raise WorkflowError("final review names a different candidate tree")
         execution = execute_findings(identity, state, intake["findings"])
         intake["findings"] = execution["findings"]
-        if verdict != "context-mismatch":  # the executed result decides, not the producer's claim
-            verdict = ("fix-before-commit" if any(item["material"] for item in intake["findings"])
-                                           else "commit-ready")
+        if verdict != "context-mismatch":
+            from .tdd_workflow import binds
+            if any(binds(item["execution"]) for item in execution["reexecuted"]):
+                verdict = "fix-before-commit"
     state = record_advisor_result(
         identity, slug, workflow_id, args.stage, args.source, verdict, reason=args.reason,
         design=design_declaration(args.design_declaration) if args.design_declaration else None,
