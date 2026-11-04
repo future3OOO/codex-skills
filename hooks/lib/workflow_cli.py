@@ -420,7 +420,7 @@ def _dispatch(args: argparse.Namespace) -> int:
     elif args.command == "history":
         _emit_json(history(identity, args.workflow_id))
     elif args.command == "evidence":
-        value = read_evidence(identity, args.evidence_id, restore_runs=False)
+        value = read_evidence(identity, args.evidence_id, restore_runs=args.full)
         if value is None:
             raise WorkflowError("evidence not found")
         document = value.pop("document")
