@@ -111,11 +111,11 @@ The lead resolves named-case obligations against the original and request, then 
 ### 9. Verification
 
 After coherent repair and cleanup, assess the intended outcome against the
-verification derived in step 2. Run the typed quality gate; it runs no comparison. A
+verification derived in step 2. Run the typed quality gate. Verification checks retained findings once per candidate tree and caches their results. A
 source edit leaves recorded comparisons stale, and every reader then routes to `tdd`
 until the lead reruns them on the current candidate.
 Reuse current comparisons; run lint, type checks and tests directly.
-CI's `contracts` job owns the full runner here and step 12 waits for it. A gate run whose
+A gate run whose
 reviewable tree drifts stays invalid and names the changed paths; on an unchanged tree
 and base, `verify` returns the passed receipt:
 
@@ -168,8 +168,7 @@ The final Codex Advisor investigates in the lead checkout using the recorded pro
 `final-review` phase with the same slug and follow its runtime continuation. The
 advisor records probes through the shared TDD command; the wrapper records its
 semantic verdict. After the first final verdict, a correction
-needs only the `tdd` rerun of its items and the final advisor's re-check: code review,
-verification and context revalidation are not repeated. Reuse applicable evidence. Once every
+needs the affected `tdd` rerun, verification for the new tree, and the final advisor's re-check. Reuse independent review and applicable evidence. Retained findings run only at `verify` or `complete`; intermediate review calls skip them. Once every
 final finding is settled (`nextAction` `complete-workflow`), a requested
 reassessment of the unchanged candidate runs the same `final-review` phase and records
 as a fresh final result.
@@ -191,6 +190,8 @@ Complete after the current-head reviewer gate closes, or on the no-PR route belo
 python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" \
   complete --repo "$PWD"
 ```
+
+`complete` first checks uncached retained findings for its candidate tree. Verdict and withdrawal records only write state; they never run probes or acquire execution locks. A replacement that produces the candidate tree runs only its own probe; current candidate proof covers maintained cases. Other replacements replay every maintained case on the candidate plus the diff, once per candidate tree and resulting tree.
 
 `complete` refuses, from inside its transaction, unless every current probe has fresh successful comparison evidence and no proof gap remains, required phases are ready, and no binding code-review or final finding is open. The immutable raw verdict remains evidence; `context-mismatch` still blocks. The reviewable working tree must match the manifest recorded by the lead review, and every evidence phase must carry its producer's evidence reference — a passed phase without one is a bare claim and reads pending, including legacy in-flight state at upgrade time. It changes workflow state only. It does not inspect, intercept, authorize, or execute Git.
 

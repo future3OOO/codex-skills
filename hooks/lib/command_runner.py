@@ -87,7 +87,7 @@ def _group_exits_by(process: subprocess.Popen[bytes], deadline: float, cancel: t
             os.killpg(process.pid, 0)
         except ProcessLookupError:
             break
-        if time.monotonic() >= deadline:
+        if cancel is not None and cancel.is_set() or time.monotonic() >= deadline:
             return False
         time.sleep(GROUP_POLL_SECONDS)
     return True
@@ -134,7 +134,6 @@ def run_entry(raw: bytes, exit_code: int, timed_out: bool, **fields: object) -> 
         **fields,
         "exitCode": exit_code,
         "timedOut": timed_out,
-        "outputTail": _tail(raw),
         "at": utc_timestamp(),
     }
 

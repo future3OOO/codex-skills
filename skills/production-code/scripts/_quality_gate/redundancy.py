@@ -15,7 +15,7 @@ from .symbols import canonical_lines, extract_symbols
 
 # Shortest canonical implementation any exact rule reports, for a complete
 # symbol as much as for a contiguous block. Pinned by the checked-in corpus
-# calibration in references/duplicate-calibration.md, which measured that a
+# historical calibration retained in Git, which measured that a
 # shorter bound reports two-line test lifecycle boilerplate whose ownership
 # belongs to #77. It is a warning threshold, never an approved blocker.
 MIN_REGION_LINES = 6
@@ -419,7 +419,7 @@ def find_owner_competition(
 ) -> tuple[list[Finding], list[Finding], list[Finding]]:
     """The responsibility-owner rules: state findings, active candidates,
     and resolved telemetry, generated independently of duplicate detection.
-    Exact evidence is one class among seven, never an entry requirement;
+    Exact evidence is one class, never an entry requirement;
     dispositions bind only through structural validation against the exact
     evaluated snapshot."""
     streams = snapshot.gap_streams()

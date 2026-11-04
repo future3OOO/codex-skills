@@ -6,7 +6,7 @@ description: Review a diff since a fixed point along independent Standards and S
 # Code review
 
 Use a fresh native context for initial review; reuse it for corrections when still
-applicable. Work in the lead's checkout. Keep scratch files outside it. The workflow
+applicable. Work in the lead's checkout. Keep scratch files outside it; isolate and clean up mutating scratch operations. The workflow
 command records your evidence and verdict; do not edit candidate source, contract,
 Git state or ledger files, merge, install, begin a pass or run context bootstrap.
 
