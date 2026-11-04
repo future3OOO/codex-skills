@@ -81,7 +81,9 @@ def advisor_envelope(
     typed: list[JsonObject] = []
     identifiers: set[str] = set()
     for position, item in enumerate(findings, 1):
-        if stage == "final" and isinstance(item, dict):  # the runner replaces a final finding's material with its execution
+        if stage == "final" and isinstance(item, dict):
+            if set(item) & {"probe", "change"}:
+                raise ValueError("execute findings with workflow tdd --as final; this envelope carries report lines only")
             item = {"material": False, **item}
         if not isinstance(item, dict) or not {"id", "claim", "material"} <= set(item):
             raise ValueError(f"advisor finding {position} requires id, claim, and material")
@@ -98,9 +100,7 @@ def advisor_envelope(
                                   or not all(_text(v) for v in prior.values())):
             raise ValueError("priorFinding requires evidenceId and id")
         finding = {"id": identifier, "claim": item["claim"], "material": item.get("material") is True, "kind": kind,
-                   **({"priorFinding": prior} if prior is not None else {}),
-                   # final evidence the runner executes; the producer's material claim is then replaced
-                   **({key: item[key] for key in ("probe", "change") if key in item} if stage == "final" else {})}
+                   **({"priorFinding": prior} if prior is not None else {})}
         typed.append(finding)
     if verdict in {"approved", "changes-required"} and ((verdict == "approved") == any(item["material"] for item in typed)):
         raise ValueError("advisor envelope verdict is incompatible with finding materiality")
@@ -128,17 +128,16 @@ DESIGN_FILE_SHAPE = (
     '{"schemaVersion":1,"status":"absent","reason":"..."}'
 )
 ITEM_SHAPE = ('{"id":"BM_X","kind":"conformance|contract|preservation","basis":"original request or preservation",'
-              '"behavior":"...","seam":"...","expected":"...","boundaryInputs":["executed case name"],'
+              '"behavior":"...","seam":"...","expected":"...","boundaryInputs":["case command"],'
               '"interpretations":["reading a","reading b"],"interpretation":"...","authority":"..."}')
-EXECUTABLE = ('{"id":"R-1","claim":"...","probe":{"path":"tests/test_r1.py","content":"...","command":"python3 -m pytest tests/test_r1.py::test_r1"}} or a normally net-reducing {"id":"R-2","claim":"...","change":"<unified diff>"}, also carrying probe when a measured production-cost improvement justifies growth')
+ADVISOR_SHAPES = {
+    "preflight": '{"schemaVersion":1,"findings":[{"id":"SPEC-1","claim":"...","material":true}],"verdict":"approved|changes-required"}',
+    "final": '{"schemaVersion":1,"workflowId":"<reviewed workflow>","candidateTree":"<reviewed tree>","tddEvidence":"<reviewed evidence, or JSON null>","findings":[{"id":"SPEC-1","claim":"report line"}],"verdict":"commit-ready|fix-before-commit|context-mismatch"}',
+}
 RECORD_SHAPES = {
     "preflight": f'{{"authoritativeContract":"text","behaviorMap":[{ITEM_SHAPE}]}}',
-    "review": '{"workflowId":"<reviewed workflow>","candidateTree":"<reviewed tree>","tddEvidence":"<reviewed evidence>","verdict":"complete|incomplete","findings":[FINDING]} where FINDING is ' + EXECUTABLE,
-    "advisor-result": ('the advisor envelope {"schemaVersion":1,"findings":[FINDING],"verdict":VERDICT}: at preflight '
-                       'FINDING is {"id":"SPEC-1","claim":"...","material":true} and VERDICT approved|changes-required, '
-                       'or --verdict unavailable --reason TEXT; at final FINDING is ' + EXECUTABLE +
-                       ' and VERDICT commit-ready|fix-before-commit|context-mismatch'),
-    "tdd-map": f'{{"items":[{ITEM_SHAPE}]}}; a recorded item needs only id and the changed fields, null removes an optional one',
+    "advisor-result": "; ".join(f"{stage}: {shape}" for stage, shape in ADVISOR_SHAPES.items()),
+    "tdd-map": f'{{"items":[{ITEM_SHAPE}]}} or {{"removed":["BM_X"]}}; a recorded item needs only id and changed fields, null removes an optional one; retained proof survives removal',
 }
 
 
@@ -307,29 +306,6 @@ def validate_advisor_projection(
     return dict(value)
 
 
-def _gate_symbols(graph: JsonObject) -> list[JsonObject]:
-    """Gate-shaped symbol results carrying only genuine incoming-relationship
-    data: context-check callers and file-context references, merged per
-    (file, target). Impact entries hold path-only impacted files; relabeling
-    those as relationship evidence would overstate the caller/callee coverage
-    the owner rules establish scope from."""
-    symbols: dict[tuple[str, str], dict[str, object]] = {}
-    for entry in graph["entries"]:  # entries already validated by _resolved_graph
-        for key in ("callers", "references"):
-            found = entry.get(key)
-            if not isinstance(found, list):
-                continue
-            symbol = symbols.setdefault(
-                (str(entry["file"]), str(entry["target"])),
-                {"name": str(entry["target"]), "file": str(entry["file"])},
-            )
-            symbol.setdefault(key, []).extend(
-                str(item["identity"]) for item in found
-                if isinstance(item, dict) and _text(item.get("identity"))
-            )
-    return [symbols[key] for key in sorted(symbols)]
-
-
 def graph_evidence_document(
     path: str,
     *,
@@ -343,9 +319,9 @@ def graph_evidence_document(
     """The repo-context-forge evidence document built from the producer's machine packet.
 
     `snapshot` is the adapter's measured claim that the analysis covered exactly
-    one base commit and candidate tree; when it holds, the document additionally
-    carries the gate-shaped context the typed quality-gate run hands to
-    `--gitnexus-context-json`. `snapshot_gap` records the measured reason no such
+    one base commit and candidate tree; when it holds, the document carries only
+    their identity and the graph selector. The gate queries its captured files
+    after re-indexing; no symbol export is stored. `snapshot_gap` records the measured reason no such
     claim could be made, so an unbound pass names its gap instead of implying one
     was never measured. The gate alone adjudicates match, stale, or absent.
     """
@@ -426,7 +402,7 @@ def graph_evidence_document(
         document["gateContext"] = {
             "base": str(snapshot["base"]).strip(),
             "candidate": str(snapshot["candidate"]).strip(),
-            "symbols": _gate_symbols(graph),
+            "repo": str(gitnexus.get("repo") or ""),
         }
     elif snapshot_gap is not None:
         if not _text(snapshot_gap):
@@ -435,48 +411,19 @@ def graph_evidence_document(
     return document
 
 
-def review_summary(path: str, *, slug: str, workflow_id: str) -> JsonObject:
-    value = load_json(path, label="review")
-    common: JsonObject = {
-        "schemaVersion": 1, "slug": slug, "workflowId": workflow_id,
-        "producer": "code-review", "stage": "code-review", "recordedAt": utc_timestamp(),
-        "observationId": uuid.uuid4().hex,
-    }
-    if value == {"findings": [], "dispositions": []}:
-        value = {"findings": []}
-    if "findings" not in value:
-        raise ValueError("review intake requires the reviewer's findings")
-    unknown = sorted(set(value) - {"findings", "candidateTree", "tddEvidence", "verdict", "workflowId"})
-    findings = value["findings"]
-    if value.get("workflowId") != workflow_id:
-        raise ValueError("review names a different workflow")
-    if not isinstance(value.get("candidateTree"), str) or not re.fullmatch(r"[0-9a-f]{40}", value["candidateTree"]):
-        raise ValueError("review requires its candidateTree")
-    if "tddEvidence" not in value or value["tddEvidence"] is not None and not _text(value["tddEvidence"]):
-        raise ValueError("review requires the tddEvidence it assessed")
-    if value.get("verdict") not in ("complete", "incomplete"):
-        raise ValueError("review requires a source-evidence completeness verdict")
-    errors = [f"review intake has unknown fields: {', '.join(unknown)}"] if unknown else []
-    errors += [] if isinstance(findings, list) else ["review intake findings must be an array"]
-    seen: set[str] = set()
-    for position, item in enumerate(findings if isinstance(findings, list) else [], 1):
-        if not isinstance(item, dict):
-            errors.append(f"review finding {position} must be an object")
+
+
+def quality_candidates(report: JsonObject) -> list[str]:
+    """The gate's located warnings, as the same data for lead and reviewers."""
+    lines = []
+    for finding in report.get("findings", []):
+        if finding.get("status") != "finding" or finding.get("region", {}).get("scope") == "evaluation":
             continue
-        identifier = item.get("id")
-        label = f"finding {identifier}" if _text(identifier) else f"review finding {position}"
-        problems = [problem for problem, bad in (
-            ("id must be non-empty and unique", not _text(identifier) or identifier in seen),
-            ("requires a non-empty claim", not _text(item.get("claim"))),
-        ) if bad]
-        if _text(identifier):
-            seen.add(str(identifier))
-        prior = item.get("priorFinding")
-        if prior is not None and (not isinstance(prior, dict) or set(prior) != {"evidenceId", "id"}
-                                  or not all(_text(v) for v in prior.values())):
-            problems.append("priorFinding requires evidenceId and id")
-        errors += [f"{label}: " + ", ".join(problems)] if problems else []
-    if errors:
-        raise ValueError("; ".join(errors))
-    return {**common, "kind": "intake", "findings": findings,
-            "candidateTree": value["candidateTree"], "tddEvidence": value["tddEvidence"], "verdict": value["verdict"]}
+        regions = finding.get("region", {}).get("regions") or [region for group in finding.get("evidence", {}).get("duplicates", []) for region in group["regions"]]
+        if not regions:
+            continue
+        locations = sorted({str(region["path"]) + ":" + str(region["displayLine"]) for region in regions})
+        rules = finding.get("matchingRules") or [{"ruleId": finding["ruleId"]}]
+        matched = sorted({rule["ruleId"] + (":" + rule["evidenceClass"] if rule.get("evidenceClass") else "") for rule in rules})
+        lines.append("[" + finding["findingId"] + "] " + " <> ".join(locations) + " — " + ", ".join(matched))
+    return lines

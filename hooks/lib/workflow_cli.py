@@ -12,7 +12,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from ._workflow_db import CHECK_ONLY, LedgerError, _canonical, history, read_evidence
+from ._workflow_db import CHECK_ONLY, LedgerError, _canonical, history, read_active, read_evidence
 from .command_runner import emit_json as _emit_json, print_output as _print_output, run as _run, run_entry as _run_entry
 from .repo_identity import RepoIdentity, RepoIdentityError, resolve_repo_identity
 from .state_prune import prune
@@ -23,7 +23,6 @@ from .workflow_documents import (
     design_declaration,
     load_json,
     preflight_document,
-    review_summary,
     validate_gate_result,
 )
 from .workflow_state import (
@@ -32,10 +31,9 @@ from .workflow_state import (
     _require_instance,
     _tree_drift,
     begin,
-    bound_state,
+    bound_state, gate_candidates,
     checkpoint,
     commit_evidence_phase,
-    commit_review,
     commit_verification,
     complete,
     evidence_document,
@@ -184,6 +182,10 @@ def _intent(args: argparse.Namespace) -> str:
 def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
     state = bound_state(identity, args.slug, args.workflow_id)
     slug, workflow_id = str(state["slug"]), str(state["workflowId"])
+    if state.get("tdd") == "in-progress":
+        _emit_json(_receipt(state, identity, kind="verification", valid=False,
+                            error="current comparison proof is incomplete; run the selected TDD cases"))
+        return 2
     args.base_ref = args.base_ref or state.get("baseOid")
     if not args.base_ref:
         raise ValueError("quality-gate verification needs the recorded base or --base-ref")
@@ -193,10 +195,13 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
     last = (passed or {}).get("runs", [{}])[-1]
     if base and last.get("valid") is True and last.get("baseCommit") == base and _tree_drift(
             identity, state, field="qualityGateManifestId", missing="missing", stale="stale") is None:
-        # The same gate on the same tree and base already passed: its receipt is the result.
+        from .tdd_workflow import check_retained
+        state = check_retained(identity, slug, workflow_id)
+        # The same typed gate is reused; retained observations have their own tree cache.
         _emit_json(_receipt(state, identity, evidenceId=state["qualityGateEvidence"], kind="quality-gate", reused=True,
-                            verification="passed", valid=True, runIndex=last["runIndex"], workflowId=workflow_id))
-        return 0
+                            verification="passed", valid=True, runIndex=last["runIndex"], workflowId=workflow_id, qualityCandidates=gate_candidates(identity, state)))
+        from .workflow_state import _finding_state_blockers
+        return 2 if _finding_state_blockers(state) else 0
 
     # The tree this run's result will describe. The recorder compares it with
     # the tree at commit; a run that could not sample it is recorded invalid.
@@ -302,12 +307,14 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
         "runIndex": recorded["runIndex"],
         "workflowId": workflow_id,
         "treeManifestId": recorded.get("treeManifestId"),
+        "qualityCandidates": gate_candidates(identity, state),
     }))
     if recorded["valid"] is not True:
         reason = recorded.get("bindingError") or "the quality gate failed"
         print(f"{reason}; verification stays pending until its rerun is green", file=sys.stderr)
         return 2
-    return 0
+    from .workflow_state import _finding_state_blockers
+    return 2 if _finding_state_blockers(state) else 0
 
 
 def _document(args: argparse.Namespace, label: str) -> dict[str, object]:
@@ -319,7 +326,9 @@ def _document(args: argparse.Namespace, label: str) -> dict[str, object]:
 def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
     """One ingest seam; --check runs the whole recording and rolls it back."""
     CHECK_ONLY.set(args.check)
-    state = bound_state(identity, args.slug, args.workflow_id)
+    from .workflow_state import _bound_instance_state
+    state = (_bound_instance_state(read_active(identity), args.slug, args.workflow_id) if args.kind == "advisor-result"
+             else bound_state(identity, args.slug, args.workflow_id))
     slug, workflow_id = str(state["slug"]), str(state["workflowId"])
     def emit(receipt: dict[str, object]) -> None:  # a rolled-back --check names none of its rows
         _emit_json({key: value for key, value in receipt.items() if key not in {"evidenceId", "summaryId"}}
@@ -341,18 +350,6 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
             return 2
         emit(_receipt(state, identity, evidenceId=evidence_id, status="passed",
                       **({"draftEdits": intake["draftEdits"]} if intake.get("draftEdits") else {})))
-        return 0
-    if args.kind == "review":
-        if not args.input:
-            raise ValueError("record review requires --input <path|->")
-        from .tdd_workflow import execute_findings
-        document = review_summary(args.input, slug=slug, workflow_id=workflow_id)
-        if document["candidateTree"] != _active_candidate_tree(identity):
-            raise WorkflowError("review names a different candidate tree; obtain a current review")
-        execution = execute_findings(identity, state, document["findings"])
-        document["findings"] = execution["findings"]
-        state, evidence_id = commit_review(identity, slug, workflow_id, document, execution)
-        emit(_receipt(state, identity, summaryId=evidence_id, status=state["codeReview"]["status"]))
         return 0
     if args.kind == "tdd-map":
         from .tdd_workflow import map_update
@@ -377,18 +374,21 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
         from .tdd_workflow import execute_findings
         if intake["candidateTree"] != candidate:
             raise WorkflowError("final review names a different candidate tree")
-        execution = execute_findings(identity, state, intake["findings"])
+        if any("probe" in finding or "change" in finding for finding in intake["findings"]):
+            raise WorkflowError("execute findings through tdd --as final before recording their verdict")
+        execution = execute_findings(identity, state, intake["findings"], candidate=candidate)
         intake["findings"] = execution["findings"]
-        if verdict != "context-mismatch":  # the executed result decides, not the producer's claim
-            verdict = ("fix-before-commit" if any(item["material"] for item in intake["findings"])
-                                           else "commit-ready")
+        if verdict != "context-mismatch":
+            from .tdd_workflow import binds
+            if any(binds(item["execution"]) for item in execution["reexecuted"]):
+                verdict = "fix-before-commit"
     state = record_advisor_result(
         identity, slug, workflow_id, args.stage, args.source, verdict, reason=args.reason,
         design=design_declaration(args.design_declaration) if args.design_declaration else None,
         intake=intake, expected_candidate_tree=expected or candidate, execution=execution,
         preflight_draft=preflight_document(args.preflight_file) if args.preflight_file else None,
         submitted_draft=preflight_document(args.submitted_draft) if args.submitted_draft else None)
-    emit(_receipt(state, identity))
+    emit(_receipt(state, identity, obligations=False))
     return 0
 
 
@@ -420,7 +420,7 @@ def _dispatch(args: argparse.Namespace) -> int:
     elif args.command == "history":
         _emit_json(history(identity, args.workflow_id))
     elif args.command == "evidence":
-        value = read_evidence(identity, args.evidence_id)
+        value = read_evidence(identity, args.evidence_id, restore_runs=args.full)
         if value is None:
             raise WorkflowError("evidence not found")
         document = value.pop("document")

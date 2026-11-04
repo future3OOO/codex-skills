@@ -1,44 +1,64 @@
-# Recorded source comparisons
+# Record a case
 
-Run this after TDD's [required probe loop](SKILL.md#required-probe-loop) has extended the batch from the actual edit. One invocation owns source selection, isolated execution, named results, comparison, freshness and transactional evidence publication:
+Submit the focused batch in one workflow TDD call. Each command asserts one
+independently falsifiable operation.
+The command is the case identity in every language. The probe asserts its required
+outcome and exits non-zero when the assertion fails. Output is diagnostic only;
+printing a value or `name: result` does not assert it.
 
-```text
-workflow.py tdd --behavior-id BM_X --timeout 900 -- COMMAND [ARG...]
-```
+The call captures the batch, prepares the sources once and records each command
+result. Extra cases and breaks run in private copies up to the CPU count. Fresh
+trees wait for the first run. That first call fixes the mode for the pass: wait
+when its first run took at least twice the median extra-run time. Otherwise every
+run uses its own copy. Ignored build outputs survive between calls; source,
+probes and execution inputs still bind every result.
+Use the runtime help for inputs. New probe
+files belong in scratch outside the checkout. Existing cases need their command.
 
-To capture edited or new probes, supply their command. Commandless continuation
-replays the recorded command, frozen probe/support files and timeout after cleanup.
-It does not capture checkout edits.
+An author withdraws its invalid observation with `tdd --as review|final --reject EVIDENCE:ID=REASON`. Withdrawal and verdict records only write state. They start no cases and leave other bindings unchanged. Retained observations are checked at `verify` or `complete`, once per candidate tree; added observations receive their own check. When a replacement produces the candidate tree, current candidate proof covers maintained cases; run only the finding’s probe. Otherwise replay every maintained case on the candidate plus the replacement, once per candidate tree and resulting tree.
+The referenced raw evidence remains; other observations stay binding.
 
-Repeat `--behavior-id` to share one command across behaviors. A failed batch does not mean every behavior failed: read the bound outcomes. Both sources execute at the checkout root with the repository on `PYTHONPATH`. Proof binds source, frozen files, command, effective environment, observed executable identities and their search paths. Readers revalidate that bound context; a new execution captures its actual environment. Cold runs use `strace` to observe executable filenames, including child tools and script interpreters; warm reads and unchanged replay start neither probes nor tracer. Python package-directory metadata and scoped/nested npm manifests detect installation changes. This does not trace arbitrary file/network inputs or detect every installed-source edit in place. Production files cannot be overlaid as probe support. Isolate mutable resources outside the runner's private checkout and workflow state.
+An explicit case or item selection runs only those cases. With no selection, `tdd` replays every current case and retained proof. Between edits, unselected cases go stale. Verification remains pending until a full `tdd` call refreshes them.
 
 ## Behavior Map
 
-The recorded preflight owns the initial map. `record tdd-map` changes items by id, naming only the fields that change; `null` removes an optional field. Every item has `id`, `kind`, `basis`, `behavior`, `seam` and `expected`. Readiness enforces the optional fields by execution. TDD readiness, reviewer dispatch and completion use the same named-case obligations.
+The map binds required case commands, not names parsed from output. Its
+`boundaryInputs` are command strings. Running a case binds its captured command to
+the selected item; planned scratch paths become their frozen command paths.
+Kept-behavior cases use the pass-start test files on both versions. Named support
+and scratch files use candidate bytes; contract and unbound cases use candidate
+tests. New kept-behavior cases need scratch source or explicit named support.
+Every required command must establish the item's outcome. New commands extend
+coverage without deleting the first proved command and its frozen source.
+`record tdd-map` accepts `{"removed":["BM_X"]}` to remove a current item;
+its proved comparisons remain in the retained evaluation.
 
-- `kind`: `conformance` for a new required property, `contract` for a required difference, `preservation` for affected behavior to keep. Conformance needs attributable candidate success and non-timeout original failure or inability to execute that case; already-passing behavior belongs in preservation. Contract needs candidate success, an attributable difference and executable original evidence. Preservation needs successful unchanged results on both sources. Separate items retain separate obligations, including in shared batches.
-- `boundaryInputs`: the executed case names the item requires: a native case id or the `name` of checked `name: result` output in the project's own language. A name matches its case exactly, or as the short id of one test. A short id that several tests share matches none of them; name the full id. A name that only appears in probe source, a skipped case, or a case outside a narrowed selection keeps the item open. Preflight states the required scope; attach executed witnesses after implementation. Each case is judged under the item that names it, whichever item's comparison ran the batch; items without names that share a batch must each name their cases. A differing case that no item names keeps open each item whose comparison ran it, except a contract item without names whose comparison ran only that case: it is that item's requested change.
-- `interpretations`: two or more competing readings. The item stays open until `interpretation` and `authority` are recorded; new readings clear both.
+Both exits zero establish preservation. Original non-zero and candidate zero
+establish a requested difference. A failing candidate remains broken. The
+requirement and affected coverage still come from the request and original code;
+no exit code can authorize an omitted responsibility or a weaker assertion.
+The existing reviewer judges whether a failure came from the claimed operation,
+whether the case actually ran, and whether its assertions establish the promise.
+For each item, supply a behavior-breaking production diff through the runtime
+change input. Change values or operators only; identifier counts must stay fixed.
+The runner stores the change with Git’s default context and applies it with one
+context line required. Edits to its patched lines or immediate context need a new
+break. Source edits rerun the break. Every command must fail under it. Findings challenge their passing
+side the same way. The runner caches these executions with the ordinary runs.
+A non-failing break leaves proof pending. Review must judge that the break changes
+the claimed behavior without breaking setup or removing its API; exit codes alone
+cannot distinguish those causes or prove complete coverage.
 
-Readiness judges the recorded named cases, not semantic completeness of the diff. The lead inspects the original and request, preserves every affected responsibility and records relevant comparisons; existing independent/final review challenges that coverage. No hunk-reversion result or written assertion certifies untested behavior. Historical judgments remain visible in existing evidence and require individual findings answers under the existing review check. They are statements, not comparison proof.
+## Replay and continuation
 
+Supply the command to capture edited probe source. Commandless continuation
+replays its recorded command and immutable probe/support files. Unchanged observed inputs reuse cached results. Source and probe changes,
+executable/lookup changes, and Python package-directory or npm manifest metadata
+changes invalidate them. In-place installed-library edits without metadata
+changes remain unbound. Current and retained commands use the same readiness
+check, including after map narrowing and finding resolution.
 
-## Attribution
-
-`python3 -m unittest`, `python3 -m pytest` and `pytest` are recognised; the runner adds verbose output and attributes their native results. Another command (a script, a shell, `env`) is attributed by the unittest or pytest report it prints, else by its printed `name: result` lines outside interpreter tracebacks. A wrapped runner names passing tests only with `-v`; pass the runner command itself instead. Beside a printed report, output outside that report is unnamed and a preservation item judges it as a whole; run a printed probe as its own command to name its cases. A unittest method that fails in its body is marked `(stopped)`: its later statements did not run on that tree. Give each input that must execute its own case, such as a subtest or a printed line. A test with a failing subtest counts as failed, and any failing case reads `error` when a failure printed for it stopped before the production code (loading, an import or syntax error, a fixture, a unittest block with no traceback); a pytest failure its report does not attribute to a test keeps pytest's result. An `error` original proves nothing, and a run whose failing cases are all `error` is incomplete.
-
-## Receipt
-
-The compact receipt is the same rendering the review packet carries: each compared tree with its outcome, executed-test count and unnamed-case count; the cases failing on current first, then those that differ across the compared trees, collapsed by pattern, each distinct assertion once after the source that produced it; limitations once (unnamed cases, a narrowed selection, stopped methods); the open obligations as questions, once, in `open`. Full output, the production diff and every earlier run stay in the evidence ledger under the receipt's `summaryId` and `runIndex`. Trees with identical production share one execution; distinct ones run one at a time in isolated checkouts. Repeating an unchanged comparison reuses its evidence. A source edit leaves recorded comparisons stale: status, the next action, review dispatch and completion read the item open until the lead reruns `tdd`; the quality gate runs none. Reuse valid source-bound results instead of repeating covered verification. Missing commands and incomplete execution remain unresolved.
-
-## Map updates
-
-Submit only the changed or new items through `record tdd-map --input FILE`:
-
-```json
-{"items":[{"id":"BM_X","kind":"contract","basis":"original request","behavior":"requested observable behavior","seam":"owning Module's Interface","expected":"observable result","boundaryInputs":["test_case_name"]}]}
-```
-
-Changing `boundaryInputs` or readings re-judges the retained comparison; contract/conformance kind, behavior and expected cannot change after preflight. New preservation items and boundary cases remain allowed; user scope requiring a new contract starts a new pass. An unchanged list writes no event. Removing all witnesses keeps the requirement open. Each original item retains its first individually proved evaluation, not its first attempted comparison. Replays keep that case code and its bindings; this does not establish that the initial proof was well designed. Later comparisons replay them from their recorded tree, sharing cached executions. New cases may extend preservation; new expected text or item labels cannot authorize an uncovered decision. Review requirement changes against the request.
-
-For nonbehavioral work, an empty approved list carries no behavior claim. Preserve affected behavior with actual comparisons when production is exercised. Summary and completion derive readiness from current runner evidence, never authored statuses.
+Follow the receipt's next command. It reports each tree's exit and comparison;
+use its evidence command for raw output. The first proved evaluation stays frozen,
+not the first attempted comparison. User scope requiring a new contract starts a
+new pass. Keep scratch resources outside production and workflow state.

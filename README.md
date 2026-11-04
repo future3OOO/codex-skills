@@ -37,10 +37,11 @@ sessions, caches and workflow state. Use Bubblewrap (`bwrap`) to bind each copy 
 `~/.codex`, keep the global estate read-only, and retain normal tool access;
 `CODEX_HOME` alone misses home-relative entrypoints.
 
-Proof comparisons require `bwrap`, `strace` and GNU `realpath`: each child sees the recorded source at
-the repository's original path, including imports through editable installations.
-On Ubuntu with AppArmor's unprivileged user-namespace restriction, `bwrap` also
-needs a profile allowing user namespaces (CI installs one in its preflight).
+Proof comparisons require bubblewrap (`bwrap`) 0.11 or later for overlays,
+`strace` and GNU `realpath`. Each child sees the recorded source at the repository's
+original path, including imports through editable installations. On Ubuntu hosts
+with AppArmor's unprivileged user-namespace restriction, the binary's own path
+needs a profile allowing user namespaces.
 An error such as `bwrap: setting up uid map: Permission denied` means that host
 prerequisite is missing; the comparison is incomplete, not a failing probe.
 
@@ -53,9 +54,8 @@ Private testing does not authorize shared installation.
 
 ## Test history
 
-The port has independent Git history. Calibration tests replay original Claude
-commits and retain their exact captured bytes and digests. CI fetches the pinned
-history before either lane; prepare a fresh local checkout the same way:
+The port has independent Git history. Fetch the captured Claude corpus when
+reproducing historical calibration:
 
 ```bash
 git fetch --no-tags https://github.com/future3OOO/claude-skills.git 08074c7e727d26ce62b0a3f80899de76e34818ef:refs/calibration/claude-skills

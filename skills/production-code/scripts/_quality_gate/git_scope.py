@@ -43,6 +43,7 @@ def git_text(repo: Path, args: list[str]) -> str:
     return git_read(repo, args)[0]
 
 
+
 def git_ok(repo: Path, args: list[str]) -> bool:
     return run_git(repo, args).returncode == 0
 

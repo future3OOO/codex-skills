@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from hooks.lib.workflow_documents import quality_candidates
+
 from pathlib import Path
 
 from .checks import changed_file_failures, evaluate_growth, scan_quality_escapes
@@ -21,6 +23,24 @@ _SIMPLE_CHECKS = (
 # report renders 3,342 bytes): three items per list, clipped at 160 characters, 4,000
 # bytes in all. The JSON result keeps every item.
 _SHOWN, _ITEM_CHARS, _SUMMARY_BYTES = 3, 160, 4000
+
+
+def _merge_locations(findings: list[dict]) -> list[dict]:
+    grouped, output = {}, []
+    for finding in findings:
+        regions = finding.get("region", {}).get("regions") or [region for group in finding.get("evidence", {}).get("duplicates", []) for region in group["regions"]]
+        if finding.get("status") != "finding" or finding.get("region", {}).get("scope") == "evaluation" or len(regions) < 2:
+            output.append(finding)
+            continue
+        key = tuple(sorted({(region["path"], region["displayLine"], region.get("role"), region.get("kind", finding["region"].get("kind", "block"))) for region in regions}))
+        match = {"ruleId": finding["ruleId"], "findingId": finding["findingId"],
+                 **({"evidenceClass": finding["region"]["evidenceClass"]} if "evidenceClass" in finding["region"] else {})}
+        if key not in grouped:
+            grouped[key] = {**finding, "matchingRules": []}
+            output.append(grouped[key])
+        if not any((other["ruleId"], other.get("evidenceClass")) == (match["ruleId"], match.get("evidenceClass")) for other in grouped[key]["matchingRules"]):
+            grouped[key]["matchingRules"].append(match)
+    return output
 
 
 def check(
@@ -46,6 +66,7 @@ def check(
     owner_rules, owner_candidates, owner_resolved = find_owner_competition(snapshot, duplicates)
     findings: list[Finding] = [growth_rule, *duplicate_rules, *duplicates, *owner_rules, *owner_candidates]
     findings.extend(incompleteness_findings(findings))
+    rendered = _merge_locations([finding.as_dict(snapshot.base_identity, snapshot.candidate_identity) for finding in findings])
 
     streams = snapshot.gap_streams()
     # The escape scan cannot claim it saw the whole change when hunks are
@@ -78,6 +99,9 @@ def check(
 
     def projected(rule: Finding) -> dict[str, object]:
         out: dict[str, object] = {"passed": rule.passed, "status": rule.status}
+        count = sum(any(match["ruleId"] == rule.rule_id for match in finding.get("matchingRules", [])) for finding in rendered)
+        if count:
+            out["candidates"] = count
         if rule.status == "incomplete":
             out["gaps"] = sorted(rule.gaps)
         return out
@@ -122,7 +146,7 @@ def check(
             "complete": not evaluation_gaps,
             "gaps": sorted(evaluation_gaps),
         },
-        "findings": [finding.as_dict(snapshot.base_identity, snapshot.candidate_identity) for finding in findings],
+        "findings": rendered,
         "resolvedFindings": [finding.as_dict(snapshot.base_identity, snapshot.candidate_identity) for finding in owner_resolved],
         "checks": checks,
         "hardRules": {
@@ -146,7 +170,7 @@ def check(
         "errors": errors,
         "warnings": [],
         # Retained until its documented consumer migrates; its scorer is gone.
-        "gitnexusQueries": [],
+        "gitnexusQueries": [snapshot.graph_query] if snapshot.graph_query else [],
     }
 
 
@@ -158,30 +182,26 @@ def _some(items: list[str]) -> list[str]:
 
 def format_text(result: dict[str, object]) -> str:
     """A bounded summary for chat: every omission is counted, and the JSON result is the complete report."""
+    candidates = quality_candidates(result)
+    verdict = "fail" if not result["ok"] else f"no blockers; {len(candidates)} candidates to investigate" if candidates else "pass"
     lines = [
         "Production Code Quality Gate",
-        f"verdict: {'pass' if result['ok'] else 'fail'}",
+        f"verdict: {verdict}",
         f"changedScope: {result['changedScope']}",
         f"changedFilesCount: {result['changedFilesCount']}",
         f"sourceFilesCount: {result['sourceFilesCount']}",
         "", "Errors:", *([f"- {error}" for error in _some(result["errors"])] or ["- none"]), "", "Checks:",
     ]
     for check in result["checks"]:
-        outcome = "incomplete" if check["passed"] is None else "pass" if check["passed"] else "fail"
+        outcome = "incomplete" if check["status"] == "incomplete" else f"{check['candidates']} to investigate (non-blocking)" if check.get("candidates") else "incomplete" if check["passed"] is None else "pass" if check["passed"] else "fail"
         lines.append(f"- {check['name']}: {outcome}" + (f" ({', '.join(_some(check['sample']))})" if check.get("sample") else ""))
     lines += ["", "Warnings:"]
     # Measured growth stays visible even when unbased, then each rule's first located findings.
     net = result["evaluation"]["growth"]["humanAuthored"]["net"]
     active = [f"{RULE_GROWTH}: human-authored net growth {net} exceeds the 500-line review budget"] if net > 500 else []
     by_rule: dict[str, list[str]] = {}
-    for item in result["findings"]:
-        if item["status"] == "finding" and item["region"]["scope"] != "evaluation":
-            by_rule.setdefault(item["ruleId"], []).append(" ".join(filter(None, (
-                f"{item['ruleId']} [{item['findingId']}]", item["state"], item["region"].get("evidenceClass"),
-                item["evidence"].get("responsibilityKey"),
-                "for " + item["evidence"]["affectedRuleId"] if "affectedRuleId" in item["evidence"] else None))) + ": "
-                + ", ".join(_some(item["evidence"].get("gaps") or item["evidence"].get("owners") or [
-                    f"{r['path']}:{r['displayLine']}" for g in item["evidence"].get("duplicates", ()) for r in g["regions"]])))
+    if candidates:
+        by_rule["candidates"] = candidates
     shown = {rule: min(_SHOWN, len(rendered)) for rule, rendered in by_rule.items()}
     while True:  # counts and errors lead, where the byte limit cannot cut them; drop findings from the end to fit
         omitted = [f"{len(r) - shown[k]} {k.removeprefix('QG54-').lower()} findings omitted — see retained report"

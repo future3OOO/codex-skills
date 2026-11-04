@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import ast
 import hashlib
 import json
 import re
 from collections import Counter
-from itertools import combinations
 
 from .findings import (
     Finding, RULE_DUPLICATE_BASELINE, RULE_DUPLICATE_BLOCK, RULE_DUPLICATE_SYMBOL,
@@ -17,7 +15,7 @@ from .symbols import canonical_lines, extract_symbols
 
 # Shortest canonical implementation any exact rule reports, for a complete
 # symbol as much as for a contiguous block. Pinned by the checked-in corpus
-# calibration in references/duplicate-calibration.md, which measured that a
+# historical calibration retained in Git, which measured that a
 # shorter bound reports two-line test lifecycle boilerplate whose ownership
 # belongs to #77. It is a warning threshold, never an approved blocker.
 MIN_REGION_LINES = 6
@@ -144,6 +142,8 @@ def _retained_baseline(
                 "fingerprint": fingerprint, "path": path, "role": base.role,
                 "language": base.language, "displayLine": list(current or {})[found_at],
                 "evidenceRole": "retained-baseline", "lines": (), "body": body,
+                "kind": next((str(node["id"]).partition(":")[0] for node in snapshot.symbols(path)
+                              if node["startLine"] + 1 == list(current or {})[found_at]), "block"),
             }
     return owners
 
@@ -155,15 +155,10 @@ def _scan(snapshot: EvaluationSnapshot) -> tuple[list[dict[str, object]], list[s
         language = entry.classification.language
         text = entry.current_text or ""
         canonical = canonical_lines(text, language)
-        extents = _extents(text) if canonical is not None else None
-        reason = "has no tokenizer for" if canonical is None else "could not parse" if extents is None else ""
-        if reason:
-            # Guessing a comment, a string interior, or a symbol edge would let
-            # two different regions canonicalize alike, so the rule says instead
-            # that it did not read this file.
-            gaps.append(f"{entry.path}: exact duplicate analysis {reason} this {language}")
+        symbols = extract_symbols(entry.path, text, language, snapshot.symbols(entry.path))
+        if entry.path not in snapshot.graph_files:
+            gaps.append(f"{entry.path}: no snapshot-bound graph ranges")
             continue
-        symbols = extract_symbols(entry.path, text, language)
         # Every symbol edge, opening and closing: a block running out of one
         # symbol into the next would span a boundary the contract forbids.
         edges = {symbol.line for symbol in symbols} | {
@@ -174,33 +169,12 @@ def _scan(snapshot: EvaluationSnapshot) -> tuple[list[dict[str, object]], list[s
             scans.append({
                 "path": entry.path, "role": role, "language": language, "added": added,
                 "canonical": canonical, "starts": edges,
-                **_symbol_regions(entry.path, role, language, symbols, set(added), canonical, extents),
+                **_symbol_regions(entry.path, role, language, symbols, set(added), canonical),
             })
     return scans, gaps
 
 
-def _extents(text: str) -> dict[int, tuple[int, int]] | None:
-    """Each definition's real first line and the first line of its suite, or
-    `None` when the file does not parse.
-
-    A decorator belongs to the implementation it decorates, a signature can
-    span lines, and a suite opening with a decorated definition starts at that
-    decorator. Only the parser knows any of those boundaries.
-    """
-    try:
-        tree = ast.parse(text)
-    # None, not {}: a definition-free file is read and empty, an unparseable
-    # one has no trustworthy boundary at all.
-    except (SyntaxError, UnicodeError, ValueError):
-        return None
-    defined = [node for node in ast.walk(tree)
-               if isinstance(node, (ast.AsyncFunctionDef, ast.ClassDef, ast.FunctionDef)) and node.body]
-    starts = {node.lineno: min([item.lineno for item in node.decorator_list] + [node.lineno]) for node in defined}
-    return {node.lineno: (starts[node.lineno], starts.get(node.body[0].lineno, node.body[0].lineno))
-            for node in defined}
-
-
-def _symbol_regions(path: str, role: str, language: str, symbols: list, added: set[int], canonical: dict[int, str], extents: dict[int, tuple[int, int]]) -> dict[str, list[dict[str, object]]]:
+def _symbol_regions(path: str, role: str, language: str, symbols: list, added: set[int], canonical: dict[int, str]) -> dict[str, list[dict[str, object]]]:
     """Complete symbol bodies this one hunk added in full, and each body alone.
 
     A hunk that edited part of an existing helper did not add it, and joining
@@ -211,7 +185,7 @@ def _symbol_regions(path: str, role: str, language: str, symbols: list, added: s
     regions: list[dict[str, object]] = []
     bodies: list[dict[str, object]] = []
     for symbol in symbols:
-        start, suite = extents.get(symbol.line, (symbol.line, symbol.line + 1))
+        start, suite = symbol.line, symbol.line + 1
         extent = range(start, symbol.line + len(symbol.content.splitlines()))
         if not all(number in added for number in extent):
             continue
@@ -221,10 +195,9 @@ def _symbol_regions(path: str, role: str, language: str, symbols: list, added: s
         fingerprint = anchor("symbol", role, language, body)
         regions.append({
             "fingerprint": fingerprint, "path": path, "role": role, "language": language,
-            "displayLine": start, "lines": tuple(extent), "evidenceRole": "duplicate", "body": body,
+            "displayLine": start, "lines": tuple(extent), "evidenceRole": "duplicate", "body": body, "kind": symbol.kind,
         })
-        # From the suite: hashing a wrapped signature into the body would hide
-        # a copy whose only difference is how its parameters are wrapped.
+        # A graph-bounded exact suffix, not a guessed language-specific body.
         inner = "\n".join(canonical[number] for number in extent if number in canonical and number >= suite)
         if len(inner.splitlines()) >= MIN_REGION_LINES:
             bodies.append({
@@ -344,7 +317,7 @@ def _groups(regions: list[dict[str, object]]) -> list[dict[str, object]]:
                 {
                     "path": member["path"], "role": member["role"], "language": member["language"],
                     "displayLine": member["displayLine"], "contentAnchor": fingerprint,
-                    "evidenceRole": member["evidenceRole"],
+                    "evidenceRole": member["evidenceRole"], "kind": member.get("kind", "block"),
                 }
                 for member in sorted(found.values(), key=lambda item: (item["role"], item["path"], item["displayLine"]))
             ],
@@ -394,283 +367,50 @@ OWNER_ACTION = "Deepen, replace, or consolidate until one owner remains for the 
 OWNER_PASS_CONDITION = pass_condition(
     "one-owner",
     ("content anchors of every named owner region", "every evidence class evaluated"),
-    "no responsibility has two mechanically evidenced owners, with every evidence class evaluated",
+    "no unresolved structural owner-overlap candidate remains in the captured graph and source",
 )
 
-# The seven mechanical evidence classes: each evaluated on every run; an
-# entry that could not look reports its gap and the rule reads incomplete.
-OWNER_CLASSES = (
-    "state-writers", "invariant-validators", "interface-overlap",
-    "lifecycle-coordinators", "parallel-entry-points",
-    "forwarding-surfaces", "exact-retained",
-)
-
+# These are structural candidates. Existing review judges responsibility and cost.
+OWNER_CLASSES = ("implementation-overlap", "shared-callees", "interface-overlap", "exact-retained")
 _OWNER_ROLES = {RULE_OWNER_PRODUCTION: ("production",)}
-
-_SHELL_ENV_READ = re.compile(r"\$\{([A-Z][A-Z0-9_]{3,})[:}\-]")
-_MUTATORS = frozenset({"mkdir", "rename", "rmdir", "rmtree", "unlink", "write_bytes", "write_text"})
-# Path segments so role-generic that sharing one is directory vocabulary, not
-# shared state.
-_SEGMENT_STOP = frozenset({"docs", "hooks", "src", "lib", "test", "tests"})
-# Framework-reserved entry and lifecycle names: sharing one is convention,
-# not an overlapping Interface for a domain operation.
-_GENERIC_PUBLIC = frozenset({"main", "setUp", "tearDown"})
-_MIN_SIGNATURE_OPS = 4
-
-
-# Operation discriminators: flag-shaped strings are CLI modes wherever they
-# appear; a bare subcommand word discriminates only under a command-runner
-# callee (`git('add')` is not the operation `git('commit')`), so ordinary
-# payload words stay normalized value slots.
-_FLAG_TOKEN = re.compile(r"^--?[A-Za-z][\w-]{0,23}$")
-_BARE_TOKEN = re.compile(r"^[a-z][a-z0-9_-]{1,15}$")
-_COMMAND_CALLEES = frozenset({"check_call", "check_output", "exec", "git", "popen", "run", "sh"})
-
-
-def _own_nodes(root: ast.AST) -> list[ast.AST]:
-    """The scope's behavior nodes: a nested definition joins only when referenced by name."""
-    own, nested, stack = [], [], [root]
-    while stack:
-        node = stack.pop()
-        own.append(node)
-        for child in ast.iter_child_nodes(node):
-            (nested if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) else stack).append(child)
-    names = {node.id for node in own if isinstance(node, ast.Name)}
-    return own + [item for child in nested if getattr(child, "name", "") in names for item in _own_nodes(child)]
-
-
-def _called_names(node: ast.AST) -> tuple[str, ...]:
-    """Callee anchors with command-token discriminators, in scope order."""
-    names = []
-    for sub in _own_nodes(node):
-        if isinstance(sub, ast.Call):
-            target = sub.func
-            name = target.attr if isinstance(target, ast.Attribute) else target.id if isinstance(target, ast.Name) else ""
-            if name:
-                names.append(name)
-                names.extend(arg.value for arg in sub.args
-                             if isinstance(arg, ast.Constant) and isinstance(arg.value, str)
-                             and (_FLAG_TOKEN.match(arg.value)
-                                  or name in _COMMAND_CALLEES and _BARE_TOKEN.match(arg.value)))
-    return tuple(names)
-
-
-def _operation_signature(body: list[ast.stmt]) -> tuple:
-    """The ordered lifecycle-operation signature of one function body:
-    callee anchors, command-token discriminators, operation order, and nested
-    control-flow shape are preserved; only call-free local bindings and
-    payload/value slots normalize, so varying payloads keep one signature
-    while an extra operation, callee, subcommand, mode, or reshaped control
-    flow breaks it."""
-    ops: list[tuple] = []
-    for stmt in body:
-        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            used = any(isinstance(sub, ast.Name) and sub.id == stmt.name for other in body
-                       if not isinstance(other, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) for sub in _own_nodes(other))
-            ops.append(("def", (), _operation_signature(stmt.body) if used else ()))
-            continue
-        blocks = [(name, part) for name in ("body", "orelse", "finalbody")
-                  for part in [getattr(stmt, name, None)] if part]
-        if blocks:
-            handlers = getattr(stmt, "handlers", ())
-            headers = [value for name in ("test", "iter") for value in [getattr(stmt, name, None)] if value]
-            headers += [item.context_expr for item in getattr(stmt, "items", ())]
-            headers += [handler.type for handler in handlers if handler.type]
-            calls = tuple(name for node in headers for name in _called_names(node))
-            inner = tuple((name, (), _operation_signature(block))
-                          for name, block in [*blocks, *[("handler", handler.body) for handler in handlers]])
-            ops.append((type(stmt).__name__, calls, inner))
-            continue
-        calls = _called_names(stmt)
-        if isinstance(stmt, (ast.Assign, ast.AnnAssign, ast.AugAssign)) and not calls:
-            continue
-        if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant):
-            continue
-        ops.append((type(stmt).__name__, calls, ()))
-    return tuple(ops)
-
-
-def _signature_weight(signature: tuple) -> int:
-    return sum((0 if op[0] in ("body", "orelse", "finalbody", "handler") else 1) + _signature_weight(op[2]) for op in signature)
-
-
-def _owner_functions(text: str) -> list[dict[str, object]] | None:
-    """Per-function mechanical facts (module functions and one level of
-    methods), or None when the file does not parse."""
-    try:
-        tree = ast.parse(text)
-    except (IndentationError, SyntaxError, SystemError, UnicodeError, ValueError):
-        return None
-    scopes = [node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
-    scopes += [item for node in tree.body if isinstance(node, ast.ClassDef)
-               for item in node.body if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))]
-    functions = []
-    for node in scopes:
-        envs: set[str] = set()
-        segments: set[str] = set()
-        mutates = False
-        decides, compare_keys = False, set()
-        for sub in _own_nodes(node):
-            if isinstance(sub, (ast.Return, ast.Raise)):
-                decides = decides or isinstance(sub, ast.Raise) or isinstance(sub.value, (ast.Compare, ast.BoolOp))
-            elif isinstance(sub, ast.Compare) and len(sub.comparators) == 1 \
-                    and isinstance(sub.comparators[0], ast.Constant):
-                subject, parts = sub.left, []
-                while isinstance(subject, ast.Attribute):
-                    parts.append(subject.attr)
-                    subject = subject.value
-                parts += [subject.id] if isinstance(subject, ast.Name) else []
-                if parts:
-                    compare_keys.add((".".join(reversed(parts)), repr(sub.comparators[0].value)))
-            if isinstance(sub, ast.Call):
-                target = sub.func
-                name = target.attr if isinstance(target, ast.Attribute) else target.id if isinstance(target, ast.Name) else ""
-                mutates = mutates or name in _MUTATORS
-                # os.environ.get / os.getenv with a literal name resolves a boundary.
-                if name in {"get", "getenv"} and sub.args and isinstance(sub.args[0], ast.Constant) \
-                        and isinstance(sub.args[0].value, str) and sub.args[0].value.isupper():
-                    root = target.value if isinstance(target, ast.Attribute) else None
-                    if name == "getenv" or (isinstance(root, ast.Attribute) and root.attr == "environ"):
-                        envs.add(sub.args[0].value)
-            elif isinstance(sub, ast.Subscript) and isinstance(sub.value, ast.Attribute) \
-                    and sub.value.attr == "environ" and isinstance(sub.slice, ast.Constant) \
-                    and isinstance(sub.slice.value, str):
-                envs.add(sub.slice.value)
-            elif isinstance(sub, ast.BinOp) and isinstance(sub.op, ast.Div) \
-                    and isinstance(sub.right, ast.Constant) and isinstance(sub.right.value, str):
-                segment = sub.right.value.strip("/")
-                if len(segment) >= 4 and "/" not in segment and segment.lower() not in _SEGMENT_STOP:
-                    segments.add(segment)
-        signature = _operation_signature(node.body)
-        body = node.body[1:] if node.body and isinstance(node.body[0], ast.Expr) \
-            and isinstance(node.body[0].value, ast.Constant) else node.body
-        forwards = ""
-        if len(body) == 1 and isinstance(body[0], ast.Return) and isinstance(body[0].value, ast.Call) \
-                and isinstance(body[0].value.func, ast.Name) \
-                and all(isinstance(arg, ast.Name) for arg in body[0].value.args):
-            forwards = body[0].value.func.id
-        line = min([item.lineno for item in node.decorator_list] + [node.lineno])
-        lines = text.splitlines()
-        functions.append({
-            "name": node.name, "line": line,
-            "anchorText": lines[line - 1].strip() if line <= len(lines) else node.name,
-            "public": not node.name.startswith("_"), "calls": _called_names(node),
-            "signature": signature, "weight": _signature_weight(signature),
-            "envs": envs, "segments": segments, "mutates": mutates, "forwards": forwards,
-            "compares": frozenset(compare_keys) if decides else frozenset(),
-        })
-    return functions
 
 
 def _owner_units(snapshot: EvaluationSnapshot, roles: tuple[str, ...]) -> tuple[list[dict[str, object]], int, list[str]]:
-    """Evidence units for one role family over changed entries and captured
-    baseline, with the file count and named parse gaps: one unit per parsed
-    function (facts closed over same-file callees one hop, where a resolver
-    delegates its boundary reads) and one per shell env-resolving line, so a
-    parserless language still contributes its boundary evidence."""
-    files = [(entry.path, entry.classification.role, entry.classification.language,
-              entry.current_text or "", True) for entry in snapshot.role_entries(*roles)]
-    changed = {item[0] for item in files}
-    files += [(path, base.role, base.language, base.text, False)
-              for base in snapshot.baseline
-              for path in [snapshot.renamed_to.get(base.path, base.path)]
-              if base.role in roles and base.text is not None
-              and path not in changed and snapshot.entry(path) is None]
-    units: list[dict[str, object]] = []
-    gaps: list[str] = []
-    for path, role, language, text, is_changed in files:
-        common = {"path": path, "role": role, "language": language, "changed": is_changed}
-        if language != "python":
-            units += [{**common, "name": line.strip(), "line": number, "public": True, "calls": (),
-                       "signature": (), "weight": 0, "envs": envs, "segments": frozenset(),
-                       "mutates": True, "forwards": "", "compares": frozenset()}
-                      for number, line in enumerate(text.splitlines(), 1)
-                      for envs in [frozenset(_SHELL_ENV_READ.findall(line))] if len(envs) >= 2]
+    paths = {entry.path for entry in snapshot.role_entries(*roles)} | {base.path for base in snapshot.baseline if base.role in roles and base.text is not None}
+    units, gaps = [], []
+    for path in sorted(paths):
+        text = _captured_text(snapshot, path, "candidate")
+        if text is None:
             continue
-        functions = _owner_functions(text)
-        if functions is None:
-            gaps.append(f"{path}: owner evidence could not parse this python")
+        if path not in snapshot.graph_files:
+            gaps.append(path + ": no snapshot-bound graph symbols")
             continue
-        ambiguous = {name for name, count in Counter(fn["name"] for fn in functions).items() if count > 1}
-        if referenced := {called for fn in functions for called in fn["calls"]} & ambiguous:
-            gaps.append(f"{path}: ambiguous same-named definitions referenced in closure: " + ", ".join(sorted(referenced)[:3]))
-        by_name = {fn["name"]: fn for fn in functions if fn["name"] not in ambiguous}
-        for fn in functions:
-            closed = [fn] + [by_name[called] for called in fn["calls"]
-                             if called in by_name and by_name[called] is not fn]
-            units.append({**fn, **common,
-                          "envs": frozenset().union(*[member["envs"] for member in closed]),
-                          "segments": frozenset().union(*[member["segments"] for member in closed]),
-                          "mutates": any(member["mutates"] for member in closed)})
-    return units, len(files), gaps
+        for node in snapshot.symbols(path):
+            lines = text.splitlines()[node["startLine"]:node["endLine"] + 1]
+            if not lines:
+                continue
+            # Remove only the reported declaration name from the first line.
+            # Equality is a source-overlap hint, not semantic equivalence.
+            lines[0] = lines[0].replace(str(node["name"]), "<declared-name>", 1)
+            units.append({"id": node["id"], "name": node["name"], "path": path, "line": node["startLine"] + 1,
+                          "role": "production", "language": (snapshot.entry(path).classification.language if snapshot.entry(path) else next(base.language for base in snapshot.baseline if base.path == path)),
+                          "changed": snapshot.entry(path) is not None, "kind": str(node["id"]).partition(":")[0], "calls": tuple(node.get("calls") or []),
+                          "implementation": "\n".join(lines), "weight": len(lines)})
+    return units, len(paths), gaps
 
 
 def _owner_groups(units: list[dict[str, object]]) -> dict[str, list[list[dict[str, object]]]]:
-    """Candidate groups per evidence class: every group spans two files,
-    touches the changed surface, and keys on the shared evidence itself."""
-    def grouped(keyed: dict[object, list[dict[str, object]]], accept=lambda members: True) -> list[list[dict[str, object]]]:
-        found, seen = [], set()
-        for members in keyed.values():
-            ordered = sorted(members, key=lambda member: (member["path"], member["line"]))
-            identity = tuple((member["path"], member["line"]) for member in ordered)
-            files = {member["path"] for member in members}
-            if len(files) >= 2 and identity not in seen and any(member["changed"] for member in members) and accept(members):
-                seen.add(identity)
-                found.append(ordered)
-        return found
-
-    def collect(key_of) -> dict[object, list[dict[str, object]]]:
-        keyed: dict[object, list[dict[str, object]]] = {}
+    def grouped(key):
+        groups = {}
         for unit in units:
-            for key in key_of(unit):
-                keyed.setdefault(key, []).append(unit)
-        return keyed
-
-    by_name = {}
-    for unit in units:
-        by_name.setdefault((unit["path"], unit["name"]), unit)
-    callers: set[str] = set()
-    for unit in units:
-        callers.update(unit["calls"])
-    defined = {unit["name"] for unit in units}
-
-    return {
-        # Resolvers sharing one env-anchor pair across files; pairwise keys so a superset still competes.
-        "state-writers": grouped(collect(
-            lambda unit: [frozenset(pair) for pair in combinations(sorted(unit["envs"]), 2)]))
-        # One state segment in two files, at least one mutating it.
-        + grouped(collect(lambda unit: sorted(unit["segments"])),
-                  lambda members: any(member["mutates"] for member in members)),
-        "invariant-validators": grouped(collect(
-            lambda unit: [unit["compares"]] if unit["compares"] else [])),
-        # Overlapping Interfaces need shared evidence beyond the name.
-        "interface-overlap": grouped(
-            collect(lambda unit: [unit["name"]] if unit["public"] and unit["name"] not in _GENERIC_PUBLIC and unit["signature"] else []),
-            lambda members: bool(
-                set.intersection(*[set(member["calls"]) for member in members])
-                or frozenset.intersection(*[member["envs"] | member["segments"] for member in members])
-            ),
-        ),
-        "parallel-entry-points": grouped(collect(
-            lambda unit: [frozenset(set(unit["calls"]) & defined)]
-            if unit["name"] not in callers and len(set(unit["calls"]) & defined) >= 3 and unit["signature"] else [])),
-        "forwarding-surfaces": grouped(collect(
-            lambda unit: [unit["forwards"]] if unit["forwards"] and unit["forwards"] in defined
-            and by_name.get((unit["path"], unit["forwards"])) is None else [])),
-    }
-
-
-def _signature_groups(units: list[dict[str, object]]) -> list[list[dict[str, object]]]:
-    """Functions owning one ordered lifecycle signature at least twice."""
-    keyed: dict[tuple, list[dict[str, object]]] = {}
-    for unit in units:
-        if unit["signature"] and unit["weight"] >= _MIN_SIGNATURE_OPS:
-            keyed.setdefault(unit["signature"], []).append(unit)
-    return [
-        sorted(members, key=lambda member: (member["path"], member["line"]))
-        for members in keyed.values()
-        if len(members) >= 2 and any(member["changed"] for member in members)
-    ]
+            value = key(unit)
+            if value:
+                groups.setdefault(value, []).append(unit)
+        return [members for members in groups.values() if len({member["path"] for member in members}) > 1
+                and any(member["changed"] for member in members)]
+    return {"implementation-overlap": grouped(lambda unit: (unit["language"], unit["implementation"]) if unit["weight"] >= 3 else None),
+            "shared-callees": grouped(lambda unit: frozenset(unit["calls"]) if len(set(unit["calls"])) >= 2 else None),
+            "interface-overlap": grouped(lambda unit: (unit["name"], frozenset(unit["calls"])) if unit["calls"] else None)}
 
 
 def find_owner_competition(
@@ -679,7 +419,7 @@ def find_owner_competition(
 ) -> tuple[list[Finding], list[Finding], list[Finding]]:
     """The responsibility-owner rules: state findings, active candidates,
     and resolved telemetry, generated independently of duplicate detection.
-    Exact evidence is one class among seven, never an entry requirement;
+    Exact evidence is one class, never an entry requirement;
     dispositions bind only through structural validation against the exact
     evaluated snapshot."""
     streams = snapshot.gap_streams()
@@ -703,7 +443,6 @@ def find_owner_competition(
         ]
         per_class: dict[str, list] = {name: [] for name in OWNER_CLASSES}
         per_class.update(groups)
-        per_class["lifecycle-coordinators"] = _signature_groups(units)
         per_class["exact-retained"] = retained
         rule_candidates = []
         for name in OWNER_CLASSES:
@@ -777,7 +516,7 @@ def _owner_candidate(
         status="finding",
         passed=True,
         identity=identity,
-        region={"scope": "candidate", "evidenceClass": evidence_class, "regions": regions},
+        region={"scope": "candidate", "evidenceClass": evidence_class, "regions": regions, "kind": members[0].get("kind", "block")},
         evidence={"evidenceClass": evidence_class,
                   "owners": [f"{region['path']}:{region['displayLine']}" for region in regions]},
         action=OWNER_ACTION,
@@ -822,88 +561,32 @@ def _captured_text(snapshot: EvaluationSnapshot, path: str, side: str) -> str | 
     return None
 
 
-def _anchor_line(text: str | None, ref: dict[str, object]) -> int | None:
-    """Where one reference resolves in captured text: an exact content
-    line or a parsed symbol definition; wildcards resolve nowhere."""
+def _anchor_line(snapshot: EvaluationSnapshot, path: str, side: str, ref: dict[str, object]) -> int | None:
+    text = _captured_text(snapshot, path, side)
     if text is None:
         return None
-    content = ref.get("content")
-    if isinstance(content, str) and content.strip():
-        for number, line in enumerate(text.splitlines(), 1):
-            if line.strip() == content.strip():
-                return number
-        return None
-    symbol = ref.get("symbol")
-    if isinstance(symbol, str) and symbol:
-        for fn in _owner_functions(text) or []:
-            if fn["name"] == symbol:
-                return int(fn["line"])
-    return None
-
-
-def _sides(snapshot: EvaluationSnapshot) -> list[tuple[str | None, str | None]]:
-    """Every captured surface as (base text, candidate text)."""
-    paths = {entry.path for entry in snapshot.entries}
-    pairs = [(entry.base_text, entry.current_text) for entry in snapshot.entries]
-    pairs += [(base.text, base.text) for base in snapshot.baseline
-              if snapshot.renamed_to.get(base.path, base.path) not in paths]
-    return pairs
-
-
-def _call_pattern(ref: dict[str, object]) -> re.Pattern[str] | None:
-    symbol = ref.get("symbol")
-    if isinstance(symbol, str) and symbol:
-        return re.compile(rf"(?<!def )\b{re.escape(symbol)}\s*\(")
-    content = ref.get("content")
-    return re.compile(re.escape(str(content).strip())) if isinstance(content, str) and content.strip() else None
+    if isinstance(content := ref.get("content"), str) and content.strip():
+        return next((number for number, line in enumerate(text.splitlines(), 1) if line.strip() == content.strip()), None)
+    if side == "base":
+        symbol = ref.get("symbol")
+        matches = [number for number, line in enumerate(text.splitlines(), 1)
+                   if isinstance(symbol, str) and re.search(r"(?<!\w)" + re.escape(symbol) + r"(?!\w)", line)]
+    else:
+        matches = [node["startLine"] + 1 for node in snapshot.symbols(path) if node["name"] == ref.get("symbol")]
+    return matches[0] if len(matches) == 1 else None
 
 
 def _still_referenced(snapshot: EvaluationSnapshot, ref: dict[str, object]) -> bool:
-    """Whether any candidate-tree surface still resolves the superseded
-    symbol: a surviving reference keeps the conflict alive."""
-    symbol = ref.get("symbol")
-    if not isinstance(symbol, str) or not symbol:
-        return False
-    pattern = re.compile(rf"(?<!def )\b{re.escape(symbol)}\s*\(")
-    return any(current and pattern.search(current) for _, current in _sides(snapshot))
-
-
-def _function_spans(text: str) -> dict[str, str] | None:
-    try:
-        tree = ast.parse(text)
-    except (IndentationError, SyntaxError, SystemError, UnicodeError, ValueError):
-        return None
-    return {
-        node.name: ast.get_source_segment(text, node) or ""
-        for scope in [tree, *[item for item in tree.body if isinstance(item, ast.ClassDef)]]
-        for node in scope.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-    }
-
-
-def _rewired_to_survivor(snapshot: EvaluationSnapshot, ref: dict[str, object], present) -> bool:
-    """Every affected surface must reach the survivor, per affected python
-    function (an unrelated neighbor proves nothing) and at file level where
-    no parser exists: a repair that only deletes behavior never resolves."""
-    gone_pattern = _call_pattern(ref)
-    survivor_patterns = [pattern for _, _, kept in present for pattern in [_call_pattern(kept)] if pattern]
-    if gone_pattern is None or not survivor_patterns:
+    targets = {node["id"] for node in snapshot.graph_symbols
+               if node.get("file") == ref["path"] and node.get("name") == ref.get("symbol")}
+    if any(targets & set(node.get("calls") or []) for node in snapshot.graph_symbols):
         return True
-
-    def reaches(text: str) -> bool:
-        return any(pattern.search(text) for pattern in survivor_patterns)
-
-    for base_text, current in _sides(snapshot):
-        if not (base_text and gone_pattern.search(base_text) and current):
-            continue
-        base_spans, current_spans = _function_spans(base_text), _function_spans(current)
-        affected = [name for name, segment in (base_spans or {}).items() if gone_pattern.search(segment)]
-        if base_spans is None or current_spans is None or not affected:
-            if not reaches(current):
-                return False
-            continue
-        if not all(reaches(current_spans.get(name) or current) for name in affected):
-            return False
-    return True
+    # A missing graph edge cannot prove absence. Keep textual uncertainty visible.
+    if not isinstance(symbol := ref.get("symbol"), str) or not symbol:
+        return False
+    pattern = re.compile(r"(?<!\w)" + re.escape(symbol) + r"(?!\w)")
+    paths = {entry.path for entry in snapshot.entries} | {base.path for base in snapshot.baseline}
+    return any(pattern.search(_captured_text(snapshot, path, "candidate") or "") for path in paths)
 
 
 def _anchored_ref(ref: object) -> bool:
@@ -957,7 +640,7 @@ def _record_problem(snapshot: EvaluationSnapshot, record: dict[str, object]) -> 
     # rejects.
     unresolved = [
         ref for ref in owners
-        if all(_anchor_line(_captured_text(snapshot, str(ref["path"]), side), ref) is None
+        if all(_anchor_line(snapshot, str(ref["path"]), side, ref) is None
                for side in ("base", "candidate"))
         and not _path_known_unread(snapshot, str(ref["path"]))
     ]
@@ -1011,7 +694,7 @@ def _apply_dispositions(
         refs = owners + ([dict(survivor)] if isinstance(survivor, dict) else [])
         present = []
         for ref in refs:
-            line = _anchor_line(_captured_text(snapshot, str(ref["path"]), "candidate"), ref)
+            line = _anchor_line(snapshot, str(ref["path"]), "candidate", ref)
             if line is not None:
                 present.append((str(ref["path"]), line, ref))
         key = str(record["responsibilityKey"])
@@ -1025,11 +708,10 @@ def _apply_dispositions(
             else:
                 notes.append(f"{key}: distinct-authority record left the candidate active: unresolved anchors or incomplete scope")
             continue
-        gone = [ref for ref in owners if _anchor_line(_captured_text(snapshot, str(ref["path"]), "candidate"), ref) is None]
-        deletion_proven = all(
-            _anchor_line(_captured_text(snapshot, str(ref["path"]), "base"), ref) is not None
+        gone = [ref for ref in owners if _anchor_line(snapshot, str(ref["path"]), "candidate", ref) is None]
+        anchors_removed = all(
+            _anchor_line(snapshot, str(ref["path"]), "base", ref) is not None
             and not _still_referenced(snapshot, ref)
-            and _rewired_to_survivor(snapshot, ref, present)
             for ref in gone
         )
         record_consumed = _consumed(rule_candidates, present)
@@ -1043,7 +725,7 @@ def _apply_dispositions(
             for item in rule_candidates
         )
         one_owner = len(named) == 1
-        one_owner_holds = scope_complete and one_owner and bool(gone) and deletion_proven and not survivor_contested
+        one_owner_holds = scope_complete and one_owner and bool(gone) and anchors_removed and not survivor_contested
         if one_owner_holds and _parent_pinned(record):
             resolved.append(_record_finding(snapshot, rule_id, record, present, "resolved"))
         else:
