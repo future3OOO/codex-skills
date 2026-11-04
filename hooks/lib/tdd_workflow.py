@@ -75,8 +75,6 @@ def _source_notes(identity: RepoIdentity, before: str, after: str) -> list[str]:
     return compact
 
 
-
-
 def current_map(identity: RepoIdentity, state: JsonObject, *, fresh: bool = True) -> tuple[list[JsonObject] | None, JsonObject | None]:
     fields = ("preflightLatestEvidence",) if state.get("preflight") == "pending" else ()
     for field in (*fields, "tddEvidence", "preflightEvidence"):
@@ -247,7 +245,11 @@ def _execution_key(identity: RepoIdentity, source: str, probe: str, files: list[
                    command: list[str], timeout: float, execution: JsonObject) -> str:
     config = json.dumps([command, timeout, {key: value for key, value in execution.items()
                                            if key not in {"search", "lookup"}}], sort_keys=True).encode()
-    return hashlib.sha256(_source_input(identity, source, probe, tuple(files)) + config).hexdigest()
+    inputs = (_EXECUTION.get() or {}).get("inputs", {})
+    if "producer" not in inputs:
+        inputs["producer"] = b"".join((Path(__file__).parent / name).read_bytes()
+                                    for name in ("tdd_workflow.py", "command_runner.py", "behavior_map.py", "state_store.py"))
+    return hashlib.sha256(_source_input(identity, source, probe, tuple(files)) + config + inputs["producer"]).hexdigest()
 
 
 def _observed_inputs(identity: RepoIdentity, root: Path, temporary: Path, trace: Path,
@@ -937,7 +939,6 @@ def execute_findings(identity: RepoIdentity, state: JsonObject, findings: list[J
                           if tuple(arm.get("key") for arm in run["arms"]) not in loaded_keys}.values())}
 
 
-
 @_comparison_scope()
 def check_retained(identity: RepoIdentity, slug: str | None, workflow_id: str | None) -> JsonObject:
     from .workflow_state import commit_retained_checks, finding_references, _finding_unresolved
@@ -1389,7 +1390,12 @@ def _run_tdd(values: list[str]) -> int:
             behavior_map.retain_evaluation([entry], {entry["id"]}, evaluation, runs)
     retained = list(dict.fromkeys([*(entry["runIndex"] for entry in evaluation.values()),
                                   *((entry.get("comparison") or {})["runIndex"] for entry in behavior_map.current_cases(items, runs) if entry.get("comparison"))]))
-    if specs or args.behavior_id:
+    if args.behavior_id:
+        owned = {entry["runIndex"] for entry in evaluation.values() if entry["id"] == args.behavior_id}
+        owned.update(case["comparison"]["runIndex"] for case in behavior_map.current_cases(items, runs)
+                     if case["id"] == args.behavior_id and case.get("comparison"))
+        retained = [index for index in retained if index in owned]
+    if specs:
         selected_contexts = {(run["command"], tuple(arm["contextKey"] for arm in run["arms"])) for run in compared}
         def same_execution(run):
             if not any(command == run["command"] for command, _ in selected_contexts):
@@ -1430,7 +1436,12 @@ def _run_tdd(values: list[str]) -> int:
                     expected_evidence_id=state.get("tddEvidence"), tree_before=before)
     notes = _source_notes(identity, original, candidate)
     rows = []
-    for (entry, _), run in zip(selected, compared):
+    reported = {run["runIndex"]: (entry, run) for (entry, _), run in zip(selected, compared)}
+    replayed_indexes = {run["runIndex"] for run in replayed}
+    for frozen in evaluation.values():
+        if frozen["runIndex"] in replayed_indexes:
+            reported.setdefault(frozen["runIndex"], (frozen, runs[frozen["runIndex"]]))
+    for entry, run in reported.values():
         row = {"case": run["command"], "exits": [arm["exitCode"] for arm in run["arms"]], "breakExit": run.get("breakExit")}
         expected_original = run["arms"][0]["outcome"] if entry is None else "passed" if entry.get("kind") == "preservation" else "failed"
         errors = []
@@ -1446,7 +1457,7 @@ def _run_tdd(values: list[str]) -> int:
                                 cases=rows, preparation=[{"tree": state["source"], "wait": state["wait"]} for state in scope["sources"].values()],
                                 **({"sourceNotes": notes} if notes else {}))
     _emit_batch(receipt)
-    return 0 if all(run["valid"] for run in compared) and not any(row.get("unexpected") for row in rows) and not any(run.get("bindingError") for run in compared) else 2
+    return 0 if all(run["valid"] and not run.get("bindingError") for _, run in reported.values()) and not any(row.get("unexpected") for row in rows) else 2
 
 
 def map_update(identity: RepoIdentity, state: JsonObject, value: JsonObject) -> JsonObject:

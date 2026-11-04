@@ -452,6 +452,7 @@ def commit_tdd(identity: RepoIdentity, slug: str, workflow_id: str | None,
         summary_doc.pop("comparedRuns", None)
         write = evidence_write(str(state["workflowId"]), "tdd", summary_doc)
         state["tddEvidence"] = write.evidence_id
+        state["activeCandidateTree"] = candidate
         state["tdd"] = "in-progress" if pending else "passed"
         state["phase"] = "tdd"
         state.pop("paused", None)
