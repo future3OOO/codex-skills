@@ -87,9 +87,9 @@ def current_map(identity: RepoIdentity, state: JsonObject, *, fresh: bool = True
     return None, None
 
 
-def refresh_proof(identity: RepoIdentity, items: list[JsonObject], *, candidate: str | None = None, runs: list[JsonObject] = ()) -> None:
-    """Re-judge each recorded comparison's freshness against the current production tree. The proof is the
-    recorded run: its probe tree and files, never the checkout's, so a probe removed after it ran still proves."""
+def refresh_proof(identity: RepoIdentity, items: list[JsonObject], *, candidate: str | None = None, runs: list[JsonObject] = (), recorded: bool = False) -> None:
+    """Re-judge comparisons against the current or recorded source trees, using their
+    recorded probe tree and files, so a probe removed after it ran still proves."""
     if scope := _EXECUTION.get():
         scope["inputs"].clear()  # resample mutable inputs for this freshness evaluation
     freshness, controls = {}, {run.get("candidateKey"): run for run in runs}
@@ -113,8 +113,9 @@ def refresh_proof(identity: RepoIdentity, items: list[JsonObject], *, candidate:
         return freshness[key]
     for item in items:
         if proof := item.get("comparison"):
-            candidate = candidate or _active_candidate_tree(identity)
-            proof.update(fresh(proof, candidate))
+            if not recorded:
+                candidate = candidate or _active_candidate_tree(identity)
+            proof.update(fresh(proof, proof["candidateTree"] if recorded else candidate))
             control = controls.get(proof.get("controlKey"))
             good = proof["arms"][-1] if proof["arms"][-1]["outcome"] == "passed" else proof["arms"][0]
             proof["sensitive"] = bool(control and proof.get("breakOid") and fresh(control, control["candidateTree"])["fresh"]
@@ -755,7 +756,7 @@ def _maintained_tests(identity: RepoIdentity, batches: list[JsonObject], maintai
         return None
     present = set(_tree_entries(identity, after))
     for run in [*batches, *([validation] if validation else [])]:
-        selected = _command_files(identity, run)
+        selected = _command_files(identity, run) or (set(run["probeFiles"]) & changed)
         scratch = sorted(path for path in selected if path.startswith("tests/.workflow-probes/"))
         available = present | set(scratch)
         if not selected or not selected & available:
@@ -934,9 +935,10 @@ def execute_findings(identity: RepoIdentity, state: JsonObject, findings: list[J
         execution = run(finding, False)
         again.append({**finding["ref"], "execution": {**execution, **{key: finding["execution"][key]
                                                                      for key in ("original",) if key in finding["execution"]}}})
+    control_keys = {((item.get("execution") or {}).get("comparison") or {}).get("controlKey") for item in [*executed, *again]}
     return {"measuredTree": candidate, "measuredEvidence": state.get("tddEvidence"), "findings": executed, "reexecuted": again,
             "runs": list({tuple(arm.get("key") for arm in run["arms"]): run for run in cached
-                          if tuple(arm.get("key") for arm in run["arms"]) not in loaded_keys}.values())}
+                          if tuple(arm.get("key") for arm in run["arms"]) not in loaded_keys or run.get("candidateKey") in control_keys}.values())}
 
 
 @_comparison_scope()
@@ -949,11 +951,14 @@ def check_retained(identity: RepoIdentity, slug: str | None, workflow_id: str | 
         state = _bound_instance_state(read_active(identity), slug, workflow_id)
         tree = _active_candidate_tree(identity)
         references = finding_references(state)
-        cached = evidence_document(identity, state.get("retainedChecks", {}).get(tree), restore_runs=False) or {}
+        cached = evidence_document(identity, state.get("retainedChecks", {}).get(tree)) or {}
         if cached.get("workflowId") != state["workflowId"] or cached.get("candidateTree") != tree:
             cached = {}
         if cached.get("findingRefs") == references:
-            return state
+            proofs = [{"comparison": run} for run in cached.get("runs", [])] + [check["execution"] for check in cached["checks"] if check["execution"].get("comparison")]
+            refresh_proof(identity, proofs, recorded=True, runs=cached["runs"])
+            if all(proof["comparison"].get("fresh") for proof in proofs):
+                return state
         retained = _retained(identity, state)
         reports = [{"evidenceId": entry["intakeEvidenceId"], "id": entry["findingId"], "execution": {"kind": "claim"}}
                    for entry in state.get("findingStates", []) if _finding_unresolved(entry)

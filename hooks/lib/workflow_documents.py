@@ -420,7 +420,7 @@ def quality_candidates(report: JsonObject) -> list[str]:
         if finding.get("status") != "finding" or finding.get("region", {}).get("scope") == "evaluation":
             continue
         regions = finding.get("region", {}).get("regions") or [region for group in finding.get("evidence", {}).get("duplicates", []) for region in group["regions"]]
-        if len(regions) < 2:
+        if not regions:
             continue
         locations = sorted({str(region["path"]) + ":" + str(region["displayLine"]) for region in regions})
         rules = finding.get("matchingRules") or [{"ruleId": finding["ruleId"]}]
