@@ -29,7 +29,7 @@ def _merge_locations(findings: list[dict]) -> list[dict]:
     grouped, output = {}, []
     for finding in findings:
         regions = finding.get("region", {}).get("regions") or [region for group in finding.get("evidence", {}).get("duplicates", []) for region in group["regions"]]
-        if finding.get("status") != "finding" or len(regions) < 2:
+        if finding.get("status") != "finding" or finding.get("region", {}).get("scope") == "evaluation" or len(regions) < 2:
             output.append(finding)
             continue
         key = tuple(sorted({(region["path"], region["displayLine"], region.get("role"), region.get("kind", finding["region"].get("kind", "block"))) for region in regions}))
@@ -101,7 +101,7 @@ def check(
         out: dict[str, object] = {"passed": rule.passed, "status": rule.status}
         count = sum(any(match["ruleId"] == rule.rule_id for match in finding.get("matchingRules", [])) for finding in rendered)
         if count:
-            out.update(status="candidate", passed=None, candidates=count)
+            out["candidates"] = count
         if rule.status == "incomplete":
             out["gaps"] = sorted(rule.gaps)
         return out
@@ -193,7 +193,7 @@ def format_text(result: dict[str, object]) -> str:
         "", "Errors:", *([f"- {error}" for error in _some(result["errors"])] or ["- none"]), "", "Checks:",
     ]
     for check in result["checks"]:
-        outcome = f"{check['candidates']} to investigate (non-blocking)" if check.get("candidates") else "incomplete" if check["passed"] is None else "pass" if check["passed"] else "fail"
+        outcome = "incomplete" if check["status"] == "incomplete" else f"{check['candidates']} to investigate (non-blocking)" if check.get("candidates") else "incomplete" if check["passed"] is None else "pass" if check["passed"] else "fail"
         lines.append(f"- {check['name']}: {outcome}" + (f" ({', '.join(_some(check['sample']))})" if check.get("sample") else ""))
     lines += ["", "Warnings:"]
     # Measured growth stays visible even when unbased, then each rule's first located findings.
