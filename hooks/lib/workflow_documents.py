@@ -417,7 +417,7 @@ def quality_candidates(report: JsonObject) -> list[str]:
     """The gate's located warnings, as the same data for lead and reviewers."""
     lines = []
     for finding in report.get("findings", []):
-        if finding.get("status") != "finding":
+        if finding.get("status") != "finding" or finding.get("region", {}).get("scope") == "evaluation":
             continue
         regions = finding.get("region", {}).get("regions") or [region for group in finding.get("evidence", {}).get("duplicates", []) for region in group["regions"]]
         if len(regions) < 2:
