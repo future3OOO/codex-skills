@@ -24,7 +24,7 @@ import sys
 from pathlib import Path
 
 from . import behavior_map
-from ._workflow_db import history, read_active
+from ._workflow_db import cached_arms, history, read_active
 from .command_runner import emit_json as _emit_json, interruptible, run as _run, run_entry as _run_entry
 from .repo_identity import CanonicalRoot, RepoIdentity, resolve_repo_identity
 from .state_store import _active_candidate_tree, _git, is_test_path, path_classification, read_blobs, blob_reader, tree_manifest, utc_timestamp, repo_state_dir, _flock
@@ -47,11 +47,10 @@ def _changed_entries(identity: RepoIdentity, before: str, after: str) -> dict[st
 
 
 @lru_cache(maxsize=128)
-def _name_decreases(identity: RepoIdentity, before: str, after: str, tests: bool) -> tuple[tuple[str, str, int, int, tuple[int, ...]], ...]:
+def _name_decreases(identity: RepoIdentity, before: str, after: str) -> tuple[tuple[str, str, int, int, tuple[int, ...]], ...]:
     """Textual decreases, including strings/comments; never definitions or coverage."""
     entries = [(path, pair) for path, pair in _changed_entries(identity, before, after).items()
-               if is_test_path(path) == tests
-               and (tests or getattr(path_classification(path), "source", False))]
+               if not is_test_path(path) and getattr(path_classification(path), "source", False)]
     blobs = read_blobs(Path(identity.root), [oid for _, pair in entries for oid in pair if oid.strip("0")])
     changed = []
     for path, pair in entries:
@@ -65,35 +64,17 @@ def _name_decreases(identity: RepoIdentity, before: str, after: str, tests: bool
     return tuple(changed)
 
 
-def _source_notes(identity: RepoIdentity, before: str, after: str) -> tuple[list[str], list[str]]:
-    full, compact = [], []
-    for path, name, old, new, lines in _name_decreases(identity, before, after, False):
+def _source_notes(identity: RepoIdentity, before: str, after: str) -> list[str]:
+    compact = []
+    for path, name, old, new, lines in _name_decreases(identity, before, after):
         note = f"{path}:{','.join(map(str, lines))} {name} {old}->{new}"
-        full.append(note)
         if "_" in name or re.search(r"[a-z].*[A-Z]|[A-Z].*[a-z]", name):
             compact.append(note)
-    if full:
-        compact.insert(0, "Original textual occurrences; hints, not proof. Compact view uses underscore/mixed-case names; full token decreases are in sourceNotes in the comparison evidence.")
-    return full, compact
+    if compact:
+        compact.insert(0, "Original textual occurrences; hints, not proof. Compact view uses underscore/mixed-case names; the complete diff remains the source.")
+    return compact
 
 
-def _cleanup_readers(identity: RepoIdentity, baselines: list[str], after: str, changed: set[str]) -> list[str]:
-    names = {name for before in baselines for path, name, _, _, _ in _name_decreases(identity, before, after, True) if path in changed}
-    if not names:
-        return sorted(changed)
-    # Git supplies textual matches. The proposer, not this lookup, selects cases.
-    raw = _git(identity, "grep", "-I", "--no-textconv", "-n", "-z", "-F",
-               *(arg for name in sorted(names) for arg in ("-e", name)), after, accepted=(0, 1))
-    readers = []
-    while raw:
-        location, _, raw = raw.partition(b"\0")
-        number, _, raw = raw.partition(b"\0")
-        line, _, raw = raw.partition(b"\n")
-        path = os.fsdecode(location).removeprefix(after + ":")
-        matches = names & set(NAME.findall(os.fsdecode(line)))
-        if is_test_path(path) and matches:
-            readers.append(f"{path}:{os.fsdecode(number)} ({', '.join(sorted(matches))})")
-    return readers
 
 
 def current_map(identity: RepoIdentity, state: JsonObject, *, fresh: bool = True) -> tuple[list[JsonObject] | None, JsonObject | None]:
@@ -121,7 +102,7 @@ def refresh_proof(identity: RepoIdentity, items: list[JsonObject], *, candidate:
                 command, execution, _ = _comparison_input(identity, proof, recorded=True)
                 arms = (proof["arms"][0], proof["arms"][-1])
                 checked = [(_execution_key(identity, source, proof.get("probeTree", proof["candidateTree"]),
-                                           proof["probeFiles"], command, proof["timeout"], execution),
+                                           _comparison_files(identity, proof), command, proof["timeout"], execution),
                             _input_identity(identity, execution, arm))
                            for source, arm in zip((proof["originalTree"], target), arms)]
                 freshness[key] = {"fresh": all(arm.get("contextKey") == context and arm.get("inputs") == inputs
@@ -175,10 +156,18 @@ def _probe_files(command: list[str], root: Path, support: list[str], virtual: st
     return sorted(paths)
 
 
+def _comparison_files(identity: RepoIdentity, probe: JsonObject) -> list[str]:
+    declared = _command_files(identity, probe) | {os.path.relpath(os.path.normpath(Path(identity.root) / name), identity.root)
+                for name in probe.get("support") or []}
+    return [path for path in probe["probeFiles"] if is_test_path(path) or path in declared]
+
+
 def _environment() -> dict[str, str]:
     owned = {"SHLVL", "_", "PWD", "OLDPWD", "PYTHONHOME", "TMPDIR", "CODEX_WORKFLOW_STATE_ROOT", "PYTHONDONTWRITEBYTECODE",
-             "CODEX_TOOL_CALL_ID", "CODEX_WORKFLOW_EXEC_TRACE"}
-    return {**{key: value for key, value in os.environ.items() if key not in owned},
+             "CODEX_TOOL_CALL_ID", "CODEX_WORKFLOW_EXEC_TRACE", "CODEX_THREAD_ID", "CODEX_SESSION_ID", "CODEX_CI",
+             "CODEX_VERSION", "CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS", "ADVISOR_ACTIVE",
+             "GH_PAGER", "GIT_PAGER", "PAGER", "NO_COLOR", "LC_ALL", "LC_CTYPE"}
+    return {**{key: value for key, value in os.environ.items() if key not in owned and not key.startswith("CODEX_ADVISOR_")},
             "SHLVL": "0", "PYTHONDONTWRITEBYTECODE": ""}
 
 
@@ -226,6 +215,10 @@ def _input_identity(identity: RepoIdentity, execution: JsonObject, arm: JsonObje
             value = None
         metadata.append((name, os.path.realpath(name), value))
     lookups = dict(arm.get("lookups", {}))
+    origin = lookups.get("bwrap")
+    if origin is not None:
+        lookups = {name: execution["search"] if search == origin or origin.startswith(search + os.pathsep) else search
+                   for name, search in lookups.items()}
     if execution.get("lookup"):
         lookups[execution["lookup"]] = execution["search"]
     metadata.extend(("lookup:" + name, _executable(identity, name, {"PATH": search})) for name, search in sorted(lookups.items()))
@@ -252,12 +245,9 @@ def _input_identity(identity: RepoIdentity, execution: JsonObject, arm: JsonObje
 
 def _execution_key(identity: RepoIdentity, source: str, probe: str, files: list[str],
                    command: list[str], timeout: float, execution: JsonObject) -> str:
-    config = json.dumps([command, timeout, execution], sort_keys=True).encode()
-    inputs = (_EXECUTION.get() or {}).get("inputs", {})
-    if "producer" not in inputs:
-        inputs["producer"] = b"".join((Path(__file__).parent / name).read_bytes()
-                                    for name in ("tdd_workflow.py", "command_runner.py", "behavior_map.py", "state_store.py"))
-    return hashlib.sha256(_source_input(identity, source, probe, tuple(files)) + config + inputs["producer"]).hexdigest()
+    config = json.dumps([command, timeout, {key: value for key, value in execution.items()
+                                           if key not in {"search", "lookup"}}], sort_keys=True).encode()
+    return hashlib.sha256(_source_input(identity, source, probe, tuple(files)) + config).hexdigest()
 
 
 def _observed_inputs(identity: RepoIdentity, root: Path, temporary: Path, trace: Path,
@@ -616,7 +606,7 @@ def _execute_case(identity: RepoIdentity, source_tree: str, root: Path,
         trace = Path(inherited) if inherited else Path(temporary) / "exec.trace"
         offset = trace.stat().st_size if inherited else 0
         env["CODEX_WORKFLOW_EXEC_TRACE"] = str(trace)
-        env.update(PYTHONPATH=os.pathsep.join(filter(None, (identity.root, env.get("PYTHONPATH")))), PWD=identity.root,
+        env.update(PYTHONPATH=os.pathsep.join(dict.fromkeys(filter(None, (str(identity.root), *env.get("PYTHONPATH", "").split(os.pathsep))))), PWD=identity.root,
                    TMPDIR=temporary, CODEX_WORKFLOW_STATE_ROOT=str(Path(temporary) / "state"))
         actual = [_executable(identity, command[0], env), *command[1:]]
         binding = ["bwrap", "--die-with-parent", "--dev-bind", "/", "/",
@@ -738,72 +728,41 @@ def _run_probe(identity: RepoIdentity, probe: object, candidate: str, original: 
         return {"kind": "probe", "error": f"probe: {exc}"}
 
 
-def _command_files(run: JsonObject) -> set[str]:
+def _command_files(identity: RepoIdentity, run: JsonObject) -> set[str]:
     """Explicit file arguments, not an inference from frozen support membership."""
-    return {path for path in run["probeFiles"] for argument in shlex.split(run["command"])
-            if argument.split("::", 1)[0] == path or argument.split("::", 1)[0].endswith("/" + path)}
+    frozen, selected = set(run["probeFiles"]), set()
+    for argument in shlex.split(run["command"]):
+        values = {argument.split("::", 1)[0]}
+        if argument.startswith("-"):
+            values.add(argument.split("=", 1)[-1].split("::", 1)[0])
+        matches = frozen & {os.path.relpath(os.path.normpath(Path(identity.root) / value), identity.root)
+                            for value in values}
+        if len(matches) > 1:
+            matches &= {os.path.relpath(os.path.normpath(Path(identity.root) / name), identity.root)
+                        for name in run.get("support") or []}
+            if not matches:
+                raise WorkflowError("ambiguous file argument: " + argument + "; replay with --support naming the captured input")
+        selected.update(matches)
+    return selected
 
 
 def _maintained_tests(identity: RepoIdentity, batches: list[JsonObject], maintained: list[JsonObject] | None,
-                      before: str | None, after: str, cached: list[JsonObject], validation: JsonObject | None = None) -> str | None:
-    """Check maintained commands and retained failure detectors; frozen replay stays separate.
-
-    Current map commands select the surviving maintained checks. Required future coverage and
-    assertion equivalence beyond the recorded source witnesses remain review obligations.
-    """
-    baselines = [before] if before else list(dict.fromkeys(run.get("probeTree", run["candidateTree"]) for run in batches))
-    changed = {path for baseline in baselines for path in _changed_entries(identity, baseline, after) if is_test_path(path)}
-    if not changed:
+                      before: str, after: str, cached: list[JsonObject], validation: JsonObject | None) -> str | None:
+    changed = set(_changed_entries(identity, before, after))
+    if not any(is_test_path(path) for path in changed):
         return None
-    present = {os.fsdecode(path) for path in _git(identity, "ls-tree", "-r", "--name-only", "-z", after).split(b"\0") if path}
-    owners = {}
-    for item in maintained or []:
-        owners.setdefault((item.get("comparison") or {}).get("runIndex"), []).append(item)
-    active = [run for run in batches if maintained is None or run["runIndex"] in owners]
-    if validation:
-        # The supplied operation selects survivors in edited entry files. Frozen
-        # commands still replay their unchanged original case code independently.
-        active = [run for run in active if not _command_files(run) & changed]
-    if validation and all([arm["key"] for arm in run["arms"]] != [arm["key"] for arm in validation["arms"]] for run in active):
-        active.append(validation)
-    readers = _cleanup_readers(identity, baselines, after, changed)
-    required = {line.rsplit(":", 1)[0] for line in readers} - changed
-    # Only explicit command arguments establish selected source membership;
-    # frozen support membership and word matches never select a case.
-    active.extend(run for run in cached if run not in active and _command_files(run) & required
-                  and run["candidateTree"] == before and run["arms"][-1]["outcome"] == "passed")
-    covered = set().union(*(_command_files(run) for run in active)) if active else set()
-    if required - covered:
-        return "surviving readers need a focused case command: " + "; ".join(line for line in readers if line.rsplit(":", 1)[0] in required - covered)
-    if validation is None:
-        if readers or changed & present:
-            locations = readers or sorted(changed & present)
-            return ("maintained cleanup scope needs a focused check: " + "; ".join(locations[:8])
-                    + (f"; {len(locations) - 8} more textual matches" if len(locations) > 8 else "")
-                    + ". Supply its surviving-case command after -- with this change. File membership and a passing unrelated batch do not establish reader coverage.")
-    for run in active:
-        selected = _command_files(run)
+    present = set(_tree_entries(identity, after))
+    for run in [*batches, *([validation] if validation else [])]:
+        selected = _command_files(identity, run)
         scratch = sorted(path for path in selected if path.startswith("tests/.workflow-probes/"))
-        live_tree = _indexed(identity, after, (("restore", "--staged", "--source=" + run["probeTree"], "--", *scratch), None)) if scratch else after
         available = present | set(scratch)
-        if selected and not selected & available:
-            continue  # a removed one-off entry; its immutable command still replays
+        if not selected or not selected & available:
+            continue
+        live_tree = _indexed(identity, after, (("restore", "--staged", "--source=" + run["probeTree"], "--", *scratch), None)) if scratch else after
         live = {**run, "probeTree": live_tree, "probeFiles": [path for path in run["probeFiles"] if path in available]}
         delivery = _compare(identity, after, after, live, cached)["arms"][-1]
         if delivery["outcome"] != "passed":
-            return ("affected surviving maintained command fails with current support: " + run["command"]
-                    + "\n" + str(delivery.get("output") or "")[:800])
-        # A weakened test must not turn an already observed detector failure into green.
-        protected = {tuple(arm["key"] for arm in batch["arms"]) for batch in batches}
-        for prior in list(cached):
-            if prior["command"] != run["command"] or not (tuple(arm["key"] for arm in prior["arms"]) in protected
-                    or prior["arms"][0]["outcome"] == "passed" and prior["arms"][-1]["outcome"] == "failed"):
-                continue
-            for source in {arm["sourceTree"] for arm in prior["arms"] if arm["outcome"] == "failed"}:
-                reference = _compare(identity, source, source, prior, cached)["arms"][-1]
-                reduced = _compare(identity, source, source, live, cached)["arms"][-1]
-                if reference["outcome"] != reduced["outcome"]:
-                    return "maintained cleanup changed a recorded detector's exit result: " + run["command"]
+            return "required surviving named case fails: " + run["command"] + "\n" + str(delivery.get("output") or "")[-800:]
     return None
 
 
@@ -830,7 +789,7 @@ def _run_change(identity: RepoIdentity, batches: list[JsonObject], change: objec
         return {"kind": "change", "error": measured["error"]}
     repaired = cost_recheck and measured is not None and "error" not in measured and measured.get("candidate") == "passed"
     if repaired:
-        before, after = None, candidate
+        before, after = frozen["originalTree"], candidate
     else:
         patch = change.encode("utf-8", "replace") + (b"" if change.endswith("\n") else b"\n")  # unencodable text cannot apply
         try:
@@ -842,7 +801,7 @@ def _run_change(identity: RepoIdentity, batches: list[JsonObject], change: objec
             except RuntimeError:
                 return {"kind": "change", "error": "change does not apply to the candidate"}
     cost = None
-    maintenance = before is None or any(is_test_path(path) for path in _changed_entries(identity, before, after))
+    maintenance = any(is_test_path(path) for path in _changed_entries(identity, before, after))
     if probe is not None and not repaired:
         if not maintenance and (measured is None or measured.get("candidate") not in {"passed", "failed"}):
             return {"kind": "change", "error": "replacement probe did not establish a candidate outcome"}
@@ -852,11 +811,13 @@ def _run_change(identity: RepoIdentity, batches: list[JsonObject], change: objec
             return {"kind": "change", "error": "replacement did not pass the same cost probe", "comparison": cost}
     if not repaired and (refusal := _shape_refusal(identity, before, after, cost is not None and cost["valid"] and measured["candidate"] == "failed")):
         return {"kind": "change", "error": refusal}
+    if after == candidate:
+        return measured if repaired else {"kind": "change", "applied": True, "candidate": "passed", **({"comparison": cost} if cost else {})}
     if error := _maintained_tests(identity, batches, maintained, before, after, cached,
                                   measured.get("comparison") if measured else None):
         return {"kind": "change", "error": error}
     for run in batches:
-        replay = _compare(identity, after, after, run, cached)
+        replay = _compare(identity, after, after, dict(run), cached)
         if replay.get("breakError") and frozen and frozen.get("breakOid"):
             replay = _compare(identity, after, after, {**run, "breakOid": frozen["breakOid"]}, cached)
         arm = replay["arms"][-1]
@@ -865,7 +826,7 @@ def _run_change(identity: RepoIdentity, batches: list[JsonObject], change: objec
         outcome = "timed-out" if arm["timedOut"] else arm["outcome"]
         if outcome != "passed":
             if outcome == "failed" and after != candidate:
-                control = _compare(identity, candidate, candidate, run, cached)["arms"][-1]
+                control = _compare(identity, candidate, candidate, dict(run), cached)["arms"][-1]
                 if control["outcome"] != "passed":
                     return {"kind": "change", "error": "current candidate does not pass the retained batch: " + run["command"]}
             reason = (f"recorded batch `{run['command']}` ran past {run['timeout']:g} s: replace it with direct probes of the changed code"
@@ -891,11 +852,13 @@ def binds(execution: JsonObject) -> bool:
 def _retained(identity: RepoIdentity, state: JsonObject) -> list[tuple[JsonObject, JsonObject]]:
     """Each observation of every review or final finding that binds by the current rule: a finding settles only with
     all of them; one recorded under an earlier rule that no longer binds is re-executed as a report line."""
-    retained, rejected = [], set()
+    retained, rejected, intakes = [], set(), {}
     for entry in state.get("findingStates") or []:
         for ref in [{"evidenceId": entry["intakeEvidenceId"], "id": entry["findingId"]}, *entry.get("observations", [])]:
             ref = {"evidenceId": ref["evidenceId"], "id": ref["id"]}
-            intake = evidence_document(identity, ref["evidenceId"]) or {}
+            if ref["evidenceId"] not in intakes:
+                intakes[ref["evidenceId"]] = evidence_document(identity, ref["evidenceId"], restore_runs=False) or {}
+            intake = intakes[ref["evidenceId"]]
             finding = next((item for item in intake.get("findings", []) if item["id"] == ref["id"]), None)
             if finding and finding.get("rejected") is True:
                 rejected.add(tuple(finding["priorFinding"][key] for key in ("evidenceId", "id")))
@@ -905,35 +868,37 @@ def _retained(identity: RepoIdentity, state: JsonObject) -> list[tuple[JsonObjec
             if tuple(finding["ref"][key] for key in ("evidenceId", "id")) not in rejected]
 
 
-def execute_findings(identity: RepoIdentity, state: JsonObject, findings: list[JsonObject], *, captured: JsonObject | None = None) -> JsonObject:
-    """Execute new findings and reevaluate all retained bindings, including resolved findings, on the measured candidate."""
-    from .workflow_state import _finding_unresolved
-    candidate = _active_candidate_tree(identity)
+def execute_findings(identity: RepoIdentity, state: JsonObject, findings: list[JsonObject], *, captured: JsonObject | None = None,
+                     retained: list[tuple[JsonObject, JsonObject]] | None = None, candidate: str | None = None) -> JsonObject:
+    """Execute only submitted observations; gates supply uncached retained observations explicitly."""
+    from .workflow_state import _finding_state
+    candidate = candidate or _active_candidate_tree(identity)
+    rejected = [finding["priorFinding"] for finding in findings if finding.get("rejected") is True]
+    withdrawn = []
+    if rejected:
+        targets = [_finding_state(state, ref["evidenceId"], ref["id"]) for ref in rejected]
+        selected = [entry for entry in state.get("findingStates", []) if any(entry is target for target in targets)]
+        remaining = [entry for entry, finding in _retained(identity, {**state, "findingStates": selected})
+                     if finding["ref"] not in rejected]
+        withdrawn = [{**ref, "execution": {"kind": "claim"}} for ref, target in zip(rejected, targets)
+                     if target is not None and all(target is not entry for entry in remaining)]
+    if retained is None and not any("probe" in finding or "change" in finding for finding in findings):
+        return {"measuredTree": candidate, "measuredEvidence": state.get("tddEvidence"),
+                "findings": [{**finding, "execution": {"kind": "claim"}, "material": False} for finding in findings],
+                "reexecuted": withdrawn, "runs": []}
     original = _git(identity, "rev-parse", f"{state['passStartOid']}^{{tree}}").decode().strip()
     if (scope := _EXECUTION.get()) and scope.get("cache_root"):
         scope["kept"] = {_source_input(identity, tree, tree, ()): scope["cache_root"] / role
                          for tree, role in ((original, "original"), (candidate, "candidate"))}
     current = evidence_document(identity, state.get("tddEvidence")) or {}
-    used = {(item.get("comparison") or {}).get("runIndex") for item in current.get("behaviorMap") or []}
     evaluation = _evaluation(identity, state, current)
-    maintained = [*(current.get("behaviorMap") or []),
+    maintained = [*behavior_map.current_cases(current.get("behaviorMap") or [], current.get("runs") or []),
                   *({**entry, "comparison": current["runs"][entry["runIndex"]]} for entry in evaluation.values())]
-    used.update(entry["runIndex"] for entry in evaluation.values())
+    used = {(item.get("comparison") or {}).get("runIndex") for item in maintained}
     batches = [run for run in current.get("runs") or [] if run["runIndex"] in used]
     cached = list(current.get("runs") or [])
-    rejected = [finding["priorFinding"] for finding in findings if finding.get("rejected") is True]
-    retained = [(entry, finding) for entry, finding in _retained(identity, state) if finding["ref"] not in rejected]
-    references = {state.get("codeReviewEvidence"), state.get("codeReviewIntakeEvidence"), (state.get("finalReview") or {}).get("intakeEvidence"),
-                  *(entry.get("dispositionEvidenceId") for entry, _ in retained),
-                  *(finding["ref"]["evidenceId"] for _, finding in retained)}
-    keys = {tuple(arm.get("key") for arm in run["arms"]) for run in cached}
-    tdd_keys = set(keys)
-    for reference in references - {None}:
-        for prior in (evidence_document(identity, reference) or {}).get("runs", []):
-            key = tuple(arm.get("key") for arm in prior["arms"])
-            if key not in keys:
-                cached.append(prior)
-                keys.add(key)
+    retained = [(entry, finding) for entry, finding in retained or [] if finding["ref"] not in rejected]
+    loaded_keys = {tuple(arm.get("key") for arm in run["arms"]) for run in cached}
     def run(finding: JsonObject, first: bool) -> JsonObject:
         timeout = next((batch["timeout"] for batch in reversed(current.get("runs") or [])
                         if batch["command"] == (finding.get("probe") or {}).get("command")),
@@ -962,18 +927,43 @@ def execute_findings(identity: RepoIdentity, state: JsonObject, findings: list[J
     for finding in findings:
         execution = run(finding, True)
         executed.append({**finding, "execution": execution, "material": binds(execution)})
-    again = []
+    again = list(withdrawn)
     for entry, finding in retained:
         execution = run(finding, False)
         again.append({**finding["ref"], "execution": {**execution, **{key: finding["execution"][key]
                                                                      for key in ("original",) if key in finding["execution"]}}})
-    again += [{"evidenceId": entry["intakeEvidenceId"], "id": entry["findingId"], "execution": {"kind": "claim"}}
-              for entry in state.get("findingStates") or []  # an open finding with no executed evidence is a report line
-              if entry.get("stage") in {"code-review", "final"} and _finding_unresolved(entry)
-              and all(entry is not other for other, _ in retained)]
     return {"measuredTree": candidate, "measuredEvidence": state.get("tddEvidence"), "findings": executed, "reexecuted": again,
             "runs": list({tuple(arm.get("key") for arm in run["arms"]): run for run in cached
-                          if tuple(arm.get("key") for arm in run["arms"]) not in tdd_keys}.values())}
+                          if tuple(arm.get("key") for arm in run["arms"]) not in loaded_keys}.values())}
+
+
+
+@_comparison_scope()
+def check_retained(identity: RepoIdentity, slug: str | None, workflow_id: str | None) -> JsonObject:
+    from .workflow_state import commit_retained_checks, finding_references, _finding_unresolved
+    state = _bound_instance_state(read_active(identity), slug, workflow_id)
+    cache = repo_state_dir(identity) / "execution-trees" / state["workflowId"]
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    with _flock(cache.with_suffix(".lock")):
+        state = _bound_instance_state(read_active(identity), slug, workflow_id)
+        tree = _active_candidate_tree(identity)
+        references = finding_references(state)
+        cached = evidence_document(identity, state.get("retainedChecks", {}).get(tree), restore_runs=False) or {}
+        if cached.get("workflowId") != state["workflowId"] or cached.get("candidateTree") != tree:
+            cached = {}
+        if cached.get("findingRefs") == references:
+            return state
+        retained = _retained(identity, state)
+        reports = [{"evidenceId": entry["intakeEvidenceId"], "id": entry["findingId"], "execution": {"kind": "claim"}}
+                   for entry in state.get("findingStates", []) if _finding_unresolved(entry)
+                   and all(entry is not other for other, _ in retained)]
+        if not retained and not reports:
+            return state
+        _EXECUTION.get().update(identity=identity, cache_root=cache)
+        execution = execute_findings(identity, state, [], retained=retained)
+        execution["reexecuted"].extend(reports)
+        _finish_kept_trees()
+        return commit_retained_checks(identity, str(state["slug"]), str(state["workflowId"]), execution, references)
 
 
 def _evaluation(identity: RepoIdentity, state: JsonObject, current: JsonObject | None) -> JsonObject:
@@ -985,7 +975,7 @@ def _evaluation(identity: RepoIdentity, state: JsonObject, current: JsonObject |
                   for reference in event["evidenceIds"])
     for reference in references:
         document = evidence_document(identity, reference) or {}
-        behavior_map.retain_evaluation(document.get("behaviorMap", []), required, retained)
+        behavior_map.retain_evaluation(behavior_map.recorded_map(document) or [], required, retained)
         if retained.keys() == required:
             break
     return retained
@@ -1000,10 +990,12 @@ def _comparison_input(identity: RepoIdentity, probe: JsonObject, *, recorded: bo
     if recorded:
         return command, probe["execution"], environment
     environment = _environment() | environment
+    environment["PYTHONPATH"] = os.pathsep.join(dict.fromkeys(
+        os.path.normpath(os.path.join(identity.root, entry)) for entry in (str(identity.root), *environment.get("PYTHONPATH", "").split(os.pathsep))))
     execution = {"executable": _executable(identity, command[0], environment),
                  "search": os.pathsep.join(os.path.join(identity.root, entry) for entry in os.get_exec_path(environment)),
                  "lookup": command[0] if not os.path.dirname(command[0]) else None,
-                 "environment": hashlib.sha256(json.dumps(sorted(environment.items())).encode()).hexdigest()}
+                 "environment": hashlib.sha256(json.dumps(sorted((key, value) for key, value in environment.items() if key != "PATH")).encode()).hexdigest()}
     return command, execution, environment
 
 
@@ -1043,14 +1035,17 @@ def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes:
                 cache.setdefault(context, {})[found["key"]] = found
             arms.append({**found, "requestedTree": source})
         keys = [arm["key"] for arm in arms]
+        metadata = {"command": probe["command"], "support": probe.get("support") or [], "timeout": probe["timeout"],
+                    "behaviorId": probe.get("behaviorId"), "probeFiles": probe["probeFiles"],
+                    "candidateTree": after, "probeTree": tree, "originalTree": before}
         retained = next((run for run in reversed(runs) if run["candidateTree"] == after
-                         and [arm.get("key") for arm in run["arms"]] == keys), None)
+                         and [arm.get("key") for arm in run["arms"]] == keys
+                         and all(run.get(key) == value for key, value in metadata.items())), None)
         if retained is not None:
             return retained
         outcomes = [arm["outcome"] for arm in arms]
         valid = outcomes[-1] == "passed" and not arms[0]["timedOut"] and outcomes[0] in {"passed", "failed"}
-        run = {**{key: probe[key] for key in ("command", "probeFiles", "support", "timeout", "behaviorId") if key in probe},
-               "runIndex": len(runs), "candidateTree": after, "probeTree": tree, "originalTree": before, "candidateKey": keys[-1],
+        run = {**metadata, "runIndex": len(runs), "candidateKey": keys[-1],
                "comparison": "incomplete" if not valid else "preserved" if all(value == "passed" for value in outcomes) else "changed",
                "arms": arms, "valid": valid, "execution": execution, "exitCode": 0 if valid else 1,
                "timedOut": any(arm["timedOut"] for arm in arms)}
@@ -1058,12 +1053,21 @@ def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes:
         return run
     pending = {}
     def schedule(source, probe, parent=None):
-        files, timeout = probe["probeFiles"], probe["timeout"]
+        files, timeout = _comparison_files(identity, probe), probe["timeout"]
         command, execution, environment = _comparison_input(identity, probe)
         tree = probe.get("probeTree", probe["candidateTree"])
         context = _execution_key(identity, source, tree, files, command, timeout, execution)
         found = next((arm for arm in reversed(list(cache.get(context, {}).values()))
                       if arm["key"] == hashlib.sha256((context + _input_identity(identity, execution, arm)).encode()).hexdigest()), None)
+        if found is None:
+            workflows = scope.setdefault("workflow_ids", {})
+            if identity.key not in workflows:
+                workflows[identity.key] = instance_id(read_active(identity) or {})
+            prior = cached_arms(identity, workflows[identity.key], context) if workflows[identity.key] else []
+            found = next((arm for arm in prior if arm["key"] == hashlib.sha256(
+                (context + _input_identity(identity, execution, arm)).encode()).hexdigest()), None)
+            if found is not None:
+                cache.setdefault(context, {})[found["key"]] = found
         if found is None:
             if context not in pending:
                 state, frozen = _prepared_tree(identity, scope, parent or source, tree, files)
@@ -1097,7 +1101,8 @@ def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes:
                 key = (source, oid)
                 if key not in scope["breaks"]:
                     prior = next((run for run in runs if run.get("breakOid") == oid and run.get("brokenSource") == source), None)
-                    if prior:  # validated and canonical when first accepted
+                    if (prior and _git(identity, "diff", "--no-ext-diff", "--full-index", source, prior["candidateTree"])
+                            == _git(identity, "cat-file", "blob", oid)):
                         scope["breaks"][key] = (oid, prior["candidateTree"])
                     else:
                         broken = _indexed(identity, source, (("apply", "--cached", "-C1", "--unidiff-zero", "-"), _git(identity, "cat-file", "blob", oid)))
@@ -1160,17 +1165,17 @@ def _run_tdd(values: list[str]) -> int:
     parser.add_argument("--workflow-id")
     parser.add_argument("--expected-candidate-tree")
     parser.add_argument("--tdd-evidence", default=argparse.SUPPRESS)
-    parser.add_argument("--verdict", help="review completion; use the source-bound command from checkpoint")
+    parser.add_argument("--verdict", help="record review completion without running cases; use the source-bound checkpoint command")
     parser.add_argument("--report", action="append", default=[], help="finding's owning invariant, or non-executable report lines with a verdict")
     parser.add_argument("--reject", action="append", default=[], metavar="EVIDENCE:ID=REASON",
-                        help="withdraw this author's invalid observation, retaining its raw evidence")
+                        help="withdraw this author's invalid observation without running cases; retain its raw evidence")
     parser.add_argument("--change", action="append", default=[], help="ITEM=FILE supplies a behavior-breaking diff for its commands (probe for authored probes); a bare FILE submits an authored replacement")
     parser.add_argument("--as", dest="author", choices=("review", "final"), help="execute and record this author's finding in the same call")
     parser.add_argument("--path", help="new probe file outside the checkout; existing cases need only their command")
     parser.add_argument("--behavior-id", help="map item for a single trailing command, or select recorded cases to replay")
     parser.add_argument("--case", action="append", nargs=2, default=[], metavar=("ITEM_OR_DASH", "COMMAND"),
                         help="repeat for the whole batch; each command is one case; '-' leaves it unbound")
-    parser.add_argument("--support", action="append")
+    parser.add_argument("--support", action="append", help="name support; recorded replay uses its captured immutable bytes")
     parser.add_argument("--timeout", type=float)
     args = parser.parse_args(values[:dash])
     if sum(value.partition("=")[0] == "--behavior-id" for value in values[:dash]) > 1:
@@ -1185,8 +1190,6 @@ def _run_tdd(values: list[str]) -> int:
     scope = _EXECUTION.get()
     cache = repo_state_dir(identity) / "execution-trees" / workflow_id
     cache.parent.mkdir(parents=True, exist_ok=True)
-    scope["resources"].enter_context(_flock(cache.with_suffix(".lock")))
-    state = _bound_instance_state(read_active(identity), args.slug, workflow_id)
     scope.update(identity=identity, cache_root=cache)
     slug = str(state["slug"])
     if args.path and not (command or args.case) or args.timeout is not None and args.timeout <= 0:
@@ -1259,7 +1262,9 @@ def _run_tdd(values: list[str]) -> int:
             findings.append({"id": "REPORT-" + hashlib.sha256(value.encode()).hexdigest()[:16],
                              "claim": reason.strip(), "kind": "nonbehavioral", "rejected": True,
                              "priorFinding": {"evidenceId": evidence, "id": identifier}})
-        execution = execute_findings(identity, state, findings, captured=captured)
+        if not args.verdict and any("probe" in finding or "change" in finding for finding in findings):
+            scope["resources"].enter_context(_flock(cache.with_suffix(".lock")))
+        execution = execute_findings(identity, state, findings, captured=captured, candidate=candidate)
         _finish_kept_trees()
         document = {"schemaVersion": 1, "kind": "intake", "workflowId": workflow_id, "slug": slug,
                     "stage": "code-review" if args.author == "review" else "final",
@@ -1268,7 +1273,7 @@ def _run_tdd(values: list[str]) -> int:
                     "tddEvidence": reviewed_evidence if args.verdict else execution["measuredEvidence"],
                     "findings": execution["findings"], **({"verdict": args.verdict} if args.verdict else {})}
         state, evidence = commit_findings(identity, slug, workflow_id, document, execution)
-        receipt = operation_receipt(state, identity, kind="tdd", summaryId=evidence)
+        receipt = operation_receipt(state, identity, kind="tdd", summaryId=evidence, obligations=False)
         if args.verdict:
             _emit_json(receipt, sort_keys=False)
             return 0
@@ -1279,6 +1284,8 @@ def _run_tdd(values: list[str]) -> int:
             row = {"case": (finding.get("probe") or {}).get("command", replacement), "findingId": finding["id"],
                    "result": "withdrawn" if finding.get("rejected") else "refused" if refused else "binds" if finding["material"] else "doesn't bind"}
             compared = result.get("comparison") or {}
+            if result.get("failure"):
+                row["failure"] = result["failure"]
             if compared:
                 row["exits"] = [arm["exitCode"] for arm in compared["arms"]]
             if refused:
@@ -1294,11 +1301,13 @@ def _run_tdd(values: list[str]) -> int:
         return 2 if any(row["result"] == "refused" for row in rows) else 0
     if replacement or args.report:
         raise WorkflowError("replacements and reports require --as review or --as final; a lead break is ITEM=FILE")
+    if args.case and (command or args.behavior_id):
+        raise WorkflowError("use repeated --case entries or one trailing command")
+    scope["resources"].enter_context(_flock(cache.with_suffix(".lock")))
+    state = _bound_instance_state(read_active(identity), slug, workflow_id)
     items, current = current_map(identity, state, fresh=False)
     if items is None:
         raise WorkflowError("tdd requires a recorded probe list")
-    if args.case and (command or args.behavior_id):
-        raise WorkflowError("use repeated --case entries or one trailing command")
     signature = json.dumps(items, sort_keys=True)
     runs = list((current or {}).get("runs", []))
     evaluation = _evaluation(identity, state, current)
@@ -1331,19 +1340,39 @@ def _run_tdd(values: list[str]) -> int:
         for entry in items:
             if args.behavior_id and entry["id"] != args.behavior_id:
                 continue
+            observations = {(case.get("comparison") or {}).get("command"): case.get("comparison")
+                            for case in behavior_map.current_cases([entry], runs)}
             for value in entry.get("boundaryInputs") or []:
-                recorded = next((run for run in reversed(runs) if run["command"] == value), None)
-                if recorded is None:
+                recorded = observations.get(value)
+                if not recorded or "runIndex" not in recorded:
                     raise WorkflowError("capture the pending command with --case " + entry["id"] + " " + shlex.quote(value))
                 selected.append((entry, recorded))
         if args.behavior_id and not any(entry["id"] == args.behavior_id for entry in items):
             raise WorkflowError("unknown Behavior Map item")
+    support_overrides = {}
+    if args.support and not specs:
+        names = {os.path.relpath(os.path.normpath(Path(identity.root) / name), identity.root) for name in args.support}
+        owners = {entry["id"] for entry, _ in selected}
+        targets = {probe["runIndex"] for _, probe in selected} | {
+            entry["runIndex"] for entry in evaluation.values() if entry["id"] in owners}
+        eligible = set()
+        for index in targets:
+            probe = runs[index]
+            support = probe.get("support") or []
+            inputs = {name for name in probe["probeFiles"] if is_test_path(name)} | _command_files(
+                identity, {**probe, "support": [*support, *names]})
+            eligible.update(inputs)
+            declared = {os.path.relpath(os.path.normpath(Path(identity.root) / name), identity.root) for name in support}
+            support_overrides[index] = {**probe, "support": [*support, *sorted((names & inputs) - declared)]}
+        if names - eligible:
+            raise WorkflowError("recorded replay support must name a captured test or command input; supply a command to capture new support")
+        selected = [(entry, support_overrides[probe["runIndex"]]) for entry, probe in selected]
     for entry, probe in selected:
         identifier = entry["id"] if entry else "-"
         if identifier in breaks:
             probe["breakOid"] = breaks[identifier]
         elif entry:
-            known = next((run["breakOid"] for run in reversed(runs) if run.get("behaviorId") == identifier and run.get("breakOid")), None)
+            known = (entry.get("comparison") or {}).get("breakOid")
             if known:
                 probe["breakOid"] = known
     unknown = set(breaks) - {entry["id"] if entry else "-" for entry, _ in selected}
@@ -1353,17 +1382,37 @@ def _run_tdd(values: list[str]) -> int:
     for (entry, _), run in zip(selected, compared):
         if entry is not None:
             prior = entry.get("comparison") or {}
-            if any(prior.get(key) != run.get(key) for key in ("runIndex", "candidateKey", "breakOid", "controlKey", "sensitive", "breakExit")) or prior.get("obligation") != behavior_map.obligation(entry):
-                entry["comparison"] = {**run, "obligation": behavior_map.obligation(entry)}
+            references = prior.get("caseRuns", {prior["command"]: prior["runIndex"]} if prior.get("command") else {}) if prior.get("obligation") == behavior_map.obligation(entry) else {}
+            references = {**references, run["command"]: run["runIndex"]}
+            if prior.get("caseRuns") != references or any(prior.get(key) != run.get(key) for key in ("runIndex", "candidateKey", "breakOid", "controlKey", "sensitive", "breakExit")) or prior.get("obligation") != behavior_map.obligation(entry):
+                entry["comparison"] = {**run, "obligation": behavior_map.obligation(entry), "caseRuns": references}
             behavior_map.retain_evaluation([entry], {entry["id"]}, evaluation, runs)
-    retained = list(dict.fromkeys(entry["runIndex"] for entry in evaluation.values()))
+    retained = list(dict.fromkeys([*(entry["runIndex"] for entry in evaluation.values()),
+                                  *((entry.get("comparison") or {})["runIndex"] for entry in behavior_map.current_cases(items, runs) if entry.get("comparison"))]))
+    if specs or args.behavior_id:
+        selected_contexts = {(run["command"], tuple(arm["contextKey"] for arm in run["arms"])) for run in compared}
+        def same_execution(run):
+            if not any(command == run["command"] for command, _ in selected_contexts):
+                return False
+            command, execution, _ = _comparison_input(identity, run)
+            contexts = tuple(_execution_key(identity, source, run["probeTree"], _comparison_files(identity, run),
+                                             command, run["timeout"], execution) for source in (original, candidate))
+            return (run["command"], contexts) in selected_contexts
+        retained = [index for index in retained if same_execution(support_overrides.get(index, runs[index]))]
     updated_breaks = {entry["id"]: probe["breakOid"] for entry, probe in selected if entry and probe.get("breakOid")}
-    replayed = _compare_many(identity, original, candidate, [{**runs[index], "breakOid": updated_breaks.get(runs[index].get("behaviorId"), runs[index].get("breakOid"))} for index in retained], runs)
+    replayed = _compare_many(identity, original, candidate, [{**support_overrides.get(index, runs[index]),
+        "breakOid": updated_breaks.get(runs[index].get("behaviorId"), runs[index].get("breakOid"))} for index in retained], runs)
     _finish_kept_trees()
     indexes = dict(zip(retained, (run["runIndex"] for run in replayed)))
     for frozen in evaluation.values():
-        frozen["runIndex"] = indexes[frozen["runIndex"]]
+        frozen["runIndex"] = indexes.get(frozen["runIndex"], frozen["runIndex"])
     for entry in items:
+        proof = entry.get("comparison") or {}
+        if references := proof.get("caseRuns"):
+            updated = {command: indexes.get(index, index) for command, index in references.items()}
+            if updated != references or indexes.get(proof["runIndex"], proof["runIndex"]) != proof["runIndex"]:
+                entry["comparison"] = {**runs[indexes.get(proof["runIndex"], proof["runIndex"])], "obligation": proof["obligation"], "caseRuns": updated}
+            continue
         frozen = evaluation.get(entry["id"])
         if not any(entry is current_entry for current_entry, _ in selected) and frozen and behavior_map.obligation(entry) == behavior_map.obligation(frozen) and entry.get("boundaryInputs") == frozen.get("boundaryInputs"):
             entry["comparison"] = {**runs[frozen["runIndex"]], "obligation": behavior_map.obligation(entry)}
@@ -1375,13 +1424,11 @@ def _run_tdd(values: list[str]) -> int:
         evidence = state["tddEvidence"]
     else:
         document = {"workflowId": workflow_id, "slug": slug, "kind": "comparison", "behaviorMap": items,
-                    "evaluation": evaluation, "runs": runs, "candidateTree": candidate, "updatedAt": utc_timestamp()}
-        notes, _ = _source_notes(identity, original, candidate)
-        if notes:
-            document["sourceNotes"] = notes
+                    "evaluation": evaluation, "runs": runs, "comparedRuns": [run["runIndex"] for run in compared],
+                    "candidateTree": candidate, "updatedAt": utc_timestamp()}
         state, evidence, readiness = commit_tdd(identity, slug, workflow_id, document,
                     expected_evidence_id=state.get("tddEvidence"), tree_before=before)
-    _, notes = _source_notes(identity, original, candidate)
+    notes = _source_notes(identity, original, candidate)
     rows = []
     for (entry, _), run in zip(selected, compared):
         row = {"case": run["command"], "exits": [arm["exitCode"] for arm in run["arms"]], "breakExit": run.get("breakExit")}
@@ -1396,14 +1443,15 @@ def _run_tdd(values: list[str]) -> int:
             row["unexpected"] = errors
         rows.append(row)
     receipt = operation_receipt(state, identity, kind="tdd", summaryId=evidence, readiness=readiness,
-                                cases=rows, **({"sourceNotes": notes} if notes else {}))
+                                cases=rows, preparation=[{"tree": state["source"], "wait": state["wait"]} for state in scope["sources"].values()],
+                                **({"sourceNotes": notes} if notes else {}))
     _emit_batch(receipt)
     return 0 if all(run["valid"] for run in compared) and not any(row.get("unexpected") for row in rows) and not any(run.get("bindingError") for run in compared) else 2
 
 
 def map_update(identity: RepoIdentity, state: JsonObject, value: JsonObject) -> JsonObject:
     if set(value) not in ({"items"}, {"added"}, {"removed"}):
-        raise ValueError("tdd-map takes items to update or removed ids; statuses and dispositions are runner-owned")
+        raise ValueError("tdd-map takes items, added or removed; statuses and dispositions are runner-owned")
     previous, current = current_map(identity, state)
     recorded = {entry["id"]: entry for entry in previous or []}
     removed = value.get("removed", [])
@@ -1432,7 +1480,13 @@ def map_update(identity: RepoIdentity, state: JsonObject, value: JsonObject) -> 
         if prior is not None and "boundaryInputs" in prior and "boundaryInputs" not in entry:
             entry["boundaryInputs"] = []  # removing every command cannot fall back to unrelated evidence
         if prior and "comparison" in prior:  # a changed kind or obligation keeps its latest run and reads stale until rerun
-            entry["comparison"] = {**prior["comparison"], "obligation": prior["comparison"].get("obligation", behavior_map.obligation(prior))}
+            comparison = {**prior["comparison"], "obligation": prior["comparison"].get("obligation", behavior_map.obligation(prior))}
+            if references := comparison.get("caseRuns"):
+                active = {command: index for command, index in references.items() if command in entry.get("boundaryInputs", [])}
+                if active != references:
+                    comparison = ({**current["runs"][next(reversed(active.values()))], "obligation": comparison["obligation"], "caseRuns": active}
+                                  if active else {})
+            entry["comparison"] = comparison
     if items == previous:
         return operation_receipt(state, identity, summaryId=state.get("tddEvidence") or state["preflightEvidence"],
                                  pending=behavior_map.unresolved(items, _readiness_lines(identity, state, items)["open"]), reused=True)

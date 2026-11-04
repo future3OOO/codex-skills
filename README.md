@@ -54,9 +54,8 @@ Private testing does not authorize shared installation.
 
 ## Test history
 
-The port has independent Git history. Calibration tests replay original Claude
-commits and retain their exact captured bytes and digests. CI fetches the pinned
-history before either lane; prepare a fresh local checkout the same way:
+The port has independent Git history. Fetch the captured Claude corpus when
+reproducing historical calibration:
 
 ```bash
 git fetch --no-tags https://github.com/future3OOO/claude-skills.git 08074c7e727d26ce62b0a3f80899de76e34818ef:refs/calibration/claude-skills

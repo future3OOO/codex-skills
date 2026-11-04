@@ -15,8 +15,10 @@ probes and execution inputs still bind every result.
 Use the runtime help for inputs. New probe
 files belong in scratch outside the checkout. Existing cases need their command.
 
-An author withdraws its invalid observation with `tdd --as review|final --reject EVIDENCE:ID=REASON`.
+An author withdraws its invalid observation with `tdd --as review|final --reject EVIDENCE:ID=REASON`. Withdrawal and verdict records only write state. They start no cases and leave other bindings unchanged. Retained observations are checked at `verify` or `complete`, once per candidate tree; added observations receive their own check. When a replacement produces the candidate tree, current candidate proof covers maintained cases; run only the finding’s probe. Otherwise replay every maintained case on the candidate plus the replacement, once per candidate tree and resulting tree.
 The referenced raw evidence remains; other observations stay binding.
+
+An explicit case or item selection runs only those cases. With no selection, `tdd` replays every current case and retained proof. Between edits, unselected cases go stale. Verification remains pending until a full `tdd` call refreshes them.
 
 ## Behavior Map
 
@@ -50,9 +52,10 @@ cannot distinguish those causes or prove complete coverage.
 ## Replay and continuation
 
 Supply the command to capture edited probe source. Commandless continuation
-replays its recorded command and immutable probe/support files. Unchanged
-execution inputs reuse cached results. Source, probe or relevant execution-input
-changes invalidate them. Current and retained commands use the same readiness
+replays its recorded command and immutable probe/support files. Unchanged observed inputs reuse cached results. Source and probe changes,
+executable/lookup changes, and Python package-directory or npm manifest metadata
+changes invalidate them. In-place installed-library edits without metadata
+changes remain unbound. Current and retained commands use the same readiness
 check, including after map narrowing and finding resolution.
 
 Follow the receipt's next command. It reports each tree's exit and comparison;

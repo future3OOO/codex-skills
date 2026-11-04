@@ -11,6 +11,7 @@ import tempfile
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
+from types import ModuleType
 from typing import Iterable, Iterator
 
 import fcntl
@@ -21,7 +22,7 @@ _PATH_POLICY_FILE = (
     Path(__file__).resolve().parents[2]
     / "skills" / "production-code" / "scripts" / "_quality_gate" / "path_policy.py"
 )
-_path_policy = None
+_path_policy: ModuleType | None = None
 
 DOC_SUFFIXES = {".md", ".markdown", ".rst", ".adoc"}
 SCRATCH_PARTS = {"scratchpad", ".scratch", ".gitnexus"}
@@ -236,8 +237,7 @@ def is_reviewable_path(path: str) -> bool:
     return not is_docs_or_scratch(path.replace("\\", "/"))
 
 
-def path_classification(path: str) -> object | None:
-    """The existing quality-gate classification, or None when unavailable."""
+def _path_policy_module() -> ModuleType | None:
     global _path_policy
     if _path_policy is None:
         try:
@@ -247,11 +247,19 @@ def path_classification(path: str) -> object | None:
         except (OSError, AttributeError, ImportError, SyntaxError):
             return None
         _path_policy = module
-    return _path_policy.classify_path(path.replace("\\", "/"))
+    return _path_policy
+
+
+def path_classification(path: str) -> object | None:
+    """The existing quality-gate classification, or None when unavailable."""
+    module = _path_policy_module()
+    return module.classify_path(path.replace("\\", "/")) if module is not None else None
+
+
 def is_test_path(path: str) -> bool:
-    """Test-like per the single classifier; unclassifiable stays production."""
-    classification = path_classification(path)
-    return bool(getattr(classification, "test_like_compat", False))
+    """Test inputs by filename; an unavailable policy stays production."""
+    module = _path_policy_module()
+    return module is not None and module.is_test_path(path.replace("\\", "/"))
 
 
 def is_governance_path(path: str) -> bool:

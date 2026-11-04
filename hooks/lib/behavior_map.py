@@ -57,7 +57,10 @@ def _recorded_fields(raw: JsonObject) -> JsonObject:
         fields["kind"] = raw["kind"]
     for key in ("boundaryInputs", "interpretations"):
         if (values := _strings(raw.get(key))) and (key != "interpretations" or len(values) >= 2):
-            fields[key] = list(dict.fromkeys(shlex.join(shlex.split(value)) for value in values)) if key == "boundaryInputs" else values
+            try:
+                fields[key] = list(dict.fromkeys(shlex.join(shlex.split(value)) for value in values)) if key == "boundaryInputs" else values
+            except ValueError:
+                fields[key] = []
     if "boundaryInputs" in raw and "boundaryInputs" not in fields:
         fields["boundaryInputs"] = []  # recorded in another shape: visible, unmapped, never silently dropped
     if "interpretations" in fields and _text(raw.get("interpretation")) and _text(raw.get("authority")):
@@ -139,6 +142,8 @@ def _case_question(entry: JsonObject) -> list[str]:
 
 
 def _question(entry: JsonObject, proofs: list[JsonObject]) -> list[str]:
+    if readings_unsettled(entry):
+        return _case_question(entry)
     commands = entry.get("boundaryInputs") or []
     if not commands:
         return ["bind the case command: workflow.py tdd --case " + entry["id"] + " 'COMMAND'"]
@@ -146,20 +151,45 @@ def _question(entry: JsonObject, proofs: list[JsonObject]) -> list[str]:
                   and obligation(proof) == obligation(entry)]
     reasons = []
     for command in commands:
-        matching = [proof for proof in candidates if (proof.get("comparison") or {}).get("command") == command]
-        if not matching:
+        matching = [proof for proof in candidates if (proof.get("comparison") or {}).get("command") == command
+                    or proof.get("comparison") == {} and proof.get("boundaryInputs") == [command]]
+        if not matching or not matching[0].get("comparison"):
             reasons.append("case command not compared: " + command)
-        elif all(found := _case_question(proof) for proof in matching):
-            reasons.extend(found)
+        else:
+            reasons.extend(_case_question(matching[0]))
     return reasons
 
 
-def open_obligations(items: list[JsonObject], evaluation: list[JsonObject] | None = None) -> list[str]:
+def current_cases(items: list[JsonObject], runs: list[JsonObject]) -> list[JsonObject]:
+    """Project current command bindings from the existing run history."""
+    cases = []
+    for entry in items:
+        proof = entry.get("comparison") or {}
+        references = proof.get("caseRuns")
+        for command in entry.get("boundaryInputs") or []:
+            if command == proof.get("command"):
+                cases.append(entry)
+                continue
+            if references is not None:
+                run = runs[references[command]] if command in references else None
+            elif proof.get("command") and "runIndex" in proof:
+                observed = [run for run in runs if run.get("command") == command and run.get("behaviorId") == entry["id"]
+                            and not run.get("brokenSource") and run.get("arms")]
+                inputs = {run["arms"][0].get("key") for run in observed}
+                run = observed[-1] if len(inputs) == 1 and None not in inputs else None
+            else:
+                run = None
+            cases.append({**entry, "boundaryInputs": [command],
+                          "comparison": {**run, "obligation": proof.get("obligation", obligation(entry))} if run else {}})
+    return cases
+
+
+def open_obligations(items: list[JsonObject], evaluation: list[JsonObject] | None = None, current: list[JsonObject] | None = None) -> list[str]:
     """One command is one case. Output and framework names never determine readiness."""
     retained = evaluation or []
     lines = [("retained " if retained_item else "") + f"{entry['id']} ({entry.get('kind') or 'kind?'}): " + "; ".join(reasons)
              for group, retained_item in ((items, False), (retained, True)) for entry in group
-             if (reasons := _case_question(entry) if retained_item else _question(entry, [*items, *retained]))]
+             if (reasons := _case_question(entry) if retained_item else _question(entry, [*(current or items), *retained]))]
     return lines
 
 
@@ -240,4 +270,9 @@ def recorded_map(
     if value is None and isinstance(fallback, dict):
         inner = fallback.get("document")
         value = inner.get("behaviorMap") if isinstance(inner, dict) else None
-    return runtime_items(value) if value is not None else None
+    items = runtime_items(value) if value is not None else None
+    for entry in items or []:
+        proof = entry.get("comparison")
+        if proof and "runIndex" in proof and tdd_document and isinstance(tdd_document.get("runs"), list):
+            entry["comparison"] = {**tdd_document["runs"][proof["runIndex"]], **proof}
+    return items

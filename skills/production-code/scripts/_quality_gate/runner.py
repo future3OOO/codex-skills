@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 from hooks.lib.workflow_documents import quality_candidates
 
 from pathlib import Path
@@ -37,7 +36,7 @@ def _merge_locations(findings: list[dict]) -> list[dict]:
         match = {"ruleId": finding["ruleId"], "findingId": finding["findingId"],
                  **({"evidenceClass": finding["region"]["evidenceClass"]} if "evidenceClass" in finding["region"] else {})}
         if key not in grouped:
-            grouped[key] = {**finding, "findingId": hashlib.sha256(repr(key).encode()).hexdigest()[:16], "matchingRules": []}
+            grouped[key] = {**finding, "matchingRules": []}
             output.append(grouped[key])
         if not any((other["ruleId"], other.get("evidenceClass")) == (match["ruleId"], match.get("evidenceClass")) for other in grouped[key]["matchingRules"]):
             grouped[key]["matchingRules"].append(match)

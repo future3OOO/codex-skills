@@ -56,7 +56,7 @@ A **decisive context** is a combination of the other values that permits this in
 
 1. Find every condition that your edit adds, removes, weakens, strengthens or changes. Rewording a condition without changing its decision creates no obligation.
 2. Use the original code to find **EVERY feasible decisive context**. For an added condition, use the contexts of the edited decision and compare both inputs with the original result.
-3. Write an MC/DC independence pair for each context as two executable test cases as separate commands, each asserting its exact result. A pair covers only its own context. Bind each command to its contract or preservation item; the item's kind must match that command's original/candidate outcomes.
+3. Write an MC/DC independence pair for each context as two executable test cases as separate commands, each asserting its exact result. A pair covers only its own context. Bind each command to its conformance, contract or preservation item; the item's kind must match that command's original/candidate outcomes.
 4. Record each case command under its owning map item. Missing required pairs leave the proof incomplete.
 5. Run each command on the original code and the edited code. Use the same initial state for each case.
 6. For each input in each pair, assert that the edited result **EQUALS** the original result. Do not use subset checks. If the request names an exact change, assert that expected result instead. Rewriting the expected value or the formula that computes it is the same as changing it.
