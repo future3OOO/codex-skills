@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""PreToolUse: advise on edits; gate turn-starting delegation on the lead's current proof.
-
-For edits, it names what the pass has not recorded yet and lets the edit
-through; comparisons run on recorded source trees, so edit order needs no gate.
-"""
+"""PreToolUse: require an active pass for edits and current proof for review dispatch."""
 from __future__ import annotations
 
 import os
@@ -15,11 +11,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from hooks.lib._workflow_db import LedgerError  # noqa: E402
+from hooks.lib._workflow_db import LedgerError, read_active  # noqa: E402
 from hooks.lib.hook_input import advise, edited_path, emit, is_explorer_continuation, read_hook_payload, working_directory  # noqa: E402
 from hooks.lib.repo_identity import RepoIdentityError, resolve_repo_identity, try_resolve_repo_identity  # noqa: E402
-from hooks.lib.state_store import is_reviewable_path, is_test_path  # noqa: E402
-from hooks.lib.tdd_workflow import edit_blockers  # noqa: E402
+from hooks.lib.state_store import is_reviewable_path, is_test_path, repo_state_dir  # noqa: E402
 from hooks.lib.workflow_state import (  # noqa: E402
     WorkflowError,
     read_workflow,
@@ -73,12 +68,15 @@ def main() -> int:
 
     reminders: list[str] = []
     try:
-        ready, missing = ready_for_edit(identity, relative)
-        if ready and not is_test_path(relative):
-            missing = edit_blockers(identity, read_workflow(identity), reminders=reminders)
-    except (WorkflowError, LedgerError, ValueError) as exc:
-        missing, reminders = [], [f"workflow intake: workflow evidence is unreadable: {exc}. "
-                                  "Admitted; nothing records this edit until it is repaired."]
+        state = read_active(identity)
+        if state is None:
+            emit("PreToolUse", permissionDecision="deny", permissionDecisionReason=
+                 f"Production edit blocked: no active workflow in {repo_state_dir(identity)}; bind the task pass before editing.")
+            return 0
+        _, missing = ready_for_edit(identity, relative, state=state, reminders=reminders if not is_test_path(relative) else None)
+    except (WorkflowError, LedgerError, OSError, ValueError) as exc:
+        emit("PreToolUse", permissionDecision="deny", permissionDecisionReason=f"Production edit blocked: workflow authority is unreadable: {exc}")
+        return 0
     advise("PreToolUse", payload.get("session_id"), {
         f"{identity.key}:intake": "workflow intake: missing before this production edit: " + ", ".join(missing)
         + ". Admitted." if missing else "",
