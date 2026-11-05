@@ -44,6 +44,8 @@ for N/N+1 proof and conditional A/B measurements.
 
 This requirement extends standard MC/DC. One independence pair for each condition is not sufficient.
 
+A changed operation that loops over stored state or an input collection requires a growth case at two sizes. Bind its allowed growth with `WORKFLOW_GROWTH=SMALL,LARGE,MAX_POWER` and a `{size}` command argument; the runner compares process counts, CPU and the probe's own nonnegative metrics printed as one JSON object (use `{}` when no additional metric is needed).
+
 A **decision** is a Boolean expression that controls a branch, guard, ternary, filter or return. A **condition** is one atomic operand. A repeated condition, one that occurs more than once in a decision, is one condition: vary all its occurrences together.
 
 An **MC/DC independence pair** is two executable test cases whose inputs change one condition and change the original decision, or the edited decision for a condition the edit adds. The other conditions keep the same values (unique cause), or differ only where they cannot affect the decision (masking). A short-circuited operand is don't-care. Coupled conditions cannot vary independently: use a masking pair, or show the context cannot be reached.

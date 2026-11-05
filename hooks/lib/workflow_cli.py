@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import io
 import os
 import re
 import shlex
@@ -16,7 +17,7 @@ from ._workflow_db import CHECK_ONLY, LedgerError, _canonical, history, read_act
 from .command_runner import emit_json as _emit_json, print_output as _print_output, run as _run, run_entry as _run_entry
 from .repo_identity import RepoIdentity, RepoIdentityError, resolve_repo_identity
 from .state_prune import prune
-from .state_store import _active_candidate_tree, analysis_unchanged, codex_home, repo_state_dir, state_root, tree_manifest, utc_timestamp
+from .state_store import _comparison_scope, _active_candidate_tree, analysis_unchanged, codex_home, repo_state_dir, state_root, tree_manifest, utc_timestamp
 from .workflow_documents import (
     RECORD_SHAPES,
     advisor_envelope,
@@ -31,7 +32,7 @@ from .workflow_state import (
     _require_instance,
     _tree_drift,
     begin,
-    bound_state, gate_candidates,
+    bound_state,
     checkpoint,
     commit_evidence_phase,
     commit_verification,
@@ -179,9 +180,17 @@ def _intent(args: argparse.Namespace) -> str:
     return text
 
 
-def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
+def _verify(args: argparse.Namespace, identity: RepoIdentity, *, review: bool = False) -> int:
     state = bound_state(identity, args.slug, args.workflow_id)
     slug, workflow_id = str(state["slug"]), str(state["workflowId"])
+    if not review:
+        from .tdd_workflow import _run_tdd
+        with redirect_stdout(io.StringIO()) as receipt:
+            result = _run_tdd(["--repo", str(identity.root), "--slug", slug, "--workflow-id", workflow_id])
+        if result:
+            print(receipt.getvalue(), end="")
+            return result
+        state = bound_state(identity, slug, workflow_id)
     if state.get("tdd") == "in-progress":
         _emit_json(_receipt(state, identity, kind="verification", valid=False,
                             error="current comparison proof is incomplete; run the selected TDD cases"))
@@ -193,13 +202,15 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
                            f"{args.base_ref}^{{commit}}"], capture_output=True, text=True, check=False).stdout.strip()
     passed = evidence_document(identity, state.get("qualityGateEvidence")) if _evidence_ready(state, "verification") else None
     last = (passed or {}).get("runs", [{}])[-1]
-    if base and last.get("valid") is True and last.get("baseCommit") == base and _tree_drift(
-            identity, state, field="qualityGateManifestId", missing="missing", stale="stale") is None:
-        from .tdd_workflow import check_retained
-        state = check_retained(identity, slug, workflow_id)
+    if (base and last.get("valid") is True and last.get("baseCommit") == base
+            and (not review or last.get("graphEvidenceId") == state.get("repoContextForgeEvidence")) and _tree_drift(
+            identity, state, field="qualityGateManifestId", missing="missing", stale="stale") is None):
+        if not review:
+            from .tdd_workflow import check_retained
+            state = check_retained(identity, slug, workflow_id)
         # The same typed gate is reused; retained observations have their own tree cache.
         _emit_json(_receipt(state, identity, evidenceId=state["qualityGateEvidence"], kind="quality-gate", reused=True,
-                            verification="passed", valid=True, runIndex=last["runIndex"], workflowId=workflow_id, qualityCandidates=gate_candidates(identity, state)))
+                            verification="passed", valid=True, runIndex=last["runIndex"], workflowId=workflow_id))
         from .workflow_state import _finding_state_blockers
         return 2 if _finding_state_blockers(state) else 0
 
@@ -213,15 +224,12 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
         tree_before = tree_manifest(identity)
     except RuntimeError as exc:
         binding_error = str(exc)
-    if binding_error is None:  # the gate binds the recorded graph evidence to the candidate it checks
-        refresh_context(identity)
-        state = bound_state(identity, slug, workflow_id)
     command = [sys.executable, str(ROOT / "skills" / "production-code" / "scripts" / "code_quality_gate.py"),
                "check", "--repo", str(identity.root), "--base-ref", base or args.base_ref]
     # The pass's recorded Repo Context Forge evidence, handed to the gate
     # unchanged when it carries the producer's snapshot-bound gate context;
     # the gate's own binding check adjudicates match, stale, or absent.
-    recorded = state.get("repoContextForgeEvidence")
+    recorded = state.get("repoContextForgeEvidence") if review else None
     graph_document = evidence_document(identity, recorded if isinstance(recorded, str) else None)
     graph_context = (
         graph_document.get("gateContext")
@@ -284,6 +292,9 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
         baseRef=args.base_ref, baseCommit=base or None, gate=gate, bindingError=binding_error,
         graphEvidenceId=graph_evidence_id,
     )
+    if valid and not review:
+        from .tdd_workflow import check_retained
+        check_retained(identity, slug, workflow_id)
     state, evidence_id, recorded = commit_verification(identity, slug, workflow_id, run, tree_before=tree_before,
                                                        report=report if gate is not None else None)
     if recorded.get("reportEvidenceId") and recorded["valid"] is not True:
@@ -307,7 +318,6 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity) -> int:
         "runIndex": recorded["runIndex"],
         "workflowId": workflow_id,
         "treeManifestId": recorded.get("treeManifestId"),
-        "qualityCandidates": gate_candidates(identity, state),
     }))
     if recorded["valid"] is not True:
         reason = recorded.get("bindingError") or "the quality gate failed"
@@ -439,6 +449,9 @@ def _dispatch(args: argparse.Namespace) -> int:
     elif args.command == "checkpoint":
         if args.channel_dir:  # a consult is about to read the projection
             refresh_context(identity)
+            if args.phase != "preflight-advice":
+                with redirect_stdout(sys.stderr):
+                    _verify(parser().parse_args(["verify", "--repo", str(identity.root)]), identity, review=True)
         _emit_json(checkpoint(identity, args.phase, reconsult=args.reconsult, channel_dir=args.channel_dir,
                               preflight_draft=preflight_document(args.preflight_file) if args.preflight_file else None))
     elif args.command == "complete":
@@ -458,7 +471,8 @@ def main(argv: list[str] | None = None) -> int:
         if values and values[0] == "tdd":
             from .tdd_workflow import _run_tdd
             return _run_tdd(values[1:])
-        return _dispatch(parser().parse_args(values))
+        with _comparison_scope():
+            return _dispatch(parser().parse_args(values))
     except (RepoIdentityError, LedgerError, WorkflowError, ValueError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

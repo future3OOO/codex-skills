@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator, NoReturn, Sequence
 from .repo_identity import RepoIdentity
-from .state_store import _active_candidate_tree, codex_home, repo_state_dir, utc_timestamp
+from .state_store import _candidate_matches, codex_home, repo_state_dir, utc_timestamp
 DATABASE_NAME = "workflow.sqlite3"
 DATABASE_FILES = frozenset({DATABASE_NAME, *(f"{DATABASE_NAME}{suffix}" for suffix in ("-journal", "-wal", "-shm"))})
 AUTHORITY = "sqlite-event-ledger-v1"
@@ -353,13 +353,15 @@ def _insert_evidence(connection: sqlite3.Connection, writes: Sequence[EvidenceWr
                 ((part_id, write.workflow_id, zlib.compress(text.encode())) for part_id, text in parts),
             )
             if key == "runs":
-                connection.executemany(
-                    "INSERT OR IGNORE INTO execution_cache(workflow_id, context_key, arm_key, part_id, arm_index) VALUES (?, ?, ?, ?, ?)",
-                    ((write.workflow_id, arm["contextKey"], arm["key"], part_id, index)
-                     for run, (part_id, _) in zip(holder[key], parts) if isinstance(run, dict)
-                     for index, arm in enumerate(run.get("arms", []))
-                     if arm.get("contextKey") and arm.get("key") and arm.get("outcome") in {"passed", "failed"}),
-                )
+                for suffix in ("", "/inputs"):
+                    connection.executemany(
+                        "INSERT OR IGNORE INTO execution_cache(workflow_id, context_key, arm_key, part_id, arm_index) VALUES (?, ?, ?, ?, ?)",
+                        ((write.workflow_id, arm["contextKey"] + suffix,
+                          hashlib.sha256(_canonical([arm.get(name) for name in ("tools", "lookups")]).encode()).hexdigest() if suffix else arm["key"], part_id, index)
+                         for run, (part_id, _) in zip(holder[key], parts) if isinstance(run, dict)
+                         for index, arm in enumerate(run.get("arms", []))
+                         if arm.get("contextKey") and arm.get("key") and arm.get("outcome") in {"passed", "failed"}),
+                    )
             holder[key] = {"parts": [part_id for part_id, _ in parts]}
         connection.execute(
             """INSERT INTO evidence(
@@ -505,7 +507,7 @@ def mutation(
             transaction = LedgerMutation(connection, identity)
             yield transaction
             if (expected_candidate_tree is not None
-                    and _active_candidate_tree(identity) != expected_candidate_tree):
+                    and not _candidate_matches(identity, expected_candidate_tree)):
                 raise LedgerError("active candidate changed during workflow mutation")
             if CHECK_ONLY.get():
                 connection.rollback()
@@ -541,18 +543,27 @@ def read_evidence(identity: RepoIdentity, evidence_id: str, *, restore_runs: boo
                 }
     return None
 
-def cached_arms(identity: RepoIdentity, workflow_id: str, context: str) -> list[JsonObject]:
-    if not _store_exists(identity):
+def cached_arms(identity: RepoIdentity, workflow_id: str, contexts, keys) -> list[JsonObject]:
+    if not contexts or not workflow_id or not _store_exists(identity):
         return []
     with _connection(identity) as connection:
+        decoded = {}
+        def document(raw):
+            if raw not in decoded:
+                decoded[raw] = json.loads(zlib.decompress(raw) if isinstance(raw, bytes) else raw)
+            return decoded[raw]
+        connection.create_function("input_keys", 2, lambda raw, index: json.dumps(keys(document(raw)["arms"][index])))
         rows = connection.execute(
-            "SELECT part.part_json, cache.arm_index FROM execution_cache AS cache "
-            "JOIN evidence_parts AS part USING (part_id) "
-            "WHERE cache.workflow_id = ? AND cache.context_key = ? ORDER BY cache.rowid DESC",
-            (workflow_id, context),
+            "SELECT DISTINCT result.part_json, hit.arm_index FROM execution_cache AS seed "
+            "JOIN evidence_parts AS part ON part.part_id = seed.part_id "
+            "JOIN json_each(input_keys(part.part_json, seed.arm_index)) AS wanted "
+            "JOIN execution_cache AS hit ON hit.workflow_id = seed.workflow_id "
+            "AND hit.context_key = substr(seed.context_key, 1, length(seed.context_key) - 7) AND hit.arm_key = wanted.value "
+            "JOIN evidence_parts AS result ON result.part_id = hit.part_id "
+            f"WHERE seed.workflow_id = ? AND seed.context_key IN ({','.join('?' for _ in contexts)})",
+            (workflow_id, *(context + "/inputs" for context in contexts)),
         ).fetchall()
-        return [json.loads(zlib.decompress(row["part_json"]) if isinstance(row["part_json"], bytes) else row["part_json"])["arms"][row["arm_index"]]
-                for row in rows]
+        return [document(row["part_json"])["arms"][row["arm_index"]] for row in rows]
 
 
 def read_manifest(identity: RepoIdentity, manifest_id: str) -> dict[str, str] | None:

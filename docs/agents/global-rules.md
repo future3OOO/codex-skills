@@ -51,8 +51,7 @@ Repo Context Forge analysis copy. For codex-skills installation, follow
   own outgoing process boundary proves only what it emits. `$production-code`
   owns the comparison procedure. For the code being changed, reuse the project's
   relevant cases, fixtures and assertions through the responsible production
-  Module's Interface. Use an enclosing operation only when the assertion concerns
-  that operation's behavior or integration.
+  Module's Interface. Probe each changed unit through the narrowest boundary a probe can call: the changed function or method itself, or its nearest callable owner when the language hides it. A probe that runs a larger operation than the changed unit is a defect, whatever its result. A probe asserts observable results, never the stored internal layout of the code under test. One case command runs one probe.
 - **Attack probes first.** Unit tests must themselves probe real production
   behavior. Cover each request promise and the preserved behavior the change
   touches. Prove each changed line with a direct N/N+1
@@ -78,6 +77,7 @@ Repo Context Forge analysis copy. For codex-skills installation, follow
 
 ## Simplicity First
 
+- Fix costs in order of wall time per call, largest first. No millisecond optimisation counts while a slower cost in the same call is unaddressed.
 - Assume your first implementation is bloated. Find the best justified whole-system design for the objective, including production code,
   tests, scripts, documentation, maintenance and execution; keep only what it needs while preserving required behavior and proof. Retain real
   attack probes; cut redundant scaffolding and mocked unit-test bloat from this change.
