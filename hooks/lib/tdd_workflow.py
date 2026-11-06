@@ -711,7 +711,7 @@ def _probe_capture(identity: RepoIdentity, probe: object, candidate: str, timeou
     tree, original_files = _kept_tests(identity, candidate, preserved, tuple(sorted(overrides))) if preserved else (candidate, set())
     virtual = None
     if "path" not in probe:
-        external = [arg for arg in command[1:] if (Path(identity.root) / arg).is_file()
+        external = [arg for arg in command[1:] if os.path.isfile(Path(identity.root) / arg)
                     and not (Path(identity.root) / arg).resolve().is_relative_to(identity.root)]
         if len(external) == 1:
             probe = {**probe, "path": external[0]}
@@ -731,6 +731,9 @@ def _probe_capture(identity: RepoIdentity, probe: object, candidate: str, timeou
         tree = _indexed(identity, tree, (("update-index", "--add", "--cacheinfo", f"{mode},{blob},{virtual}"), None))
         for index in positions:
             command[index] = virtual + command[index][len(command[index].split("::", 1)[0]):]
+    elif frozen := [match for arg in command[1:] if (match := re.fullmatch(r"tests/\.workflow-probes/([0-9a-f]{40,64})/[^/]+", arg.split("::", 1)[0]))]:
+        virtual = frozen[0][0]  # a captured probe command rebinds the blob its path names
+        tree = _indexed(identity, tree, (("update-index", "--add", "--cacheinfo", f"100644,{frozen[0][1]},{virtual}"), None))
     selected = list(command)
     if selected and Path(selected[0]).name == "env":
         selected.pop(0)
@@ -1583,7 +1586,7 @@ def map_update(identity: RepoIdentity, state: JsonObject, value: JsonObject) -> 
         prior = recorded.get(entry["id"])
         if prior is not None and "boundaryInputs" in prior and "boundaryInputs" not in entry:
             entry["boundaryInputs"] = []  # removing every command cannot fall back to unrelated evidence
-        if prior and "comparison" in prior:  # a changed kind or obligation keeps its latest run and reads stale until rerun
+        if "runIndex" in (prior or {}).get("comparison", {}):  # a changed kind or obligation keeps its latest run and reads stale until rerun
             comparison = {**prior["comparison"], "obligation": prior["comparison"].get("obligation", behavior_map.obligation(prior))}
             if references := comparison.get("caseRuns"):
                 active = {command: index for command, index in references.items() if command in entry.get("boundaryInputs", [])}
