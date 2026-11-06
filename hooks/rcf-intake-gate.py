@@ -69,11 +69,11 @@ def main() -> int:
     reminders: list[str] = []
     try:
         state = read_active(identity)
-        if state is None:
+        if state is None or state.get("phase") == "complete" or state.get("revalidation"):
             emit("PreToolUse", permissionDecision="deny", permissionDecisionReason=
-                 f"Production edit blocked: no active workflow in {repo_state_dir(identity)}; bind the task pass before editing.")
+                 f"Production edit blocked: no active implementation workflow in {repo_state_dir(identity)}; bind the task pass before editing.")
             return 0
-        _, missing = ready_for_edit(identity, relative, state=state, reminders=reminders if not is_test_path(relative) else None)
+        missing = ready_for_edit(identity, state, reminders=reminders if not is_test_path(relative) else None)
     except (WorkflowError, LedgerError, OSError, ValueError) as exc:
         emit("PreToolUse", permissionDecision="deny", permissionDecisionReason=f"Production edit blocked: workflow authority is unreadable: {exc}")
         return 0

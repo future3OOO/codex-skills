@@ -149,7 +149,7 @@ def _question(entry: JsonObject, proofs: list[JsonObject]) -> list[str]:
         return ["bind the case command: workflow.py tdd --case " + entry["id"] + " 'COMMAND'"]
     candidates = [proof for proof in proofs if proof["id"] == entry["id"]
                   and obligation(proof) == obligation(entry)]
-    reasons = []
+    reasons, behavior = [], False
     for command in commands:
         matching = [proof for proof in candidates if (proof.get("comparison") or {}).get("command") == command
                     or proof.get("comparison") == {} and proof.get("boundaryInputs") == [command]]
@@ -157,7 +157,8 @@ def _question(entry: JsonObject, proofs: list[JsonObject]) -> list[str]:
             reasons.append("case command not compared: " + command)
         else:
             reasons.extend(_case_question(matching[0]))
-    return reasons
+            behavior = behavior or "WORKFLOW_GROWTH" not in (matching[0]["comparison"].get("execution") or {}).get("assignments", {})
+    return reasons or ([] if behavior else ["growth cases check scaling only; bind a behavior case and its break: workflow.py tdd --case " + entry["id"] + " 'COMMAND'"])
 
 
 def current_cases(items: list[JsonObject], runs: list[JsonObject]) -> list[JsonObject]:
