@@ -80,17 +80,14 @@ it advances nothing. State never authorizes Git.
 ```bash
 "$HOME/.codex/skills/codex-advisor/scripts/ask-codex-advisor.sh" \
   --slug "<task>" --phase preflight-advice --preflight-file "<draft.json>" \
-  --cwd "$PWD" --design-file "<design-artifact>" \
-  --budget 600 -- "<focused scope question>"
+  --cwd "$PWD" --design-file "<design-artifact>"
 
 "$HOME/.codex/skills/codex-advisor/scripts/ask-codex-advisor.sh" \
   --slug "<task>" --phase final-review \
-  --cwd "$PWD" --design-file "<design-artifact>" \
-  --budget 600 -- "<focused completion question>"
+  --cwd "$PWD" --design-file "<design-artifact>"
 ```
 
-For a long question, drop the `--` argument and feed it on stdin:
-`< question.txt`.
+Phased consults carry no lead text. Pass only the user's instructions given after `begin`, each line quoted verbatim after `> `, on stdin.
 
 ## Failure and disposition
 
