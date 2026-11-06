@@ -44,7 +44,7 @@ for N/N+1 proof and conditional A/B measurements.
 
 This requirement extends standard MC/DC. One independence pair for each condition is not sufficient.
 
-Where the changed work depends on a size (rows, items, requests, input or stored data), run the benchmark's workloads at two or more sizes chosen from the cost model, on the original and the candidate, and assert how each metric may grow with size. Bind the allowed growth with `WORKFLOW_GROWTH=SMALL,LARGE,MAX_POWER` and a `{size}` command argument; the runner compares process counts, CPU and the probe's own nonnegative metrics printed as one JSON object (use `{}` when no additional metric is needed). That comparison is its check, so it needs no behavior break; its item still needs one behavior case.
+Where the changed work depends on a size (rows, items, requests, input or stored data), run the benchmark's workloads at two or more sizes, growing every input in the cost model's dominant term, the largest at the size production gives the operation, on the original and the candidate, and assert how each metric may grow with size. Bind the allowed growth with `WORKFLOW_GROWTH=SMALL,LARGE,MAX_POWER` and a `{size}` command argument; the runner compares process counts, CPU and the probe's own nonnegative metrics printed as one JSON object (use `{}` when no additional metric is needed). That comparison is its check, so it needs no behavior break; its item still needs one behavior case.
 
 A **decision** is a Boolean expression that controls a branch, guard, ternary, filter or return. A **condition** is one atomic operand. A repeated condition, one that occurs more than once in a decision, is one condition: vary all its occurrences together.
 
