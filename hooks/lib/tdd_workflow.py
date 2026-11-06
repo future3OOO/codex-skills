@@ -1538,7 +1538,7 @@ def _run_tdd(values: list[str]) -> int:
         errors = _work_errors(run)
         if errors:
             identifier = "COST-" + hashlib.sha256(run["command"].encode()).hexdigest()[:16]
-            if any(entry["findingId"] == identifier and entry.get("status") == "resolved" for entry in state.get("findingStates", [])):
+            if {entry.get("status") for entry in state.get("findingStates", []) if entry["findingId"] == identifier} == {"resolved"}:
                 errors = []
         for side, arm, expected in zip(("original", "candidate"), (run["arms"][0], run["arms"][-1]), (expected_original, "passed")):
             if arm["outcome"] != expected:
