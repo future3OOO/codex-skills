@@ -1309,6 +1309,7 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
         "sessionMode": "create" if phase == "preflight-advice" and not reconsult else "resume",
         "passStartOid": state.get("passStartOid"),
         "activeCandidateTree": candidate,
+        "scratchPath": str(repo_state_dir(identity) / "execution-trees" / str(workflow_id) / "scratch"),  # kept with the pass's execution state
         "tddEvidence": state.get("tddEvidence"),
         "tdd": state.get("tdd"),
         "codeReviewStatus": review.get("status"),

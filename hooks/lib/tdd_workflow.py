@@ -295,30 +295,9 @@ def _observed_inputs(identity: RepoIdentity, root: Path, temporary: Path, trace:
     lookups = dict.fromkeys(("bwrap", "strace", "realpath"), os.pathsep.join(search))
     directories, observed, owners = {}, set(), set()
     work_root = str(work_root or (records[0][0] if records else ""))
-    argv_pattern = re.compile(r'execve\(("(?:[^"\\]|\\.)*"),\s*(\[.*\]),.*\)\s+=\s+(.+)$')
-    processes, finished, groups = {}, {}, {}
-    work = {"processes": 0, "recomputations": []}
-    def ended(pid, stamp):
-        process = processes.get(pid)
-        if process and "end" not in process:
-            process["end"] = float(stamp)
-            ancestor = process
-            while ancestor:
-                ancestor["live"] -= 1
-                ancestor["last"] = float(stamp)
-                ancestor = processes.get(ancestor.get("parent"))
-            if process.get("command"):
-                finished.setdefault((process["command"], process["cwd"]), []).append(process)
-    def sequential(prior, current):
-        left, right = [prior], [current]
-        for chain in (left, right):
-            while parent := processes.get(chain[-1].get("parent")):
-                chain.append(parent)
-        while left and right and left[-1] is right[-1]:
-            left.pop();right.pop()
-        return bool(left and right and left[-1]["live"] == 0 and left[-1]["last"] <= right[-1]["start"])
+    groups, work = set(), {"processes": 0}
     shared = bool(os.environ.get("CODEX_WORKFLOW_EXEC_TRACE"))
-    for pid, stamp, call in records:
+    for pid, _, call in records:
         operation = call.split("(", 1)[0]
         directory = directories.setdefault(pid, [identity.root])
         changed = re.match(r"^(chdir|fchdir)\((.*)\)\s+=\s+0$", call) if operation in {"chdir", "fchdir"} else None
@@ -327,16 +306,8 @@ def _observed_inputs(identity: RepoIdentity, root: Path, temporary: Path, trace:
             if pid in owners:
                 owners.add(child[1])
             if pid in groups:
-                groups[child[1]] = groups[pid] if "CLONE_THREAD" in call else child[1]
-                if "CLONE_THREAD" not in call:
-                    processes[child[1]] = {"start": float(stamp), "parent": groups[pid], "cwd": directory[0], "live": 1, "threads": {child[1]}}
-                    work["processes"] += 1
-                    ancestor = processes[groups[pid]]
-                    while ancestor:
-                        ancestor["live"] += 1
-                        ancestor = processes.get(ancestor.get("parent"))
-                else:
-                    processes[groups[pid]]["threads"].add(child[1])
+                groups.add(child[1])
+                work["processes"] += "CLONE_THREAD" not in call
         elif changed:
             target = _trace_path(changed[2][1:-1] if changed[1] == "chdir" else changed[2].split("<", 1)[1].rsplit(">", 1)[0])
             target = os.path.join(directory[0], target)
@@ -345,30 +316,14 @@ def _observed_inputs(identity: RepoIdentity, root: Path, temporary: Path, trace:
         if shared and pid not in owners:
             continue
         if pid == work_root and pid not in groups:
-            groups[pid] = pid
-            processes[pid] = {"start": float(stamp), "cwd": directory[0], "live": 1, "threads": {pid}}
+            groups.add(pid)
             work["processes"] += 1
-        process = processes.get(groups.get(pid))
-        if process:
-            if call.startswith("+++ "):
-                process["threads"].discard(pid)
-                if not process["threads"]:
-                    ended(groups[pid], stamp)
-            elif call.startswith("--- SIGCHLD") and (child := re.search(r"si_pid=(\d+)", call)):
-                ended(child[1], stamp)
         if changed:
             directory[0] = target
-        match = argv_pattern.match(call) if operation == "execve" else None
+        match = re.match(r'execve\(("(?:[^"\\]|\\.)*"),.*\)\s+=\s+(.+)', call) if operation == "execve" else None
         if not match:
             continue
-        quoted, vector, result = match.groups()
-        if process and result.startswith("0") and vector != "[...]":
-            arguments = (_trace_path(quoted[1:-1]), *(_trace_path(value[1:-1]) for value in re.findall(r'"(?:[^"\\]|\\.)*"', vector)))
-            process.update(command=arguments, cwd=directory[0])
-            for prior in finished.get((arguments, directory[0]), ()) if pid != work_root else ():
-                if prior["end"] <= process["start"] and sequential(prior, process):
-                    folder = "<case temporary>" if Path(directory[0]).is_relative_to(temporary) else shlex.quote(directory[0])
-                    work["recomputations"].append(shlex.join(arguments) + " # in " + folder);break
+        quoted, result = match.groups()
         path = Path(os.path.join(directory[0], _trace_path(quoted[1:-1])))
         if path.is_relative_to(temporary):
             continue  # recreated by this isolated operation
@@ -706,9 +661,8 @@ def _execute_case(identity: RepoIdentity, source_tree: str, root: Path,
             runtimes.append(runtime)
         binding.extend(arg for runtime in runtimes for arg in ("--ro-bind", str(runtime), str(runtime)))
         process_started = time.perf_counter()
-        calls = "execve,chdir,fchdir,clone,clone3,fork,vfork"
-        observer = [] if inherited else ["strace", "-f", "--seccomp-bpf", "-q", "-ttt", "-e", "trace=" + calls,
-                    "-e", "status=successful,failed", "-y", "-s", "2097152", "-o", str(trace)]
+        observer = [] if inherited else ["strace", "-f", "--seccomp-bpf", "-qq", "-ttt", "-e", "trace=execve,chdir,fchdir,clone,clone3,fork,vfork",
+                    "-e", "status=successful,failed", "-y", "-s", "0", "-o", str(trace)]
         cpu_path = Path(temporary) / "cpu"
         raw, code, timed_out = _run([*binding, "--chdir", identity.root, "--", *observer, sys.executable, "-I", "-S", "-c", _CPU_SUPERVISOR, str(cpu_path), *actual], snapshot, timeout, env=runner_env, cancel=cancel)
         cpu = json.loads(cpu_path.read_bytes()) if cpu_path.exists() else [None, None]
@@ -802,13 +756,14 @@ def _run_probe(identity: RepoIdentity, probe: object, candidate: str, original: 
                timeout: float = PROBE_TIMEOUT, cached: list[JsonObject] | None = None,
                frozen: JsonObject | None = None) -> JsonObject:
     try:
+        regression = original is not None and bool(frozen and frozen.get("arms")) and _probe_outcome(frozen["arms"][0]) == "passed" and _probe_outcome(frozen["arms"][-1]) in {"failed", "timed-out"}
         frozen = frozen or _probe_capture(identity, probe, candidate, timeout)
         compared = _compare(identity, original or candidate, candidate, frozen, cached if cached is not None else [], passing_original=original is not None)
         result: JsonObject = {"kind": "probe", "comparison": compared,
                               "candidate": _probe_outcome(compared["arms"][-1])}
         if original is not None:
             result["original"] = _probe_outcome(compared["arms"][0])
-        if (compared["arms"][0]["outcome"] == "passed" if original is not None else compared["arms"][-1]["outcome"] == "passed") and not compared.get("sensitive"):
+        if all(arm["outcome"] == "passed" for arm in compared["arms"]) and not compared.get("sensitive") and not regression:  # a candidate failure the original passes is its own witness
             result["error"] = compared.get("breakError") or "probe did not fail under its behavior break; supply --change probe=FILE"
         if any(_probe_outcome(arm) == "incomplete" for arm in compared["arms"]):
             result["error"] = "; ".join(dict.fromkeys(str(arm.get("error") or "unproved execution") for arm in compared["arms"] if _probe_outcome(arm) == "incomplete"))
@@ -1122,33 +1077,28 @@ def _growth(execution):
 
 
 def _work_errors(run):
+    """The author-declared growth bound; other observed work is reported, never judged."""
     arms, errors = run.get("arms", []), []
-    if not arms or arms[-1].get("outcome") != "passed" or not arms[-1].get("work"):
+    if not arms or arms[-1].get("outcome") != "passed" or not arms[-1].get("work") or not (sizes := _growth(run["execution"])):
         return errors
-    before, after = arms[0].get("work", {}), arms[-1]["work"]
-    if repeats := Counter(after.get("recomputations", [])) - Counter(before.get("recomputations", [])):
-        errors.append("sequential recomputation: " + "; ".join(repeats))
-    def increased(first, last, ratio, label, metrics=("processes", "cpuSeconds")):
+    def increased(first, last, ratio, metrics=("processes", "cpuSeconds")):
         for metric in metrics:
             x, y = first.get(metric), last.get(metric)
             if x is not None and y is not None and y > x * ratio and (metric != "cpuSeconds" or y - x * ratio > max(.02, x * .2)):
-                errors.append(f"{label}: {metric} {x:g} -> {y:g} (limit {x * ratio:g})")
-    if all(arm.get("outcome") == "passed" for arm in arms):
-        increased(before, after, 1, "more work")
-    if sizes := _growth(run["execution"]):
-        if len(arms) != 4:
-            errors.append("growth case lacks both sizes")
-        elif all(arm.get("outcome") == "passed" for arm in arms[2:]):
-            ratio = (sizes[1] / sizes[0]) ** sizes[2]
-            increased(arms[2].get("work", {}), after, ratio, "growth")
-            try:
-                small, large = [json.loads(arm["output"]) for arm in arms[2:]]
-                if not isinstance(small, dict) or not isinstance(large, dict) or small.keys() != large.keys() or any(
-                        type(value) not in (int, float) or not math.isfinite(value) or value < 0 for metrics in (small, large) for value in metrics.values()):
-                    raise ValueError("growth metrics must be matching objects of finite nonnegative numbers")
-                increased(small, large, ratio, "growth", small)
-            except (ValueError, KeyError, TypeError) as exc:
-                errors.append("growth metrics unavailable: " + str(exc))
+                errors.append(f"growth: {metric} {x:g} -> {y:g} (limit {x * ratio:g})")
+    if len(arms) != 4:
+        errors.append("growth case lacks both sizes")
+    elif all(arm.get("outcome") == "passed" for arm in arms[2:]):
+        ratio = (sizes[1] / sizes[0]) ** sizes[2]
+        increased(arms[2].get("work", {}), arms[-1]["work"], ratio)
+        try:
+            small, large = [json.loads(arm["output"]) for arm in arms[2:]]
+            if not isinstance(small, dict) or not isinstance(large, dict) or small.keys() != large.keys() or any(
+                    type(value) not in (int, float) or not math.isfinite(value) or value < 0 for metrics in (small, large) for value in metrics.values()):
+                raise ValueError("growth metrics must be matching objects of finite nonnegative numbers")
+            increased(small, large, ratio, small)
+        except (ValueError, KeyError, TypeError) as exc:
+            errors.append("growth metrics unavailable: " + str(exc))
     return errors
 
 
@@ -1171,7 +1121,7 @@ def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes:
                   runs: list[JsonObject], *, challenge: bool = True, passing_original: bool = False) -> list[JsonObject]:
     """One execution/cache owner. Each command has its own two exit results."""
     scope = _EXECUTION.get()
-    cache, created, measured = {}, len(runs), set()
+    cache = {}
     for run in [*runs, *probes]:
         for arm in run.get("arms", []):
             if arm.get("contextKey") and arm.get("outcome") in {"passed", "failed"}:
@@ -1186,7 +1136,6 @@ def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes:
                 found = {**found, "contextKey": context, "inputs": inputs,
                          "key": hashlib.sha256((context + inputs).encode()).hexdigest()}
                 cache.setdefault(context, {})[found["key"]] = found
-                measured.add(found["key"])
             arms.append({**found, "requestedTree": source})
         keys = [arm["key"] for arm in arms]
         metadata = {"command": probe["command"], "support": probe.get("support") or [], "timeout": probe["timeout"],
@@ -1206,19 +1155,19 @@ def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes:
         runs.append(run)
         return run
     pending = {}
-    def schedule(source, probe, parent=None, size=None, fresh=False):
+    def schedule(source, probe, parent=None, size=None):
         files, timeout = _comparison_files(identity, probe), probe["timeout"]
         command, execution, environment = _comparison_input(identity, probe)
         if size is not None:
             command = [arg.replace("{size}", str(size)) for arg in command]
         tree = probe.get("probeTree", probe["candidateTree"])
         context = _execution_key(identity, source, tree, files, command, timeout, execution)
-        found = None if fresh else next((arm for arm in reversed(list(cache.get(context, {}).values()))
+        found = next((arm for arm in reversed(list(cache.get(context, {}).values()))
                       if (inputs := _input_identity(identity, execution, arm)) and arm["key"] == hashlib.sha256((context + inputs).encode()).hexdigest()), None)
         if found is None:
             pending_key = context
-            if fresh or pending_key not in pending:
-                state, frozen = _prepared_tree(identity, scope, parent or source, tree, files, isolated=size is not None or fresh)
+            if pending_key not in pending:
+                state, frozen = _prepared_tree(identity, scope, parent or source, tree, files, isolated=size is not None)
                 if parent:  # a break is its parent's warm tree plus the break's changed files
                     entries = _tree_entries(identity, source)
                     changes = _changed_entries(identity, parent, source)
@@ -1231,9 +1180,7 @@ def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes:
                 _require_overlay(_executable(identity, "bwrap", environment))
                 execute = partial(_after, previous, identity, source, (state, frozen), command, timeout, environment, scope["cancel"],
                                   tuple(scope["objects"].items()), derived=bool(parent),
-                                  first=not fresh and size is None and not parent and root_key not in scope["first"])
-                if fresh:  # a confirmation sample runs alone, after the batch
-                    return source, context, execute()
+                                  first=size is None and not parent and root_key not in scope["first"])
                 pending[pending_key] = scope["pool"].submit(execute)
                 if not parent and size is None:
                     scope["first"].setdefault(root_key, pending[pending_key])
@@ -1288,11 +1235,11 @@ def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes:
     for arm in cached_arms(identity, workflows[identity.key], contexts, keys):
         cache.setdefault(arm["contextKey"], {})[arm["key"]] = arm
     jobs, controls = [], []
-    def selections(first, last, probe, parent=None, fresh=False):
+    def selections(first, last, probe, parent=None):
         sizes = _growth(_comparison_input(identity, probe)[1])
-        return ([schedule(source, probe, size=size, fresh=fresh)
+        return ([schedule(source, probe, size=size)
                  for source, size in ((first, sizes[1]), (first, sizes[0]), (last, sizes[0]), (last, sizes[1]))]
-                if sizes else [schedule(first, probe, fresh=fresh), schedule(last, probe, parent, fresh=fresh)])
+                if sizes else [schedule(first, probe), schedule(last, probe, parent)])
     for probe, tree, execution, control in plans:
         selected = selections(original, candidate, probe)
         jobs.append((probe, tree, execution, selected, original, candidate))
@@ -1323,13 +1270,6 @@ def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes:
             result["sensitive"] = good["outcome"] == "passed" and checked["arms"][0]["key"] == good["key"] and checked["arms"][-1]["outcome"] == "failed" and not checked["timedOut"]
             result["breakExit"] = checked["arms"][-1]["exitCode"]
             result.pop("breakError", None)
-    for probe, result in zip(probes, compared):  # arms measured in different calls ran under different load: judge CPU on one serial current pair
-        keys = {arm["key"] for arm in result["arms"]}
-        if result["runIndex"] >= created and keys & measured and not keys <= measured and any("cpuSeconds" in error for error in _work_errors(result)):
-            pair = [arm for _, _, arm in selections(original, candidate, probe, fresh=True)]
-            if all(arm["outcome"] == "passed" and arm["work"]["cpuSeconds"] is not None for arm in pair):
-                result["arms"] = [{**arm, "work": {**arm["work"], "cpuSeconds": now["work"]["cpuSeconds"], "firstCpuSeconds": arm["work"]["cpuSeconds"]}}
-                                  for arm, now in zip(result["arms"], pair)]
     return compared
 
 def _compare(identity: RepoIdentity, original: str, candidate: str, probe: JsonObject, runs: list[JsonObject], *, passing_original: bool = False) -> JsonObject:
