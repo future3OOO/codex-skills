@@ -13,12 +13,12 @@ when its first run took at least twice the median extra-run time. Otherwise ever
 run uses its own copy. Ignored build outputs survive between calls; source,
 probes and execution inputs still bind every result.
 Use the runtime help for inputs. New probe
-files belong in scratch outside the checkout. Existing cases need their command.
+files belong in scratch outside the checkout. A recorded command needs no `--case`; `tdd` captures it.
 
 An author withdraws its invalid observation with `tdd --as review|final --reject EVIDENCE:ID=REASON`. Withdrawal and verdict records only write state. They start no cases and leave other bindings unchanged. Retained observations are checked at `verify` or `complete`, once per candidate tree; added observations receive their own check. When a replacement produces the candidate tree, current candidate proof covers maintained cases; run only the finding’s probe. Otherwise replay every maintained case on the candidate plus the replacement, once per candidate tree and resulting tree.
 The referenced raw evidence remains; other observations stay binding.
 
-An explicit case or item selection runs only those cases. With no selection, `tdd` replays every current case and retained proof. Between edits, unselected cases go stale. Verification remains pending until a full `tdd` call refreshes them.
+An explicit case or item selection runs only those cases. With no selection, `tdd` replays every current case and retained proof, and captures recorded commands that no run has compared. Between edits, unselected cases go stale. Verification remains pending until a full `tdd` call refreshes them.
 
 ## Behavior Map
 
