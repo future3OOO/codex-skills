@@ -310,16 +310,14 @@ def _observed_inputs(identity: RepoIdentity, root: Path, temporary: Path, trace:
                 work["processes"] += "CLONE_THREAD" not in call
         elif changed:
             target = _trace_path(changed[2][1:-1] if changed[1] == "chdir" else changed[2].split("<", 1)[1].rsplit(">", 1)[0])
-            target = os.path.join(directory[0], target)
-            if target == str(root):
+            directory[0] = os.path.join(directory[0], target)  # the kernel resolves symlinks before "..": compare resolved paths only
+            if shared and pid not in owners and os.path.realpath(directory[0]) == os.path.realpath(root):
                 owners.add(pid)
         if shared and pid not in owners:
             continue
         if pid == work_root and pid not in groups:
             groups.add(pid)
             work["processes"] += 1
-        if changed:
-            directory[0] = target
         match = re.match(r'execve\(("(?:[^"\\]|\\.)*"),.*\)\s+=\s+(.+)', call) if operation == "execve" else None
         if not match:
             continue
