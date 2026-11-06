@@ -109,6 +109,11 @@ def _case_question(entry: JsonObject) -> list[str]:
     if not run.get("sensitive"):
         return [run.get("breakError") or "supply --change " + entry["id"] + "=FILE: every command must fail under this behavior break"]
     original, current = run["arms"][0], run["arms"][-1]
+    if "WORKFLOW_GROWTH" in (run.get("execution") or {}).get("assignments", {}):  # the original's outcome is its own declared bound
+        from .tdd_workflow import _work_errors
+        small, large = run["arms"][1], run["arms"][0]
+        errors = _work_errors({**run, "arms": [small, large, small, large]}) if small["outcome"] == large["outcome"] == "passed" else ["unmeasured"]
+        original = {"outcome": "unmeasured" if any(not error.startswith("growth: ") for error in errors) else "failed" if errors else "passed"}
     if current["outcome"] != "passed":
         return ["candidate command " + current["outcome"] + ": " + run["command"]]
     expected = "passed" if entry["kind"] == "preservation" else "failed"
@@ -133,7 +138,7 @@ def _question(entry: JsonObject, proofs: list[JsonObject]) -> list[str]:
             reasons.append("case command not compared: " + command)
         else:
             reasons.extend(_case_question(matching[0]))
-            behavior = behavior or "WORKFLOW_GROWTH" not in (matching[0]["comparison"].get("execution") or {}).get("assignments", {})
+            behavior = behavior or entry.get("kind") != "preservation" or "WORKFLOW_GROWTH" not in (matching[0]["comparison"].get("execution") or {}).get("assignments", {})
     return reasons or ([] if behavior else ["growth cases check scaling only; bind a behavior case and its break: workflow.py tdd --case " + entry["id"] + " 'COMMAND'"])
 
 
