@@ -97,6 +97,16 @@ def readings_unsettled(entry: JsonObject) -> bool:
     return bool(entry.get("interpretations")) and not (entry.get("interpretation") and entry.get("authority"))
 
 
+def original_outcome(run: JsonObject) -> str:
+    """A growth case's original is judged by its own declared bound when both of its arms ran and produced measurements."""
+    if "WORKFLOW_GROWTH" not in (run.get("execution") or {}).get("assignments", {}):
+        return run["arms"][0]["outcome"]
+    from .tdd_workflow import _work_errors
+    small, large = run["arms"][1], run["arms"][0]
+    errors = _work_errors({**run, "arms": [small, large, small, large]}) if small["outcome"] == large["outcome"] == "passed" else ["unmeasured"]
+    return "unmeasured" if any(not error.startswith("growth: ") for error in errors) else "failed" if errors else "passed"
+
+
 def _case_question(entry: JsonObject) -> list[str]:
     if entry.get("kind") not in KINDS:
         return ["declare kind (conformance, contract or preservation) through record tdd-map"]
@@ -108,17 +118,12 @@ def _case_question(entry: JsonObject) -> list[str]:
                  else "no current valid command comparison") + "; replay the recorded batch: workflow.py tdd"]
     if not run.get("sensitive"):
         return [run.get("breakError") or "supply --change " + entry["id"] + "=FILE: every command must fail under this behavior break"]
-    original, current = run["arms"][0], run["arms"][-1]
-    if "WORKFLOW_GROWTH" in (run.get("execution") or {}).get("assignments", {}):  # the original's outcome is its own declared bound
-        from .tdd_workflow import _work_errors
-        small, large = run["arms"][1], run["arms"][0]
-        errors = _work_errors({**run, "arms": [small, large, small, large]}) if small["outcome"] == large["outcome"] == "passed" else ["unmeasured"]
-        original = {"outcome": "unmeasured" if any(not error.startswith("growth: ") for error in errors) else "failed" if errors else "passed"}
-    if current["outcome"] != "passed":
-        return ["candidate command " + current["outcome"] + ": " + run["command"]]
+    original, current = original_outcome(run), run["arms"][-1]["outcome"]
+    if current != "passed":
+        return ["candidate command " + current + ": " + run["command"]]
     expected = "passed" if entry["kind"] == "preservation" else "failed"
-    if original["outcome"] != expected:
-        return [f"{entry['kind']} needs original {expected}, candidate passed; original {original['outcome']}: " + run["command"]]
+    if original != expected:
+        return [f"{entry['kind']} needs original {expected}, candidate passed; original {original}: " + run["command"]]
     return []
 
 

@@ -1532,15 +1532,16 @@ def _run_tdd(values: list[str]) -> int:
     for entry, run in reported.values():
         row = {"case": run["command"], "exits": [arm["exitCode"] for arm in run["arms"]], "breakExit": run.get("breakExit"),
                "work": [arm.get("work") for arm in run["arms"]]}
-        expected_original = run["arms"][0]["outcome"] if entry is None else "passed" if entry.get("kind") == "preservation" else "failed"
+        original = behavior_map.original_outcome(run)
+        expected_original = original if entry is None else "passed" if entry.get("kind") == "preservation" else "failed"
         errors = _work_errors(run)
         if errors:
             identifier = "COST-" + hashlib.sha256(run["command"].encode()).hexdigest()[:16]
             if {entry.get("status") for entry in state.get("findingStates", []) if entry["findingId"] == identifier} == {"resolved"}:
                 errors = []
-        for side, arm, expected in zip(("original", "candidate"), (run["arms"][0], run["arms"][-1]), (expected_original, "passed")):
-            if arm["outcome"] != expected:
-                errors.append(side + ": " + str(arm.get("output") or arm.get("bindingError") or arm["outcome"])[-1200:])
+        for side, outcome, arm, expected in (("original", original, run["arms"][0], expected_original), ("candidate", run["arms"][-1]["outcome"], run["arms"][-1], "passed")):
+            if outcome != expected:
+                errors.append(side + " " + outcome + ": " + str(arm.get("output") or arm.get("bindingError") or arm["outcome"])[-1200:])
         if not run.get("sensitive"):
             errors.append(run.get("breakError") or "supply --change ITEM=FILE: every command must fail when this behavior is broken")
         if errors:
