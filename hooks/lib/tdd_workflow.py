@@ -6,7 +6,7 @@ import argparse
 import hashlib
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
-from functools import lru_cache
+from functools import lru_cache, partial
 from collections import Counter
 import json
 import math
@@ -85,7 +85,7 @@ def refresh_proof(identity: RepoIdentity, items: list[JsonObject], *, candidate:
             proof.update(fresh(proof, candidate))
             control = controls.get(proof.get("controlKey"))
             good = proof["arms"][-1] if proof["arms"][-1]["outcome"] == "passed" else proof["arms"][0]
-            proof["sensitive"] = bool(control and proof.get("breakOid") and fresh(control, control["candidateTree"])["fresh"]
+            proof["sensitive"] = bool(_growth(proof.get("execution") or {})) or bool(control and proof.get("breakOid") and fresh(control, control["candidateTree"])["fresh"]
                                       and control["arms"][0]["key"] == good["key"]
                                       and control["arms"][-1]["outcome"] == "failed" and not control["timedOut"]
                                       and (candidate == control["originalTree"] or
@@ -367,7 +367,8 @@ def _observed_inputs(identity: RepoIdentity, root: Path, temporary: Path, trace:
             process.update(command=arguments, cwd=directory[0])
             for prior in finished.get((arguments, directory[0]), ()) if pid != work_root else ():
                 if prior["end"] <= process["start"] and sequential(prior, process):
-                    work["recomputations"].append(shlex.join(arguments));break
+                    folder = "<case temporary>" if Path(directory[0]).is_relative_to(temporary) else shlex.quote(directory[0])
+                    work["recomputations"].append(shlex.join(arguments) + " # in " + folder);break
         path = Path(os.path.join(directory[0], _trace_path(quoted[1:-1])))
         if path.is_relative_to(temporary):
             continue  # recreated by this isolated operation
@@ -505,8 +506,6 @@ def _prepared_tree(identity: RepoIdentity, scope, source: str, probe: str, files
 
 def _finish_kept_trees():
     scope = _EXECUTION.get()
-    if not scope:
-        return
     for state in scope["sources"].values():
         cache = state.get("cache")
         primer = state.get("primer", state) if state["wait"] else state
@@ -529,7 +528,6 @@ def _finish_kept_trees():
             os.replace(primer["root"], cache / "tree")
         except (OSError, RuntimeError) as error:
             print("Prepared tree not retained: " + str(error), file=sys.stderr)
-        state["cache"] = None
 
 
 def _ignored(state, name: str) -> bool:
@@ -981,9 +979,6 @@ def execute_findings(identity: RepoIdentity, state: JsonObject, findings: list[J
                 "findings": [{**finding, "execution": {"kind": "claim"}, "material": False} for finding in findings],
                 "reexecuted": withdrawn, "runs": []}
     original = _git(identity, "rev-parse", f"{state['passStartOid']}^{{tree}}").decode().strip()
-    if (scope := _EXECUTION.get()) and scope.get("cache_root"):
-        scope["kept"] = {tree: scope["cache_root"] / role
-                         for tree, role in ((original, "original"), (candidate, "candidate"))}
     current = current if current is not None else evidence_document(identity, state.get("tddEvidence")) or {}
     evaluation = _evaluation(identity, state, current)
     maintained = [*behavior_map.current_cases(current.get("behaviorMap") or [], current.get("runs") or []),
@@ -1037,39 +1032,46 @@ def execute_findings(identity: RepoIdentity, state: JsonObject, findings: list[J
                           if tuple(arm.get("key") for arm in run["arms"]) not in loaded_keys}.values())}
 
 
+def _execution_cache(identity, state):
+    scope = _EXECUTION.get()
+    cache = repo_state_dir(identity) / "execution-trees" / state["workflowId"]
+    if scope.get("cache_root") != cache:
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        scope["resources"].enter_context(_flock(cache.with_suffix(".lock")))
+        original = _git(identity, "rev-parse", f"{state['passStartOid']}^{{tree}}").decode().strip()
+        scope.update(identity=identity, cache_root=cache, finish=_finish_kept_trees,
+                     kept={original: cache / "original", _active_candidate_tree(identity): cache / "candidate"})
+
+
 @_comparison_scope()
 def check_retained(identity: RepoIdentity, slug: str | None, workflow_id: str | None) -> JsonObject:
     from .workflow_state import commit_retained_checks, finding_references, _finding_unresolved
     state = _bound_instance_state(read_active(identity), slug, workflow_id)
-    cache = repo_state_dir(identity) / "execution-trees" / state["workflowId"]
-    cache.parent.mkdir(parents=True, exist_ok=True)
-    with _flock(cache.with_suffix(".lock")):
-        state = _bound_instance_state(read_active(identity), slug, workflow_id)
-        tree = _active_candidate_tree(identity)
-        references = finding_references(state)
-        cached = evidence_document(identity, state.get("retainedChecks", {}).get(tree), restore_runs=False) or {}
-        if cached.get("workflowId") != state["workflowId"] or cached.get("candidateTree") != tree:
-            cached = {}
-        if (cached.get("findingRefs") == references and cached.get("runnerKey") == _runner_digest()
-                and isinstance(cached.get("inputIdentities"), list)):
-            try:
-                reusable = all(record["digest"] == _input_identity(identity, record["execution"], record) for record in cached["inputIdentities"])
-            except (WorkflowError, OSError):
-                reusable = False
-            if reusable:
-                return state
-        retained = _retained(identity, state)
-        reports = [{"evidenceId": entry["intakeEvidenceId"], "id": entry["findingId"], "execution": {"kind": "claim"}}
-                   for entry in state.get("findingStates", []) if _finding_unresolved(entry)
-                   and all(entry is not other for other, _ in retained)]
-        _EXECUTION.get().update(identity=identity, cache_root=cache)
-        current = evidence_document(identity, state.get("tddEvidence")) or {}
-        execution = execute_findings(identity, state, [], retained=retained, current=current)
-        execution["reexecuted"].extend(reports)
-        _finish_kept_trees()
-        execution["runnerKey"] = _runner_digest()
-        execution["inputIdentities"] = [value for value in _EXECUTION.get()["inputs"].values() if isinstance(value, dict)]
-        return commit_retained_checks(identity, str(state["slug"]), str(state["workflowId"]), execution, references)
+    _execution_cache(identity, state)
+    state = _bound_instance_state(read_active(identity), slug, workflow_id)
+    tree = _active_candidate_tree(identity)
+    references = finding_references(state)
+    cached = evidence_document(identity, state.get("retainedChecks", {}).get(tree), restore_runs=False) or {}
+    if cached.get("workflowId") != state["workflowId"] or cached.get("candidateTree") != tree:
+        cached = {}
+    if (cached.get("findingRefs") == references and cached.get("runnerKey") == _runner_digest()
+            and isinstance(cached.get("inputIdentities"), list)):
+        try:
+            reusable = all(record["digest"] == _input_identity(identity, record["execution"], record) for record in cached["inputIdentities"])
+        except (WorkflowError, OSError):
+            reusable = False
+        if reusable:
+            return state
+    retained = _retained(identity, state)
+    reports = [{"evidenceId": entry["intakeEvidenceId"], "id": entry["findingId"], "execution": {"kind": "claim"}}
+               for entry in state.get("findingStates", []) if _finding_unresolved(entry)
+               and all(entry is not other for other, _ in retained)]
+    current = evidence_document(identity, state.get("tddEvidence")) or {}
+    execution = execute_findings(identity, state, [], retained=retained, current=current)
+    execution["reexecuted"].extend(reports)
+    execution["runnerKey"] = _runner_digest()
+    execution["inputIdentities"] = [value for value in _EXECUTION.get()["inputs"].values() if isinstance(value, dict)]
+    return commit_retained_checks(identity, str(state["slug"]), str(state["workflowId"]), execution, references)
 
 
 def _evaluation(identity: RepoIdentity, state: JsonObject, current: JsonObject | None) -> JsonObject:
@@ -1124,8 +1126,8 @@ def _work_errors(run):
     if not arms or arms[-1].get("outcome") != "passed" or not arms[-1].get("work"):
         return errors
     before, after = arms[0].get("work", {}), arms[-1]["work"]
-    if repeats := after.get("recomputations"):
-        errors.append("sequential recomputation: " + "; ".join(dict.fromkeys(repeats)))
+    if repeats := Counter(after.get("recomputations", [])) - Counter(before.get("recomputations", [])):
+        errors.append("sequential recomputation: " + "; ".join(repeats))
     def increased(first, last, ratio, label, metrics=("processes", "cpuSeconds")):
         for metric in metrics:
             x, y = first.get(metric), last.get(metric)
@@ -1169,7 +1171,7 @@ def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes:
                   runs: list[JsonObject], *, challenge: bool = True, passing_original: bool = False) -> list[JsonObject]:
     """One execution/cache owner. Each command has its own two exit results."""
     scope = _EXECUTION.get()
-    cache = {}
+    cache, created, measured = {}, len(runs), set()
     for run in [*runs, *probes]:
         for arm in run.get("arms", []):
             if arm.get("contextKey") and arm.get("outcome") in {"passed", "failed"}:
@@ -1184,6 +1186,7 @@ def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes:
                 found = {**found, "contextKey": context, "inputs": inputs,
                          "key": hashlib.sha256((context + inputs).encode()).hexdigest()}
                 cache.setdefault(context, {})[found["key"]] = found
+                measured.add(found["key"])
             arms.append({**found, "requestedTree": source})
         keys = [arm["key"] for arm in arms]
         metadata = {"command": probe["command"], "support": probe.get("support") or [], "timeout": probe["timeout"],
@@ -1203,32 +1206,35 @@ def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes:
         runs.append(run)
         return run
     pending = {}
-    def schedule(source, probe, parent=None, size=None):
+    def schedule(source, probe, parent=None, size=None, fresh=False):
         files, timeout = _comparison_files(identity, probe), probe["timeout"]
         command, execution, environment = _comparison_input(identity, probe)
         if size is not None:
             command = [arg.replace("{size}", str(size)) for arg in command]
         tree = probe.get("probeTree", probe["candidateTree"])
         context = _execution_key(identity, source, tree, files, command, timeout, execution)
-        found = next((arm for arm in reversed(list(cache.get(context, {}).values()))
+        found = None if fresh else next((arm for arm in reversed(list(cache.get(context, {}).values()))
                       if (inputs := _input_identity(identity, execution, arm)) and arm["key"] == hashlib.sha256((context + inputs).encode()).hexdigest()), None)
         if found is None:
             pending_key = context
-            if pending_key not in pending:
-                state, frozen = _prepared_tree(identity, scope, parent or source, tree, files, isolated=size is not None)
+            if fresh or pending_key not in pending:
+                state, frozen = _prepared_tree(identity, scope, parent or source, tree, files, isolated=size is not None or fresh)
                 if parent:  # a break is its parent's warm tree plus the break's changed files
                     entries = _tree_entries(identity, source)
                     changes = _changed_entries(identity, parent, source)
                     state = {**state, "owner": state, "base": {path: value for path, value in state["base"].items() if path not in changes}
                              | {path: entries[path] for path in changes if path in entries}}
                 if scope["pool"] is None:
-                    scope["pool"] = ThreadPoolExecutor(max_workers=os.cpu_count() or 1)
+                    scope["pool"] = ThreadPoolExecutor(max_workers=min(os.cpu_count() or 1, 8))  # measured: more workers inflate CPU time
                 root_key = parent or source
                 previous = scope["first"].get(root_key) if state["wait"] and size is None else None
                 _require_overlay(_executable(identity, "bwrap", environment))
-                pending[pending_key] = scope["pool"].submit(_after, previous, identity, source, (state, frozen),
-                    command, timeout, environment, scope["cancel"], tuple(scope["objects"].items()), derived=bool(parent),
-                    first=size is None and not parent and root_key not in scope["first"])
+                execute = partial(_after, previous, identity, source, (state, frozen), command, timeout, environment, scope["cancel"],
+                                  tuple(scope["objects"].items()), derived=bool(parent),
+                                  first=not fresh and size is None and not parent and root_key not in scope["first"])
+                if fresh:  # a confirmation sample runs alone, after the batch
+                    return source, context, execute()
+                pending[pending_key] = scope["pool"].submit(execute)
                 if not parent and size is None:
                     scope["first"].setdefault(root_key, pending[pending_key])
             found = pending[pending_key]
@@ -1248,7 +1254,7 @@ def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes:
                 contexts[_execution_key(identity, source, tree, _comparison_files(identity, probe), value, probe["timeout"], execution)] = execution
         oid = probe.get("breakOid")
         control = None
-        if challenge and oid:
+        if challenge and oid and not sizes:  # a growth case's two-size comparison is its own check
             try:
                 source = original if passing_original else candidate
                 key = (source, oid)
@@ -1282,11 +1288,11 @@ def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes:
     for arm in cached_arms(identity, workflows[identity.key], contexts, keys):
         cache.setdefault(arm["contextKey"], {})[arm["key"]] = arm
     jobs, controls = [], []
-    def selections(first, last, probe, parent=None):
+    def selections(first, last, probe, parent=None, fresh=False):
         sizes = _growth(_comparison_input(identity, probe)[1])
-        return ([schedule(source, probe, parent if source == last else None, size)
+        return ([schedule(source, probe, size=size, fresh=fresh)
                  for source, size in ((first, sizes[1]), (first, sizes[0]), (last, sizes[0]), (last, sizes[1]))]
-                if sizes else [schedule(first, probe), schedule(last, probe, parent)])
+                if sizes else [schedule(first, probe, fresh=fresh), schedule(last, probe, parent, fresh=fresh)])
     for probe, tree, execution, control in plans:
         selected = selections(original, candidate, probe)
         jobs.append((probe, tree, execution, selected, original, candidate))
@@ -1299,10 +1305,10 @@ def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes:
     compared = [finish(*job) for job in jobs]
     if challenge:
         for probe, result, control in zip(probes, compared, controls):
-            result["sensitive"] = False
+            result["sensitive"] = bool(_growth(result["execution"]))
             result.pop("controlKey", None)
             result.pop("breakExit", None)
-            if not probe.get("breakOid"):
+            if not probe.get("breakOid") or result["sensitive"]:
                 continue
             result["breakOid"] = probe["breakOid"]
             if control is None:
@@ -1317,6 +1323,13 @@ def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes:
             result["sensitive"] = good["outcome"] == "passed" and checked["arms"][0]["key"] == good["key"] and checked["arms"][-1]["outcome"] == "failed" and not checked["timedOut"]
             result["breakExit"] = checked["arms"][-1]["exitCode"]
             result.pop("breakError", None)
+    for probe, result in zip(probes, compared):  # arms measured in different calls ran under different load: judge CPU on one serial current pair
+        keys = {arm["key"] for arm in result["arms"]}
+        if result["runIndex"] >= created and keys & measured and not keys <= measured and any("cpuSeconds" in error for error in _work_errors(result)):
+            pair = [arm for _, _, arm in selections(original, candidate, probe, fresh=True)]
+            if all(arm["outcome"] == "passed" and arm["work"]["cpuSeconds"] is not None for arm in pair):
+                result["arms"] = [{**arm, "work": {**arm["work"], "cpuSeconds": now["work"]["cpuSeconds"], "firstCpuSeconds": arm["work"]["cpuSeconds"]}}
+                                  for arm, now in zip(result["arms"], pair)]
     return compared
 
 def _compare(identity: RepoIdentity, original: str, candidate: str, probe: JsonObject, runs: list[JsonObject], *, passing_original: bool = False) -> JsonObject:
@@ -1356,9 +1369,6 @@ def _run_tdd(values: list[str]) -> int:
     if (workflow_id := instance_id(state)) is None:
         raise WorkflowError(NO_INSTANCE_ID)
     scope = _EXECUTION.get()
-    cache = repo_state_dir(identity) / "execution-trees" / workflow_id
-    cache.parent.mkdir(parents=True, exist_ok=True)
-    scope.update(identity=identity, cache_root=cache)
     slug = str(state["slug"])
     if args.path and not (command or args.case) or args.timeout is not None and args.timeout <= 0:
         raise WorkflowError("a scratch path needs its command; timeout must be positive")
@@ -1431,9 +1441,8 @@ def _run_tdd(values: list[str]) -> int:
                              "claim": reason.strip(), "kind": "nonbehavioral", "rejected": True,
                              "priorFinding": {"evidenceId": evidence, "id": identifier}})
         if not args.verdict and any("probe" in finding or "change" in finding for finding in findings):
-            scope["resources"].enter_context(_flock(cache.with_suffix(".lock")))
+            _execution_cache(identity, state)
         execution = execute_findings(identity, state, findings, captured=captured, candidate=candidate)
-        _finish_kept_trees()
         document = {"schemaVersion": 1, "kind": "intake", "workflowId": workflow_id, "slug": slug,
                     "stage": "code-review" if args.author == "review" else "final",
                     "producer": "code-review" if args.author == "review" else "codex-advisor",
@@ -1471,7 +1480,7 @@ def _run_tdd(values: list[str]) -> int:
         raise WorkflowError("replacements and reports require --as review or --as final; a lead break is ITEM=FILE")
     if args.case and (command or args.behavior_id):
         raise WorkflowError("use repeated --case entries or one trailing command")
-    scope["resources"].enter_context(_flock(cache.with_suffix(".lock")))
+    _execution_cache(identity, state)
     state = _bound_instance_state(read_active(identity), slug, workflow_id)
     items, current = current_map(identity, state, fresh=False)
     if items is None:
@@ -1483,9 +1492,6 @@ def _run_tdd(values: list[str]) -> int:
     candidate = _active_candidate_tree(identity)
     before = tree_manifest(identity)
     original = _git(identity, "rev-parse", f"{state['passStartOid']}^{{tree}}").decode().strip()
-    if (scope := _EXECUTION.get()) and scope.get("cache_root"):
-        scope["kept"] = {tree: scope["cache_root"] / role
-                         for tree, role in ((original, "original"), (candidate, "candidate"))}
     specs = [(identifier if identifier != "-" else None, value) for identifier, value in args.case]
     if command:
         specs = [(args.behavior_id, shlex.join(command))]
@@ -1562,7 +1568,6 @@ def _run_tdd(values: list[str]) -> int:
             if prior.get("caseRuns") != references or any(prior.get(key) != run.get(key) for key in ("runIndex", "candidateKey", "breakOid", "controlKey", "sensitive", "breakExit")) or prior.get("obligation") != behavior_map.obligation(entry):
                 entry["comparison"] = {**run, "obligation": behavior_map.obligation(entry), "caseRuns": references}
             behavior_map.retain_evaluation([entry], {entry["id"]}, evaluation, runs)
-    _finish_kept_trees()
     for frozen in evaluation.values() if indexes else ():
         frozen["runIndex"] = indexes.get(frozen["runIndex"], frozen["runIndex"])
     for entry in items if indexes else ():

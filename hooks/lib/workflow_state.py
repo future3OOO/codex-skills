@@ -33,6 +33,7 @@ from .advisor_diff import current_pass_evidence
 from .repo_identity import RepoIdentity
 from .workflow_documents import ADVISOR_SHAPES, RECORD_SHAPES, validate_advisor_projection, validate_design_declaration, quality_candidates
 from .state_store import (
+    _EXECUTION,
     _active_candidate_tree,
     _candidate_matches,
     _comparison_scope,
@@ -52,6 +53,7 @@ STEP_STATUSES = {"pending", "in-progress", "passed", "not-required", "unavailabl
 FINDING_STATUSES = {"pending", "none", "addressed"}
 REVIEW_SOURCES = {"codex-advisor"}
 FINAL_VERDICTS = {"commit-ready", "fix-before-commit", "context-mismatch"}
+FINAL_ACTIONS = {"final-review", "re-consult-final-review", "complete-workflow", "address-review-findings"}  # the final advisor may judge
 NO_INSTANCE_ID = "this state predates workflow instance identity and can no longer advance; begin a new workflow"
 SLUG_MISMATCH = "--slug does not match the active workflow"
 INSTANCE_MISMATCH = "--workflow-id does not match the active workflow instance"
@@ -1059,12 +1061,6 @@ def record_advisor_result(
                 reviewed = manifest_write(str(state["workflowId"]), "final-review-tree", tree_manifest(identity))
                 state["reviewManifestId"] = reviewed.manifest_id
                 record = state.get("finalReview")
-                # A requested reassessment of a dispositioned candidate, like the re-consult of a
-                # mismatched one, is a fresh final result.
-                fresh = not _stage_unresolved(state, stage, source) and (
-                    state.get("nextAction") in {"complete-workflow", "re-consult-final-review"} or bool(state.get("finalReviewContextMismatchEvidence")))
-                if not fresh and (isinstance(record, dict) and record.get("status") != "pending"):
-                    raise WorkflowError("final review result already recorded for the current candidate")
                 intake["runs"] = execution["runs"]
                 intake_write = evidence_write(str(state["workflowId"]), "finding-intake-final", intake)
                 writes.append(intake_write)
@@ -1072,6 +1068,11 @@ def record_advisor_result(
                     transaction, state, intake_write.evidence_id, intake, intakes,
                 )
                 _settle_executed(state, execution, intake_reference)
+                # A requested reassessment of a candidate it dispositions, like the re-consult of a
+                # mismatched one, is a fresh final result; a refusal rolls back this transaction.
+                if (isinstance(record, dict) and record.get("status") != "pending" and (_stage_unresolved(state, stage, source) or not (
+                        state.get("nextAction") in FINAL_ACTIONS or state.get("finalReviewContextMismatchEvidence")))):
+                    raise WorkflowError("final review result already recorded for the current candidate")
                 state["finalReview"] = {
                     "source": source, "status": verdict, "intakeEvidence": intake_write.evidence_id,  # this round's executed intake
                     "findings": "pending" if _stage_unresolved(state, stage, source) else "none",
@@ -1234,7 +1235,7 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
     open_for_phase = not terminal and not (phase == "preflight-advice" and revalidation)
     stage_actions = {
         "preflight-advice": {"preflight"},
-        "final-review": {"final-review", "re-consult-final-review", "complete-workflow"},
+        "final-review": FINAL_ACTIONS,
     }
     reviewing = phase == "code-review"
     requirements = (
@@ -1420,8 +1421,11 @@ def complete(
 
 def _discard_execution_tree(identity: RepoIdentity, workflow_id: str) -> None:
     cache = repo_state_dir(identity) / "execution-trees" / workflow_id
+    scope = _EXECUTION.get() or {}
+    if owned := scope.get("cache_root") == cache:  # this command holds the lock; its trees are not published
+        scope.pop("finish", None)
     if cache.exists():
-        with _flock(cache.with_suffix(".lock")):
+        with contextlib.nullcontext() if owned else _flock(cache.with_suffix(".lock")):
             if cache.exists():
                 shutil.rmtree(cache)
 
@@ -1510,13 +1514,7 @@ def review_blockers(identity: RepoIdentity, state: JsonObject) -> list[str]:
     return missing
 
 
-def ready_for_edit(identity: RepoIdentity, path: str, *, reminders=None, state: JsonObject | None = None) -> tuple[bool, list[str]]:
-    state = read_active(identity) if state is None else state
-    if state is None:
-        return False, ["active workflow"]
-    if state.get("revalidation") or state.get("phase") == "complete":
-        return False, ["new active workflow" + (" (governance revalidation permits verification/review only)"
-                                               if state.get("revalidation") else "")]
+def ready_for_edit(identity: RepoIdentity, state: JsonObject, *, reminders=None) -> list[str]:
     missing = [name for name, phase in (("repo-context-forge", "repo-context-forge"),
                ("production preflight", "preflight")) if not _allows_next(state, phase)]
     if not missing and reminders is not None:
@@ -1526,7 +1524,7 @@ def ready_for_edit(identity: RepoIdentity, path: str, *, reminders=None, state: 
             items = behavior_map.recorded_map(evidence_document(identity, state.get("preflightEvidence"), restore_runs=False))
         if items:
             reminders.append("Probe obligations: " + "; ".join(f"{entry['id']}: {entry['behavior']} => {entry['expected']}" for entry in items)[:1800])
-    return not missing, missing
+    return missing
 
 
 def public_status(state: JsonObject, identity: RepoIdentity | None = None, *,
@@ -1590,7 +1588,7 @@ def _readiness_lines(identity: RepoIdentity, state: JsonObject, items: list[Json
     refresh_proof(identity, [*observations, *evaluation], candidate=candidate, runs=(document or {}).get("runs", []))
     cases = behavior_map.open_obligations(items, evaluation, observations)
     review = review if review is not None else evidence_document(identity, state.get("codeReviewEvidence"))
-    current = bool(review and review.get("workflowId") == state["workflowId"] and review.get("candidateTree") == candidate and review.get("verdict") == "complete" and not any(_finding_unresolved(entry) for entry in state.get("findingStates") or []))
+    current = bool(review and review.get("workflowId") == state["workflowId"] and review.get("candidateTree") == candidate and review.get("verdict") == "complete" and not _stage_unresolved(state, "code-review", "code-review"))
     return {"open": cases, "reviewCurrent": current, "openCount": len(cases),
             "never": behavior_map.never_compared(items), "contractChanges": behavior_map.contract_changes(items, recorded)}
 

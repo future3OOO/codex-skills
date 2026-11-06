@@ -42,10 +42,14 @@ def _comparison_scope():
         try:
             yield scope
         finally:
-            scope["cancel"].set()
-            if scope["pool"] is not None:
-                scope["pool"].shutdown(wait=True, cancel_futures=True)
-            _EXECUTION.reset(token)
+            try:
+                scope["cancel"].set()
+                if scope["pool"] is not None:
+                    scope["pool"].shutdown(wait=True, cancel_futures=True)
+                if finish := scope.get("finish"):
+                    finish()
+            finally:
+                _EXECUTION.reset(token)
 
 
 def codex_home() -> Path:
@@ -240,7 +244,7 @@ def _candidate_matches(identity: RepoIdentity, expected: str) -> bool:
     if scope["candidates"][identity.root] != expected:
         return False
     env = {**os.environ, "GIT_INDEX_FILE": scope["indices"][identity.root]}
-    checked = subprocess.run(["git", "-C", str(identity.root), "diff", "--quiet", "--no-ext-diff", "--no-textconv"],
+    checked = subprocess.run(["git", "-C", str(identity.root), "diff", "--quiet", "--no-ext-diff", "--no-textconv", "--ignore-submodules=dirty"],
                              env=env, capture_output=True, check=False)
     if checked.returncode not in {0, 1}:
         raise OSError(checked.stderr.decode("utf-8", "replace"))
