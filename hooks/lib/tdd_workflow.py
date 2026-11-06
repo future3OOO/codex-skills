@@ -133,13 +133,13 @@ def _environment() -> dict[str, str]:
             "SHLVL": "0", "PYTHONDONTWRITEBYTECODE": ""}
 
 
-def _executable(identity: RepoIdentity, command: str, environment: dict[str, str] | None = None) -> str:
+def _executable(identity: RepoIdentity, command: str, environment: dict[str, str] | None = None, case: JsonObject | None = None) -> str:
     if os.path.dirname(command):
         return os.path.normpath(os.path.join(identity.root, command))
     search = os.pathsep.join(os.path.join(identity.root, entry) for entry in os.get_exec_path(environment))
     executable = shutil.which(command, path=search)
     if executable is None:
-        raise WorkflowError("probe executable is unavailable: " + command)
+        raise WorkflowError("probe executable is unavailable: " + (f"{case.get('behaviorId') or '-'}: {case['command']}" if case else command))
     return executable
 
 
@@ -1055,7 +1055,7 @@ def _comparison_input(identity: RepoIdentity, probe: JsonObject) -> tuple[list[s
     environment = _environment() | environment
     environment["PYTHONPATH"] = os.pathsep.join(dict.fromkeys(
         os.path.normpath(os.path.join(identity.root, entry)) for entry in (str(identity.root), *environment.get("PYTHONPATH", "").split(os.pathsep))))
-    execution = {"executable": _executable(identity, command[0], environment),
+    execution = {"executable": _executable(identity, command[0], environment, probe),
                  "assignments": assignments,
                  "search": os.pathsep.join(os.path.join(identity.root, entry) for entry in os.get_exec_path(environment)),
                  "lookup": command[0] if not os.path.dirname(command[0]) else None,
@@ -1156,9 +1156,9 @@ def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes:
         runs.append(run)
         return run
     pending = {}
-    def schedule(source, probe, parent=None, size=None):
+    def schedule(source, probe, prepared, parent=None, size=None):
         files, timeout = _comparison_files(identity, probe), probe["timeout"]
-        command, execution, environment = _comparison_input(identity, probe)
+        command, execution, environment = prepared
         if size is not None:
             command = [arg.replace("{size}", str(size)) for arg in command]
         tree = probe.get("probeTree", probe["candidateTree"])
@@ -1189,7 +1189,8 @@ def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes:
         return (source, context, found)
     plans, contexts = [], {}
     for probe in probes:
-        command, execution, _ = _comparison_input(identity, probe)
+        prepared = _comparison_input(identity, probe)
+        command, execution, _ = prepared
         tree = probe.get("probeTree", probe["candidateTree"])
         sizes = _growth(execution)
         if sizes and not any("{size}" in arg for arg in command):
@@ -1226,7 +1227,7 @@ def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes:
                 control = (source, broken)
             except (RuntimeError, ValueError) as exc:
                 control = str(exc)
-        plans.append((probe, tree, execution, control))
+        plans.append((probe, tree, prepared, control))
     def keys(arm):
         context = arm["contextKey"]
         return [hashlib.sha256((context + _input_identity(identity, contexts[context], arm)).encode()).hexdigest()]
@@ -1236,18 +1237,19 @@ def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes:
     for arm in cached_arms(identity, workflows[identity.key], contexts, keys):
         cache.setdefault(arm["contextKey"], {})[arm["key"]] = arm
     jobs, controls = [], []
-    def selections(first, last, probe, parent=None):
-        sizes = _growth(_comparison_input(identity, probe)[1])
-        return ([schedule(source, probe, size=size)
+    def selections(first, last, probe, prepared, parent=None):
+        sizes = _growth(prepared[1])
+        return ([schedule(source, probe, prepared, size=size)
                  for source, size in ((first, sizes[1]), (first, sizes[0]), (last, sizes[0]), (last, sizes[1]))]
-                if sizes else [schedule(first, probe), schedule(last, probe, parent)])
-    for probe, tree, execution, control in plans:
-        selected = selections(original, candidate, probe)
+                if sizes else [schedule(first, probe, prepared), schedule(last, probe, prepared, parent)])
+    for probe, tree, prepared, control in plans:
+        execution = prepared[1]
+        selected = selections(original, candidate, probe, prepared)
         jobs.append((probe, tree, execution, selected, original, candidate))
         if isinstance(control, tuple):
             source, broken = control
             target = selected[0 if passing_original else -1][2]
-            control = ((probe, tree, execution, selections(source, broken, probe, source), source, broken)
+            control = ((probe, tree, execution, selections(source, broken, probe, prepared, source), source, broken)
                        if not isinstance(target, dict) or target["outcome"] == "passed" else None)
         controls.append(control)
     compared = [finish(*job) for job in jobs]
@@ -1293,7 +1295,7 @@ def _run_tdd(values: list[str]) -> int:
                         help="withdraw this author's invalid observation without running cases; retain its raw evidence")
     parser.add_argument("--change", action="append", default=[], help="ITEM=FILE supplies a behavior-breaking diff for its commands (probe for authored probes); a bare FILE submits an authored replacement")
     parser.add_argument("--as", dest="author", choices=("review", "final"), help="execute and record this author's finding in the same call")
-    parser.add_argument("--path", help="new probe file outside the checkout; existing cases need only their command")
+    parser.add_argument("--path", help="new probe file outside the checkout; a recorded command needs no --case")
     parser.add_argument("--behavior-id", help="map item for a single trailing command, or select recorded cases to replay")
     parser.add_argument("--case", action="append", nargs=2, default=[], metavar=("ITEM_OR_DASH", "COMMAND"),
                         help="one command per case; '-' is unbound. Growth: WORKFLOW_GROWTH=SMALL,LARGE,MAX_POWER COMMAND {size}; counts may grow by at most (LARGE/SMALL)**MAX_POWER")
@@ -1433,35 +1435,22 @@ def _run_tdd(values: list[str]) -> int:
     candidate = _active_candidate_tree(identity)
     before = tree_manifest(identity)
     original = _git(identity, "rev-parse", f"{state['passStartOid']}^{{tree}}").decode().strip()
-    specs = [(identifier if identifier != "-" else None, value) for identifier, value in args.case]
+    specs = [(identifier if identifier != "-" else None, shlex.join(shlex.split(value))) for identifier, value in args.case]
     if command:
         specs = [(args.behavior_id, shlex.join(command))]
-    selected = []
-    inventory = _probe_files([], identity, args.support or []) if specs else None
-    for identifier, value in specs:
-        entry = behavior_map.item(items, identifier) if identifier else None
-        if identifier and entry is None:
-            raise WorkflowError("unknown Behavior Map item: " + identifier)
-        captured = _probe_capture(identity, {"command": value, **({"path": args.path} if args.path else {})},
-                                  candidate, args.timeout or 900., args.support, inventory, original if entry and entry.get("kind") == "preservation" else None)
-        if entry is not None:
-            inputs = entry.get("boundaryInputs") or []
-            entry["boundaryInputs"] = list(dict.fromkeys(captured["command"] if item == value else item for item in inputs))
-            if captured["command"] not in entry["boundaryInputs"]:
-                entry["boundaryInputs"].append(captured["command"])
-            captured["behaviorId"] = entry["id"]
-        selected.append((entry, captured))
+    selected, pending = [], []
     if not specs:
         for entry in items:
             if args.behavior_id and entry["id"] != args.behavior_id:
                 continue
             observations = {(case.get("comparison") or {}).get("command"): case.get("comparison")
                             for case in behavior_map.current_cases([entry], runs)}
-            for value in entry.get("boundaryInputs") or []:
+            for value in entry.get("boundaryInputs") or []:  # a recorded command no run has compared is captured below
                 recorded = observations.get(value)
-                if not recorded or "runIndex" not in recorded:
-                    raise WorkflowError("capture the pending command with --case " + entry["id"] + " " + shlex.quote(value))
-                selected.append((entry, recorded))
+                if recorded and "runIndex" in recorded:
+                    selected.append((entry, recorded))
+                else:
+                    pending.append((entry["id"], value))
         if args.behavior_id and not any(entry["id"] == args.behavior_id for entry in items):
             raise WorkflowError("unknown Behavior Map item")
     support_overrides = {}
@@ -1482,6 +1471,20 @@ def _run_tdd(values: list[str]) -> int:
         if names - eligible:
             raise WorkflowError("recorded replay support must name a captured test or command input; supply a command to capture new support")
         selected = [(entry, support_overrides[probe["runIndex"]]) for entry, probe in selected]
+    inventory = _probe_files([], identity, args.support or []) if specs or pending else None
+    for identifier, value in specs or pending:
+        entry = behavior_map.item(items, identifier) if identifier else None
+        if identifier and entry is None:
+            raise WorkflowError("unknown Behavior Map item: " + identifier)
+        captured = _probe_capture(identity, {"command": value, **({"path": args.path} if args.path else {})},
+                                  candidate, args.timeout or 900., args.support, inventory, original if entry and entry.get("kind") == "preservation" else None)
+        if entry is not None:
+            inputs = entry.get("boundaryInputs") or []
+            entry["boundaryInputs"] = list(dict.fromkeys(captured["command"] if item == value else item for item in inputs))
+            if captured["command"] not in entry["boundaryInputs"]:
+                entry["boundaryInputs"].append(captured["command"])
+            captured["behaviorId"] = entry["id"]
+        selected.append((entry, captured))
     for entry, probe in selected:
         identifier = entry["id"] if entry else "-"
         if identifier in breaks:
