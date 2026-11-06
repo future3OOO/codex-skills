@@ -27,31 +27,8 @@ def _strings(value: object) -> list[str] | None:
     return None
 
 
-def _field_errors(raw: JsonObject, identifier: str) -> list[str]:
-    errors = [f"probe {identifier} kind must be conformance, contract or preservation"] if "kind" in raw and not (
-        isinstance(raw["kind"], str) and raw["kind"] in KINDS) else []
-    if "boundaryInputs" in raw:
-        if _strings(raw["boundaryInputs"]) is None:
-            errors.append(f"probe {identifier} boundaryInputs must contain case commands")
-        else:
-            try:
-                if any(not shlex.split(value) for value in raw["boundaryInputs"]):
-                    errors.append(f"probe {identifier} contains an empty case command")
-            except ValueError as exc:
-                errors.append(f"probe {identifier} has an invalid case command: {exc}")
-    readings = raw.get("interpretations")
-    if "interpretations" in raw and (_strings(readings) is None or len(readings) < 2):
-        errors.append(f"probe {identifier} interpretations requires at least two competing readings")
-    settled = {key for key in ("interpretation", "authority") if key in raw}
-    if settled and ("interpretations" not in raw or settled != {"interpretation", "authority"}
-                    or not all(_text(raw[key]) for key in settled)):
-        errors.append(f"probe {identifier} settles its readings with both interpretation and authority")
-    return errors
-
-
 def _recorded_fields(raw: JsonObject) -> JsonObject:
-    """The optional fields in their valid shape; a recorded item's other fields (an earlier
-    recorder's, or a typed input list) are absent rather than refused."""
+    """The optional fields in their valid shape; any other shape is absent rather than refused."""
     fields: JsonObject = {}
     if raw.get("kind") in KINDS:
         fields["kind"] = raw["kind"]
@@ -82,11 +59,10 @@ def map_errors(value: object, *, allow_runtime: bool) -> list[str]:
         seen.add(identifier)
         errors.extend(f"probe {identifier} requires {field}" for field in REQUIRED_FIELDS if not _text(raw.get(field)))
         if not allow_runtime:
-            if "kind" not in raw:
+            if not (isinstance(raw.get("kind"), str) and raw["kind"] in KINDS):
                 errors.append(f"probe {identifier} requires kind: conformance, contract or preservation")
             if extra := set(raw) - REQUIRED_FIELDS - JUDGEMENT_FIELDS:
                 errors.append(f"probe {identifier} has unknown fields: " + ", ".join(sorted(extra)))
-            errors.extend(_field_errors(raw, identifier))
     return errors
 
 
