@@ -190,6 +190,7 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity, *, review: bool = 
         if result:
             print(receipt.getvalue(), end="")
             return result
+        refresh_context(identity)
         state = bound_state(identity, slug, workflow_id)
     if state.get("tdd") == "in-progress":
         _emit_json(_receipt(state, identity, kind="verification", valid=False,
@@ -203,7 +204,7 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity, *, review: bool = 
     passed = evidence_document(identity, state.get("qualityGateEvidence")) if _evidence_ready(state, "verification") else None
     last = (passed or {}).get("runs", [{}])[-1]
     if (base and last.get("valid") is True and last.get("baseCommit") == base
-            and (not review or last.get("graphEvidenceId") == state.get("repoContextForgeEvidence")) and _tree_drift(
+            and last.get("graphEvidenceId") == state.get("repoContextForgeEvidence") and _tree_drift(
             identity, state, field="qualityGateManifestId", missing="missing", stale="stale") is None):
         if not review:
             from .tdd_workflow import check_retained
@@ -229,7 +230,7 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity, *, review: bool = 
     # The pass's recorded Repo Context Forge evidence, handed to the gate
     # unchanged when it carries the producer's snapshot-bound gate context;
     # the gate's own binding check adjudicates match, stale, or absent.
-    recorded = state.get("repoContextForgeEvidence") if review else None
+    recorded = state.get("repoContextForgeEvidence")
     graph_document = evidence_document(identity, recorded if isinstance(recorded, str) else None)
     graph_context = (
         graph_document.get("gateContext")

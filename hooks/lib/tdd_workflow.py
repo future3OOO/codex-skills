@@ -1145,7 +1145,11 @@ def _work_errors(run):
         ratio = (sizes[1] / sizes[0]) ** sizes[2]
         increased(arms[2].get("work", {}), arms[-1]["work"], ratio)
         try:
-            small, large = [json.loads(arm["output"]) for arm in arms[2:]]
+            measurements = []
+            for arm in arms[2:]:
+                _, marker, text = ("\n" + arm["output"]).rpartition("\nWORKFLOW_METRICS=")
+                measurements.append(json.loads(text.partition("\n")[0] if marker else arm["output"]))
+            small, large = measurements
             if not isinstance(small, dict) or not isinstance(large, dict) or small.keys() != large.keys() or any(
                     type(value) not in (int, float) or not math.isfinite(value) or value < 0 for metrics in (small, large) for value in metrics.values()):
                 raise ValueError("growth metrics must be matching objects of finite nonnegative numbers")
