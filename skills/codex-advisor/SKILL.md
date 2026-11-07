@@ -20,12 +20,9 @@ Investigate the lead candidate design before production preflight is recorded. S
 The advisor designs against [Production Preflight's frozen evaluation and architecture rules](../production-preflight/SKILL.md#behaviormap),
 checking preservation against executed original results and challenging change expectations and costs.
 
-Preflight requires two consults in the same session.
-Round 1 investigates with full access and returns its model and design as findings;
-even `approved` cannot record preflight. Supply any response with `--reconsult`.
-Round 2 incorporates that investigation and response into the existing draft copy,
-cuts unnecessary work and code, and dry-runs the result.
-It closes the remaining design gaps and returns `approved`; no third consult is allowed.
+The advisor investigates, edits the draft copy and dry-runs it in one consult.
+Record preflight when it returns `approved`. Use `--reconsult` in the same session
+only for new evidence or unresolved gaps; approval remains required.
 The checkpoint sends the delta with both content identities; failed results keep
 that base, and the first request sends it whole.
 
@@ -58,7 +55,7 @@ resolves it. Correct the draft using that measurement before resubmission.
 
 ### `final-review`
 
-Run after implementation, verification, and the required native delegate code review. This
+Request approval after implementation, verification and native delegate code review. This
 independent checkpoint verifies the candidate by running code rather than trusting the lead
 or delegate verdict. The wrapper sends the recorded original request once, the checkpoint's
 retained advisor projection, the current governing-design declaration (a deepened design
@@ -72,7 +69,7 @@ Leave candidate files, Git state and workflow state unchanged. This is trusted a
 preflight skips the candidate-staleness check, which neither restores nor confines writes.
 
 Findings follow the workflow's [executable evidence and acceptance order](../repo-production-workflow/SKILL.md#10-delegate-code-review).
-The wrapper records the verdict without running cases. Submit new executable findings through `tdd --as final` before returning the verdict; its payload contains only report lines or recorded references. Retained findings run at `verify` or `complete`, with results cached by candidate tree. `context-mismatch` is reserved for candidate/projection identity mismatch;
+Final advice remains available while proof is pending; only current proof permits approval. The wrapper records the verdict without running cases. Submit new executable findings through `tdd --as final` before returning the verdict; its payload contains only report lines or recorded references. Retained findings run at `verify` or `complete`, with results cached by candidate tree. `context-mismatch` is reserved for candidate/projection identity mismatch;
 it advances nothing. State never authorizes Git.
 
 ## Invocation

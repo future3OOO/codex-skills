@@ -136,9 +136,8 @@ def _question(entry: JsonObject, proofs: list[JsonObject]) -> list[str]:
                   and obligation(proof) == obligation(entry)]
     reasons, behavior = [], False
     for command in commands:
-        matching = [proof for proof in candidates if (proof.get("comparison") or {}).get("command") == command
-                    or proof.get("comparison") == {} and proof.get("boundaryInputs") == [command]]
-        if not matching or not matching[0].get("comparison"):
+        matching = [proof for proof in candidates if (proof.get("comparison") or {}).get("command") == command]
+        if not matching:
             reasons.append("case command not compared: " + command)
         else:
             reasons.extend(_case_question(matching[0]))

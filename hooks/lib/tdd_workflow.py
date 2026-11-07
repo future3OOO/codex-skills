@@ -1111,7 +1111,7 @@ def _comparison_input(identity: RepoIdentity, probe: JsonObject) -> tuple[list[s
                  "assignments": assignments,
                  "search": os.pathsep.join(os.path.join(identity.root, entry) for entry in os.get_exec_path(environment)),
                  "lookup": command[0] if not os.path.dirname(command[0]) else None,
-                 "environment": hashlib.sha256(json.dumps(sorted((key, value) for key, value in environment.items() if key != "PATH")).encode()).hexdigest()}
+                 "environment": hashlib.sha256(json.dumps(sorted(environment.items())).encode()).hexdigest()}
     return command, execution, environment
 
 

@@ -84,8 +84,8 @@ Its map follows TDD's [Behavior Map](../tdd/recorder.md#behavior-map): each item
 the contract and planned attacks.
 
 Submit the exact draft through [Codex Advisor's preflight loop](../codex-advisor/SKILL.md#preflight-advice).
-Complete both rounds in the same session: investigation findings, then an advisor-edited draft.
-Continue to recording only after round 2 returns `approved`.
+The advisor investigates and edits the draft in one consult. Record it after
+`approved`; reconsult only for new evidence or unresolved gaps.
 
 ### 5. Record approved preflight once
 

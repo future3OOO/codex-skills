@@ -1010,13 +1010,8 @@ def record_advisor_result(
             if verdict in {"approved", "changes-required"}:
                 if intake is None or preflight_draft is None:
                     raise WorkflowError("draft advice requires its reviewed preflight artifact")
-                if state.get("preflightRounds", 0) >= 2:
-                    raise WorkflowError("preflight consultation budget exhausted")
-                if verdict == "changes-required" and state.get("preflightRounds") and not state.get("preflightEvidence"):
-                    raise WorkflowError("the second preflight consult is the last: the advisor edits the draft "
-                                        "in place and returns approved")
                 intake["preflightDraft"] = preflight_draft
-                if submitted_draft not in (None, preflight_draft):  # the last round's in-place edits
+                if submitted_draft not in (None, preflight_draft):
                     intake["draftEdits"] = draft_diff(submitted_draft, preflight_draft, "submitted-draft", "approved-draft")
                 state["preflightRounds"] = int(state.get("preflightRounds", 0)) + 1
             measured_reason = str(reason or "").strip() or None
@@ -1040,7 +1035,7 @@ def record_advisor_result(
             state.pop("paused", None)
             state["advisorPreflight"] = {
                 "source": source,
-                "status": "pending" if verdict == "approved" and state.get("preflightRounds") == 1 else verdict,
+                "status": verdict,
                 "findings": (current or {}).get("findings", "none") if verdict == "unavailable" and intake_reference else "pending" if verdict == "changes-required" else "none",
                 "reason": recorded_reason,
                 **({"intakeEvidence": intake_reference} if intake_reference else {}),
@@ -1054,22 +1049,19 @@ def record_advisor_result(
                     raise WorkflowError("final review comparison evidence is absent or foreign")
             _review_evidence(state, intake)
             state.pop("paused", None)
-            _require_predecessor(state, "final-review")
-            if not state.get("finalStarted") and (drift := _binding_drift(identity, state, "review", transaction)):
-                raise WorkflowError(f"the reviewed tree changed after the lead review: {drift}")
-            if drift := _binding_drift(identity, state, "quality-gate", transaction):
-                raise WorkflowError(f"the quality gate did not cover the current tree: {drift}")
             if verdict not in FINAL_VERDICTS:
                 raise ValueError(f"unsupported final-review verdict: {verdict}")
+            ready = (all(_allows_next(state, phase) for phase in SEQUENCE[:SEQUENCE.index("code-review")])
+                     and (_allows_next(state, "code-review") or _review_assessed(state))
+                     and (state.get("finalStarted") or not _binding_drift(identity, state, "review", transaction))
+                     and not _binding_drift(identity, state, "quality-gate", transaction))
+            if verdict == "commit-ready" and not ready:
+                raise WorkflowIncomplete("commit-ready requires current proof, verification and independent review")
             if verdict == "context-mismatch":
                 mismatch = evidence_write(str(state["workflowId"]), "finding-context-mismatch-final", intake)
                 writes.append(mismatch)
                 state["finalReviewContextMismatchEvidence"] = mismatch.evidence_id
             else:
-                state["finalStarted"] = True  # the final advisor's tree is now the reviewed tree
-                reviewed = manifest_write(str(state["workflowId"]), "final-review-tree", tree_manifest(identity))
-                state["reviewManifestId"] = reviewed.manifest_id
-                record = state.get("finalReview")
                 intake["runs"] = execution["runs"]
                 intake_write = evidence_write(str(state["workflowId"]), "finding-intake-final", intake)
                 writes.append(intake_write)
@@ -1077,25 +1069,24 @@ def record_advisor_result(
                     transaction, state, intake_write.evidence_id, intake, intakes,
                 )
                 _settle_executed(state, execution, intake_reference)
-                # A requested reassessment of a candidate it dispositions, like the re-consult of a
-                # mismatched one, is a fresh final result; a refusal rolls back this transaction.
-                if (isinstance(record, dict) and record.get("status") != "pending" and (_stage_unresolved(state, stage, source) or not (
-                        state.get("nextAction") in FINAL_ACTIONS or state.get("finalReviewContextMismatchEvidence")))):
-                    raise WorkflowError("final review result already recorded for the current candidate")
-                state["finalReview"] = {
-                    "source": source, "status": verdict, "intakeEvidence": intake_write.evidence_id,  # this round's executed intake
-                    "findings": "pending" if _stage_unresolved(state, stage, source) else "none",
-                }
-                # A later final is sent only the change since the tree this verdict judged.
-                state["judgedTree"] = expected_candidate_tree or _active_candidate_tree(identity)
-                state.pop("finalReviewContextMismatchEvidence", None)
-                state["phase"] = "final-review"
+                state["finalReview"].update(status="pending", intakeEvidence=intake_write.evidence_id)
+                if ready:
+                    state["finalStarted"] = True
+                    reviewed = manifest_write(str(state["workflowId"]), "final-review-tree", tree_manifest(identity))
+                    state["reviewManifestId"] = reviewed.manifest_id
+                    state["finalReview"] = {
+                        "source": source, "status": verdict, "intakeEvidence": intake_write.evidence_id,
+                        "findings": "pending" if _stage_unresolved(state, stage, source) else "none",
+                    }
+                    state["judgedTree"] = expected_candidate_tree or _active_candidate_tree(identity)
+                    state.pop("finalReviewContextMismatchEvidence", None)
+                    state["phase"] = "final-review"
         else:
             raise ValueError(f"unsupported advisor stage: {stage}")
         state["nextAction"] = _derive_next_action(state)
         return _commit(
             transaction, state, f"advisor-{stage}-result", evidence=writes,
-            manifests=[reviewed] if stage == "final" and verdict != "context-mismatch" else (),
+            manifests=[reviewed] if stage == "final" and verdict != "context-mismatch" and ready else (),
         )
 
 
@@ -1268,8 +1259,6 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
     if phase == "preflight-advice":
         if preflight_draft is None:
             missing.append("preflight draft (--preflight-file)")
-        if state.get("preflightRounds", 0) >= 2:
-            missing.append("preflight consultation budget exhausted")
         if state.get("preflightLatestEvidence"):
             missing.append("preflight is already recorded; draft consultations are closed")
     evidence_id = state.get("repoContextForgeEvidence")
@@ -1639,7 +1628,7 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
         intake = (evidence_document(identity, advice.get("intakeEvidence")) or {}) if preflight else {}
         draft = intake.get("preflightDraft")
         if (preflight and advice.get("status") == "approved" and intake.get("verdict") == "approved"
-                and isinstance(draft, dict) and (preflight_draft is None or state.get("preflightRounds", 0) >= 2
+                and isinstance(draft, dict) and (preflight_draft is None
                 or json.dumps(draft, sort_keys=True) == json.dumps(preflight_draft, sort_keys=True))):
             return {"command": shlex.join([*cli, "record", "preflight", *bound])}
         design = repo_state_dir(identity) / "designs" / f"{state['workflowId']}.md"

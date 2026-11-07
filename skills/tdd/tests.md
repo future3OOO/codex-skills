@@ -4,11 +4,10 @@ A strong test is a real probe of one **independently-failable observable outcome
 
 A behavior test survives internal refactoring: if observable behavior is unchanged but the test breaks, the test is coupled to implementation. Several assertions are valid when they jointly prove one behavior; one assertion can still hide an over-broad behavior.
 
-Scratch work investigates; it is not recorded proof. A recorded probe is a direct
-operation in the project's own test layout and runner where it has one, focused on the changed Interface, recorded
-through `workflow.py tdd`.
+Record direct operations through `workflow.py tdd`. Reuse the project's runner,
+fixtures and supported execution matrix; use a focused script where none exists.
 Submit the focused commands in one workflow call. One command is one case.
-The command is its identity, and the probe must assert
+The probe must assert
 its expected outcome and exit non-zero when a check fails. The comparison reads
 exit codes only. Printed values and native reports are diagnostic.
 Read the diff and map the affected decisions to preservation or contract cases, or
