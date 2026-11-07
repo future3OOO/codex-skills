@@ -794,7 +794,7 @@ def _probe_capture(identity: RepoIdentity, probe: object, candidate: str, timeou
     if preserved is not None:
         files = sorted(original_files | (set(files) & (overrides | ({virtual} if virtual else set()))))
     return {"command": shlex.join(command), "candidateTree": candidate, "probeTree": tree,
-            "probeFiles": files, "support": support or [], "timeout": timeout}
+            "probeFiles": files, "support": support or [], "timeout": timeout, "captureKey": os.urandom(16).hex()}
 
 
 def _probe_outcome(arm: JsonObject) -> str:

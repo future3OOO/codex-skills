@@ -1052,7 +1052,7 @@ def record_advisor_result(
             if verdict not in FINAL_VERDICTS:
                 raise ValueError(f"unsupported final-review verdict: {verdict}")
             ready = (all(_allows_next(state, phase) for phase in SEQUENCE[:SEQUENCE.index("code-review")])
-                     and (_allows_next(state, "code-review") or _review_assessed(state))
+                     and _allows_next(state, "code-review")
                      and (state.get("finalStarted") or not _binding_drift(identity, state, "review", transaction))
                      and not _binding_drift(identity, state, "quality-gate", transaction))
             if verdict == "commit-ready" and not ready:
