@@ -33,8 +33,6 @@ hard rule reports `incomplete`; a warning-only rule's `incomplete` needs no acti
   the batch replaces corresponding indirect executions and duplicate verification.
 - Inspect the delta and remove unnecessary additions.
 - Scan for common quality escapes such as `TODO`, `FIXME`, `eslint-disable`, `@ts-ignore`, and broad catch/pass patterns.
-- Run the bundled production code quality gate.
-- If the gate reports errors or actionable warnings, go back to the code, remove the bloat or quality escape, and rerun the gate.
 - If the gate reports a `QG54-OWNER-COMPETITION-PRODUCTION` warning, it has named both competing owners with their evidence class. Deepen, replace, or consolidate same-responsibility owners until one owner remains and delete the competing surface; a `candidate` or `confirmed-unresolved` state left behind is unfinished work, not a passing verdict. `resolved` telemetry requires a parent-bound disposition record and complete scope; same-responsibility repairs additionally require the one-owner predicate.
 - If the gate reports a `QG54-DUPLICATE-*` warning, it has named every region carrying that exact implementation. Keep one owner and delete the copies, or call the survivor. These rules are warning-only; a copy left behind is unfinished work, not a passing verdict.
 - For owner-competition warnings, inspect the named regions' callers/callees with GitNexus MCP or local search before deciding; distinct authorities, real adapters, and genuinely different lifecycles are the legitimate negative cases the disposition contract records.
@@ -49,7 +47,6 @@ hard rule reports `incomplete`; a warning-only rule's `incomplete` needs no acti
   - changed execution order
   - remaining blockers or follow-ups
 - Do not create busywork edits for every tiny code change, but do not leave the governing artifact stale after a meaningful implementation pass either.
-- Follow `repo-production-workflow` through code review and the final advisor’s readiness decision before pushing/opening the PR; resolve threads as fixed only after the fix is pushed.
 - Reconcile closure through the Minimum Implementation Decision. Compare the final diff against the preflight module shape; delete or inline shallow wrappers/helpers and verify tests cross the public interface.
 - Run applicable required checks for touched areas; the workflow owns delivery and installation order.
 - Keep changed code paths at or above the repo coverage gate.

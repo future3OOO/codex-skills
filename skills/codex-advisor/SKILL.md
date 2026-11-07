@@ -20,9 +20,9 @@ Investigate the lead candidate design before production preflight is recorded. S
 The advisor designs against [Production Preflight's frozen evaluation and architecture rules](../production-preflight/SKILL.md#behaviormap),
 checking preservation against executed original results and challenging change expectations and costs.
 
-The advisor investigates, edits the draft copy and dry-runs it in one consult.
-Record preflight when it returns `approved`. Use `--reconsult` in the same session
-only for new evidence or unresolved gaps; approval remains required.
+The advisor first investigates without editing the draft. The lead checks its
+source claims and updates the draft. Resume with `--reconsult` for the advisor to
+finalise and approve it. Further unresolved gaps stay in that session; there is no call quota.
 The checkpoint sends the delta with both content identities; failed results keep
 that base, and the first request sends it whole.
 

@@ -150,13 +150,11 @@ def _review_ready(review: object, *, final: bool = False) -> bool:
         return False
     if not final:
         return review.get("status") in {"passed", "not-required"}
-    return (review.get("source") in REVIEW_SOURCES
-            and (review.get("status") == "commit-ready"
-                 or review.get("status") == "fix-before-commit" and bool(review.get("intakeEvidence"))))
+    return review.get("source") in REVIEW_SOURCES and review.get("status") == "commit-ready"
 
 
 # The one step registry, in workflow order: step -> (state field, readiness).
-# Sequence, predecessors, nextAction, edit readiness,
+# Sequence, predecessors and nextAction,
 # checkpoint requirements, summary and completion all derive from it.
 STEPS: dict[str, tuple[str, Callable[[JsonObject], bool]]] = {
     "repo-context-forge": ("repoContextForge", lambda state: _evidence_ready(state, "repoContextForge")),
@@ -200,9 +198,9 @@ def _derive_next_action(state: JsonObject, tdd_document: JsonObject | None = Non
         return "re-consult-final-review"
     phase = next((phase for phase in SEQUENCE if not _allows_next(state, phase)), "complete-workflow")
     if phase == "final-review":
-        if state.get("finalStarted") and (state.get("finalReview") or {}).get("status") == "pending":
+        review = state.get("finalReview") or {}
+        if state.get("finalStarted") and (review.get("status") == "pending" or review.get("findings") in {"none", "addressed"}):
             return "re-consult-final-review"
-        review = state.get("finalReview")
         if isinstance(review, dict) and review.get("status") not in {None, "pending"}:
             return "address-review-findings"
     return phase
@@ -1035,7 +1033,7 @@ def record_advisor_result(
             state.pop("paused", None)
             state["advisorPreflight"] = {
                 "source": source,
-                "status": verdict,
+                "status": "pending" if verdict == "approved" and state.get("preflightRounds") == 1 else verdict,
                 "findings": (current or {}).get("findings", "none") if verdict == "unavailable" and intake_reference else "pending" if verdict == "changes-required" else "none",
                 "reason": recorded_reason,
                 **({"intakeEvidence": intake_reference} if intake_reference else {}),
@@ -1501,19 +1499,6 @@ def invalidate_after_edit(identity: RepoIdentity, path: str | None) -> tuple[Jso
                 state["nextAction"] = before_next
             return state, changed
         return _commit(transaction, state, kind), changed
-
-
-def ready_for_edit(identity: RepoIdentity, state: JsonObject, *, reminders=None) -> list[str]:
-    missing = [name for name, phase in (("repo-context-forge", "repo-context-forge"),
-               ("production preflight", "preflight")) if not _allows_next(state, phase)]
-    if not missing and reminders is not None:
-        document = evidence_document(identity, state.get("tddEvidence"), restore_runs=False)
-        items = behavior_map.recorded_map(document)
-        if items is None:
-            items = behavior_map.recorded_map(evidence_document(identity, state.get("preflightEvidence"), restore_runs=False))
-        if items:
-            reminders.append("Probe obligations: " + "; ".join(f"{entry['id']}: {entry['behavior']} => {entry['expected']}" for entry in items)[:1800])
-    return missing
 
 
 def public_status(state: JsonObject, identity: RepoIdentity | None = None, *,

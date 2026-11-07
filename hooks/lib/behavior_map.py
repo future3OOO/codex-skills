@@ -187,7 +187,8 @@ def retain_evaluation(items: list[JsonObject], required: set[str], retained: Jso
             continue
         run = entry["comparison"]
         if any(old["id"] == entry["id"] and (runs is None or
-                runs[old["runIndex"]]["command"] == run["command"] and (not retired or case_key(old["id"], runs[old["runIndex"]]) not in retired))
+                runs[old["runIndex"]].get("sourceCommand", runs[old["runIndex"]]["command"]) == run.get("sourceCommand", run["command"])
+                and (not retired or case_key(old["id"], runs[old["runIndex"]]) not in retired))
                 for old in retained.values()):
             continue
         key = entry["id"] if runs is None else case_key(entry["id"], runs[run["runIndex"]])
@@ -247,10 +248,13 @@ def comparison_view(run: JsonObject) -> JsonObject:
     arms = run.get("arms") or []
     return {"comparison": run.get("comparison", "incomplete"), "valid": run.get("valid", False),
             "runIndex": run.get("runIndex"), "command": run.get("command"),
+            "probeTree": run.get("probeTree"),
             "sensitive": run.get("sensitive", False), "breakExit": run.get("breakExit"),
             **({"breakCommand": shlex.join(["git", "cat-file", "blob", run["breakOid"]])} if run.get("breakOid") else {}),
-            "arms": [{"source": "original" if index == 0 else "current", "tree": arm.get("requestedTree", arm.get("sourceTree")),
-                      "outcome": arm.get("outcome"), "exitCode": arm.get("exitCode"), "timedOut": arm.get("timedOut", False)}
+            "arms": [{"source": "original" if index < (len(arms) + 1) // 2 else "current", "tree": arm.get("requestedTree", arm.get("sourceTree")),
+                      "outcome": arm.get("outcome"), "exitCode": arm.get("exitCode"), "timedOut": arm.get("timedOut", False),
+                      **({"outputTail": str(arm.get("output") or arm.get("error") or arm.get("bindingError") or "")[-1200:]}
+                         if arm.get("outcome") != "passed" else {})}
                      for index, arm in enumerate(arms)],
             **({"limitations": [run["bindingError"]]} if run.get("bindingError") else {})}
 

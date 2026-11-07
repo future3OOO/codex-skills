@@ -19,25 +19,8 @@ source-bound evidence instead of repeating project verification at each stage.
 ## One stable workflow
 
 Follow AGENTS.md's Production Repo Workflow section for isolation and pass reuse.
-After creating or selecting the task worktree, move this session's root into
-it before `begin` — the session checkout is the pass's `--repo`, and only a
-rooted session gives delegates, hooks, and advisors the same checkout:
-
-```bash
-python3 "$HOME/.codex/skills/repo-production-workflow/scripts/codex-relocate" "<task-worktree>"
-```
-
-The `<task-worktree>` must be an absolute, whitespace-free path. Run relocation
-as the turn's last action. Native `codex`/`codexs` sessions resume the same thread
-through their owned launcher; without it, follow the printed `resume -C` command.
-An explicit app-server request remains pending until a subsequent turn confirms
-the target cwd and hook repository. Continue only in that confirmed checkout.
-For a new task, choose one short slug; `begin` creates and activates its state
-for that worktree before bootstrap:
-
-```bash
-python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" begin --repo "$PWD" --slug "<task>"
-```
+After the required relocation confirms the task checkout, use `begin` for a new
+task. Reuse its slug and pass for related corrections, including after review.
 
 In a fresh session `begin` records the opening message verbatim; add `--intent-file`
 with the verbatim body of a document it names. Deep in a session, or outside Codex,
@@ -84,8 +67,8 @@ Its map follows TDD's [Behavior Map](../tdd/recorder.md#behavior-map): each item
 the contract and planned attacks.
 
 Submit the exact draft through [Codex Advisor's preflight loop](../codex-advisor/SKILL.md#preflight-advice).
-The advisor investigates and edits the draft in one consult. Record it after
-`approved`; reconsult only for new evidence or unresolved gaps.
+The advisor investigates; the lead checks and corrects its claims; the advisor
+then finalises and approves the draft in the same session. Record only that approval.
 
 ### 5. Record approved preflight once
 

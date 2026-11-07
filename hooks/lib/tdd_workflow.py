@@ -755,6 +755,7 @@ def _probe_capture(identity: RepoIdentity, probe: object, candidate: str, timeou
             and isinstance(probe.get("command"), str) and probe["command"].strip()):
         raise ValueError("probe needs command and, for a new scratch file, path; source content is not an input")
     command = shlex.split(probe["command"])
+    source_command = shlex.join(command)
     overrides = {os.path.relpath(os.path.normpath(Path(identity.root) / name), identity.root) for name in support or []}
     tree, original_files = _kept_tests(identity, candidate, preserved, tuple(sorted(overrides))) if preserved else (candidate, set())
     virtual = None
@@ -794,7 +795,8 @@ def _probe_capture(identity: RepoIdentity, probe: object, candidate: str, timeou
     if preserved is not None:
         files = sorted(original_files | (set(files) & (overrides | ({virtual} if virtual else set()))))
     return {"command": shlex.join(command), "candidateTree": candidate, "probeTree": tree,
-            "probeFiles": files, "support": support or [], "timeout": timeout, "captureKey": os.urandom(16).hex()}
+            "probeFiles": files, "support": support or [], "timeout": timeout, "captureKey": os.urandom(16).hex(),
+            "sourceCommand": source_command}
 
 
 def _probe_outcome(arm: JsonObject) -> str:
@@ -1196,6 +1198,7 @@ def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes:
             arms.append({**found, "requestedTree": source})
         keys = [arm["key"] for arm in arms]
         metadata = {"command": probe["command"], "support": probe.get("support") or [], "timeout": probe["timeout"],
+                    **({"sourceCommand": probe["sourceCommand"]} if "sourceCommand" in probe else {}),
                     "behaviorId": probe.get("behaviorId"), "probeFiles": probe["probeFiles"],
                     "candidateTree": after, "probeTree": tree, "originalTree": before,
                     "captureKey": probe.get("captureKey", probe.get("candidateKey", keys[-1]))}
@@ -1560,8 +1563,15 @@ def _run_tdd(values: list[str]) -> int:
         captured = _probe_capture(identity, {"command": value, **({"path": args.path} if args.path else {})},
                                   candidate, args.timeout or 120., args.support, inventory, original if entry and entry.get("kind") == "preservation" else None)
         if entry is not None:
+            prior = entry.get("comparison") or {}
+            references = prior.get("caseRuns", {prior["command"]: prior["runIndex"]} if prior.get("command") else {})
+            if captured["sourceCommand"] in references:
+                known = runs[references[captured["sourceCommand"]]]
+                captured["sourceCommand"] = known.get("sourceCommand", captured["sourceCommand"])
+            aliases = {name for name, index in references.items()
+                       if runs[index].get("sourceCommand", name) == captured["sourceCommand"]}
             inputs = entry.get("boundaryInputs") or []
-            entry["boundaryInputs"] = list(dict.fromkeys(captured["command"] if item == value else item for item in inputs))
+            entry["boundaryInputs"] = list(dict.fromkeys(captured["command"] if item == value or item in aliases else item for item in inputs))
             if captured["command"] not in entry["boundaryInputs"]:
                 entry["boundaryInputs"].append(captured["command"])
             captured["behaviorId"] = entry["id"]
