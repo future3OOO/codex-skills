@@ -5,9 +5,8 @@ import hashlib
 import json
 import os
 import re
-import sqlite3
 import sys
-from contextlib import closing, suppress
+from contextlib import suppress
 from pathlib import Path
 
 
@@ -62,30 +61,6 @@ def working_directory(payload: dict[str, object]) -> str:
             return value
     env = os.environ.get("CODEX_PROJECT_DIR")
     return env if env else os.getcwd()
-
-
-def is_explorer_continuation(payload: dict[str, object]) -> bool:
-    """Resolve the target in Codex's existing thread metadata, without recording it."""
-    inputs = payload.get("tool_input")
-    target = (inputs.get("target") or inputs.get("id")) if isinstance(inputs, dict) else None
-    session = payload.get("session_id")
-    if not isinstance(target, str) or not isinstance(session, str):
-        return False
-    database = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "state_5.sqlite"
-    if not database.is_file():
-        return False
-    with closing(sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True, timeout=0)) as connection:
-        caller = connection.execute("SELECT agent_path FROM threads WHERE id = ?", (session,)).fetchone()
-        if caller is None:
-            return False
-        path = target if target.startswith("/") else f"{caller[0] or '/root'}/{target}"
-        roles = connection.execute(
-            "SELECT agent_role FROM threads WHERE (id = ? OR agent_path = ?) AND "
-            "CASE WHEN json_valid(source) THEN "
-            "json_extract(source, '$.subagent.thread_spawn.parent_thread_id') END = ?",
-            (target, path, session),
-        ).fetchall()
-    return roles == [("explorer",)]
 
 
 def emit(event: str, **fields: object) -> None:

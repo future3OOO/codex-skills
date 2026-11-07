@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import copy
-import hashlib
 import re
 import shlex
 
@@ -174,26 +173,35 @@ def current_cases(items: list[JsonObject], runs: list[JsonObject]) -> list[JsonO
 def open_obligations(items: list[JsonObject], evaluation: list[JsonObject] | None = None, current: list[JsonObject] | None = None) -> list[str]:
     """One command is one case. Output and framework names never determine readiness."""
     retained = evaluation or []
-    lines = [("retained " if retained_item else "") + f"{entry['id']} ({entry.get('kind') or 'kind?'}): " + "; ".join(reasons)
+    lines = [("retained " if retained_item else "") + f"{entry.get('caseKey', entry['id'])} ({entry.get('kind') or 'kind?'})"
+             + (f" `{entry['boundaryInputs'][0]}`" if retained_item else "") + ": " + "; ".join(reasons)
              for group, retained_item in ((items, False), (retained, True)) for entry in group
              if (reasons := _case_question(entry) if retained_item else _question(entry, [*(current or items), *retained]))]
     return lines
 
 
 def retain_evaluation(items: list[JsonObject], required: set[str], retained: JsonObject,
-                      runs: list[JsonObject] | None = None) -> None:
-    """Retain each first proved command and every later distinct proved command."""
+                      runs: list[JsonObject] | None = None, retired: set[str] = frozenset()) -> None:
+    """Retain each first proved command and every later distinct one; a retired expectation frees its command for a new one."""
     for entry in items:
         if entry["id"] not in required or _case_question(entry):
             continue
         run = entry["comparison"]
-        fixed = {**copy.deepcopy({key: value for key, value in entry.items() if key != "comparison"}),
-                 "runIndex": run["runIndex"], "boundaryInputs": [run["command"]]}
-        if entry["id"] not in retained:
-            retained[entry["id"]] = fixed
-        elif runs is not None and run["command"] not in {
-                runs[old["runIndex"]]["command"] for old in retained.values() if old["id"] == entry["id"]}:
-            retained[entry["id"] + ":" + hashlib.sha256(run["command"].encode()).hexdigest()[:16]] = fixed
+        if any(old["id"] == entry["id"] and (runs is None or
+                runs[old["runIndex"]]["command"] == run["command"] and (not retired or case_key(old["id"], runs[old["runIndex"]]) not in retired))
+                for old in retained.values()):
+            continue
+        key = entry["id"] if runs is None else case_key(entry["id"], runs[run["runIndex"]])
+        if key in retired:
+            continue
+        key = entry["id"] if entry["id"] not in retained else key
+        retained[key] = {**copy.deepcopy({key: value for key, value in entry.items() if key != "comparison"}),
+                         "runIndex": run["runIndex"], "boundaryInputs": [run["command"]]}
+
+
+def case_key(identifier: str, run: JsonObject) -> str:
+    """Identify the recorded case, independent of later replay inputs; old ledgers carry its initial execution key."""
+    return identifier + ":" + (run.get("captureKey") or run["candidateKey"])
 
 
 def obligation(entry: JsonObject) -> list[object]:
