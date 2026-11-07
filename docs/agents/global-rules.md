@@ -55,9 +55,14 @@ Repo Context Forge analysis copy. For codex-skills installation, follow
 - **Attack probes first.** Unit tests must themselves probe real production
   behavior. Cover each request promise and the preserved behavior the change
   touches. Prove each changed line with a direct N/N+1
-  probe that calls it. Add another existing test only when it calls the changed
-  code directly. Never collect a whole test file, class, directory or suite; a focused direct script is allowed. Do not duplicate
-  retained probes with a parallel unit-test suite.
+  probe that calls it. Write probes in the project's own test layout and runner, with its settings, where it has one; otherwise use a focused direct script.
+  After source changes compile, run the relevant tests for changed packages and their dependents once before final review under `timeout 600`.
+  Use focused native selections when they cover the affected behavior; whole files and suites are allowed within that limit.
+  Do not run tests for a task with no code changes or rerun them without further source changes.
+  A timeout is incomplete verification; use narrower native checks to finish the required coverage.
+  A test that fails only on the candidate is a regression to fix; update its expectation only when the request changes that behavior.
+  This run is a direct check, not a recorded probe; rerun a failing test on the pass-start source to tell a regression from an existing failure.
+  Do not duplicate retained probes with a parallel unit-test suite.
 - **Imaginary-risk ban.** A theoretical risk with no demonstrated failure is a
   report line, not a system. Build nothing for it.
 - **Root-cause-first.** Use `$diagnose` for bugs, failures, flaky behavior, and

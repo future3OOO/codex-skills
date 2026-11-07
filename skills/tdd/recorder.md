@@ -12,8 +12,7 @@ trees wait for the first run. That first call fixes the mode for the pass: wait
 when its first run took at least twice the median extra-run time. Otherwise every
 run uses its own copy. Ignored build outputs survive between calls; source,
 probes and execution inputs still bind every result.
-Use the runtime help for inputs. New probe
-files belong in scratch outside the checkout. A recorded command needs no `--case`; `tdd` captures it.
+Use the runtime help for inputs. A recorded command needs no `--case`; `tdd` captures it.
 
 An author withdraws its invalid observation with `tdd --as review|final --reject EVIDENCE:ID=REASON`. Withdrawal and verdict records only write state. They start no cases and leave other bindings unchanged. Retained observations are checked at `verify` or `complete`, once per candidate tree; added observations receive their own check. When a replacement produces the candidate tree, current candidate proof covers maintained cases; run only the finding’s probe. Otherwise replay every maintained case on the candidate plus the replacement, once per candidate tree and resulting tree.
 The referenced raw evidence remains; other observations stay binding.
@@ -27,7 +26,7 @@ The map binds required case commands, not names parsed from output. Its
 the selected item; planned scratch paths become their frozen command paths.
 Kept-behavior cases use the pass-start test files on both versions. Named support
 and scratch files use candidate bytes; contract and unbound cases use candidate
-tests. New kept-behavior cases need scratch source or explicit named support.
+tests. Name a new in-repository kept-behavior test file with `--support`.
 Every required command must establish the item's outcome. New commands extend
 coverage without deleting the first proved command and its frozen source.
 `record tdd-map` accepts `{"removed":["BM_X"]}` to remove a current item;
