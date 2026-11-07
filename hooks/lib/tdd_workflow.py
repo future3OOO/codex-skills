@@ -21,6 +21,7 @@ import stat
 from statistics import median
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Callable, TypeVar
 
 from . import behavior_map
@@ -571,14 +572,14 @@ def _restore_case(state, before):
 
 
 def _execute_tree(identity: RepoIdentity, source_tree: str, prepared,
-                  command: list[str], timeout: float, environment: dict[str, str], cancel, objects, *, restore=True) -> JsonObject:
+                  command: list[str], timeout: float, environment: dict[str, str], cancel, memory: int, objects, *, restore=True, passing=None) -> JsonObject:
     state, frozen = prepared
     if cancel.is_set():
         raise WorkflowError("comparison interrupted")
     before = _overlay_probe(state, frozen, restore)
     try:
-        result = _execute_case(identity, source_tree, state["root"], command, timeout, environment, cancel, objects,
-                               overlay=state if state.get("lower") else None)
+        result = _execute_case(identity, source_tree, state["root"], command, timeout, environment, cancel, memory, objects,
+                               overlay=state if state.get("lower") else None, passing=passing)
         if restore:
             state["result"] = result
         if state.get("measure") and not result["timedOut"]:
@@ -589,7 +590,7 @@ def _execute_tree(identity: RepoIdentity, source_tree: str, prepared,
             _restore_case(state, before)
 
 
-def _after(previous, identity, source, prepared, *arguments, derived=False, first=False):
+def _after(previous, identity, source, prepared, *arguments, derived=False, first=False, passing=None):
     state, frozen = prepared
     owner = state.get("owner", state)
     if previous is not None:
@@ -609,21 +610,65 @@ def _after(previous, identity, source, prepared, *arguments, derived=False, firs
             index.parent.mkdir(parents=True, exist_ok=True)
             _git(RepoIdentity(CanonicalRoot(str(origin["root"])), identity.key), "read-tree", "--index-output=" + str(index), source,
                  env={"GIT_INDEX_FILE": str(index), "GIT_ALTERNATE_OBJECT_DIRECTORIES": os.pathsep.join(original for original, _ in arguments[-1])})
-        return _execute_tree(identity, source, (private, frozen), *arguments, restore=first and state["wait"])
+        return _execute_tree(identity, source, (private, frozen), *arguments, restore=first and state["wait"], passing=passing)
 
 
-_CPU_SUPERVISOR = '''import ctypes,json,os,signal,sys
+def _outlived(passing, started: float) -> bool:
+    """A break started at `started` has run past max(20 s, 10x) the passing arm it is compared with."""
+    arm = passing if isinstance(passing, dict) else passing.result() if passing.done() else None
+    return bool(arm) and arm["outcome"] == "passed" and time.monotonic() - started > max(20.0, 10 * arm["timing"]["executionSeconds"])
+
+
+# A one-shot SIGALRM between wait4 retries charges the case's descendants, re-armed after max(100 ms, 50x its own cost):
+# RssAnon + VmSwap bounds their anonymous memory cheaply; only above the share does proportional Pss_Anon + SwapPss
+# decide, so fork-shared pages count once; a process it may not inspect keeps its RssAnon + VmSwap.
+_CPU_SUPERVISOR = '''import ctypes,json,os,signal,sys,time
 if ctypes.CDLL(None,use_errno=True).prctl(36,1,0,0,0):
     raise OSError(ctypes.get_errno(),"cannot supervise case descendants")
+share=int(sys.argv[2]);over=0
 pid=os.fork()
-if pid==0: os.execv(sys.argv[2],sys.argv[2:])
+if pid==0: os.execv(sys.argv[3],sys.argv[3:])
+def owned():
+    found=[os.getpid()]
+    for parent in found:
+        try: tasks=os.listdir(f"/proc/{parent}/task")
+        except FileNotFoundError: continue
+        for task in tasks:
+            try:
+                with open(f"/proc/{parent}/task/{task}/children") as handle: children=[int(child) for child in handle.read().split()]
+            except (FileNotFoundError,ProcessLookupError): continue
+            found+=children
+    return found[1:]
+cheap=("status",("RssAnon:","VmSwap:"))
+def charged(pids,*sources):
+    total=0
+    for child in pids:
+        for name,keys in sources:
+            try:
+                with open(f"/proc/{child}/{name}") as handle: total+=sum(int(line.split()[1]) for line in handle if line.startswith(keys))
+            except PermissionError: continue
+            except (FileNotFoundError,ProcessLookupError): pass
+            break
+    return total*1024
+def check(signum,frame):
+    global over
+    started=time.monotonic()
+    pids=owned()
+    if not over and charged(pids,cheap)>share and (used:=charged(pids,("smaps_rollup",("Pss_Anon:","SwapPss:")),cheap))>share: over=used
+    for child in pids if over else ():
+        try: os.kill(child,signal.SIGKILL)
+        except ProcessLookupError: pass
+    signal.setitimer(signal.ITIMER_REAL,max(.1,50*(time.monotonic()-started)))
+signal.signal(signal.SIGALRM,check)
+signal.setitimer(signal.ITIMER_REAL,.1)
 cpu=0.;status=None
 while True:
     try: child,result,usage=os.wait4(-1,0)
     except ChildProcessError: break
     cpu+=usage.ru_utime+usage.ru_stime
     if child==pid: status=os.waitstatus_to_exitcode(result)
-with open(sys.argv[1],"w") as output: json.dump([pid,cpu],output)
+signal.setitimer(signal.ITIMER_REAL,0)
+with open(sys.argv[1],"w") as output: json.dump([pid,cpu,over],output)
 if status<0:
     if status!=-signal.SIGKILL: signal.signal(-status,signal.SIG_DFL)
     os.kill(os.getpid(),-status)
@@ -632,7 +677,7 @@ sys.exit(status)
 
 
 def _execute_case(identity: RepoIdentity, source_tree: str, root: Path,
-                  command: list[str], timeout: float, environment: dict[str, str], cancel, objects, *, overlay=None) -> JsonObject:
+                  command: list[str], timeout: float, environment: dict[str, str], cancel, memory: int, objects, *, overlay=None, passing=None) -> JsonObject:
     started = time.perf_counter()
     with tempfile.TemporaryDirectory(prefix="workflow-proof-") as temporary:
         snapshot = RepoIdentity(CanonicalRoot(str(root)), identity.key)
@@ -662,17 +707,20 @@ def _execute_case(identity: RepoIdentity, source_tree: str, root: Path,
         observer = [] if inherited else ["strace", "-f", "--seccomp-bpf", "-qq", "-ttt", "-e", "trace=execve,chdir,fchdir,clone,clone3,fork,vfork",
                     "-e", "status=successful,failed", "-y", "-s", "0", "-o", str(trace)]
         cpu_path = Path(temporary) / "cpu"
-        raw, code, timed_out = _run([*binding, "--chdir", identity.root, "--", *observer, sys.executable, "-I", "-S", "-c", _CPU_SUPERVISOR, str(cpu_path), *actual], snapshot, timeout, env=runner_env, cancel=cancel)
-        cpu = json.loads(cpu_path.read_bytes()) if cpu_path.exists() else [None, None]
+        launched = time.monotonic()  # a break also stops once it outlives its passing arm; the runner polls this every 50 ms
+        stop = cancel if passing is None else SimpleNamespace(is_set=lambda: cancel.is_set() or _outlived(passing, launched))
+        raw, code, timed_out = _run([*binding, "--chdir", identity.root, "--", *observer, sys.executable, "-I", "-S", "-c", _CPU_SUPERVISOR, str(cpu_path), str(memory), *actual], snapshot, timeout, env=runner_env, cancel=stop)
+        cpu = json.loads(cpu_path.read_bytes()) if cpu_path.exists() else [None, None, 0]
         inputs = _observed_inputs(identity, root, Path(temporary), trace, offset, actual, env, binding, timeout, runtimes, lower=overlay["lower"] if overlay else None, work_root=cpu[0])
         inputs["work"]["cpuSeconds"] = cpu[1]
         from .command_runner import _tail
         output = _tail(raw)
         timing = {"totalSeconds": time.perf_counter() - started,
                   "executionSeconds": time.perf_counter() - process_started}
-        outcome = "incomplete" if timed_out else "passed" if code == 0 else "failed"
+        outcome = "incomplete" if timed_out or cpu[2] else "passed" if code == 0 else "failed"
+        memory_error = {"error": f"memory: case held {cpu[2] >> 20} MB over its {memory >> 20} MB share"} if cpu[2] else {}
         return _run_entry(raw, code, timed_out, sourceTree=source_tree, outcome=outcome,
-                          output=output, loadedRoot=identity.root, executedCommand=actual, timing=timing, **inputs)
+                          output=output, loadedRoot=identity.root, executedCommand=actual, timing=timing, **inputs, **memory_error)
 
 
 # --- executable findings ------------------------------------------------------------------------
@@ -1156,7 +1204,7 @@ def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes:
         runs.append(run)
         return run
     pending = {}
-    def schedule(source, probe, prepared, parent=None, size=None):
+    def schedule(source, probe, prepared, parent=None, size=None, passing=None):
         files, timeout = _comparison_files(identity, probe), probe["timeout"]
         command, execution, environment = prepared
         if size is not None:
@@ -1178,11 +1226,13 @@ def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes:
                     cpus = sorted(os.sched_getaffinity(0))
                     starts = iter(range(os.getpid(), os.getpid() + 8))  # advanced in C: concurrent initializers cannot collide
                     scope["pool"] = ThreadPoolExecutor(min(len(cpus), 8), initializer=lambda: os.sched_setaffinity(0, [cpus[next(starts) % len(cpus)]]))
+                    with open("/proc/meminfo") as meminfo:  # and an equal share of the memory available when the pool starts
+                        scope["memory"] = next(int(line.split()[1]) for line in meminfo if line.startswith("MemAvailable:")) * 1024 // min(len(cpus), 8)
                 root_key = parent or source
                 previous = scope["first"].get(root_key) if state["wait"] and size is None else None
                 _require_overlay(_executable(identity, "bwrap", environment))
                 execute = partial(_after, previous, identity, source, (state, frozen), command, timeout, environment, scope["cancel"],
-                                  tuple(scope["objects"].items()), derived=bool(parent),
+                                  scope["memory"], tuple(scope["objects"].items()), derived=bool(parent), passing=passing,
                                   first=size is None and not parent and root_key not in scope["first"])
                 pending[pending_key] = scope["pool"].submit(execute)
                 if not parent and size is None:
@@ -1243,7 +1293,7 @@ def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes:
         sizes = _growth(prepared[1])
         return ([schedule(source, probe, prepared, size=size)
                  for source, size in ((first, sizes[1]), (first, sizes[0]), (last, sizes[0]), (last, sizes[1]))]
-                if sizes else [schedule(first, probe, prepared), schedule(last, probe, prepared, parent)])
+                if sizes else [(good := schedule(first, probe, prepared)), schedule(last, probe, prepared, parent, passing=good[2] if parent else None)])
     for probe, tree, prepared, control in plans:
         execution = prepared[1]
         selected = selections(original, candidate, probe, prepared)
