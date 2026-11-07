@@ -12,7 +12,7 @@ trees wait for the first run. That first call fixes the mode for the pass: wait
 when its first run took at least twice the median extra-run time. Otherwise every
 run uses its own copy. Ignored build outputs survive between calls; source,
 probes and execution inputs still bind every result.
-Use the runtime help for inputs. A recorded command needs no `--case`; `tdd` captures it.
+Use the runtime help for inputs. A command already bound in the map needs no `--case`; `tdd` captures it.
 
 An author withdraws its invalid observation with `tdd --as review|final --reject EVIDENCE:ID=REASON`. Withdrawal and verdict records only write state. They start no cases and leave other bindings unchanged. Retained observations are checked at `verify` or `complete`, once per candidate tree; added observations receive their own check. When a replacement produces the candidate tree, current candidate proof covers maintained cases; run only the finding’s probe. Otherwise replay every maintained case on the candidate plus the replacement, once per candidate tree and resulting tree.
 The referenced raw evidence remains; other observations stay binding.

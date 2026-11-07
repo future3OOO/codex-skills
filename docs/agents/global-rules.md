@@ -61,7 +61,7 @@ Repo Context Forge analysis copy. For codex-skills installation, follow
   Do not run tests for a task with no code changes or rerun them without further source changes.
   A timeout is incomplete verification; use narrower native checks to finish the required coverage.
   A test that fails only on the candidate is a regression to fix; update its expectation only when the request changes that behavior.
-  This run is a direct check, not a recorded probe; rerun a failing test on the pass-start source to tell a regression from an existing failure.
+  This run is a direct check, not a recorded probe; run a failing test on the pass-start source to tell a regression from an existing failure. That run and a narrower selection after a timeout are not reruns.
   Do not duplicate retained probes with a parallel unit-test suite.
 - **Imaginary-risk ban.** A theoretical risk with no demonstrated failure is a
   report line, not a system. Build nothing for it.
