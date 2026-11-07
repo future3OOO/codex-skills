@@ -1174,8 +1174,10 @@ def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes:
                     changes = _changed_entries(identity, parent, source)
                     state = {**state, "owner": state, "base": {path: value for path, value in state["base"].items() if path not in changes}
                              | {path: entries[path] for path in changes if path in entries}}
-                if scope["pool"] is None:
-                    scope["pool"] = ThreadPoolExecutor(max_workers=min(os.cpu_count() or 1, 8))  # measured: more workers inflate CPU time
+                if scope["pool"] is None:  # each concurrent case owns one CPU, offset per runner: tools sizing pools to the machine start one worker
+                    cpus = sorted(os.sched_getaffinity(0))
+                    starts = iter(range(os.getpid(), os.getpid() + 8))  # advanced in C: concurrent initializers cannot collide
+                    scope["pool"] = ThreadPoolExecutor(min(len(cpus), 8), initializer=lambda: os.sched_setaffinity(0, [cpus[next(starts) % len(cpus)]]))
                 root_key = parent or source
                 previous = scope["first"].get(root_key) if state["wait"] and size is None else None
                 _require_overlay(_executable(identity, "bwrap", environment))
@@ -1477,7 +1479,7 @@ def _run_tdd(values: list[str]) -> int:
         if identifier and entry is None:
             raise WorkflowError("unknown Behavior Map item: " + identifier)
         captured = _probe_capture(identity, {"command": value, **({"path": args.path} if args.path else {})},
-                                  candidate, args.timeout or 900., args.support, inventory, original if entry and entry.get("kind") == "preservation" else None)
+                                  candidate, args.timeout or 120., args.support, inventory, original if entry and entry.get("kind") == "preservation" else None)
         if entry is not None:
             inputs = entry.get("boundaryInputs") or []
             entry["boundaryInputs"] = list(dict.fromkeys(captured["command"] if item == value else item for item in inputs))
