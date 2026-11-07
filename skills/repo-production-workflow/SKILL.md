@@ -127,11 +127,10 @@ Completion requires the typed `quality-gate` run over the current reviewable tre
 
 ### 10. Delegate code review
 
-Do not spawn or task the reviewer until the lead has completed the investigation,
-repair, real outcome assessment and verification in steps 2–9. Missing lead proof
-is work for the lead before initial or return review.
-The existing tool hook blocks governed delegation while prerequisites or the
-verified tree are stale; readiness does not substitute for assessing real outcomes.
+Request a completion verdict after the lead completes the investigation, repair,
+real outcome assessment and verification in steps 2–9. Investigation and incoming
+finding intake remain available while proof is pending. They do not replace
+the proof required for completion.
 
 Before final advisor review, obtain independent `code-review` of the original
 objective and current candidate. Lead self-cleanup and later GitHub review do not replace this

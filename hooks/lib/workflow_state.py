@@ -156,7 +156,7 @@ def _review_ready(review: object, *, final: bool = False) -> bool:
 
 
 # The one step registry, in workflow order: step -> (state field, readiness).
-# Sequence, predecessors, nextAction, dispatch blockers, edit readiness,
+# Sequence, predecessors, nextAction, edit readiness,
 # checkpoint requirements, summary and completion all derive from it.
 STEPS: dict[str, tuple[str, Callable[[JsonObject], bool]]] = {
     "repo-context-forge": ("repoContextForge", lambda state: _evidence_ready(state, "repoContextForge")),
@@ -437,12 +437,12 @@ def commit_tdd(identity: RepoIdentity, slug: str, workflow_id: str | None,
                 for entry in items:
                     if entry.get("comparison", {}).get("candidateTree") == run["candidateTree"]:
                         entry["comparison"].update(valid=False, bindingError=drift)
-        from .tdd_workflow import _evaluation
+        from .tdd_workflow import _evaluation, _retired
         if "evaluation" not in summary_doc:
             summary_doc["evaluation"] = _evaluation(identity, state, transaction.evidence(state.get("tddEvidence")))
         readiness = None if selected_only else _readiness_lines(identity, state, items,
                     documents=(summary_doc, transaction.evidence(state.get("preflightEvidence"))), candidate=candidate)
-        behavior_map.retain_evaluation(items, {item["id"] for item in items}, summary_doc["evaluation"], summary_doc["runs"])
+        behavior_map.retain_evaluation(items, {item["id"] for item in items}, summary_doc["evaluation"], summary_doc["runs"], _retired(state))
         pending = readiness is None or bool(readiness["open"])
         runs = summary_doc["runs"]
         used = {case["comparison"]["runIndex"] for case in behavior_map.current_cases(items, runs) if case.get("comparison")}
@@ -845,6 +845,9 @@ def _register_finding_intake(
                     or "probe" in item or "change" in item or not str(item.get("claim") or "").strip()):
                 raise WorkflowError("withdrawal must name this author's recorded executable observation and its reason")
             intakes[str(prior["evidenceId"])] = document
+            for entry in finding_states:  # a withdrawn observation's retirements end with it
+                if "retires" in entry:
+                    entry["retires"] = [case for case in entry["retires"] if case["observation"] != prior]
     # Read immutable observations once; the state carries only their identities.
     observed: list[tuple[JsonObject, JsonObject, JsonObject, JsonObject]] = []
     latest: dict[tuple[str, str], JsonObject] = {}
@@ -905,7 +908,7 @@ def _register_finding_intake(
             prior["material"] = prior["material"] or item["material"]
             if item["kind"] == "behavioral":
                 prior["kind"] = "behavioral"
-            pending.append((prior, item, any(all(finding.get(k) == item.get(k) for k in ("id", "claim", "kind", "material", "probe", "change"))
+            pending.append((prior, item, any(all(finding.get(k) == item.get(k) for k in ("id", "claim", "kind", "material", "probe", "change", "retires"))
                        and all(document.get(k) == intake.get(k) for k in ("producer", "stage"))
                        for root, ref, document, finding in observed
                        if (str(root["evidenceId"]), str(root["id"])) in matches)))
@@ -915,6 +918,8 @@ def _register_finding_intake(
                 "producer": intake["producer"], "stage": intake["stage"],
                 "intakeEvidenceId": intake_id, "findingId": item["id"],
                 "material": item["material"], "kind": item["kind"], "status": "pending",
+                **({"retires": [{**case, "observation": {"evidenceId": intake_id, "id": item["id"]}} for case in item["retires"]]}
+                   if item.get("retires") else {}),
             }
             if prior:
                 root = next(iter(matches))
@@ -929,9 +934,13 @@ def _register_finding_intake(
         references.add(reference)
     reference = next(iter(references)) if len(references) == 1 else intake_id
     for prior, item, unchanged in pending:
-        if reference == intake_id or intake["producer"] == "code-review" or not unchanged:
-            prior.setdefault("observations", []).append({"evidenceId": intake_id, "id": item["id"],
-                                                        "producer": intake["producer"], "stage": intake["stage"]})
+        live = {(case["id"], case["key"]) for case in prior.get("retires", [])}  # an unindexed repeat adds nothing it lacks
+        if (reference == intake_id or intake["producer"] == "code-review" or not unchanged
+                or any((case["id"], case["key"]) not in live for case in item.get("retires", []))):
+            observation = {"evidenceId": intake_id, "id": item["id"]}
+            prior.setdefault("observations", []).append({**observation, "producer": intake["producer"], "stage": intake["stage"]})
+            if item.get("retires"):  # each retirement stands on the indexed author observation naming it; its withdrawal ends it
+                prior["retires"] = [*prior.get("retires", []), *({**case, "observation": observation} for case in item["retires"])]
     return reference
 
 
@@ -1505,16 +1514,6 @@ def invalidate_after_edit(identity: RepoIdentity, path: str | None) -> tuple[Jso
         return _commit(transaction, state, kind), changed
 
 
-def review_blockers(identity: RepoIdentity, state: JsonObject) -> list[str]:
-    """Lead prerequisites for dispatch, without recording or rerunning proof."""
-    missing = [phase for phase in SEQUENCE[:SEQUENCE.index("code-review")] if phase != "tdd" and not _allows_next(state, phase)]
-    missing.extend(_readiness_lines(identity, state)["open"])
-    if not missing:
-        if drift := _binding_drift(identity, state, "quality-gate"):
-            missing.append(drift)
-    return missing
-
-
 def ready_for_edit(identity: RepoIdentity, state: JsonObject, *, reminders=None) -> list[str]:
     missing = [name for name, phase in (("repo-context-forge", "repo-context-forge"),
                ("production preflight", "preflight")) if not _allows_next(state, phase)]
@@ -1583,8 +1582,9 @@ def _readiness_lines(identity: RepoIdentity, state: JsonObject, items: list[Json
         items = behavior_map.recorded_map(*documents) if items is None else items
     items = items or []
     recorded = behavior_map.recorded_map(None, preflight)
-    evaluation = [{**entry, "comparison": dict(document["runs"][entry["runIndex"]])}
-                  for entry in _evaluation(identity, state, document).values()]
+    evaluation = [{**entry, "caseKey": behavior_map.case_key(entry["id"], document["runs"][entry["runIndex"]]),
+                   "comparison": dict(document["runs"][entry["runIndex"]])}
+                  for entry in _evaluation(identity, state, document, True).values()]
     observations = behavior_map.current_cases(items, (document or {}).get("runs", []))
     refresh_proof(identity, [*observations, *evaluation], candidate=candidate, runs=(document or {}).get("runs", []))
     cases = behavior_map.open_obligations(items, evaluation, observations)
