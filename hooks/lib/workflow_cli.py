@@ -196,7 +196,7 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity, *, review: bool = 
         _emit_json(_receipt(state, identity, kind="verification", valid=False,
                             error="current comparison proof is incomplete; run the selected TDD cases"))
         return 2
-    args.base_ref = args.base_ref or state.get("baseOid")
+    args.base_ref = args.base_ref or state.get("baseOid") or state.get("passStartOid")
     if not args.base_ref:
         raise ValueError("quality-gate verification needs the recorded base or --base-ref")
     base = subprocess.run(["git", "-C", str(identity.root), "rev-parse", "--verify", "--quiet", "--end-of-options",

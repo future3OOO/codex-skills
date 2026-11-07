@@ -1561,7 +1561,7 @@ def _readiness_lines(identity: RepoIdentity, state: JsonObject, items: list[Json
                      documents: tuple[JsonObject | None, JsonObject | None] | None = None,
                      review: JsonObject | None = None, candidate: str | None = None) -> JsonObject:
     """One readiness result: immutable named cases, with retained statements for review."""
-    from .tdd_workflow import _evaluation, current_map, refresh_proof
+    from .tdd_workflow import _evaluation, _retired, current_map, refresh_proof
     candidate = candidate or _active_candidate_tree(identity)
     if documents is None:
         items, document = current_map(identity, state, fresh=False) if items is None else (items, evidence_document(identity, state.get("tddEvidence")))
@@ -1574,7 +1574,14 @@ def _readiness_lines(identity: RepoIdentity, state: JsonObject, items: list[Json
     evaluation = [{**entry, "caseKey": behavior_map.case_key(entry["id"], document["runs"][entry["runIndex"]]),
                    "comparison": dict(document["runs"][entry["runIndex"]])}
                   for entry in _evaluation(identity, state, document, True).values()]
-    observations = behavior_map.current_cases(items, (document or {}).get("runs", []))
+    retired = _retired(state)
+    observations = behavior_map.current_cases(items, (document or {}).get("runs", []), retired)
+    if retired:
+        live = {entry["id"]: set() for entry in items}
+        for case in observations:
+            live[case["id"]].update(case["boundaryInputs"])
+        items = [{**entry, "boundaryInputs": [command for command in entry.get("boundaryInputs") or [] if command in live[entry["id"]]]}
+                 for entry in items if not entry.get("boundaryInputs") or live[entry["id"]]]
     refresh_proof(identity, [*observations, *evaluation], candidate=candidate, runs=(document or {}).get("runs", []))
     cases = behavior_map.open_obligations(items, evaluation, observations)
     review = review if review is not None else evidence_document(identity, state.get("codeReviewEvidence"))

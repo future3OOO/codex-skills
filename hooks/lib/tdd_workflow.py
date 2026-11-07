@@ -981,7 +981,7 @@ def execute_findings(identity: RepoIdentity, state: JsonObject, findings: list[J
                 "reexecuted": withdrawn, "runs": []}
     original = _git(identity, "rev-parse", f"{state['passStartOid']}^{{tree}}").decode().strip()
     current = current if current is not None else evidence_document(identity, state.get("tddEvidence")) or {}
-    maintained = [*behavior_map.current_cases(current.get("behaviorMap") or [], current.get("runs") or []),
+    maintained = [*behavior_map.current_cases(current.get("behaviorMap") or [], current.get("runs") or [], _retired(state)),
                   *({**entry, "comparison": current["runs"][entry["runIndex"]]} for entry in _evaluation(identity, state, current, True).values())]
     used = {(item.get("comparison") or {}).get("runIndex") for item in maintained}
     batches = [run for run in current.get("runs") or [] if run["runIndex"] in used]
@@ -1521,18 +1521,17 @@ def _run_tdd(values: list[str]) -> int:
     if command:
         specs = [(args.behavior_id, shlex.join(command))]
     selected, pending = [], []
+    retired = _retired(state)
     if not specs:
         for entry in items:
             if args.behavior_id and entry["id"] != args.behavior_id:
                 continue
-            observations = {(case.get("comparison") or {}).get("command"): case.get("comparison")
-                            for case in behavior_map.current_cases([entry], runs)}
-            for value in entry.get("boundaryInputs") or []:  # a recorded command no run has compared is captured below
-                recorded = observations.get(value)
+            for case in behavior_map.current_cases([entry], runs, retired):
+                recorded = case.get("comparison")
                 if recorded and "runIndex" in recorded:
                     selected.append((entry, recorded))
                 else:
-                    pending.append((entry["id"], value))
+                    pending.append((entry["id"], case["boundaryInputs"][0]))
         if args.behavior_id and not any(entry["id"] == args.behavior_id for entry in items):
             raise WorkflowError("unknown Behavior Map item")
     support_overrides = {}
@@ -1578,7 +1577,6 @@ def _run_tdd(values: list[str]) -> int:
     unknown = set(breaks) - {entry["id"] if entry else "-" for entry, _ in selected}
     if unknown:
         raise WorkflowError("break has no selected item: " + ", ".join(sorted(unknown)))
-    retired = _retired(state)
     if not specs:
         selected_indexes = {probe.get("runIndex") for _, probe in selected}
         selected.extend((None, {**support_overrides.get(index, runs[index]),
@@ -1590,7 +1588,7 @@ def _run_tdd(values: list[str]) -> int:
     for (entry, _), run in zip(selected, compared):
         if entry is not None:
             prior = entry.get("comparison") or {}
-            references = prior.get("caseRuns", {prior["command"]: prior["runIndex"]} if prior.get("command") else {}) if prior.get("obligation") == behavior_map.obligation(entry) else {}
+            references = prior.get("caseRuns", {prior["command"]: prior["runIndex"]} if prior.get("command") else {})
             references = {**references, run["command"]: run["runIndex"]}
             if prior.get("caseRuns") != references or any(prior.get(key) != run.get(key) for key in ("runIndex", "candidateKey", "breakOid", "controlKey", "sensitive", "breakExit")) or prior.get("obligation") != behavior_map.obligation(entry):
                 entry["comparison"] = {**run, "obligation": behavior_map.obligation(entry), "caseRuns": references}

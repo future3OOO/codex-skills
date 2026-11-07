@@ -145,7 +145,7 @@ def _question(entry: JsonObject, proofs: list[JsonObject]) -> list[str]:
     return reasons or ([] if behavior else ["growth cases check scaling only; bind a behavior case and its break: workflow.py tdd --case " + entry["id"] + " 'COMMAND'"])
 
 
-def current_cases(items: list[JsonObject], runs: list[JsonObject]) -> list[JsonObject]:
+def current_cases(items: list[JsonObject], runs: list[JsonObject], retired: set[str] = frozenset()) -> list[JsonObject]:
     """Project current command bindings from the existing run history."""
     cases = []
     for entry in items:
@@ -153,7 +153,7 @@ def current_cases(items: list[JsonObject], runs: list[JsonObject]) -> list[JsonO
         references = proof.get("caseRuns")
         for command in entry.get("boundaryInputs") or []:
             if command == proof.get("command"):
-                cases.append(entry)
+                cases.append({**entry, "boundaryInputs": [command]})
                 continue
             if references is not None:
                 run = runs[references[command]] if command in references else None
@@ -166,7 +166,7 @@ def current_cases(items: list[JsonObject], runs: list[JsonObject]) -> list[JsonO
                 run = None
             cases.append({**entry, "boundaryInputs": [command],
                           "comparison": {**run, "obligation": proof.get("obligation", obligation(entry))} if run else {}})
-    return cases
+    return [case for case in cases if not case.get("comparison") or case_key(case["id"], case["comparison"]) not in retired] if retired else cases
 
 
 def open_obligations(items: list[JsonObject], evaluation: list[JsonObject] | None = None, current: list[JsonObject] | None = None) -> list[str]:
