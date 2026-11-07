@@ -81,12 +81,11 @@ def advisor_envelope(
     typed: list[JsonObject] = []
     identifiers: set[str] = set()
     for position, item in enumerate(findings, 1):
-        if stage == "final" and isinstance(item, dict):
-            if set(item) & {"probe", "change"}:
-                raise ValueError("execute findings with workflow tdd --as final; this envelope carries report lines only")
-            item = {"material": False, **item}
-        if not isinstance(item, dict) or not {"id", "claim", "material"} <= set(item):
-            raise ValueError(f"advisor finding {position} requires id, claim, and material")
+        if stage == "final" and isinstance(item, dict) and set(item) & {"probe", "change"}:
+            raise ValueError("execute findings with workflow tdd --as final; this envelope carries report lines only")
+        if not isinstance(item, dict) or not {"id", "claim"} <= set(item):
+            raise ValueError(f"advisor finding {position} requires id and claim")
+        item = {"material": False, **item}
         identifier, kind = item.get("id"), item.get("kind")
         if not _text(identifier) or identifier in identifiers:
             raise ValueError("advisor finding ids must be non-empty and unique")

@@ -127,11 +127,10 @@ Completion requires the typed `quality-gate` run over the current reviewable tre
 
 ### 10. Delegate code review
 
-Do not spawn or task the reviewer until the lead has completed the investigation,
-repair, real outcome assessment and verification in steps 2–9. Missing lead proof
-is work for the lead before initial or return review.
-The existing tool hook blocks governed delegation while prerequisites or the
-verified tree are stale; readiness does not substitute for assessing real outcomes.
+Request a completion verdict after the lead completes the investigation, repair,
+real outcome assessment and verification in steps 2–9. Investigation and incoming
+finding intake remain available while proof is pending. They do not replace
+the proof required for completion.
 
 Before final advisor review, obtain independent `code-review` of the original
 objective and current candidate. Lead self-cleanup and later GitHub review do not replace this
@@ -139,7 +138,7 @@ step. For initial non-trivial review use a fresh native Codex background
 delegate (`spawn_agent`, `agent_type=default`, `fork_turns="none"`, normal native
 model selection) in the lead's native task checkout. Supply the target and correction delta; instruct it to apply `code-review`,
 which loads the request, contract, comparison outcomes and diff itself.
-Wait without editing the candidate. The reviewer records executable findings and
+Wait for it in one `wait_agent` call with `timeout_ms` 1800000, without editing the candidate; on timeout, wait again rather than re-tasking. The reviewer records executable findings and
 its source-bound verdict through the existing workflow command, then returns its
 Standards/Spec report and receipt references. Follow the runtime continuation.
 For genuinely trivial work, use the runtime's existing not-required operation.

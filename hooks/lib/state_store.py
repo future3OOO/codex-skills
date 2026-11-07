@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextlib
+from contextvars import ContextVar
 import importlib.util
 import json
 import os
@@ -26,6 +27,29 @@ _path_policy: ModuleType | None = None
 
 DOC_SUFFIXES = {".md", ".markdown", ".rst", ".adoc"}
 SCRATCH_PARTS = {"scratchpad", ".scratch", ".gitnexus"}
+_EXECUTION = ContextVar("comparison_execution", default=None)
+
+
+@contextlib.contextmanager
+def _comparison_scope():
+    if _EXECUTION.get() is not None:
+        yield _EXECUTION.get()
+        return
+    with tempfile.TemporaryDirectory(prefix="workflow-comparison-") as temporary, contextlib.ExitStack() as resources:
+        scope = {"root": Path(temporary), "sources": {}, "breaks": {}, "inputs": {}, "objects": {}, "cancel": threading.Event(),
+                 "pool": None, "first": {}, "resources": resources, "reader": None, "samples": {}}
+        token = _EXECUTION.set(scope)
+        try:
+            yield scope
+        finally:
+            try:
+                scope["cancel"].set()
+                if scope["pool"] is not None:
+                    scope["pool"].shutdown(wait=True, cancel_futures=True)
+                if finish := scope.get("finish"):
+                    finish()
+            finally:
+                _EXECUTION.reset(token)
 
 
 def codex_home() -> Path:
@@ -135,17 +159,17 @@ def blob_reader(repo: Path):
                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL) as process:
         assert process.stdin is not None and process.stdout is not None
         lock = threading.Lock()
-        def read(oid: str) -> bytes | None:
+        def read(oid: str, *, kind: bytes = b"blob") -> bytes | None:
             with lock:
                 try:
                     process.stdin.write((oid + "\n").encode("ascii"))
                     process.stdin.flush()
                     header = process.stdout.readline().split()
-                    if len(header) != 3 or header[1] != b"blob":
+                    if len(header) != 3:
                         return None
                     size = int(header[2])
                     data = process.stdout.read(size)
-                    return data if len(data) == size and process.stdout.read(1) == b"\n" else None
+                    return data if len(data) == size and process.stdout.read(1) == b"\n" and header[1] == kind else None
                 except BrokenPipeError:
                     return None
         try:
@@ -169,6 +193,9 @@ def read_blobs(repo: Path, objects: list[str]) -> dict[str, str | None]:
 def _write_candidate_tree(identity: RepoIdentity) -> str:
     handle = tempfile.NamedTemporaryFile(prefix="workflow-candidate-index-", delete=False)
     handle.close()
+    scope = _EXECUTION.get()
+    if scope is not None:
+        scope["resources"].callback(Path(handle.name).unlink, missing_ok=True)
     env = {"GIT_INDEX_FILE": handle.name}
     step = "read-tree"
     try:
@@ -186,22 +213,42 @@ def _write_candidate_tree(identity: RepoIdentity) -> str:
         step = "add"
         _git(identity, "add", "-A", ".", env=env)
         step = "write-tree"
-        return _git(identity, "write-tree", env=env).decode("utf-8").strip()
+        tree = _git(identity, "write-tree", env=env).decode("utf-8").strip()
+        if scope is not None:
+            scope.setdefault("indices", {})[identity.root] = handle.name
+        return tree
     except RuntimeError as exc:
         raise OSError(f"candidate capture failed at git {step}: {exc}") from exc
     finally:
-        Path(handle.name).unlink(missing_ok=True)
+        if scope is None:
+            Path(handle.name).unlink(missing_ok=True)
 
 
+@_comparison_scope()
 def _active_candidate_tree(identity: RepoIdentity) -> str:
+    scope = _EXECUTION.get()
+    if identity.root in scope.setdefault("candidates", {}):
+        return scope["candidates"][identity.root]
     first = _write_candidate_tree(identity)
-    second = _write_candidate_tree(identity)
-    if first != second:
-        raise OSError(
-            "candidate capture drift: worktree changed during capture "
-            f"({first[:12]} then {second[:12]})"
-        )
+    scope["candidates"][identity.root] = first
+    if not _candidate_matches(identity, first):
+        del scope["candidates"][identity.root]
+        raise OSError("candidate capture drift: worktree changed during capture")
     return first
+
+
+def _candidate_matches(identity: RepoIdentity, expected: str) -> bool:
+    scope = _EXECUTION.get()
+    if scope is None or identity.root not in scope.get("candidates", {}):
+        return _active_candidate_tree(identity) == expected
+    if scope["candidates"][identity.root] != expected:
+        return False
+    env = {**os.environ, "GIT_INDEX_FILE": scope["indices"][identity.root]}
+    checked = subprocess.run(["git", "-C", str(identity.root), "diff", "--quiet", "--no-ext-diff", "--no-textconv", "--ignore-submodules=dirty"],
+                             env=env, capture_output=True, check=False)
+    if checked.returncode not in {0, 1}:
+        raise OSError(checked.stderr.decode("utf-8", "replace"))
+    return checked.returncode == 0 and not _git(identity, "ls-files", "--others", "--exclude-standard", "-z", env=env)
 
 
 def _paths(identity: RepoIdentity, *args: str) -> list[str]:
@@ -248,12 +295,6 @@ def _path_policy_module() -> ModuleType | None:
             return None
         _path_policy = module
     return _path_policy
-
-
-def path_classification(path: str) -> object | None:
-    """The existing quality-gate classification, or None when unavailable."""
-    module = _path_policy_module()
-    return module.classify_path(path.replace("\\", "/")) if module is not None else None
 
 
 def is_test_path(path: str) -> bool:
