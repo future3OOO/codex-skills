@@ -23,18 +23,6 @@
         ]
       }
     ],
-    "PreToolUse": [
-      {
-        "matcher": "apply_patch|Agent|spawn_agent|followup_task|send_input|resume_agent|collaborationspawn_agent|collaborationfollowup_task",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 ~/.codex/hooks/rcf-intake-gate.py",
-            "timeout": 15
-          }
-        ]
-      }
-    ],
     "PostToolUse": [
       {
         "matcher": "Bash|apply_patch",

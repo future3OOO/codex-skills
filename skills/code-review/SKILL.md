@@ -58,5 +58,5 @@ identities, inspect the changed evidence and answer specific questions supplied 
 the current package. The runner rechecks retained findings, including resolved ones;
 reuse valid executions. Name missing request promises and unresolved evidence.
 
-Withdraw your own invalid observation with `tdd --as review --reject EVIDENCE:ID=REASON`.
+Withdraw your own invalid observation with `tdd --as review --reject EVIDENCE:ID=REASON`. When your finding proves a frozen case's expectation wrong, add `--retire CASE_KEY` to its probe or replacement command, using `caseKey` from the comparison receipt or readiness.
 Give the measured failure cause; the raw observation remains recorded.

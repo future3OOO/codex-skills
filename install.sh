@@ -47,6 +47,7 @@ def expand(value):
 
 managed = expand(json.loads(Path(sys.argv[1]).read_text())["hooks"])
 ours = {h.get("command") for gs in managed.values() for g in gs for h in g.get("hooks", [])}
+ours.update(f"python3 {prefix}/hooks/rcf-intake-gate.py" for prefix in (home + "/.codex", str(live_path.parent)))
 
 for event, groups in live.setdefault("hooks", {}).items():
     for group in groups:
@@ -55,6 +56,7 @@ for event, groups in live.setdefault("hooks", {}).items():
 for event, groups in managed.items():
     live["hooks"].setdefault(event, []).extend(groups)
 live_path.write_text(json.dumps(live, indent=2) + "\n")
+(live_path.parent / "hooks/rcf-intake-gate.py").unlink(missing_ok=True)
 PY
 
 # config.toml: append the GitNexus MCP server if absent; every other key is
