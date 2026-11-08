@@ -194,6 +194,13 @@ def _schema(connection: sqlite3.Connection) -> None:
             workflow_id TEXT NOT NULL REFERENCES workflows(workflow_id) ON DELETE CASCADE,
             part_json TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS execution_cache (
+            workflow_id TEXT NOT NULL REFERENCES workflows(workflow_id) ON DELETE CASCADE,
+            context_key TEXT NOT NULL, arm_key TEXT NOT NULL,
+            part_id TEXT NOT NULL REFERENCES evidence_parts(part_id) ON DELETE CASCADE,
+            arm_index INTEGER NOT NULL,
+            PRIMARY KEY (workflow_id, context_key, arm_key)
+        );
         CREATE TABLE IF NOT EXISTS review_manifests (
             manifest_id TEXT PRIMARY KEY,
             workflow_id TEXT NOT NULL REFERENCES workflows(workflow_id) ON DELETE CASCADE,
@@ -337,12 +344,22 @@ def _insert_evidence(connection: sqlite3.Connection, writes: Sequence[EvidenceWr
         for holder, key in _part_holders(stored):
             if not isinstance(holder[key], list):
                 continue
+            if key == "runs":
+                holder[key] = [{name: field for name, field in run.items() if name != "runIndex"} for run in holder[key]]
             parts = [(_logical_id("part", write.workflow_id, "part", value), _canonical(value)) for value in holder[key]]
             connection.executemany(
                 """INSERT INTO evidence_parts(part_id, workflow_id, part_json) VALUES (?, ?, ?)
                    ON CONFLICT(part_id) DO NOTHING""",
                 ((part_id, write.workflow_id, zlib.compress(text.encode())) for part_id, text in parts),
             )
+            if key == "runs":
+                connection.executemany(
+                    "INSERT OR IGNORE INTO execution_cache(workflow_id, context_key, arm_key, part_id, arm_index) VALUES (?, ?, ?, ?, ?)",
+                    ((write.workflow_id, arm["contextKey"], arm["key"], part_id, index)
+                     for run, (part_id, _) in zip(holder[key], parts) if isinstance(run, dict)
+                     for index, arm in enumerate(run.get("arms", []))
+                     if arm.get("contextKey") and arm.get("key") and arm.get("outcome") in {"passed", "failed"}),
+                )
             holder[key] = {"parts": [part_id for part_id, _ in parts]}
         connection.execute(
             """INSERT INTO evidence(
@@ -358,10 +375,12 @@ def _insert_evidence(connection: sqlite3.Connection, writes: Sequence[EvidenceWr
                 _canonical(stored),
             ),
         )
-def _document(connection: sqlite3.Connection, text: str) -> JsonObject:
+def _document(connection: sqlite3.Connection, text: str, *, restore_runs: bool = True) -> JsonObject:
     """A stored evidence document with its content-addressed parts restored."""
     value = json.loads(text)
     for holder, key in _part_holders(value) if isinstance(value, dict) else ():
+        if key == "runs" and not restore_runs:
+            continue
         reference = holder[key]
         if isinstance(reference, dict) and set(reference) == {"parts"}:
             ids = list(reference["parts"])
@@ -371,6 +390,8 @@ def _document(connection: sqlite3.Connection, text: str) -> JsonObject:
             if not set(ids) <= set(rows):
                 raise LedgerError("stored evidence references a missing part")
             holder[key] = [json.loads(zlib.decompress(rows[i]) if isinstance(rows[i], bytes) else rows[i]) for i in ids]
+            if key == "runs":
+                holder[key] = [{**run, "runIndex": index} for index, run in enumerate(holder[key])]
     return value
 def _insert_manifests(connection: sqlite3.Connection, writes: Sequence[ManifestWrite]) -> None:
     for write in writes:
@@ -462,7 +483,7 @@ class LedgerMutation:
     def write(self, evidence: Sequence[EvidenceWrite]) -> None:
         """Make evidence readable inside this transaction before its event."""
         _insert_evidence(self.connection, evidence)
-    def evidence(self, evidence_id: str | None) -> JsonObject | None:
+    def evidence(self, evidence_id: str | None, *, restore_runs: bool = True) -> JsonObject | None:
         if not evidence_id:
             return None
         row = self.connection.execute(
@@ -470,7 +491,7 @@ class LedgerMutation:
         ).fetchone()
         if row is None:
             return None
-        value = _document(self.connection, str(row["document_json"]))
+        value = _document(self.connection, str(row["document_json"]), restore_runs=restore_runs)
         return value if isinstance(value, dict) else None
     def manifest(self, manifest_id: str | None) -> dict[str, str] | None:
         return _manifest_from(self.connection, manifest_id)
@@ -501,7 +522,7 @@ def read_active(identity: RepoIdentity) -> JsonObject | None:
         if state is not None:
             _validate_state_identity(identity, state)
         return state
-def read_evidence(identity: RepoIdentity, evidence_id: str) -> JsonObject | None:
+def read_evidence(identity: RepoIdentity, evidence_id: str, *, restore_runs: bool = True) -> JsonObject | None:
     if _store_exists(identity):
         with _connection(identity) as connection:
             row = connection.execute(
@@ -516,9 +537,24 @@ def read_evidence(identity: RepoIdentity, evidence_id: str) -> JsonObject | None
                     "kind": str(row["kind"]),
                     "schemaVersion": int(row["schema_version"]),
                     "recordedAt": str(row["recorded_at"]),
-                    "document": _document(connection, str(row["document_json"])),
+                    "document": _document(connection, str(row["document_json"]), restore_runs=restore_runs),
                 }
     return None
+
+def cached_arms(identity: RepoIdentity, workflow_id: str, context: str) -> list[JsonObject]:
+    if not _store_exists(identity):
+        return []
+    with _connection(identity) as connection:
+        rows = connection.execute(
+            "SELECT part.part_json, cache.arm_index FROM execution_cache AS cache "
+            "JOIN evidence_parts AS part USING (part_id) "
+            "WHERE cache.workflow_id = ? AND cache.context_key = ? ORDER BY cache.rowid DESC",
+            (workflow_id, context),
+        ).fetchall()
+        return [json.loads(zlib.decompress(row["part_json"]) if isinstance(row["part_json"], bytes) else row["part_json"])["arms"][row["arm_index"]]
+                for row in rows]
+
+
 def read_manifest(identity: RepoIdentity, manifest_id: str) -> dict[str, str] | None:
     if _store_exists(identity):
         with _connection(identity) as connection:

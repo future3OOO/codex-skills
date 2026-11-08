@@ -52,7 +52,7 @@ document or argument still needed and its form. Retain the returned evidence IDs
 On resume or after edits,
 use `workflow.py summary --repo <checkout>` for current recovery guidance;
 `status --fields <fields>` supplies missing facts. Resume the same pass.
-See [State Interface](WORKFLOW-MAP.md#state-interface) for receipt and status fields.
+Use the runtime help and returned continuation for current commands and input forms.
 
 ## Mandatory order
 
@@ -104,18 +104,18 @@ Invoke `production-code` for its standards and baseline gate. Reuse the existing
 
 Continue TDD's [required probe loop](../tdd/SKILL.md#required-probe-loop): implement the chosen
 design against the recorded baseline, reconcile the actual diff, and compare the same
-named cases on the candidate. Add uncovered cases to that batch; reuse unchanged proof.
+case commands on the candidate. Add commands for uncovered outcomes; reuse unchanged proof.
 
-The lead resolves named-case obligations against the original and request, then verifies and obtains the existing independent review. Historical source judgments remain review input, not coverage proof. After final review starts, targeted repair returns to that final advisor.
+The lead resolves named-case obligations against the original and request, then verifies and obtains the existing independent review. After final review starts, targeted repair returns to that final advisor.
 
 ### 9. Verification
 
 After coherent repair and cleanup, assess the intended outcome against the
-verification derived in step 2. Run the typed quality gate; it runs no comparison. A
+verification derived in step 2. Run the typed quality gate. Verification checks retained findings once per candidate tree and caches their results. A
 source edit leaves recorded comparisons stale, and every reader then routes to `tdd`
 until the lead reruns them on the current candidate.
 Reuse current comparisons; run lint, type checks and tests directly.
-CI's `contracts` job owns the full runner here and step 12 waits for it. A gate run whose
+A gate run whose
 reviewable tree drifts stays invalid and names the changed paths; on an unchanged tree
 and base, `verify` returns the passed receipt:
 
@@ -139,39 +139,24 @@ step. For initial non-trivial review use a fresh native Codex background
 delegate (`spawn_agent`, `agent_type=default`, `fork_turns="none"`, normal native
 model selection) in the lead's native task checkout. Supply the target and correction delta; instruct it to apply `code-review`,
 which loads the request, contract, comparison outcomes and diff itself.
-Wait without editing the candidate. It returns a
-Standards/Spec review and a findings intake. Historical behavior
-is contextual evidence only — a current Interface claim needs current documentation,
-callers, tests, or another active authority. In this governed workflow `workflow.py record review` is the required producer for non-trivial review state; outside the governed
-workflow it stays optional. For a genuinely trivial change, record
-`set-phase --phase code-review --status not-required --findings none`.
+Wait without editing the candidate. The reviewer records executable findings and
+its source-bound verdict through the existing workflow command, then returns its
+Standards/Spec report and receipt references. Follow the runtime continuation.
+For genuinely trivial work, use the runtime's existing not-required operation.
 
-Retain its agent and intake IDs. Resume it via `followup_task` with the correction
-delta, finding IDs and changed/missing evidence.
-Do not reload unchanged skills or repeat execution solely for handoff. Keep the
-reviewer read-only and assign each needed operation once; the lead owns repairs,
-TDD and verification recording. Use a fresh reviewer when context is
-unavailable or changed scope/architecture makes it unusable, naming that reason.
-Historical receipts retain their original identity. Every review must describe
-the current candidate.
+Retain the reviewer agent and finding identities. Resume that context for
+corrections with the changed evidence. Do not reload unchanged skills or repeat
+valid execution solely for handoff. The lead owns repairs, TDD and verification;
+the reviewer owns its evidence and verdict. Start a fresh reviewer only when its
+context is unavailable or scope/architecture makes it unusable, naming the reason.
 
-Record the delegate's intake. Code is proof: the runner executes each finding's `probe`
-(`{"path","content","command"}`, a named focused project operation run by its direct command) on the
-candidate and the original, and each `change` against every retained comparison batch. Changes normally reduce net lines; maintained test cleanup must preserve frozen replay, required regression coverage, recorded detector results and affected surviving named tests with current support; a combined change/probe may justify growth only by a real cost improvement from candidate failure to replacement success. Objective:
-maximum performance and efficiency of the delivered code with the requested behaviour held
-fixed. Acceptance order: (1) a regression, a probe of behaviour the request keeps that passes on
-the original and fails or times out on the candidate, binds and is repaired; (2) a request
-promise or benchmark binds only as a Behavior Map case; (3) a change that every recorded
-batch still passes binds and is applied; (4) anything else is a report line.
-
-```bash
-python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" record review --input <review.json>
-```
-
-An intake binds the source and evidence actually reviewed; each retained source judgment needs its answer in findings, including acceptance. Each later intake reevaluates retained binding findings, including resolved ones, reusing unchanged executions: a
-finding settles on repair, an applied passing change or a proposal-caused failure against a passing baseline. Shared failures stay pending. For a report line naming an uncovered request sentence, record the decision and, when required,
-add the case with `record tdd-map` before implementing it. Verification and review can run
-with open findings; they block completion.
+Required behavior stays fixed. Seek the lowest justified whole-system cost in the
+affected production path, including existing bloat. A replacement must preserve
+frozen proof and required surviving checks; necessary growth must buy demonstrated
+cost reduction. The runtime owns acceptance and rechecks retained findings after
+repair, including reopening when waste returns. For a missing request promise,
+reconcile the requirement and extend affected coverage before implementing it.
+Verification and review can run with open findings; they block completion.
 
 ### 11. Final Codex Advisor review
 
@@ -179,12 +164,11 @@ Before the consult, reconcile known material obligations using step 2's verifica
 and the delegate's findings. Reference the applicable observations and unresolved
 acceptance gaps; load only missing evidence, not the verification history.
 
-The final Codex Advisor investigates in the lead checkout using the recorded project executable. The wrapper exposes the recorded original in scratch with source-specific commands. Invoke it against the live diff with wrapper phase
-`final-review` and the same slug; the checkpoint supplies the diff anchors. It returns findings
-in the same executable forms; the runner executes them and derives the verdict, and the wrapper
-returns each finding's execution with the recorded `next`; follow it. After the first final verdict, a correction
-needs only the `tdd` rerun of its items and the final advisor's re-check: code review,
-verification and context revalidation are not repeated. Reuse applicable evidence. Once every
+The final Codex Advisor investigates in the lead checkout using the recorded project executable and original source. Invoke the wrapper's
+`final-review` phase with the same slug and follow its runtime continuation. The
+advisor records probes through the shared TDD command; the wrapper records its
+semantic verdict. After the first final verdict, a correction
+needs the affected `tdd` rerun, verification for the new tree, and the final advisor's re-check. Reuse independent review and applicable evidence. Retained findings run only at `verify` or `complete`; intermediate review calls skip them. Once every
 final finding is settled (`nextAction` `complete-workflow`), a requested
 reassessment of the unchanged candidate runs the same `final-review` phase and records
 as a fresh final result.
@@ -206,6 +190,8 @@ Complete after the current-head reviewer gate closes, or on the no-PR route belo
 python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" \
   complete --repo "$PWD"
 ```
+
+`complete` first checks uncached retained findings for its candidate tree. Verdict and withdrawal records only write state; they never run probes or acquire execution locks. A replacement that produces the candidate tree runs only its own probe; current candidate proof covers maintained cases. Other replacements replay every maintained case on the candidate plus the diff, once per candidate tree and resulting tree.
 
 `complete` refuses, from inside its transaction, unless every current probe has fresh successful comparison evidence and no proof gap remains, required phases are ready, and no binding code-review or final finding is open. The immutable raw verdict remains evidence; `context-mismatch` still blocks. The reviewable working tree must match the manifest recorded by the lead review, and every evidence phase must carry its producer's evidence reference — a passed phase without one is a bare claim and reads pending, including legacy in-flight state at upgrade time. It changes workflow state only. It does not inspect, intercept, authorize, or execute Git.
 

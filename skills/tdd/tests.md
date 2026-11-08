@@ -4,11 +4,15 @@ A strong test is a real probe of one **independently-failable observable outcome
 
 A behavior test survives internal refactoring: if observable behavior is unchanged but the test breaks, the test is coupled to implementation. Several assertions are valid when they jointly prove one behavior; one assertion can still hide an over-broad behavior.
 
-Scratch work investigates; it is not recorded proof. A recorded probe is a named direct
+Scratch work investigates; it is not recorded proof. A recorded probe is a direct
 operation in the project's own language, focused on the changed Interface, recorded
 through `workflow.py tdd`. Never collect a whole test file, class, directory or suite; a focused direct script is allowed.
-Native case results or checked `name: result` output name its cases. The comparison
-records those results; no language-specific branch trace defines proof.
+Submit the focused commands in one workflow call. One command is one case.
+The command is its identity, and the probe must assert
+its expected outcome and exit non-zero when a check fails. The comparison reads
+exit codes only. Printed values and native reports are diagnostic. The whole-file,
+class, directory and suite ban is policy checked by the agent and existing review;
+the runner neither identifies frameworks nor inspects their selection.
 Read the diff and map the affected decisions to preservation or contract cases, or
 an executed case and source argument showing the context is infeasible. Reaching a
 condition alone does not establish what it decides. Reviewers and advisors judge
@@ -52,12 +56,12 @@ A **decisive context** is a combination of the other values that permits this in
 
 1. Find every condition that your edit adds, removes, weakens, strengthens or changes. Rewording a condition without changing its decision creates no obligation.
 2. Use the original code to find **EVERY feasible decisive context**. For an added condition, use the contexts of the edited decision and compare both inputs with the original result.
-3. Write an MC/DC independence pair for each context as two executable test cases in your direct batch, labelled `<condition> | <context> | a` and `... | b`, each asserting its exact result. A pair covers only its own context. Name both cases in the owning map item's `boundaryInputs`.
-4. Put the pairs in your existing direct batch. A batch without required pairs is incomplete, even if all its tests pass.
-5. Run the same batch on the original code and the edited code. Use the same initial state for each test.
+3. Write an MC/DC independence pair for each context as two executable test cases as separate commands, each asserting its exact result. A pair covers only its own context. Bind each command to its conformance, contract or preservation item; the item's kind must match that command's original/candidate outcomes.
+4. Record each case command under its owning map item. Missing required pairs leave the proof incomplete.
+5. Run each command on the original code and the edited code. Use the same initial state for each case.
 6. For each input in each pair, assert that the edited result **EQUALS** the original result. Do not use subset checks. If the request names an exact change, assert that expected result instead. Rewriting the expected value or the formula that computes it is the same as changing it.
 7. Find every pair where the original decision flips and the edited decision does not. Treat each as a regression unless the request names that exact change. When a pair fails after your edit, do not change its expected value to make it pass. Fix the code. If you believe the request needs the new result, ask the user.
-8. Run the batch again.
+8. Rerun only invalidated commands.
 9. Send the corrected code and test results to review only after the receipt's `open` list is empty.
 
 **Do not use tests for a requested change as evidence that another context keeps its original behavior.**
@@ -125,13 +129,13 @@ The batch is complete only when every changed condition has a pair in each of it
 
 ### Context completeness
 
-The runner enforces each declared case: it must execute and carry its item's outcome. The runner does not derive the required contexts, and it does not check that a pair is independent. You derive every feasible context from the original decision and the diff; the preflight advisor and final review check your list.
+The runner checks each bound command's exit on both sources. It does not prove Interface reach, context completeness or pair independence. Derive feasible contexts from the original decision and diff; the existing advisor and reviewer judge the evidence.
 
 - Match pairs by **condition AND decisive context**, including contexts for retained outcomes.
 - Count a pair only if its executions show an original decision flip (the edited decision for an added condition) in that exact context. Establish the condition values from execution or independently checked fixture facts, never from labels.
 - An infeasible context needs executed evidence: a case under the context's own names drives the Interface and shows the constraint on both trees. State the reason in the item's `expected`. Do not treat unknown contexts as infeasible.
 - Keep short-circuit evaluation. Make sure that the target condition executes. Make sure that each input has the required context. Do not evaluate an unsafe skipped operand.
-- If only the other input supplies a context value, mark that value as unverified. Unavailable measurement is not unreachable input: print `<case>: unverified - <why>`, and the item stays open.
+- If only the other input supplies a context value, mark that value as unverified. Unavailable measurement is not unreachable input: make that case exit non-zero and explain the missing observation. A printed warning alone does not keep the item open.
 - Do not close TDD with missing contexts, unverified contexts, or differences that the request does not permit.
 
 ### Values and effects
@@ -145,7 +149,7 @@ Use the existing probes and batch results.
 
 ## Attribution
 
-A historical failure must reach the claimed behavior. Collection, imports, setup errors and zero tests cannot demonstrate a product regression. A rollback probe stopping at a missing API proves no rollback behavior; create the Interface and exercise its guarantees independently.
+The existing reviewer must check that a claimed regression comes from the affected behavior, using the source and raw output. The recorder compares exit codes and requires each command to fail under its supplied behavior break. It does not classify collection, import, setup or missing-API failures; the reviewer must check the break’s validity. A failure before the asserted operation does not establish that operation's behavior.
 
 Assert meaningful public outputs and state effects with real collaborators. For a rejected transfer, assert the error, unchanged independently read balances and uncommitted result. Keep every independently falsifiable obligation covered. The runner executes the same assertions on each source version; existing review checks whether those assertions express the original objective.
 
@@ -157,7 +161,7 @@ Avoid tests that:
 
 - replace production collaborators with programmed answers;
 - assert private methods, call counts, or interior sequencing instead of behavior;
-- fail because setup, syntax, collection, fixture shape, or a missing API prevents the mapped Seam from being reached;
+- claim a product regression from a setup or missing-API failure; the existing reviewer judges that premise;
 - combine independently-failable outcomes under one broad name;
 - prove only the happy path while omitting declared failure or preservation behavior;
 - inspect private persistence when the public contract does not expose or govern it.

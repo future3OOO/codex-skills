@@ -8,7 +8,7 @@ whose decorator mentions `dataclass` that no text reads as `.name` or a getattr 
 unless a module naming the class calls asdict, astuple, fields or vars or reads __dict__.
 Python files are `.py` or python-shebang files; test-like paths neither define nor
 reference. Skipped: `__x__` methods and the `visit_<AST class>` methods of a class with a
-base and the registered tdd_surface.pytest_collectstart hook, called by name.
+base.
 """
 import ast
 import collections
@@ -49,8 +49,6 @@ def unreferenced(repo: str) -> list[str]:
     dispatched = {f"visit_{name}" for name in dir(ast) if isinstance(getattr(ast, name), type)}
     found, fields, registered = [], [], set()
     for path, tree in trees.items():
-        if path == "hooks/lib/tdd_surface.py":
-            registered.update((path, node.lineno, node.name) for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "pytest_collectstart")
         exempt = {id(item) for node in ast.walk(tree) if isinstance(node, ast.ClassDef) and node.bases
                   for item in node.body if getattr(item, "name", None) in dispatched}
         found += [(path, node.lineno, node.name) for node in ast.walk(tree) if id(node) not in exempt

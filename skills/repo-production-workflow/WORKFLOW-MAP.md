@@ -1,223 +1,26 @@
 # Production workflow map
 
-The maintained boundary is workflow sequencing and completion. Git remains an
-ordinary delivery tool.
-
-```mermaid
-flowchart LR
-    B[begin] --> R[Repo Context Forge records the packet graph evidence]
-    R --> D{bug or regression?}
-    D -->|yes| DG[diagnose]
-    D -->|no| PD[draft production preflight and Behavior Map]
-    DG --> PD
-    PD --> A1[advisor preflight]
-    A1 -->|changes-required| PD
-    A1 -->|approved| P[record the approved preflight once]
-    P --> I[write decisive probes and implement]
-    I --> TG[runner compares recorded source versions]
-    TG --> TM[update probe list when scope changes]
-    TM -->|unresolved| I
-    TM -->|current proof| V[verification]
-    V --> CR[code-review delegate review when non-trivial]
-    CR --> A2[final Codex Advisor review]
-    A2 --> C{context matched and effective findings terminal?}
-    C -->|context mismatch| A2
-    C -->|behavioral correction| TM2[tdd-map adds the item]
-    TM2 --> I
-    C -->|non-behavioral correction| I
-    C -->|yes, PR| DL[delivery]
-    C -->|yes, no PR| WC[workflow complete]
-    DL --> PR{reviewer gate closed?}
-    PR -->|yes| WC
-    PR -->|behavioral correction| TM2
-    PR -->|non-behavioral correction| I
-```
+The executable workflow owns phase order, readiness, formats and continuation.
+Use the current runtime output; this document does not restate its protocol.
+The [workflow skill](SKILL.md) owns the lead's method and review obligations.
 
 ## State Interface
 
-One repository-scoped SQLite ledger records accepted transitions as receipts (their evidence and manifest links), logical evidence, review manifests, and each workflow's current state on its workflow row. Behavior Map items and run rows are stored once as content-addressed parts, so an evidence id keeps its original meaning after later map changes. See [Workflow state root](https://github.com/future3OOO/claude-skills/blob/main/README.md#workflow-state-root) for which root holds it.
+Use the runtime's emitted commands and their `--help`. Status reports current state;
+checkpoint supplies the role's source-bound package and commands; evidence exposes
+retained execution details. Follow the returned continuation.
 
-```text
-workflow begin                 # assigns and activates a random workflowId
-workflow status|summary        # active canonical state
-workflow history               # ordered accepted receipts and logical references
-workflow evidence [--full]     # one evidence record's metadata, or its document
-workflow set-phase             # trivial code review only
-workflow record <kind> [--check] [--input -|path]
-                               # preflight|review|advisor-result|tdd-map
-workflow tdd                   # compare probes on the original and candidate sources
-workflow verify                # the typed quality gate; an unchanged tree and base reuse its receipt
-workflow pause|checkpoint|complete|prune
-```
-
-Mutation receipts include identity, the operation result and `next`: its bound
-`command`, any authored `input` and finding bindings.
-Summary derives recovery guidance from the current checkout. Dry-run recording publishes no continuation or
-committed reference. `status` returns full state. Identity defaults to the active workflow; an explicit
-`--slug`/`--workflow-id` that disagrees refuses. Every refusal names all of a
-document's violations at once and mutates nothing.
-
-A documentation-only pull request takes the CI job's cheap lane, decided by
-`.github/scripts/pr_scope.py` from the pull-request delta and governed by step 9.
-
-### `workflow status` contract
-
-`workflow status` is a public JSON Interface, not a dump of persistence internals.
-It returns the active canonical `schemaVersion: 1` projection. Callers may rely
-on the semantic workflow fields: repository identity, `slug`, `workflowId`,
-`phase`, `nextAction`, phase statuses, advisor/review records, logical evidence
-identities, and the optional `paused` and `revalidation` state. The projection
-never includes a database path, SQLite table or column name, journal detail, or
-other storage mechanism. With no authoritative workflow it prints no JSON,
-returns exit 2, names `no active workflow`, and creates no state.
-
-Repo Context Forge, preflight, TDD, verification and review record their native
-documents as logical evidence in the same SQLite transaction as the accepted event.
-Review and final findings carry executable payloads under the workflow's [objective and acceptance order](SKILL.md#10-delegate-code-review); the runner decides what binds. Preflight owns
-the initial Behavior Map; TDD evidence carries its stable IDs and source comparisons. A plan may show
-the map but is not an evidence owner.
-
-Exit 2 alone does not prove a refusal: verification and TDD can commit first
-and return 2 after — a command that failed after being recorded or an invalid
-incomplete comparison.
-Repo Context Forge, preflight, and verification keep their
-accepted reference only while producer-recorded as passed — every other transition drops
-it, so a bare replay can never resurrect prior evidence. TDD and code review
-instead keep a current producer reference across their own non-passed states —
-incomplete comparisons and pending reviews — so later operations can reuse
-applicable results. TDD entry requires recorded preflight evidence and a probe ID. Each producer stamps
-the workflow instance into its evidence and the ledger keeps its logical
-identity, so a passed Repo Context Forge, preflight, or
-verification phase without one — legacy state, or a bare library claim — reads
-pending at completion, never success. Evidence proves the output exists, not
-that the analysis is good; fabrication remains deception and stays covered by
-the transcript audit.
-
-The database and its containing directory are private and agent-writable. Committed transactions provide continuity across process restart and compaction; it is not tamper-proof and does not authorize Git. A normal
-commit or HEAD change does not invalidate it. The edit hook advises, never
-refuses (hook table below). The runner compares the original and candidate sources and retains bound results. Update the list only when obligations change. A normally
-completed workflow is terminal: every mutation except `begin` is rejected.
-
-The edit hook runs no impacted-test scan: a file-level list sent agents into
-whole test modules without naming the tests a change breaks.
-
-A governance-document edit after completion is the sole controlled revalidation exception: it opens a window in
-which only context refresh, verification, reruns of mapped comparisons a governance edit left stale,
-code review, the final advisor review, and completion are accepted, the Behavior Map
-and production editing stay closed, and completing again restores
-the terminal state. The read-only `checkpoint` query reports consult
-readiness for the advisor phases without mutating anything.
-
-`complete` requires every step in the step table (`STEPS` in
-`hooks/lib/workflow_state.py`, the one source for sequence, readiness, blockers and
-completion) with its producer evidence, a closed Behavior Map judged inside the
-transaction, settled binding findings, a context-matched final review whose
-effective findings are terminal, and an unchanged reviewable tree since the lead review.
-
-## Edit invalidation
-
-```text
-production edit observed through explicit paths or actual Git changes
-  -> verification = pending
-  -> codeReview = pending
-  -> finalReview = pending
-  -> derive the next invocation from the operation receipt or fresh summary
-```
-
-Invalidation occurs before quality feedback, so a failing quality check cannot
-leave stale readiness behind. Ordinary documentation and scratch edits are
-exempt; governance docs reset verification, code review, and final review, and
-resume at the first unsatisfied phase in the same ordered workflow. A
-pass with an empty approved probe list resumes verification; an unresolved
-comparison resumes TDD.
-
-A binding finding returns to the same workflow: repair it, and the next intake or final re-check re-executes it and settles it. Separate work starts a new pass.
-
-A finding envelope is one correction batch. Until every binding finding settles by
-re-execution and the map is closed, the final checkpoint and `complete` refuse;
-verification, the typed gate, and lead review run regardless. Targeted TDD and direct
-changed-Seam probes remain available. New IDs form their own immutable intake.
-
-## Approval freshness
-
-Bash writes are observed from actual Git changes when the tool finishes;
-prose and quoted operators are not edit paths. Changes during execution remain
-subject to the later binding checks. Recording the lead review stores a
-per-path manifest of the reviewable surface: each path's working-tree file mode
-and content hash, and for a tracked submodule the commit it currently points at.
-The index is read only to learn which paths are tracked and which of them are
-submodules; every recorded value comes from the working tree, never from an
-index object id, which records staged content and would miss an unstaged edit.
-Four things follow from that: the bytes are hashed unfiltered, so a normalising
-clean filter cannot hide a line-ending rewrite; the mode rides along — git's owner
-execute bit, the only one a tree entry records — because a content hash alone
-is blind to `chmod`; a symlink is recorded as the link rather
-than its referent, so re-pointing one is visible and a file outside the
-repository can never drift the manifest; and a submodule is read from its own
-checked-out `HEAD`, so an unstaged submodule move is visible. A submodule is
-recorded by that commit alone: uncommitted content inside it belongs to that
-repository's own review, not this one's. Each later gate recomputes it:
-
-```text
-final advisor recording refuses -> the tree changed after the lead review
-final-review checkpoint reports not ready -> same, before a paid consult is spent
-complete refuses -> the tree changed after the final review
-```
-
-The refusal site is the window attribution, and every refusal names the added,
-changed, and removed paths. Re-recording the lead review refreshes the manifest
-and resets the final review to pending, so a refreshed tree always costs a fresh
-final consult. A missing or uncomputable manifest is pending, never success: a
-pass in flight when this shipped cannot complete until its lead review is
-re-recorded. A mutation racing the completion call itself stays uncatchable —
-the state lock serializes state writers, not the filesystem.
+State records continuity and proof. It never authorizes Git or proves semantic
+completeness. The request and original operations govern preserved behavior.
 
 ## Hook roles
 
-This section is the canonical operational documentation for hook behavior.
-`~/.codex/config.toml` and the hook scripts remain the executable Interface:
-where they disagree with this table, the code is correct and the table is the
-defect. `AGENTS.md` — GitNexus keeps only the facts that change lead action each
-session and defers the rest here.
-
-| Hook | Role |
-|---|---|
-| `PreToolUse(Edit\|Write\|apply_patch)` | Advise, never refuse: name what the pass has not recorded and admit the edit; docs, scratch, and non-repository paths are silent; test-like paths skip only the comparison advice |
-| `PostToolUse(Edit\|Write\|apply_patch\|Bash)` | Observe explicit edit paths and actual Git changes, invalidate downstream readiness, then return batched lint |
-| `PostCompact` | Forget which advisories this session has heard, so each returns once after compaction |
-| `SessionStart(compact)` | Restore the discipline line and the pass's open work from committed SQLite state |
-
-Every hook advisory is keyed per session and emitted only when its text changed
-since that session last heard it in the current compaction epoch; identical repeats
-emit nothing.
-
-There is no Git hook, protected-path parser, candidate-tree gate, approval marker,
-nonce, or evidence graph.
-
-## Ordinary summaries
-
-Repo Context Forge output, mapped TDD runs and map updates, and code-review
-findings may be retained as bounded summaries for the next agent. They carry no
-HEAD/tree/hash identity and are never substitutes for the real packet, recorded
-Behavior Map, test command, or live review. The review-time manifest above is
-workflow state rather than one of these summaries, and it identifies working-tree
-file mode and content, plus each submodule's checked-out commit — never this
-repository's own HEAD, and never an attestation.
-
-## Finding batches
-
-Findings and map items batch by owner. A finding names one owning Module and violated invariant and lists every demonstrated input as its cases; a later input to the same owner and invariant is a case of that finding through `priorFinding`, and its repair is the owner's class-wide correction. The map carries one contract and one preservation item per owning Interface, each decisive context a case of it.
-
-Both intake paths reconcile retained namespace/ID and exact behavioral claims
-(outer whitespace only). Changed wording/identity can use an owned
-`priorFinding: {"evidenceId":"...","id":"..."}`; ambiguous matches require one.
-Distinct findings need distinct IDs. Pending retries preserve progress; a settled
-finding raised again opens a new obligation. Observations and proof stay immutable.
+Hook behavior belongs to the configured scripts in `hooks/`; inspect that owner
+when a hook and a receipt disagree. Do not maintain a second readiness rule here.
+Edit observation can invalidate evidence; it cannot replace comparison execution
+or an independent judgment.
 
 ## Delivery is separate
 
-After verification and final reviews, deliver when integration is intended.
-Keep the pass active through reviewer corrections; complete after the current-head
-reviewer gate closes. The no-PR route completes after final review, reports the
-change and its verification, and names why no PR exists. Workflow state never
-authorizes Git or replaces the reviewer gate.
+Follow the workflow skill and global rules for Git delivery. Workflow completion
+changes state; it does not commit, push, merge or authorize those operations.

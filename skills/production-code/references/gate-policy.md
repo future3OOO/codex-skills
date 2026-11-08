@@ -23,8 +23,7 @@ tests, build, or domain-specific gates.
   control flow, symbol boundaries, and hunk boundaries all discriminate, and
   separate hunks are never joined. Only Python is canonicalized, by its real
   tokenizer; any other language in scope is reported as incomplete rather than
-  guessed. `references/duplicate-calibration.md` publishes the pinned-corpus
-  replay behind the reported minimum region size.
+  guessed. Git history retains the pinned-corpus calibration for the minimum region size.
 - Growth is warning-only: `QG54-GROWTH-CUMULATIVE` reports cumulative
   production, test, test-support, generated, and human-authored added/deleted/
   net, warning when human-authored net exceeds the 500-line review budget.
@@ -37,9 +36,9 @@ tests, build, or domain-specific gates.
   `QG54-ANALYSIS-INCOMPLETE`.
 - Responsibility-owner competition is warning-only structured evidence:
   `QG54-OWNER-COMPETITION-PRODUCTION` generates candidates over production
-  source independently of duplicate detection from seven mechanical evidence
-  classes, each evaluated on every run with a serialized
-  per-class ledger. Every finding carries exactly one state — `candidate`,
+  source independently of duplicate detection through `implementation-overlap`,
+  `shared-callees`, `interface-overlap` and `exact-retained`, each evaluated
+  with a serialized per-class ledger. Every finding carries exactly one state — `candidate`,
   `confirmed-unresolved`, or `resolved` — and only the first two are active
   warnings; `resolved` evidence lives in `resolvedFindings` as telemetry and
   never keeps the visible gate non-green. Semantic dispositions arrive only
@@ -59,8 +58,7 @@ tests, build, or domain-specific gates.
   parent-pinned table (extending that table is a parent-approved code change,
   exactly like promotion eligibility); **confirmation** only adds visible
   debt, so it accepts content-consistent records.
-  `references/owner-calibration.md` publishes the parent-pinned manifest
-  replay.
+  Git history retains the parent-pinned calibration.
 - `--fail-on-warnings` promotes only typed active findings whose exact rule ID
   carries promotion eligibility in immutable rule-policy metadata. Every rule
   ID currently starts ineligible; promotion of an exact ID is a separate
