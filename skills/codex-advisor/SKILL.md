@@ -15,16 +15,17 @@ phase belongs in `--phase`, not in the slug.
 
 ### `preflight-advice`
 
-Investigate the lead candidate design before production preflight is recorded. Supply it with
-`--preflight-file <draft.json>`; the wrapper snapshots it before consultation.
+Investigate the request and original source before production preflight is recorded.
+Supply `--preflight-file <draft.json>`; the wrapper snapshots it before consultation.
 The advisor designs against [Production Preflight's frozen evaluation and architecture rules](../production-preflight/SKILL.md#behaviormap),
 checking preservation against executed original results and challenging change expectations and costs.
 
-The advisor first investigates without editing the draft. The lead checks its
-source claims and updates the draft. Resume with `--reconsult` for the advisor to
+The advisor derives required work and outcomes using the proposed owners and reuse
+paths as inputs. The lead checks its source claims and updates the draft. Resume
+with `--reconsult` for the advisor to
 finalise and approve it. Further unresolved gaps stay in that session; there is no call quota.
-The checkpoint sends the delta with both content identities; failed results keep
-that base, and the first request sends it whole.
+The first consult receives the whole draft. Reconsults send its delta with both
+content identities; failed results keep that base.
 
 Preflight records the governing-design declaration: `--design-file` with the
 durable design artifact of a planned stack, or `--design-absent` with a reason; a

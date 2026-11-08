@@ -36,7 +36,8 @@ from .workflow_state import (
 
 JsonObject = dict[str, object]
 _Input = TypeVar("_Input")
-PROBE_TIMEOUT = 10.0  # default for new finding probes; recorded cases keep their execution budget
+MAX_CASE_SECONDS = 30.0
+PROBE_TIMEOUT = 10.0  # default for new finding probes
 NAME = re.compile(r"(?:[^\W\d]|\$)[\w$]*")
 @lru_cache(maxsize=128)
 def _changed_entries(identity: RepoIdentity, before: str, after: str) -> dict[str, tuple[str, str]]:
@@ -702,7 +703,12 @@ def _execute_case(identity: RepoIdentity, source_tree: str, root: Path,
         runtime = Path(actual[0]).parent.parent
         if runtime.is_relative_to(identity.root) and (runtime / "pyvenv.cfg").is_file():
             runtimes.append(runtime)
-        binding.extend(arg for runtime in runtimes for arg in ("--ro-bind", str(runtime), str(runtime)))
+        for index, runtime in enumerate(runtimes):
+            runtime_upper = Path(temporary) / f"runtime-{index}"
+            runtime_work = Path(temporary) / f"runtime-work-{index}"
+            runtime_upper.mkdir()
+            runtime_work.mkdir()
+            binding.extend(("--overlay-src", str(runtime), "--overlay", str(runtime_upper), str(runtime_work), str(runtime)))
         process_started = time.perf_counter()
         observer = [] if inherited else ["strace", "-f", "--seccomp-bpf", "-qq", "-ttt", "-e", "trace=execve,chdir,fchdir,clone,clone3,fork,vfork",
                     "-e", "status=successful,failed", "-y", "-s", "0", "-o", str(trace)]
@@ -1172,6 +1178,7 @@ def _identifiers(path: str, text: str) -> Counter[str]:
 def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes: list[JsonObject],
                   runs: list[JsonObject], *, challenge: bool = True, passing_original: bool = False) -> list[JsonObject]:
     """One execution/cache owner. Each command has its own two exit results."""
+    probes = [{**probe, "timeout": min(MAX_CASE_SECONDS, probe["timeout"])} for probe in probes]
     scope = _EXECUTION.get()
     cache = {}
     for run in [*runs, *probes]:
@@ -1359,9 +1366,9 @@ def _run_tdd(values: list[str]) -> int:
     parser.add_argument("--path", help="new probe file outside the checkout; a recorded command needs no --case")
     parser.add_argument("--behavior-id", help="map item for a single trailing command, or select recorded cases to replay")
     parser.add_argument("--case", action="append", nargs=2, default=[], metavar=("ITEM_OR_DASH", "COMMAND"),
-                        help="one command per case; '-' is unbound. Growth: WORKFLOW_GROWTH=SMALL,LARGE,MAX_POWER COMMAND {size}; counts may grow by at most (LARGE/SMALL)**MAX_POWER")
+                        help="one command per case; '-' is unbound. Growth: WORKFLOW_GROWTH=SMALL,LARGE,MAX_POWER COMMAND {size}; counts may grow by at most (LARGE/SMALL)**MAX_POWER. Print WORKFLOW_METRICS=<JSON object> or JSON alone for numeric metrics. Growth checks scaling; assert saved work and runtime in the probe.")
     parser.add_argument("--support", action="append", help="name support; recorded replay uses its captured immutable bytes")
-    parser.add_argument("--timeout", type=float)
+    parser.add_argument("--timeout", type=float, help="execution budget per source arm, at most 30 seconds")
     args = parser.parse_args(values[:dash])
     if sum(value.partition("=")[0] == "--behavior-id" for value in values[:dash]) > 1:
         raise WorkflowError("one Behavior Map item per case command")
@@ -1372,10 +1379,9 @@ def _run_tdd(values: list[str]) -> int:
         raise WorkflowError("tdd requires recorded preflight evidence")
     if (workflow_id := instance_id(state)) is None:
         raise WorkflowError(NO_INSTANCE_ID)
-    scope = _EXECUTION.get()
     slug = str(state["slug"])
-    if args.path and not (command or args.case) or args.timeout is not None and args.timeout <= 0:
-        raise WorkflowError("a scratch path needs its command; timeout must be positive")
+    if args.path and not (command or args.case) or args.timeout is not None and not 0 < args.timeout <= MAX_CASE_SECONDS:
+        raise WorkflowError("a scratch path needs its command; timeout must be positive and at most 30 seconds")
     if (args.reject or args.retire) and not args.author or args.retire and not (command or args.case or args.change):
         raise WorkflowError("only the finding author can withdraw an observation, or retire a case beside its probe or replacement")
     if args.verdict and (args.author != "review" or args.verdict not in {"complete", "incomplete"}
@@ -1516,18 +1522,14 @@ def _run_tdd(values: list[str]) -> int:
     specs = [(identifier if identifier != "-" else None, shlex.join(shlex.split(value))) for identifier, value in args.case]
     if command:
         specs = [(args.behavior_id, shlex.join(command))]
-    selected, pending = [], []
+    selected = []
     retired = _retired(state)
     if not specs:
         for entry in items:
             if args.behavior_id and entry["id"] != args.behavior_id:
                 continue
             for case in behavior_map.current_cases([entry], runs, retired):
-                recorded = case.get("comparison")
-                if recorded and "runIndex" in recorded:
-                    selected.append((entry, recorded))
-                else:
-                    pending.append((entry["id"], case["boundaryInputs"][0]))
+                selected.append((entry, case["comparison"]))
         if args.behavior_id and not any(entry["id"] == args.behavior_id for entry in items):
             raise WorkflowError("unknown Behavior Map item")
     support_overrides = {}
@@ -1548,25 +1550,22 @@ def _run_tdd(values: list[str]) -> int:
         if names - eligible:
             raise WorkflowError("recorded replay support must name a captured test or command input; supply a command to capture new support")
         selected = [(entry, support_overrides[probe["runIndex"]]) for entry, probe in selected]
-    inventory = _probe_files([], identity, args.support or []) if specs or pending else None
-    for identifier, value in specs or pending:
+    inventory = _probe_files([], identity, args.support or []) if specs else None
+    for identifier, value in specs:
         entry = behavior_map.item(items, identifier) if identifier else None
         if identifier and entry is None:
             raise WorkflowError("unknown Behavior Map item: " + identifier)
         captured = _probe_capture(identity, {"command": value, **({"path": args.path} if args.path else {})},
-                                  candidate, args.timeout or 120., args.support, inventory, original if entry and entry.get("kind") == "preservation" else None)
+                                  candidate, args.timeout or MAX_CASE_SECONDS, args.support, inventory, original if entry and entry.get("kind") == "preservation" else None)
         if entry is not None:
             prior = entry.get("comparison") or {}
-            references = prior.get("caseRuns", {prior["command"]: prior["runIndex"]} if prior.get("command") else {})
+            references = prior.get("caseRuns")
+            if not references:
+                references = {case["comparison"]["command"]: case["comparison"]["runIndex"]
+                              for case in behavior_map.current_cases([entry], runs)}
             if captured["sourceCommand"] in references:
                 known = runs[references[captured["sourceCommand"]]]
                 captured["sourceCommand"] = known.get("sourceCommand", captured["sourceCommand"])
-            aliases = {name for name, index in references.items()
-                       if runs[index].get("sourceCommand", name) == captured["sourceCommand"]}
-            inputs = entry.get("boundaryInputs") or []
-            entry["boundaryInputs"] = list(dict.fromkeys(captured["command"] if item == value or item in aliases else item for item in inputs))
-            if captured["command"] not in entry["boundaryInputs"]:
-                entry["boundaryInputs"].append(captured["command"])
             captured["behaviorId"] = entry["id"]
         selected.append((entry, captured))
     for entry, probe in selected:
@@ -1591,7 +1590,10 @@ def _run_tdd(values: list[str]) -> int:
     for (entry, _), run in zip(selected, compared):
         if entry is not None:
             prior = entry.get("comparison") or {}
-            references = prior.get("caseRuns", {prior["command"]: prior["runIndex"]} if prior.get("command") else {})
+            references = prior.get("caseRuns")
+            if not references:
+                references = {case["comparison"]["command"]: case["comparison"]["runIndex"]
+                              for case in behavior_map.current_cases([entry], runs)}
             references = {**references, run["command"]: run["runIndex"]}
             if prior.get("caseRuns") != references or any(prior.get(key) != run.get(key) for key in ("runIndex", "candidateKey", "breakOid", "controlKey", "sensitive", "breakExit")) or prior.get("obligation") != behavior_map.obligation(entry):
                 entry["comparison"] = {**run, "obligation": behavior_map.obligation(entry), "caseRuns": references}
@@ -1610,7 +1612,7 @@ def _run_tdd(values: list[str]) -> int:
                   and frozen_signature == json.dumps(evaluation, sort_keys=True))
     if reused:
         readiness = None if selected_only else _readiness_lines(identity, state, items,
-                    documents=(current, evidence_document(identity, state.get("preflightEvidence"))), candidate=_active_candidate_tree(identity))
+                    documents=(current, None), candidate=_active_candidate_tree(identity))
         evidence = state["tddEvidence"]
     else:
         document = {"workflowId": workflow_id, "slug": slug, "kind": "comparison", "behaviorMap": items,
@@ -1622,8 +1624,9 @@ def _run_tdd(values: list[str]) -> int:
     reported = {run["runIndex"]: (entry, run) for (entry, _), run in zip(selected, compared)}
     for entry, run in reported.values():
         row = {"case": run["command"], "exits": [arm["exitCode"] for arm in run["arms"]], "breakExit": run.get("breakExit"),
-               **({"caseKey": behavior_map.case_key(run["behaviorId"], run)} if run.get("behaviorId") else {}),
-               "work": [arm.get("work") for arm in run["arms"]]}
+               **({"caseKey": behavior_map.case_key(run["behaviorId"], run)} if run.get("behaviorId") else {})}
+        if _growth(run["execution"]):
+            row["work"] = [arm.get("work") for arm in run["arms"]]
         original = behavior_map.original_outcome(run)
         expected_original = original if entry is None else "passed" if entry.get("kind") == "preservation" else "failed"
         errors = _work_errors(run)
@@ -1640,7 +1643,7 @@ def _run_tdd(values: list[str]) -> int:
             row["unexpected"] = errors
         rows.append(row)
     receipt = operation_receipt(state, identity, kind="tdd", summaryId=evidence, readiness=readiness, obligations=not selected_only,
-                                cases=rows, preparation=[{"tree": state["source"], "wait": state["wait"]} for state in scope["sources"].values()])
+                                cases=rows)
     _emit_json(receipt)
     return 0 if all(run["valid"] and not run.get("bindingError") for _, run in reported.values()) and not any(row.get("unexpected") for row in rows) else 2
 
@@ -1675,15 +1678,8 @@ def map_update(identity: RepoIdentity, state: JsonObject, value: JsonObject) -> 
              if item["id"] not in removed]
     for entry in updates:
         prior = recorded.get(entry["id"])
-        if prior is not None and "boundaryInputs" in prior and "boundaryInputs" not in entry:
-            entry["boundaryInputs"] = []  # removing every command cannot fall back to unrelated evidence
         if "runIndex" in (prior or {}).get("comparison", {}):  # a changed kind or obligation keeps its latest run and reads stale until rerun
             comparison = {**prior["comparison"], "obligation": prior["comparison"].get("obligation", behavior_map.obligation(prior))}
-            if references := comparison.get("caseRuns"):
-                active = {command: index for command, index in references.items() if command in entry.get("boundaryInputs", [])}
-                if active != references:
-                    comparison = ({**current["runs"][next(reversed(active.values()))], "obligation": comparison["obligation"], "caseRuns": active}
-                                  if active else {})
             entry["comparison"] = comparison
     if items == previous:
         return operation_receipt(state, identity, summaryId=state.get("tddEvidence") or state["preflightEvidence"],

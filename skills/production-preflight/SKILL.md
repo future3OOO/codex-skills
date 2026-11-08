@@ -14,7 +14,7 @@ Use [diagnose](../diagnose/SKILL.md) for bugs before choosing a correction.
 
 Apply [Production Code's Minimum Implementation Decision](../production-code/SKILL.md#minimum-implementation-decision):
 name the affected Interface, existing Module and reuse path, adjacent consumers,
-no-change surfaces and real test surface in the contract. Invoke
+no-change surfaces and real test surface for the design judgment. Invoke
 [codebase-design](../codebase-design/SKILL.md) for a new Module or public Seam,
 or a changed public Interface. Deepen the existing owner; a new Module must earn
 its Interface. Absorb touched shallow helpers or name a concrete blocker.
@@ -27,12 +27,20 @@ invariants and proof surface; an unnamed material part blocks recording.
 
 Two fields: `authoritativeContract` (concise prose for the reviewers who read it;
 the recorder checks only that it is non-empty text) and `behaviorMap`. `behaviorMap` is authoritative for the obligations TDD must reconcile, not for
-choosing the architecture; a plan may reference it but owns no copy. Keep ordinary
-local work short; transaction-sensitive work names the full surrounding surface.
+choosing the architecture; a plan may reference it but owns no copy. Record required
+outcomes, not provisional implementation choices. Keep design reasoning in the
+existing advisor context. Keep ordinary local work short; transaction-sensitive
+work names the full surrounding surface.
 
 ### `authoritativeContract`
 
-`d* = argmin C(d)` over designs satisfying the fixed request and preservation. The lead supplies the request, preservation requirements, source facts and candidate design. The advisor derives `C` analytically from the production path: repeated calls and scans, copies, retained state and how work grows with input size. Identify the responsible owners and system limits; distinguish observations from estimates. Compare the least sufficient change with a materially different architecture by necessary production work and code at fixed behavior. Explore the deciding feasibility and cost assumptions with small scratch prototypes or direct probes; do not build competing production implementations. The advisor investigates; the lead checks its source claims and corrects the draft; the advisor then finalises it in the same session. Record the model, most efficient supported feasible design, deciding evidence and superseded code here. Derive preservation from required outcomes, not a chosen mechanism's intermediate state. TDD's [required probe loop](../tdd/SKILL.md#required-probe-loop) revisits affected decisions against the actual diff.
+State the request, preserved behavior and responsible production path. Include
+source facts and proposed reuse as revisable reasoning.
+The [preflight advisor](../codex-advisor/SKILL.md#preflight-advice)
+independently challenges the lead's cost model and architecture; the lead checks the source
+claims before the same advisor finalizes the draft. Keep unresolved predictions
+visible. Preserve required outcomes rather than a proposed mechanism's intermediate
+state. TDD revisits those responsibilities against the actual diff.
 
 Before choosing an implementation or writing tests, investigate each behavioral
 predicate that decides an outcome:
@@ -57,7 +65,7 @@ predicate that decides an outcome:
 
 State the reachable values and decision rules concisely in this contract and the
 existing `behaviorMap`: competing readings go in the owning item's `interpretations`,
-and the commands asserting discriminating inputs in its `boundaryInputs`. Investigation is complete when each
+and concrete discriminating inputs in its `boundaryInputs`. Investigation is complete when each
 decision's meaning is established over its reachable values or its uncertainty
 is explicit. Unambiguous predicates need no additional fields or inventory.
 
@@ -70,10 +78,15 @@ readings of one behavior, is a pending `behaviorMap` item, not an unknown.
 
 ### `behaviorMap`
 
-Freeze requirement meaning and scope in TDD's [Behavior Map](../tdd/recorder.md#behavior-map). Quote each load-bearing promise and select its `seam` under AGENTS.md's Real-Seam proof invariant: the responsible production Interface and real setup. For new behavior, probe against the result of the existing code or engine that defines its terms. Use request-grounded properties only when no owner exists. Preservation takes the original's result on touched behavior. A round-trip or idempotence law must also establish the requested effect. Use the recorder's kind and witness rules. A deciding production cost is an additional contract case, never a replacement for the whole design obligation. The lead proposes metric ideas; the advisor investigates and freezes the challenger design and its growth bound. Prefer timing the real operation on real inputs at production size against an equivalent same-run reference; counts, memory and output quality may fit better. New behavior needs an equivalent reference or a justified resource target. Record workload, reference, repetitions, operation budget, tolerance and inclusive boundary in behavior and expected. Challenge the lead's design with the most efficient production design you can find for the same behaviour: the least work, or the fastest or leanest result, in code the change edits or its requested operation runs through, including existing inefficient machinery. It must return the same result on every input the request and preserved behaviour cover; where existing code defines a term the request uses, that code's result decides the term. Changing any result to get there is a failure and immediate termination of that design. Name its dominant cost term and how that term grows. Bind that growth as a growth case on the lead's build, measured inside the operation, never weaker than the original's. If you find nothing better, state why the dominant term cannot be reduced. The lead builds the challenger or refutes it with a failing comparison or measurement. If no production cost term can affect the outcome, say why in one line and freeze no performance case. Explicit user restrictions still apply.
+Quote each load-bearing promise in TDD's [Behavior Map](../tdd/recorder.md#behavior-map)
+and name its responsible production Interface and real setup. Preservation uses the
+original's result, including other decisions controlled by shared logic the edit
+removes. New terms use the existing owner's result; use request-grounded properties
+only when no owner exists. A round-trip must also establish the requested effect.
+The advisor's deciding work and runtime assertions supplement functional proof.
 
-Use the runtime form. Bind concrete discriminating case commands when known;
-running a case captures its command without a placeholder.
+Describe concrete inputs and outcomes. Bind a command after its executable probe
+exists; the runner captures it. Do not create obligations from proposed test names.
 
 Remove every element whose deletion preserves required behavior and distinct necessary proof without increasing whole-system cost. Use real collaborators and observe results and state effects.
 
@@ -86,9 +99,7 @@ Update changed items by id with `record tdd-map` when obligations change. The ru
 Submit the exact artifact through [Codex Advisor's preflight loop](../codex-advisor/SKILL.md#preflight-advice) before tracked edits.
 Record it once the advisor returns `approved` for that content.
 
-In the governed workflow record it with `python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" record preflight`:
-with no input it records the advisor-approved draft, including the advisor's last-round edits
-(`--check` validates without recording). A refusal
-names every violation at once and mutates nothing. Key order and JSON formatting
-do not change content.
-Resolve outstanding questions before dependent implementation. After recording, `tdd-map` may add preservation items and boundary cases; contract/conformance kind, behavior and expected are fixed. A user scope change requiring a new contract starts a new pass. Response prose is not evidence.
+The runtime continuation supplies the recording command. Record the approved draft
+once; later corrections use the same map and pass. Changed command formatting is
+not a changed contract. Resolve interpretations before dependent implementation;
+response prose is not execution evidence.

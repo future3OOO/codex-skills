@@ -37,9 +37,10 @@ Equal failures or unexecuted operations do not prove preservation. Equivalent
 changes need no invented distinguishing input. Judge changed requirements and
 coverage against the request; listing a change authorizes nothing.
 
-Attack whole-system cost at fixed behavior. Find the largest justified production
-reduction or optimization in code the change edits or its requested operation runs
-through, including existing inefficient machinery. Prove the saved work and kept
+Attack whole-system cost at fixed required behavior. Treat all code on the requested
+production path as variable, including existing inefficient machinery. Find the
+cheapest justified design. An improved term cannot excuse remaining avoidable work;
+a known cheaper correct design rejects approval. Prove saved work and preserved
 outcomes with a concrete replacement. Prefer net reduction; necessary growth needs
 demonstrated lower cost. Maintained-test cleanup must keep frozen proof and required
 surviving checks. Generate replacement diffs from actual scratch edits.

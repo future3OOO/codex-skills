@@ -27,18 +27,14 @@ def _strings(value: object) -> list[str] | None:
 
 
 def _recorded_fields(raw: JsonObject) -> JsonObject:
-    """The optional fields in their valid shape; any other shape is absent rather than refused."""
+    """Preserve input context; normalize the optional reading choices."""
     fields: JsonObject = {}
     if raw.get("kind") in KINDS:
         fields["kind"] = raw["kind"]
-    for key in ("boundaryInputs", "interpretations"):
-        if (values := _strings(raw.get(key))) and (key != "interpretations" or len(values) >= 2):
-            try:
-                fields[key] = list(dict.fromkeys(shlex.join(shlex.split(value)) for value in values)) if key == "boundaryInputs" else values
-            except ValueError:
-                fields[key] = []
-    if "boundaryInputs" in raw and "boundaryInputs" not in fields:
-        fields["boundaryInputs"] = []  # recorded in another shape: visible, unmapped, never silently dropped
+    if "boundaryInputs" in raw:
+        fields["boundaryInputs"] = copy.deepcopy(raw["boundaryInputs"])
+    if (values := _strings(raw.get("interpretations"))) and len(values) >= 2:
+        fields["interpretations"] = values
     if "interpretations" in fields and _text(raw.get("interpretation")) and _text(raw.get("authority")):
         fields.update(interpretation=raw["interpretation"].strip(), authority=raw["authority"].strip())
     return fields
@@ -129,20 +125,15 @@ def _case_question(entry: JsonObject) -> list[str]:
 def _question(entry: JsonObject, proofs: list[JsonObject]) -> list[str]:
     if readings_unsettled(entry):
         return _case_question(entry)
-    commands = entry.get("boundaryInputs") or []
-    if not commands:
-        return ["bind the case command: workflow.py tdd --case " + entry["id"] + " 'COMMAND'"]
-    candidates = [proof for proof in proofs if proof["id"] == entry["id"]
+    candidates = [proof for proof in proofs if proof["id"] == entry["id"] and proof.get("comparison")
                   and obligation(proof) == obligation(entry)]
+    if not candidates:
+        return ["bind the case command: workflow.py tdd --case " + entry["id"] + " 'COMMAND'"]
     reasons, behavior = [], False
-    for command in commands:
-        matching = [proof for proof in candidates if (proof.get("comparison") or {}).get("command") == command]
-        if not matching:
-            reasons.append("case command not compared: " + command)
-        else:
-            reasons.extend(_case_question(matching[0]))
-            behavior = behavior or entry.get("kind") != "preservation" or "WORKFLOW_GROWTH" not in (matching[0]["comparison"].get("execution") or {}).get("assignments", {})
-    return reasons or ([] if behavior else ["growth cases check scaling only; bind a behavior case and its break: workflow.py tdd --case " + entry["id"] + " 'COMMAND'"])
+    for proof in candidates:
+        reasons.extend(_case_question(proof))
+        behavior = behavior or entry.get("kind") != "preservation" or "WORKFLOW_GROWTH" not in (proof.get("comparison", {}).get("execution") or {}).get("assignments", {})
+    return list(dict.fromkeys(reasons)) or ([] if behavior else ["growth cases check scaling only; bind a behavior case and its break: workflow.py tdd --case " + entry["id"] + " 'COMMAND'"])
 
 
 def current_cases(items: list[JsonObject], runs: list[JsonObject], retired: set[str] = frozenset()) -> list[JsonObject]:
@@ -151,21 +142,18 @@ def current_cases(items: list[JsonObject], runs: list[JsonObject], retired: set[
     for entry in items:
         proof = entry.get("comparison") or {}
         references = proof.get("caseRuns")
-        for command in entry.get("boundaryInputs") or []:
-            if command == proof.get("command"):
-                cases.append({**entry, "boundaryInputs": [command]})
-                continue
-            if references is not None:
-                run = runs[references[command]] if command in references else None
-            elif proof.get("command") and "runIndex" in proof:
-                observed = [run for run in runs if run.get("command") == command and run.get("behaviorId") == entry["id"]
-                            and not run.get("brokenSource") and run.get("arms")]
-                inputs = {run["arms"][0].get("key") for run in observed}
-                run = observed[-1] if len(inputs) == 1 and None not in inputs else None
-            else:
-                run = None
-            cases.append({**entry, "boundaryInputs": [command],
-                          "comparison": {**run, "obligation": proof.get("obligation", obligation(entry))} if run else {}})
+        if not references:
+            references = {}
+            if proof.get("command") and "runIndex" in proof:
+                references = {run["command"]: index for index, run in enumerate(runs)
+                              if run.get("behaviorId") == entry["id"] and run.get("arms") and not run.get("brokenSource")}
+                references[proof["command"]] = proof["runIndex"]
+        latest = {}
+        for index in sorted(set(references.values())):
+            run = runs[index]
+            latest[run.get("sourceCommand", run["command"])] = run
+        for run in latest.values():
+            cases.append({**entry, "comparison": {**run, "obligation": proof.get("obligation", obligation(entry))}})
     return [case for case in cases if not case.get("comparison") or case_key(case["id"], case["comparison"]) not in retired] if retired else cases
 
 
@@ -173,7 +161,7 @@ def open_obligations(items: list[JsonObject], evaluation: list[JsonObject] | Non
     """One command is one case. Output and framework names never determine readiness."""
     retained = evaluation or []
     lines = [("retained " if retained_item else "") + f"{entry.get('caseKey', entry['id'])} ({entry.get('kind') or 'kind?'})"
-             + (f" `{entry['boundaryInputs'][0]}`" if retained_item else "") + ": " + "; ".join(reasons)
+             + (f" `{entry['comparison']['command']}`" if retained_item else "") + ": " + "; ".join(reasons)
              for group, retained_item in ((items, False), (retained, True)) for entry in group
              if (reasons := _case_question(entry) if retained_item else _question(entry, [*(current or items), *retained]))]
     return lines
@@ -196,7 +184,7 @@ def retain_evaluation(items: list[JsonObject], required: set[str], retained: Jso
             continue
         key = entry["id"] if entry["id"] not in retained else key
         retained[key] = {**copy.deepcopy({key: value for key, value in entry.items() if key != "comparison"}),
-                         "runIndex": run["runIndex"], "boundaryInputs": [run["command"]]}
+                         "runIndex": run["runIndex"]}
 
 
 def case_key(identifier: str, run: JsonObject) -> str:
@@ -223,24 +211,6 @@ def unresolved(items: list[JsonObject], opened: list[str] | None = None) -> list
 
 def never_compared(items: list[JsonObject]) -> list[str]:
     return [str(entry["id"]) for entry in items if not (entry.get("comparison") or {}).get("arms")]
-
-
-def contract_changes(items: list[JsonObject], recorded: list[JsonObject] | None) -> list[str]:
-    """Added required command cases and dropped commands; recorded contract wording and kind cannot change."""
-    before = {entry["id"]: entry for entry in recorded or []}
-    lines = []
-    for entry in items:
-        prior, kind = before.get(entry["id"]), entry.get("kind")
-        if prior is None:
-            continue
-        inputs, earlier = set(entry.get("boundaryInputs") or []), set(prior.get("boundaryInputs") or [])
-        changes = []
-        if kind in {"contract", "conformance"} and inputs - earlier:
-            changes.append(f"{kind} commands added: " + ", ".join(sorted(inputs - earlier)))
-        if earlier - inputs:
-            changes.append(f"{prior.get('kind')} commands dropped: " + ", ".join(sorted(earlier - inputs)))
-        lines.extend(f"{entry['id']}: {change}: {entry['basis']}" for change in changes)
-    return lines
 
 
 def comparison_view(run: JsonObject) -> JsonObject:
