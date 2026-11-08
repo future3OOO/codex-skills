@@ -55,8 +55,7 @@ def main() -> int:
             missing.append(str(exc))
         if missing:
             emit("PreToolUse", permissionDecision="deny", permissionDecisionReason=
-                 "Lead investigation and current behavioral verification must precede reviewer dispatch. Pending: "
-                 + ", ".join(dict.fromkeys(missing)))
+                 "Review dispatch blocked: " + ", ".join(dict.fromkeys(missing)))
         return 0
     path = edited_path(payload)
     if path is None:
