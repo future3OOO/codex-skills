@@ -883,32 +883,25 @@ def _run_change(identity: RepoIdentity, batches: list[JsonObject], change: objec
     measured = _run_probe(identity, probe, candidate, None, timeout, cached, frozen) if probe is not None else None
     if measured and measured.get("candidate") == "passed" and "error" in measured:
         return {"kind": "change", "error": measured["error"]}
-    repaired = cost_recheck and measured is not None and "error" not in measured and measured.get("candidate") == "passed"
-    if repaired:
-        before, after = frozen["originalTree"], candidate
-    else:
-        patch = change.encode("utf-8", "replace") + (b"" if change.endswith("\n") else b"\n")  # unencodable text cannot apply
-        try:
-            changed = _indexed(identity, candidate, (("apply", "--cached", "-"), patch))
-            before, after = candidate, changed
-        except RuntimeError:
-            try:  # already applied by the lead: the candidate itself carries the removal
-                before, after = _indexed(identity, candidate, (("apply", "--cached", "--reverse", "-"), patch)), candidate
-            except RuntimeError:
-                return {"kind": "change", "error": "change does not apply to the candidate"}
+    if cost_recheck and measured is not None:
+        return measured
+    patch = change.encode("utf-8", "replace") + (b"" if change.endswith("\n") else b"\n")  # unencodable text cannot apply
+    try:
+        changed = _indexed(identity, candidate, (("apply", "--cached", "-"), patch))
+        before, after = candidate, changed
+    except RuntimeError:
+        return {"kind": "change", "error": "change does not apply to the candidate"}
     cost = None
     maintenance = any(is_test_path(path) for path in _changed_entries(identity, before, after))
-    if probe is not None and not repaired:
+    if probe is not None:
         if not maintenance and (measured is None or measured.get("candidate") not in {"passed", "failed"}):
             return {"kind": "change", "error": "replacement probe did not establish a candidate outcome"}
         if measured and "comparison" in measured:
             cost = _compare(identity, candidate, after, measured["comparison"], cached)
         if cost and (not cost["valid"] or not cost.get("sensitive")) and not maintenance:
             return {"kind": "change", "error": "replacement did not pass the same cost probe", "comparison": cost}
-    if not repaired and (refusal := _shape_refusal(identity, before, after, cost is not None and cost["valid"] and measured["candidate"] == "failed")):
+    if refusal := _shape_refusal(identity, before, after, cost is not None and cost["valid"] and measured["candidate"] == "failed"):
         return {"kind": "change", "error": refusal}
-    if after == candidate:
-        return measured if repaired else {"kind": "change", "applied": True, "candidate": "passed", **({"comparison": cost} if cost else {})}
     if error := _maintained_tests(identity, batches, maintained, before, after, cached,
                                   measured.get("comparison") if measured else None):
         return {"kind": "change", "error": error}
@@ -926,20 +919,20 @@ def _run_change(identity: RepoIdentity, batches: list[JsonObject], change: objec
             return ({"kind": "change", "applied": after == candidate, "candidate": outcome,
                      "timedOut" if arm["timedOut"] else "failure": reason} if outcome in {"failed", "timed-out"}
                     else {"kind": "change", "error": reason})
-    return measured if repaired else {"kind": "change", "applied": after == candidate, "candidate": "passed", **({"comparison": cost} if cost else {}),
+    return {"kind": "change", "applied": after == candidate, "candidate": "passed", **({"comparison": cost} if cost else {}),
                                      **({"selection": "proposer-selected command; exit result checked, source-line reachability and relevance not traced"} if probe is not None else {})}
 
 
 def binds(execution: JsonObject) -> bool:
-    """The acceptance order: a regression (a probe the original passes that fails or runs past its limit on the
-    candidate) binds and is repaired; a net reduction or cost-proved replacement every retained batch passes binds;
-    anything else, a probe the original also fails included, asks for unrecorded behaviour: a report line."""
+    """Observed regressions and measured cost failures bind; implementation sketches remain review evidence."""
     if "error" in execution:
         return False
     if execution["kind"] == "cost":
         return execution.get("candidate") != "passed"
     if execution["kind"] == "change":
-        return execution.get("candidate") == "passed"
+        comparison = execution.get("comparison") or {}
+        return bool(comparison.get("valid") and comparison["arms"][0]["outcome"] == "failed"
+                    and execution.get("candidate") == "passed")
     return execution.get("candidate") in {"failed", "timed-out"} and execution.get("original") == "passed"
 
 

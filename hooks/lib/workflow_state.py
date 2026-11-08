@@ -199,7 +199,7 @@ def _derive_next_action(state: JsonObject, tdd_document: JsonObject | None = Non
     phase = next((phase for phase in SEQUENCE if not _allows_next(state, phase)), "complete-workflow")
     if phase == "final-review":
         review = state.get("finalReview") or {}
-        if state.get("finalStarted") and (review.get("status") == "pending" or review.get("findings") in {"none", "addressed"}):
+        if state.get("finalStarted") and (review.get("status") == "pending" or review.get("findings") == "addressed"):
             return "re-consult-final-review"
         if isinstance(review, dict) and review.get("status") not in {None, "pending"}:
             return "address-review-findings"
@@ -509,8 +509,7 @@ def _finding_unresolved(entry: JsonObject) -> bool:
 
 
 def _settle_executed(state: JsonObject, execution: JsonObject, evidence_id: str) -> None:
-    """Each open binding finding settles when its re-execution on this candidate no longer binds: a repaired probe
-    passes, or an applied deletion keeps every batch passing; one with no binding case left is a report line."""
+    """Binding predicates settle when they pass; observations with no binding case remain report lines."""
     if state.get("tddEvidence") != execution["measuredEvidence"]:
         raise WorkflowError("comparison evidence changed during finding execution; record the intake again")
     binding = [_finding_state(state, evidence_id, item["id"]) for item in execution["findings"] if item["material"]]

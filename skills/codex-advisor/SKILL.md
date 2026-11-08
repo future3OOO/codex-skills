@@ -93,4 +93,4 @@ If transport is genuinely unavailable, record the preflight result as
 review. No nonce, skip file, stamp, attestation, or audited exception authorizes
 completion.
 
-Rechecks settle repairs, passing applied changes and proposal-caused failures against a passing baseline; shared failures stay pending. There is no disposition command.
+Rechecks settle behavior and measured cost failures; shared failures stay pending. There is no disposition command.
