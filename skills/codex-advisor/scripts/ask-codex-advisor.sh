@@ -332,8 +332,7 @@ if [[ "$phase" == preflight-advice ]]; then
     dry_run=$(printf '%q ' python3 "$workflow_cli" record advisor-result --check --repo "$repo_root" --slug "$producer_slug" \
       --workflow-id "$active_wid" --stage preflight --source codex-advisor --input - --preflight-file "$transport_dir/preflight.json" \
       --design-declaration "$design_declaration_file")
-    phase_prompt="Checkpoint Interface: preflight-advice
-Use your investigation and the lead's checked corrections. Quote each load-bearing promise in its map item. Ground expectations in the request, an executed original operation, or the existing owner or engine on the same input. Use request-grounded properties only when no owner exists; establish the requested effect, not just a round-trip. Required outcomes are authoritative; design choices and cost hypotheses remain revisable.
+    phase_prompt+=$'\n'"Use your investigation and the lead's checked corrections. Quote each load-bearing promise in its map item. Ground expectations in the request, an executed original operation, or the existing owner or engine on the same input. Use request-grounded properties only when no owner exists; establish the requested effect, not just a round-trip. Required outcomes are authoritative; design choices and cost hypotheses remain revisable.
 Finalise $transport_dir/preflight.json with required outcomes and deciding functional, work and runtime cases from the investigation. Keep design reasoning in the existing findings and consult context; do not turn implementation choices into contract requirements. Keep only required behavior, distinct proof or lower whole-system cost. Validate it with: $dry_run
 Return approved when complete; otherwise return changes-required with demonstrated gaps. Continue this session until those gaps are settled."
   fi
