@@ -395,7 +395,7 @@ if [[ "$provider" == "codex" ]]; then
     exec_args+=(-c "model_reasoning_effort=$codex_effort")
   fi
   set +e
-  (cd "$repo_root" && env "${provider_env[@]}" codex "${exec_args[@]}" -) \
+  (cd "$repo_root" && env "${provider_env[@]}" python3 "$script_dir/advisor-estate.py" codex "${exec_args[@]}" -) \
     <"$prompt_file" >"$output_file" 2>"$transport_dir/provider-stderr"
   status=$?
   set -e
@@ -412,7 +412,7 @@ if [[ "$provider" == "codex" ]]; then
 else
   set +e
   cd "$repo_root" && env "${provider_unset[@]}" "${provider_env[@]}" \
-    claude -p "${session_args[@]}" --dangerously-skip-permissions --model "$model" --effort xhigh --output-format text \
+    python3 "$script_dir/advisor-estate.py" claude -p "${session_args[@]}" --dangerously-skip-permissions --model "$model" --effort xhigh --output-format text \
       --append-system-prompt "$role" --tools default --disallowed-tools Task <"$prompt_file" >"$output_file"
   status=$?
   set -e
