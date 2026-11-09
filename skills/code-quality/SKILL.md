@@ -8,14 +8,14 @@ description: Compact quality rubric: the seven principles for judging a change. 
 This skill owns the seven quality principles below. `production-code` extends
 them with execution procedure; it does not redefine them.
 
-Judge the changed surface, not unrelated legacy debt. Cite the diff, contract,
-and concrete proof. The hard invariants remain owned by `AGENTS.md`.
+Judge code the change edits or its requested operation runs through. Cite the
+diff, contract and concrete proof. `AGENTS.md` owns the hard invariants.
 
 ## Seven principles
 
 ### 1. Minimal code
 
-- Is this the smallest correct change?
+- Does the design minimize whole-system cost at fixed required behavior, including runtime and resources, even for a functional-only request?
 - Did it remove code it made obsolete?
 - Did it avoid one-off wrappers, pass-through modules, and speculative options?
 

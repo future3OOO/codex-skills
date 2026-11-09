@@ -439,7 +439,7 @@ def commit_tdd(identity: RepoIdentity, slug: str, workflow_id: str | None,
         if "evaluation" not in summary_doc:
             summary_doc["evaluation"] = _evaluation(identity, state, transaction.evidence(state.get("tddEvidence")))
         readiness = None if selected_only else _readiness_lines(identity, state, items,
-                    documents=(summary_doc, transaction.evidence(state.get("preflightEvidence"))), candidate=candidate)
+                    documents=(summary_doc, None), candidate=candidate)
         behavior_map.retain_evaluation(items, {item["id"] for item in items}, summary_doc["evaluation"], summary_doc["runs"], _retired(state))
         pending = readiness is None or bool(readiness["open"])
         runs = summary_doc["runs"]
@@ -543,7 +543,7 @@ def commit_findings(
     identity: RepoIdentity, slug: str, workflow_id: str | None, summary_doc: JsonObject, execution: JsonObject,
 ) -> tuple[JsonObject, str]:
     """Publish executed findings; only an explicit independent verdict completes review."""
-    with _ledger_mutation(identity, expected_candidate_tree=execution["measuredTree"]) as transaction:
+    with mutation(identity, expected_candidate_tree=execution["measuredTree"]) as transaction:
         state = _bound_instance_state(transaction.state, slug, workflow_id)
         if summary_doc.get("candidateTree") != execution["measuredTree"]:
             raise WorkflowError("review names a different candidate tree; obtain a current review")
@@ -967,7 +967,7 @@ def record_advisor_result(
         raise ValueError(f"unsupported reviewer source: {source}")
     if stage == "final" and (intake is None or execution is None):
         raise ValueError("a final advisor-result records the advisor finding envelope (--input), executed")
-    with _ledger_mutation(identity, expected_candidate_tree=None if stage == "preflight" else expected_candidate_tree) as transaction:
+    with mutation(identity, expected_candidate_tree=None if stage == "preflight" else expected_candidate_tree) as transaction:
         state = _bound_instance_state(transaction.state, slug, workflow_id)
         writes: list[EvidenceWrite] = []
         intake_reference: str | None = (state.get("advisorPreflight") or {}).get("intakeEvidence") if stage == "preflight" else None
@@ -1549,29 +1549,21 @@ def _readiness_lines(identity: RepoIdentity, state: JsonObject, items: list[Json
     candidate = candidate or _active_candidate_tree(identity)
     if documents is None:
         items, document = current_map(identity, state, fresh=False) if items is None else (items, evidence_document(identity, state.get("tddEvidence")))
-        preflight = evidence_document(identity, state.get("preflightEvidence"))
     else:
-        document, preflight = documents
+        document = documents[0]
         items = behavior_map.recorded_map(*documents) if items is None else items
     items = items or []
-    recorded = behavior_map.recorded_map(None, preflight)
     evaluation = [{**entry, "caseKey": behavior_map.case_key(entry["id"], document["runs"][entry["runIndex"]]),
                    "comparison": dict(document["runs"][entry["runIndex"]])}
                   for entry in _evaluation(identity, state, document, True).values()]
     retired = _retired(state)
     observations = behavior_map.current_cases(items, (document or {}).get("runs", []), retired)
-    if retired:
-        live = {entry["id"]: set() for entry in items}
-        for case in observations:
-            live[case["id"]].update(case["boundaryInputs"])
-        items = [{**entry, "boundaryInputs": [command for command in entry.get("boundaryInputs") or [] if command in live[entry["id"]]]}
-                 for entry in items if not entry.get("boundaryInputs") or live[entry["id"]]]
     refresh_proof(identity, [*observations, *evaluation], candidate=candidate, runs=(document or {}).get("runs", []))
     cases = behavior_map.open_obligations(items, evaluation, observations)
     review = review if review is not None else evidence_document(identity, state.get("codeReviewEvidence"))
     current = bool(review and review.get("workflowId") == state["workflowId"] and review.get("candidateTree") == candidate and review.get("verdict") == "complete" and not _stage_unresolved(state, "code-review", "code-review"))
     return {"open": cases, "reviewCurrent": current, "openCount": len(cases),
-            "never": behavior_map.never_compared(items), "contractChanges": behavior_map.contract_changes(items, recorded)}
+            "never": behavior_map.never_compared(items)}
 
 def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObject | None = None, *,
                    preflight_draft: JsonObject | None = None, preflight_file: str | None = None,
@@ -1667,8 +1659,7 @@ def operation_receipt(state: JsonObject, identity: RepoIdentity, *, readiness: J
         return details
     current = public_status(state, fields={"schemaVersion", "workflowId", "slug", "phase", "nextAction"})
     if obligations and details.get("kind") == "tdd":
-        # The receipt carries what the lead must act on; contract-change history stays with review.
-        details.update({key: value for key, value in (readiness if readiness is not None else _readiness_lines(identity, state)).items() if key != "contractChanges"})
+        details.update(readiness if readiness is not None else _readiness_lines(identity, state))
     operation = next_operation(identity, {**state, **current}, details, obligations=obligations)
     return {"nextAction": operation.pop("action", current.get("nextAction")), "next": operation,
             **{key: value for key, value in current.items() if key != "nextAction"}, **details}

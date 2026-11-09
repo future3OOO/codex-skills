@@ -127,7 +127,7 @@ DESIGN_FILE_SHAPE = (
     '{"schemaVersion":1,"status":"absent","reason":"..."}'
 )
 ITEM_SHAPE = ('{"id":"BM_X","kind":"conformance|contract|preservation","basis":"original request or preservation",'
-              '"behavior":"...","seam":"...","expected":"...","boundaryInputs":["case command"],'
+              '"behavior":"...","seam":"...","expected":"...","boundaryInputs":["concrete input"],'
               '"interpretations":["reading a","reading b"],"interpretation":"...","authority":"..."}')
 ADVISOR_SHAPES = {
     "preflight": '{"schemaVersion":1,"findings":[{"id":"SPEC-1","claim":"...","material":true}],"verdict":"approved|changes-required"}',

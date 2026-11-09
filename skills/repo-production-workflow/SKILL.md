@@ -48,8 +48,8 @@ Stop on packet blockers. The packet fixes the initial target and coverage surfac
 
 Derive verification from the user's intended production behavior using
 [Production Code's outcome verification](../production-code/SKILL.md#minimum-implementation-decision).
-The lead owns that investigation through implementation and repair; the independent
-reviewer challenges it. Use the packet to trace affected paths, state skipped and
+The lead owns correctness and optimization for every task, through implementation
+and repair; the independent reviewer challenges it. Use the packet to trace affected paths, state skipped and
 preserved surfaces, and establish review-budget fit. Apply `diagnose` to bugs,
 regressions and performance failures before choosing a correction.
 
@@ -61,18 +61,18 @@ graph step. Run further MCP checks only when they widen the surface the packet f
 ### 4. Draft and advisor review
 
 Invoke `production-preflight` and draft its two-field artifact before consulting.
-Its map follows TDD's [Behavior Map](../tdd/recorder.md#behavior-map): each item's
-`kind`, its required boundary cases and any competing readings. Invoke
+Its map states required outcomes, concrete inputs and any competing readings. Invoke
 `codebase-design` when changing a Module, public Interface or Seam. The draft owns
 the contract and planned attacks.
 
 Submit the exact draft through [Codex Advisor's preflight loop](../codex-advisor/SKILL.md#preflight-advice).
-The advisor investigates; the lead checks and corrects its claims; the advisor
+The advisor investigates. The lead checks deletion claims against every original
+outcome controlled by the affected logic and corrects false premises. The advisor
 then finalises and approves the draft in the same session. Record only that approval.
 
 ### 5. Record approved preflight once
 
-Record the approved contract and probe list with `record preflight` (no input: it records the advisor-approved draft). Keep this workflow pass when scope changes; use `record tdd-map` for changed items; untouched proof remains.
+Record the approved draft through the returned continuation. Related corrections stay in this pass; reuse untouched proof.
 
 ### 6. Select the probe batch
 
@@ -93,20 +93,10 @@ The lead resolves named-case obligations against the original and request, then 
 
 ### 9. Verification
 
-After coherent repair and cleanup, assess the intended outcome against the
-verification derived in step 2. Run the typed quality gate. Verification checks retained findings once per candidate tree and caches their results. A
-source edit leaves recorded comparisons stale, and every reader then routes to `tdd`
-until the lead reruns them on the current candidate.
-Reuse current comparisons; run lint, type checks and tests directly.
-A gate run whose
-reviewable tree drifts stays invalid and names the changed paths; on an unchanged tree
-and base, `verify` returns the passed receipt:
-
-```bash
-python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" verify
-```
-
-Completion requires the typed `quality-gate` run over the current reviewable tree.
+Assess the intended outcome against step 2's verification. Reuse current real
+comparisons; run missing or invalidated operations and required lint, type checks
+and build. The typed quality gate and retained findings must pass on the current
+candidate. Follow the receipt for stale comparisons, failed checks and continuation.
 
 ### 10. Delegate code review
 
@@ -167,11 +157,6 @@ affected steps, including verification and independent review.
 ### 13. Complete the workflow
 
 Complete after the current-head reviewer gate closes, or on the no-PR route below.
-
-```bash
-python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" \
-  complete --repo "$PWD"
-```
 
 `complete` first checks uncached retained findings for its candidate tree. Verdict and withdrawal records only write state; they never run probes or acquire execution locks. A replacement that produces the candidate tree runs only its own probe; current candidate proof covers maintained cases. Other replacements replay every maintained case on the candidate plus the diff, once per candidate tree and resulting tree.
 

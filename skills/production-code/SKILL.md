@@ -8,19 +8,10 @@ description: Enforce production-only implementation standards for this repo. Use
 Apply this skill before writing any repository code or file content change, keep it active while implementing, and run its bundled gate before finalizing.
 Use the production-preflight skill first on before-edit turns that require explicit preflight. `code-quality` owns the seven quality principles and wins on conflict; this skill extends them with implementation procedure.
 
-In a governed production workflow, invoke this skill after planning the real probe and before production, configuration, or runtime implementation edits; the probe edit may precede it. Keep
-this doctrine active through implementation and final verification.
-
-Before editing, use the standards below to choose the best justified whole-system design found. In a governed pass, run the bundled gate before finalizing:
-
-```bash
-python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" verify --kind quality-gate
-```
-
-It prints a bounded summary and, when the gate fails, a command that saves the complete report
-outside chat and a bounded `jq` projection; never print the saved file whole. Load
-[references/gate-policy.md](references/gate-policy.md) only when the gate fails or a
-hard rule reports `incomplete`; a warning-only rule's `incomplete` needs no action.
+The repository workflow owns phase order and the typed quality gate. Use its
+continuation and runtime help for commands. Load [gate-policy](references/gate-policy.md)
+only for a failing gate or a hard rule marked incomplete; warning-only incomplete
+telemetry needs no action.
 
 ## Execution Checklist
 
@@ -40,25 +31,20 @@ hard rule reports `incomplete`; a warning-only rule's `incomplete` needs no acti
 - Do not finish the turn while duplicate added code, reimplemented existing helpers, unnecessary growth, fake-green suppressions, broad catch/pass, temp artifacts, or cleanup failures remain in the changed production surface.
 - Treat the gate as changed-scope evidence, not as a substitute for the repo's own lint, typecheck, tests, build, and domain-specific quality gates.
 - If a tracked governing plan or review artifact exists for the current work and includes an execution checklist, update it when execution state materially changes.
-- Material changes include:
-  - checklist progress
-  - active branch or PR state
-  - superseded or dropped items
-  - changed execution order
-  - remaining blockers or follow-ups
-- Do not create busywork edits for every tiny code change, but do not leave the governing artifact stale after a meaningful implementation pass either.
 - Reconcile closure through the Minimum Implementation Decision. Compare the final diff against the preflight module shape; delete or inline shallow wrappers/helpers and verify tests cross the public interface.
 - Run applicable required checks for touched areas; the workflow owns delivery and installation order.
-- Keep changed code paths at or above the repo coverage gate.
-- Add explicit tests for critical control loops even if coverage already passes.
 - For bugs and regressions, compare the implementation to the canonical root-cause-first gate and the `/diagnose` trace.
 - Do not mark work done while blockers, follow-ups, dead-letter gaps, retry gaps, or state-regression risks remain.
 - Do not present PR remediation as complete while the fix exists only locally or while review threads were resolved ahead of the pushed fix.
-- Closure notes must include: summary, commands run, key outcomes, test classes exercised, and blockers or follow-ups.
 
 ## Minimum Implementation Decision
 
-A purpose-qualified deletion removes the rules serving that purpose. A parenthetical list of regexes, helpers or predicates does not expand the deletion to their other uses. Trace shared uses and retain logic needed by behavior the request keeps. A code-name match, an observed difference or an assertion endorsing that difference does not authorize changing preserved behavior.
+Optimization is the default. The lead owns it through diagnosis, implementation
+and repair. Derive the information and work each required result needs; remove
+avoidable work in the requested production path before accelerating it. Choose
+the lowest whole-system cost at fixed behavior. The advisor independently
+challenges that choice.
+
 Establish contract authority before adopting a corrective assertion or edit. Trace
 supported inputs, callers, callees, lifecycle paths and shared-state interactions
 before choosing probes. Tests and historical behavior inform that investigation;
@@ -83,10 +69,6 @@ the defect. A setup failure proves no sensitivity; mutation proves no oracle.
 Ground expectations in the frozen evaluation before judging sensitivity. Missing material acceptance remains unresolved,
 regardless of passing examples, suite totals, CI or recorder readiness.
 
-When efficiency is part of the objective, use those operations for an A/B comparison
-of relevant costs at equivalent work and correctness. Meeting a resource limit alone
-does not demonstrate improvement.
-
 For workflow changes, also observe the actual lead following the candidate
 instructions during real work and return review. Distinguish that observation from
 scripted stand-ins and maintainer-directed demonstrations. Runtime tests establish
@@ -102,8 +84,8 @@ Use the request/map already in context; load missing evidence once at implementa
 
 Resolve ownership placement inside that decision:
 
-1. Check the behavior and whole-system cost objective. Reuse an existing Interface when real evidence verifies both; otherwise implement the best justified design found.
-2. Choose the responsible owner. Consume production preflight's Module-shape decision (in `authoritativeContract`). When the turn required no preflight, deepen the existing Module; proposing a new Module or Seam requires preflight first. Delete every surface the change supersedes.
+1. Reuse an existing Interface when real evidence verifies the required behavior and cost; otherwise implement the best justified design found.
+2. Choose the responsible owner using preflight's Module-shape reasoning. When the turn required no preflight, deepen the existing Module; proposing a new Module or Seam requires preflight first. Delete every surface the change supersedes.
 3. Inside that owner, reuse a capability whose Interface already owns the required semantics, invariant, or failure policy: standard library; native platform, runtime, datastore, or protocol; or an already-installed dependency. These are peers; choose by authority, not list order.
 4. Treat the whole change as bloated. **Reduce it first.** Whole-system cost includes production code, tests, scripts, documentation, maintenance and execution. Delete duplication and unnecessary maintained surfaces. Every change targets fewer lines; justify necessary growth against the requirement and demonstrated cost. Preserve required behavior, immutable proof, surviving tests and necessary regression coverage. Moving complexity or compressing formatting does not count.
 
@@ -118,7 +100,6 @@ The decision is complete only when one outcome is recorded:
 
 - Ship only required production code, regression coverage and supporting files.
 - Build the best justified whole-system design, including tests, scripts, documentation, maintenance and execution; then cut what it does not need.
-- Delete lines that do not directly serve the requirement.
 - Remove dead code instead of hiding it behind flags or wrappers.
 - Apply [codebase-design](../codebase-design/SKILL.md) when judging Module depth and consolidation; file size is not the measure.
 - Do not add orchestration layers, control-plane hops, or indirection that the requirement does not need.

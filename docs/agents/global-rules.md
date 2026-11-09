@@ -51,17 +51,16 @@ Repo Context Forge analysis copy. For codex-skills installation, follow
   own outgoing process boundary proves only what it emits. `$production-code`
   owns the comparison procedure. For the code being changed, reuse the project's
   relevant cases, fixtures and assertions through the responsible production
-  Module's Interface. Probe each changed unit through the narrowest boundary a probe can call: the changed function or method itself, or its nearest callable owner when the language hides it. A probe that runs a larger operation than the changed unit is a defect, whatever its result. A probe asserts observable results, never the stored internal layout of the code under test. One case command runs one probe.
+  Module's Interface. Use an enclosing operation only when the assertion concerns
+  that operation's behavior or integration. A probe asserts observable results.
 - **Attack probes first.** Unit tests must themselves probe real production
   behavior. Cover each request promise and the preserved behavior the change
   touches. Prove each changed line with a direct N/N+1
-  probe that calls it. Write probes in the project's own test layout and runner, with its settings, where it has one; otherwise use a focused direct script.
-  After source changes compile, run the relevant tests for changed packages and their dependents once before final review under `timeout 600`.
-  Use focused native selections when they cover the affected behavior; whole files and suites are allowed within that limit.
-  Do not run tests for a task with no code changes or rerun them without further source changes.
-  A timeout is incomplete verification; use narrower native checks to finish the required coverage.
-  A test that fails only on the candidate is a regression to fix; update its expectation only when the request changes that behavior.
-  This run is a direct check, not a recorded probe; run a failing test on the pass-start source to tell a regression from an existing failure. That run and a narrower selection after a timeout are not reruns.
+  probe that calls it. Add an existing test only when it calls the changed code
+  directly. Never collect a whole test file, class, directory or suite; a focused
+  direct script is allowed. Keep each test command within 30 seconds; never raise
+  the limit. A timeout leaves verification pending; narrow the command while
+  preserving its required assertions. Reuse retained proof instead of rerunning it.
   Do not duplicate retained probes with a parallel unit-test suite.
 - **Imaginary-risk ban.** A theoretical risk with no demonstrated failure is a
   report line, not a system. Build nothing for it.
@@ -76,13 +75,14 @@ Repo Context Forge analysis copy. For codex-skills installation, follow
   request keeps summarizes the original code, so the original's result stands.
   For new behavior, the code or engine that already defines a term is its
   authority: probe the new code against that owner's result.
+  Replacements and bypasses must preserve the owner's supported protocol behavior,
+  including custom implementations. A type check proves no semantic equivalence.
 - Decide a material unknown from the code, the request and the recorded evidence,
   record the decision in one line, and continue; stop only before a destructive,
   irreversible or outside-the-worktree action.
 
 ## Simplicity First
 
-- Fix costs in order of wall time per call, largest first. No millisecond optimisation counts while a slower cost in the same call is unaddressed.
 - Assume your first implementation is bloated. Find the best justified whole-system design for the objective, including production code,
   tests, scripts, documentation, maintenance and execution; keep only what it needs while preserving required behavior and proof. Retain real
   attack probes; cut redundant scaffolding and mocked unit-test bloat from this change.

@@ -6,7 +6,8 @@ A behavior test survives internal refactoring: if observable behavior is unchang
 
 Record direct operations through `workflow.py tdd`. Reuse the project's runner,
 fixtures and supported execution matrix; use a focused script where none exists.
-Submit the focused commands in one workflow call. One command is one case.
+Batch selected direct tests in one runner command when their assertions, required
+original/candidate outcomes and attribution remain valid.
 The probe must assert
 its expected outcome and exit non-zero when a check fails. The comparison reads
 exit codes only. Printed values and native reports are diagnostic.
@@ -40,8 +41,6 @@ for N/N+1 proof and conditional A/B measurements.
 ## MC/DC
 
 This requirement extends standard MC/DC. One independence pair for each condition is not sufficient.
-
-Where the changed work depends on a size (rows, items, requests, input or stored data), run the benchmark's workloads at two or more sizes, growing every input in the cost model's dominant term, the largest at the size production gives the operation, on the original and the candidate, and assert how each metric may grow with size. Bind the allowed growth with `WORKFLOW_GROWTH=SMALL,LARGE,MAX_POWER` and a `{size}` command argument; the runner compares process counts, CPU and the probe's own nonnegative metrics. Print one line `WORKFLOW_METRICS=<JSON object>` amid native runner output, or emit only the JSON object (use `{}` when no additional metric is needed). That comparison is its check, so it needs no behavior break; a preservation item still needs one behavior case.
 
 A **decision** is a Boolean expression that controls a branch, guard, ternary, filter or return. A **condition** is one atomic operand. A repeated condition, one that occurs more than once in a decision, is one condition: vary all its occurrences together.
 
