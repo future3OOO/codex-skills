@@ -17,6 +17,9 @@ Invoke `$repo-production-workflow` first, only when production changes are requi
 phase order, evidence, independent review, advisor checks, and delivery. Do not
 jump from Repo Context Forge straight to edits.
 
+`$production-code` owns the comparison procedure. Use `$diagnose` for bugs,
+failures, flaky behavior, and performance regressions.
+
 Docs-only work creates no workflow or slug. Verify checkout/branch, inspect files
 directly, edit minimally, clean up, and run diff checks. Skip Repo Context Forge
 and GitNexus. Governance docs that change agent behavior (`AGENTS.md`,
@@ -41,32 +44,6 @@ and branch/PR alignment is verified, unless the user or workflow says otherwise.
 Once the task's PR has merged, `git worktree remove` its worktree and remove its
 Repo Context Forge analysis copy. For codex-skills installation, follow
 [README](https://github.com/future3OOO/codex-skills/blob/main/README.md#scoped-updates).
-
-## Hard Production Invariants
-
-- **Real-Seam proof.** Require equivalent real N/N+1 operations through
-  production Interfaces with real collaborators; retained attack probes are
-  primary proof. Mocks, stubs, fakes, fixture-substituted collaborators, invented
-  gateways, and test-only adapters never prove behavior. Capturing a Module's
-  own outgoing process boundary proves only what it emits. `$production-code`
-  owns the comparison procedure. For the code being changed, reuse the project's
-  relevant cases, fixtures and assertions through the responsible production
-  Module's Interface. Use an enclosing operation only when the assertion concerns
-  that operation's behavior or integration. A probe asserts observable results.
-- **Attack probes first.** Unit tests must themselves probe real production
-  behavior. Cover each request promise and the preserved behavior the change
-  touches. Prove each changed line with a direct N/N+1
-  probe that calls it. Add an existing test only when it calls the changed code
-  directly. Never collect a whole test file, class, directory or suite; a focused
-  direct script is allowed. Keep each test command within 30 seconds; never raise
-  the limit. A timeout leaves verification pending; narrow the command while
-  preserving its required assertions. Reuse retained proof instead of rerunning it.
-  Do not duplicate retained probes with a parallel unit-test suite.
-- **Imaginary-risk ban.** A theoretical risk with no demonstrated failure is a
-  report line, not a system. Build nothing for it.
-- **Root-cause-first.** Use `$diagnose` for bugs, failures, flaky behavior, and
-  performance regressions. No fix until the failure is reproduced, traced, and
-  stated as a testable hypothesis.
 
 ## Think Before Coding
 

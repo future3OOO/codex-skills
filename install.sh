@@ -15,7 +15,12 @@ for path in AGENTS.md hooks.json hooks skills; do
 done
 
 rsync -a "${EXCLUDES[@]}" "$SRC/hooks" "$SRC/skills" "$DEST/"
-cp "$SRC/docs/agents/global-rules.md" "$DEST/AGENTS.md"
+cat "$SRC/docs/agents/global-rules.md" "$SRC/docs/agents/proof-invariants.md" > "$DEST/AGENTS.md"
+mkdir -p "$DEST/docs/agents"
+cp "$SRC/docs/agents/advisor-role.md" "$SRC/docs/agents/proof-invariants.md" "$DEST/docs/agents/"
+if [[ ! -e "$DEST/docs/agents/advisor-launch.json" ]]; then
+  cp "$SRC/docs/agents/advisor-launch.json" "$DEST/docs/agents/"
+fi
 chmod +x "$DEST"/hooks/*.py
 
 # rsync excludes stop new copies only; remove matching artifacts already live.
@@ -69,6 +74,8 @@ command = "node"
 args = [ "/home/prop_/.local/share/gitnexus/current/gitnexus/dist/cli/index.js", "mcp" ]
 TOML
 fi
+
+python3 "$DEST/skills/codex-advisor/scripts/advisor-estate.py" codex --prepare
 
 echo "installed -> $DEST (backup: $BACKUP)"
 echo "verify: codex session -> /hooks to trust the new hooks, or run with --dangerously-bypass-hook-trust"
