@@ -45,7 +45,6 @@ avoidable work in the requested production path before accelerating it. Choose
 the lowest whole-system cost at fixed behavior. The advisor independently
 challenges that choice.
 
-A purpose-qualified deletion removes the rules serving that purpose. A parenthetical list of regexes, helpers or predicates does not expand the deletion to their other uses. Trace shared uses and retain logic needed by behavior the request keeps. A code-name match, an observed difference or an assertion endorsing that difference does not authorize changing preserved behavior.
 Establish contract authority before adopting a corrective assertion or edit. Trace
 supported inputs, callers, callees, lifecycle paths and shared-state interactions
 before choosing probes. Tests and historical behavior inform that investigation;
