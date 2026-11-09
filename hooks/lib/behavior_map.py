@@ -126,12 +126,12 @@ def _question(entry: JsonObject, proofs: list[JsonObject]) -> list[str]:
     if readings_unsettled(entry):
         return _case_question(entry)
     candidates = [proof for proof in proofs if proof["id"] == entry["id"] and proof.get("comparison")
-                  and obligation(proof) == obligation(entry)]
+                  and obligation(proof)[1:] == obligation(entry)[1:]]
     if not candidates:
         return ["bind the case command: workflow.py tdd --case " + entry["id"] + " 'COMMAND'"]
     reasons, behavior = [], False
     for proof in candidates:
-        reasons.extend(_case_question(proof))
+        reasons.extend(_case_question({**proof, "kind": entry.get("kind")}))
         behavior = behavior or entry.get("kind") != "preservation" or "WORKFLOW_GROWTH" not in (proof.get("comparison", {}).get("execution") or {}).get("assignments", {})
     return list(dict.fromkeys(reasons)) or ([] if behavior else ["growth cases check scaling only; bind a behavior case and its break: workflow.py tdd --case " + entry["id"] + " 'COMMAND'"])
 
@@ -197,11 +197,12 @@ def obligation(entry: JsonObject) -> list[object]:
 
 
 def producer_proved(entry: JsonObject) -> bool:
+    """Bind proof to behavior, Seam and expected result; kind is revisable judgment."""
     comparison = entry.get("comparison")
     return (isinstance(comparison, dict) and comparison.get("valid") is True and comparison.get("fresh", True) is True
             and bool(comparison.get("command")) and bool(comparison.get("arms"))
             and isinstance(recorded := comparison.get("obligation", obligation(entry)), list)
-            and recorded[:4] == obligation(entry))
+            and recorded[1:4] == obligation(entry)[1:4])
 
 
 def unresolved(items: list[JsonObject], opened: list[str] | None = None) -> list[str]:

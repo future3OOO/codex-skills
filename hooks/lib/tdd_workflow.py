@@ -1670,15 +1670,14 @@ def map_update(identity: RepoIdentity, state: JsonObject, value: JsonObject) -> 
         corrected = {(case["id"], *case["statement"]) for finding in state.get("findingStates", []) for case in finding.get("retires", [])}
         for entry in updates:
             prior = recorded.get(entry["id"])
-            if prior is not None and (entry["id"], *(prior.get(key) for key in ("kind", "behavior", "expected"))) not in corrected and (
-                    entry["kind"] in {"contract", "conformance"} or (prior or {}).get("kind") in {"contract", "conformance"}):
-                if any(entry.get(key) != prior.get(key) for key in ("kind", "behavior", "expected")):
+            if prior is not None and (entry["id"], *(prior.get(key) for key in ("kind", "behavior", "expected"))) not in corrected:
+                if any(entry.get(key) != prior.get(key) for key in ("behavior", "expected")):
                     raise WorkflowError("recorded obligation is fixed; correct a proven declaration error through review (--retire), then retry")
     items = [item for item in {item["id"]: item for item in [*(previous or []), *updates]}.values()
              if item["id"] not in removed]
     for entry in updates:
         prior = recorded.get(entry["id"])
-        if "runIndex" in (prior or {}).get("comparison", {}):  # a changed kind or obligation keeps its latest run and reads stale until rerun
+        if "runIndex" in (prior or {}).get("comparison", {}):
             comparison = {**prior["comparison"], "obligation": prior["comparison"].get("obligation", behavior_map.obligation(prior))}
             entry["comparison"] = comparison
     if items == previous:
