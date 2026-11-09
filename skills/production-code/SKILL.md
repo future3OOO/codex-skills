@@ -40,12 +40,10 @@ telemetry needs no action.
 ## Minimum Implementation Decision
 
 Optimization is the default. The lead owns it through diagnosis, implementation
-and repair. Before acceptance, prove `D* ∈ argmin_{D ⊨ C} Cost(D)`. Derive
-original and candidate work equations from real operations. Remove avoidable
-work and justify the remaining terms. Compare equivalent correct operations;
-assert saved dominant work and a separate runtime bound. Refute cheaper designs
-with a required-result failure or demonstrated higher whole-system cost.
-The advisor independently attacks the proof; approval cannot replace it.
+and repair. Derive the information and work each required result needs; remove
+avoidable work in the requested production path before accelerating it. Choose
+the lowest whole-system cost at fixed behavior. The advisor independently
+challenges that choice.
 
 Establish contract authority before adopting a corrective assertion or edit. Trace
 supported inputs, callers, callees, lifecycle paths and shared-state interactions

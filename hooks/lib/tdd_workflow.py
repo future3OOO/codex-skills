@@ -1673,7 +1673,7 @@ def map_update(identity: RepoIdentity, state: JsonObject, value: JsonObject) -> 
             if prior is not None and (entry["id"], *(prior.get(key) for key in ("kind", "behavior", "expected"))) not in corrected and (
                     entry["kind"] in {"contract", "conformance"} or (prior or {}).get("kind") in {"contract", "conformance"}):
                 if any(entry.get(key) != prior.get(key) for key in ("kind", "behavior", "expected")):
-                    raise WorkflowError("recorded contract and conformance obligations are fixed; user scope changes require a new pass")
+                    raise WorkflowError("recorded obligation is fixed; correct a proven declaration error through review (--retire), then retry")
     items = [item for item in {item["id"]: item for item in [*(previous or []), *updates]}.values()
              if item["id"] not in removed]
     for entry in updates:
