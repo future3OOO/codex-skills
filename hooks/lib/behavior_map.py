@@ -214,20 +214,28 @@ def never_compared(items: list[JsonObject]) -> list[str]:
     return [str(entry["id"]) for entry in items if not (entry.get("comparison") or {}).get("arms")]
 
 
-def comparison_view(run: JsonObject) -> JsonObject:
-    """One compact exit-code comparison, shared by receipts and review input."""
+def comparison_view(run: JsonObject, *, detail: bool = False) -> JsonObject:
+    """One compact exit-code comparison, shared by receipts, evidence reads and review input; detail adds its item and passing output."""
     arms = run.get("arms") or []
     return {"comparison": run.get("comparison", "incomplete"), "valid": run.get("valid", False),
             "runIndex": run.get("runIndex"), "command": run.get("command"),
+            **({"behaviorId": run["behaviorId"]} if detail and run.get("behaviorId") else {}),
             "probeTree": run.get("probeTree"),
             "sensitive": run.get("sensitive", False), "breakExit": run.get("breakExit"),
             **({"breakCommand": shlex.join(["git", "cat-file", "blob", run["breakOid"]])} if run.get("breakOid") else {}),
             "arms": [{"source": "original" if index < (len(arms) + 1) // 2 else "current", "tree": arm.get("requestedTree", arm.get("sourceTree")),
                       "outcome": arm.get("outcome"), "exitCode": arm.get("exitCode"), "timedOut": arm.get("timedOut", False),
                       **({"outputTail": str(arm.get("output") or arm.get("error") or arm.get("bindingError") or "")[-1200:]}
-                         if arm.get("outcome") != "passed" else {})}
+                         if arm.get("outcome") != "passed" or detail and arm.get("output") else {})}
                      for index, arm in enumerate(arms)],
             **({"limitations": [run["bindingError"]]} if run.get("bindingError") else {})}
+
+
+def compact(value: object) -> object:
+    """An evidence value with every comparison inside it replaced by its detailed view."""
+    if isinstance(value, dict):
+        return comparison_view(value, detail=True) if isinstance(value.get("arms"), list) else {key: compact(item) for key, item in value.items()}
+    return [compact(item) for item in value] if isinstance(value, list) else value
 
 
 def recorded_map(

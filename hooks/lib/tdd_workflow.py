@@ -1491,14 +1491,9 @@ def _run_tdd(values: list[str]) -> int:
             if result.get("failure"):
                 row["failure"] = result["failure"]
             if compared:
-                row["exits"] = [arm["exitCode"] for arm in compared["arms"]]
+                row["arms"] = behavior_map.comparison_view(compared, detail=True)["arms"]
             if refused:
                 row["unexpected"] = str(result["error"])
-            elif result.get("original") == "passed" and result.get("candidate") in {"failed", "timed-out"}:
-                row["unexpected"] = str((compared.get("arms") or [{}])[-1].get("output") or result["candidate"])[-1200:]
-            elif compared and not finding["material"] and any(arm["outcome"] != "passed" for arm in compared["arms"]):
-                row["unexpected"] = [side + ": " + str(arm.get("output") or arm["outcome"])[-800:]
-                                     for side, arm in zip(("original", "candidate"), compared["arms"]) if arm["outcome"] != "passed"]
             rows.append(row)
         receipt["cases"] = rows
         _emit_json(receipt)

@@ -13,6 +13,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+from . import behavior_map
 from ._workflow_db import CHECK_ONLY, LedgerError, _canonical, history, read_active, read_evidence
 from .command_runner import emit_json as _emit_json, print_output as _print_output, run as _run, run_entry as _run_entry
 from .repo_identity import RepoIdentity, RepoIdentityError, resolve_repo_identity
@@ -87,7 +88,7 @@ def parser() -> argparse.ArgumentParser:
     command.add_argument("--workflow-id")
     command = _repo(commands.add_parser("history", help="read ordered accepted events"))
     command.add_argument("--workflow-id")
-    command = _repo(commands.add_parser("evidence", help="evidence metadata; --full for the document"))
+    command = _repo(commands.add_parser("evidence", help="evidence metadata and compact comparisons; --full for the raw document"))
     command.add_argument("--evidence-id", required=True)
     command.add_argument("--full", action="store_true")
 
@@ -431,12 +432,14 @@ def _dispatch(args: argparse.Namespace) -> int:
     elif args.command == "history":
         _emit_json(history(identity, args.workflow_id))
     elif args.command == "evidence":
-        value = read_evidence(identity, args.evidence_id, restore_runs=args.full)
+        value = read_evidence(identity, args.evidence_id)
         if value is None:
             raise WorkflowError("evidence not found")
         document = value.pop("document")
-        _emit_json({**value, "document": document} if args.full else {
-            **value, "bytes": len(_canonical(document).encode()), "fields": sorted(document)})
+        if not args.full:
+            value.update(bytes=len(_canonical(document).encode()), fields=sorted(document))
+            document = {key: view for key, field in document.items() if (view := behavior_map.compact(field)) != field}
+        _emit_json({**value, **({"document": document} if document or args.full else {})})
     elif args.command == "set-phase":
         if (args.phase, args.status, args.findings) != ("code-review", "not-required", "none"):
             raise ValueError("set-phase records only --phase code-review --status not-required --findings none; "

@@ -1322,7 +1322,7 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
     if state.get("tddEvidence"):
         cli = Path(__file__).resolve().parents[2] / "skills/repo-production-workflow/scripts/workflow.py"
         result["evidenceCommand"] = shlex.join([sys.executable, str(cli), "evidence", "--repo", identity.root,
-            "--evidence-id", state["tddEvidence"], "--full"])
+            "--evidence-id", state["tddEvidence"]])
     if channel_dir is None:
         return result
     ledger = _finding_ledger(identity, state, items)
