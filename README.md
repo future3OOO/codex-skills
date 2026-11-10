@@ -20,7 +20,7 @@ The project is the source of truth; the estate is an install artifact.
   do not exist upstream: `codex-advisor` (the codex-side advisor name),
   `frontend-design`, `setup-pre-commit`, `.system/` is excluded.
 - `hooks/` — lifecycle hooks (workflow state lib, intake gate, quality gate,
-  discipline re-arm).
+  discipline re-arm, advisor consult).
 - `hooks.json` — managed hook entries; install merges them into the live
   `~/.codex/hooks.json` without dropping entries it does not own (the
   GitNexus hook stays live-managed).
@@ -186,6 +186,11 @@ Codex fires the full Claude event set with the same payload contract
   `tool_input.command`; writes through shell arrive as `Bash` with the
   command in `tool_input.command`. Gate matchers must cover both.
 - `SessionStart` matchers filter `source` directly: `startup|resume|compact|clear`.
+- No hook fires for a poll (`write_stdin`, `wait`), so a hook cannot shorten a
+  model's wait on a running command. `PreToolUse` can rewrite a `Bash` command
+  (`permissionDecision: "allow"` with `updatedInput.command`) and `Stop` can
+  hold a turn end and continue the turn (`decision: "block"` with `reason`) at
+  no model request: `advisor-consult.py` runs a consult detached this way.
 - Hooks require trust approval (`/hooks`, or `--dangerously-bypass-hook-trust`
   for automation).
 
