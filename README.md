@@ -12,9 +12,8 @@ The project is the source of truth; the estate is an install artifact.
 
 ## Layout
 
-- `docs/agents/global-rules.md` — global Codex rules, installed as
-  `~/.codex/AGENTS.md`. Not named `AGENTS.md`, so sessions in this repo load
-  the rules once.
+- `docs/agents/global-rules.md` and `proof-invariants.md` — assembled into
+  `~/.codex/AGENTS.md`. The proof fragment is also used by the advisor.
 - `decisions.md` — tracked project decisions; not installed globally.
 - `skills/` — custom skills, one directory per skill. Codex-only extras that
   do not exist upstream: `codex-advisor` (the codex-side advisor name),
@@ -96,8 +95,10 @@ rsync -acR --backup --backup-dir="$backup" -- "${paths[@]}" "$estate/" &&
 The global rules install under a different name, so never list them in `paths`:
 
 ```bash
-rsync -a --backup --backup-dir="$backup" -- docs/agents/global-rules.md "$estate/AGENTS.md" &&
-  cmp -- docs/agents/global-rules.md "$estate/AGENTS.md"
+mkdir -p "$backup" &&
+  cp -- "$estate/AGENTS.md" "$backup/AGENTS.md" &&
+  cat docs/agents/global-rules.md docs/agents/proof-invariants.md > "$estate/AGENTS.md" &&
+  cmp -- <(cat docs/agents/global-rules.md docs/agents/proof-invariants.md) "$estate/AGENTS.md"
 ```
 
 Back up and remove only explicitly owned obsolete files. Record the source SHA,
@@ -108,6 +109,23 @@ Update `hooks/` and `skills/` together when a change migrates the workflow ledge
 the first new-estate read migrates it, and an old post-edit hook
 (`code-quality-gate.py`) then exits 1 with a traceback, where the old CLI refuses
 by name.
+
+### Advisor estate
+
+The advisor wrapper automatically launches a persistent home at
+`$CODEX_HOME/advisor/codex` or `$CODEX_HOME/advisor/claude`, with its own
+`AGENTS.md` or `CLAUDE.md` and full filesystem access. Native authentication
+and session storage remain available; there is no terminal or history transfer.
+
+Edit `$CODEX_HOME/docs/agents/advisor-launch.json` to select rule files, installed
+skill names and configured MCP server names. Rule paths are relative to that
+JSON file, or absolute. Changes take effect on the next consultation; installation
+preserves the JSON. The defaults select `code-quality`, `codebase-design`, `fff`
+and `gitnexus`. Other automatic skill sources and estate workflow hooks are
+excluded. Repository instructions and unrelated user hooks remain active.
+
+Claude uses its native settings, credentials and session paths separately,
+honoring `CLAUDE_CONFIG_DIR`. Installation writes only into the Codex estate.
 
 ### External tool updates
 
