@@ -334,7 +334,7 @@ if [[ "$phase" == preflight-advice ]]; then
       --design-declaration "$design_declaration_file")
     phase_prompt+=$'\n'"Use your investigation and the lead's checked corrections. Quote each load-bearing promise in its map item. Ground expectations in the request, an executed original operation, or the existing owner or engine on the same input. Use request-grounded properties only when no owner exists; establish the requested effect, not just a round-trip. Required outcomes are authoritative; design choices and cost hypotheses remain revisable.
 Finalise $transport_dir/preflight.json with required outcomes and deciding functional, work and runtime cases from the investigation. Keep design reasoning in the existing findings and consult context; do not turn implementation choices into contract requirements. Keep only required behavior, distinct proof or lower whole-system cost. Validate it with: $dry_run
-Return approved when complete; otherwise return changes-required with demonstrated gaps. Continue this session until those gaps are settled."
+Return approved once it validates: you own every remaining change, so this consultation has no changes-required verdict."
   fi
 fi
 

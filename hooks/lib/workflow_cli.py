@@ -357,7 +357,7 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
         except WorkflowError as exc:
             print(str(exc), file=sys.stderr)
             _emit_json({"error": str(exc), "next": next_operation(
-                identity, bound_state(identity, slug, workflow_id), preflight_draft=document,
+                identity, bound_state(identity, slug, workflow_id),
                 preflight_file=str(Path(args.input).resolve()) if args.input and args.input != "-" else None)})
             return 2
         emit(_receipt(state, identity, evidenceId=evidence_id, status="passed",

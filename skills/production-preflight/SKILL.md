@@ -96,7 +96,7 @@ Update changed items by id with `record tdd-map` when obligations change. The ru
 
 ## Recording
 
-Submit the exact artifact through [Codex Advisor's preflight loop](../codex-advisor/SKILL.md#preflight-advice) before tracked edits.
+Submit the exact artifact through [Codex Advisor's two-round preflight](../codex-advisor/SKILL.md#preflight-advice) before tracked edits.
 Record it once the advisor returns `approved` for that content.
 
 The runtime continuation supplies the recording command. Record the approved draft

@@ -1002,6 +1002,11 @@ def record_advisor_result(
                 raise ValueError("preflight advisor source must be codex-advisor")
             if state.get("preflightLatestEvidence") and verdict in {"approved", "changes-required"}:
                 raise WorkflowError("preflight is already recorded; draft consultations are closed")
+            rounds = int(state.get("preflightRounds", 0))
+            if rounds >= 2 and not state.get("preflightLatestEvidence"):
+                raise WorkflowError("both preflight consultations are recorded; record preflight publishes the approved draft")
+            if verdict == "changes-required" and rounds:
+                raise WorkflowError("the second preflight consultation completes the draft; its only verdict is approved")
             if verdict not in {"unavailable", "approved", "changes-required"}:
                 raise ValueError("preflight verdict must be approved, changes-required or unavailable")
             if verdict in {"approved", "changes-required"}:
@@ -1258,6 +1263,8 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
             missing.append("preflight draft (--preflight-file)")
         if state.get("preflightLatestEvidence"):
             missing.append("preflight is already recorded; draft consultations are closed")
+        elif (rounds := int(state.get("preflightRounds", 0))) != int(reconsult):
+            missing.append(f"preflight takes exactly two consultations, the second resuming the first with --reconsult; {rounds} recorded")
     evidence_id = state.get("repoContextForgeEvidence")
     graph_document = evidence_document(
         identity, evidence_id if isinstance(evidence_id, str) else None,
@@ -1318,6 +1325,8 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
         shape = json.loads(ADVISOR_SHAPES["preflight" if phase == "preflight-advice" else "final"])
         if phase == "final-review":
             shape.update(workflowId=workflow_id, candidateTree=candidate, tddEvidence=state.get("tddEvidence"))
+        elif reconsult:  # the second consultation completes the draft
+            shape["verdict"] = "approved"
         result["responseFormat"] = json.dumps(shape)
     if state.get("tddEvidence"):
         cli = Path(__file__).resolve().parents[2] / "skills/repo-production-workflow/scripts/workflow.py"
@@ -1566,8 +1575,7 @@ def _readiness_lines(identity: RepoIdentity, state: JsonObject, items: list[Json
             "never": behavior_map.never_compared(items)}
 
 def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObject | None = None, *,
-                   preflight_draft: JsonObject | None = None, preflight_file: str | None = None,
-                   obligations: bool = True) -> JsonObject:
+                   preflight_file: str | None = None, obligations: bool = True) -> JsonObject:
     """Bind the selected operation once for command results and recovery."""
     scripts = Path(__file__).resolve().parents[2] / "skills"
     cli = [sys.executable, str(scripts / "repo-production-workflow/scripts/workflow.py")]
@@ -1610,9 +1618,8 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
         advice = state.get("advisorPreflight") or {}
         intake = (evidence_document(identity, advice.get("intakeEvidence")) or {}) if preflight else {}
         draft = intake.get("preflightDraft")
-        if (preflight and advice.get("status") == "approved" and intake.get("verdict") == "approved"
-                and isinstance(draft, dict) and (preflight_draft is None
-                or json.dumps(draft, sort_keys=True) == json.dumps(preflight_draft, sort_keys=True))):
+        # A first approval is held pending, so an approved status is the second consultation's: publish its draft.
+        if preflight and advice.get("status") == "approved" and intake.get("verdict") == "approved" and isinstance(draft, dict):
             return {"command": shlex.join([*cli, "record", "preflight", *bound])}
         design = repo_state_dir(identity) / "designs" / f"{state['workflowId']}.md"
         declaration = evidence_document(identity, state.get("governedDesignEvidence")) or {}

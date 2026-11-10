@@ -65,7 +65,7 @@ Its map states required outcomes, concrete inputs and any competing readings. In
 `codebase-design` when changing a Module, public Interface or Seam. The draft owns
 the contract and planned attacks.
 
-Submit the exact draft through [Codex Advisor's preflight loop](../codex-advisor/SKILL.md#preflight-advice).
+Submit the exact draft through [Codex Advisor's two-round preflight](../codex-advisor/SKILL.md#preflight-advice).
 The advisor investigates. The lead checks deletion claims against every original
 outcome controlled by the affected logic and corrects false premises. The advisor
 then finalises and approves the draft in the same session. Record only that approval.

@@ -23,7 +23,8 @@ checking preservation against executed original results and challenging change e
 The advisor derives required work and outcomes using the proposed owners and reuse
 paths as inputs. The lead checks its source claims and updates the draft. Resume
 with `--reconsult` for the advisor to
-finalise and approve it. Further unresolved gaps stay in that session; there is no call quota.
+finalise and approve it. Preflight is exactly these two consultations in one advisor session:
+the second completes the draft, so `approved` is its only verdict and a third is refused.
 The first consult receives the whole draft. Reconsults send its delta with both
 content identities; failed results keep that base.
 
