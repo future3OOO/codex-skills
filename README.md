@@ -20,7 +20,7 @@ The project is the source of truth; the estate is an install artifact.
   do not exist upstream: `codex-advisor` (the codex-side advisor name),
   `frontend-design`, `setup-pre-commit`, `.system/` is excluded.
 - `hooks/` — lifecycle hooks (workflow state lib, intake gate, quality gate,
-  discipline re-arm, advisor consult).
+  discipline re-arm, workflow command).
 - `hooks.json` — managed hook entries; install merges them into the live
   `~/.codex/hooks.json` without dropping entries it does not own (the
   GitNexus hook stays live-managed).
@@ -187,10 +187,20 @@ Codex fires the full Claude event set with the same payload contract
   command in `tool_input.command`. Gate matchers must cover both.
 - `SessionStart` matchers filter `source` directly: `startup|resume|compact|clear`.
 - No hook fires for a poll (`write_stdin`, `wait`), so a hook cannot shorten a
-  model's wait on a running command. `PreToolUse` can rewrite a `Bash` command
-  (`permissionDecision: "allow"` with `updatedInput.command`) and `Stop` can
-  hold a turn end and continue the turn (`decision: "block"` with `reason`) at
-  no model request: `advisor-consult.py` runs a consult detached this way.
+  model's wait on a running command, lengthen a call's own wait
+  (`updatedInput` carries only the command) or end a turn (`continue: false`
+  is ignored). At no model request, `PreToolUse` can rewrite a `Bash` command
+  (`permissionDecision: "allow"` with `updatedInput.command`), and
+  `PostModelRequest` runs after the model answers and before the answer's
+  tool calls start: it can hold them, and it finds them at the end of the
+  transcript. Nothing it prints reaches the model. `workflow-command.py` uses
+  the two: a command naming the workflow CLI, the context bootstrap or the
+  advisor consult runs as written, and an answer that only polls what that
+  command's call handed back is held until the command has ended, so the lead
+  polls once and the poll returns at once. No other answer is held, and a poll
+  of something else only when that same call's result also handed it back.
+  `workflow-command.sh` starts the interpreter only for those commands and
+  answers.
 - Hooks require trust approval (`/hooks`, or `--dangerously-bypass-hook-trust`
   for automation).
 

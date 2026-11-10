@@ -1626,7 +1626,7 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
         if preflight or declaration:
             command = [str(scripts / "codex-advisor/scripts/ask-codex-advisor.sh"), "--slug", str(state["slug"]),
                        "--phase", "preflight-advice" if preflight else "final-review", "--cwd", str(identity.root)]
-            needed = ["Run it once and never poll or sleep. If it reports the consult running detached, end your turn: its result is delivered to you when it finishes. Otherwise wait for it in a single call of up to 300 seconds."]
+            needed = ["Run it once. If the call returns while it is still running, collect its result with one empty poll of up to 300 seconds. Never sleep or poll in shorter steps."]
             if preflight:
                 if design.is_file():
                     command += ["--design-file", str(design)]
