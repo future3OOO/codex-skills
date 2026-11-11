@@ -1361,7 +1361,7 @@ def _run_tdd(values: list[str]) -> int:
                         help="withdraw this author's invalid observation without running cases; retain its raw evidence")
     parser.add_argument("--retire", action="append", default=[], metavar="CASE_KEY",
                         help="with --as and a finding probe: the retained key shown in readiness, or an unproved map item id")
-    parser.add_argument("--change", action="append", default=[], help="ITEM=FILE supplies a behavior-breaking diff for its commands (probe for authored probes); a bare FILE submits an authored replacement")
+    parser.add_argument("--change", action="append", default=[], help="with --as: probe=FILE supplies a behavior-breaking diff for the authored probe; a bare FILE submits an authored replacement")
     parser.add_argument("--as", dest="author", choices=("review", "final"), help="execute and record this author's finding in the same call")
     parser.add_argument("--path", help="new probe file outside the checkout; a recorded command needs no --case")
     parser.add_argument("--behavior-id", help="map item for a single trailing command, or select recorded cases to replay")
@@ -1448,8 +1448,7 @@ def _run_tdd(values: list[str]) -> int:
                         available[alias] = available[key]
             if unknown := set(args.retire) - available.keys():
                 raise WorkflowError("--retire names a retained case key or unproved map item id: " + ", ".join(sorted(unknown)))
-            retires = [{"id": entry["id"], "key": entry.get("key"), "statement": [entry.get(key) for key in ("kind", "behavior", "expected")]}
-                       for entry in (available[key] for key in dict.fromkeys(args.retire))]
+            retires = [{"id": entry["id"], "key": entry.get("key")} for entry in (available[key] for key in dict.fromkeys(args.retire))]
             findings = []
             for probe in list({probe["command"]: probe for probe in probes}.values()) or ([None] if replacement else []):
                 finding = {**({"probe": probe} if probe else {}), **({"change": change} if change is not None else {})}
@@ -1498,8 +1497,8 @@ def _run_tdd(values: list[str]) -> int:
         receipt["cases"] = rows
         _emit_json(receipt)
         return 2 if any(row["result"] == "refused" and "retired" not in row for row in rows) else 0
-    if replacement or args.report:
-        raise WorkflowError("replacements and reports require --as review or --as final; a lead break is ITEM=FILE")
+    if replacement or args.report or breaks:
+        raise WorkflowError("changes and reports require --as review or --as final")
     if args.case and (command or args.behavior_id):
         raise WorkflowError("use repeated --case entries or one trailing command")
     _execution_cache(identity, state)
@@ -1563,24 +1562,12 @@ def _run_tdd(values: list[str]) -> int:
                 captured["sourceCommand"] = known.get("sourceCommand", captured["sourceCommand"])
             captured["behaviorId"] = entry["id"]
         selected.append((entry, captured))
-    for entry, probe in selected:
-        identifier = entry["id"] if entry else "-"
-        if identifier in breaks:
-            probe["breakOid"] = breaks[identifier]
-        elif entry and not probe.get("breakOid"):
-            known = (entry.get("comparison") or {}).get("breakOid")
-            if known:
-                probe["breakOid"] = known
-    unknown = set(breaks) - {entry["id"] if entry else "-" for entry, _ in selected}
-    if unknown:
-        raise WorkflowError("break has no selected item: " + ", ".join(sorted(unknown)))
     if not specs:
         selected_indexes = {probe.get("runIndex") for _, probe in selected}
-        selected.extend((None, {**support_overrides.get(index, runs[index]),
-                                "breakOid": breaks.get(frozen["id"], runs[index].get("breakOid"))})
+        selected.extend((None, dict(support_overrides.get(index, runs[index])))
                         for frozen in evaluation.values() if behavior_map.case_key(frozen["id"], runs[frozen["runIndex"]]) not in retired and (not args.behavior_id or frozen["id"] == args.behavior_id)
                         and (index := frozen["runIndex"]) not in selected_indexes)
-    compared = _compare_many(identity, original, candidate, [probe for _, probe in selected], runs)
+    compared = _compare_many(identity, original, candidate, [probe for _, probe in selected], runs, challenge=False)
     indexes = {probe["runIndex"]: run["runIndex"] for (_, probe), run in zip(selected, compared) if "runIndex" in probe}
     for (entry, _), run in zip(selected, compared):
         if entry is not None:
@@ -1632,8 +1619,6 @@ def _run_tdd(values: list[str]) -> int:
         for side, outcome, arm, expected in (("original", original, run["arms"][0], expected_original), ("candidate", run["arms"][-1]["outcome"], run["arms"][-1], "passed")):
             if outcome != expected:
                 errors.append(side + " " + outcome + ": " + str(arm.get("output") or arm.get("bindingError") or arm["outcome"])[-1200:])
-        if not run.get("sensitive"):
-            errors.append(run.get("breakError") or "supply --change ITEM=FILE: every command must fail when this behavior is broken")
         if errors:
             row["unexpected"] = errors
         rows.append(row)
@@ -1661,13 +1646,6 @@ def map_update(identity: RepoIdentity, state: JsonObject, value: JsonObject) -> 
                         and not ("interpretations" in entry and key in ("interpretation", "authority"))}
                 merged[position] = {key: field for key, field in {**kept, **entry}.items() if field is not None}
     updates = behavior_map.initial_items(merged)
-    if state.get("preflightEvidence"):
-        corrected = {(case["id"], *case["statement"]) for finding in state.get("findingStates", []) for case in finding.get("retires", [])}
-        for entry in updates:
-            prior = recorded.get(entry["id"])
-            if prior is not None and (entry["id"], *(prior.get(key) for key in ("kind", "behavior", "expected"))) not in corrected:
-                if any(entry.get(key) != prior.get(key) for key in ("behavior", "expected")):
-                    raise WorkflowError("recorded obligation is fixed; correct a proven declaration error through review (--retire), then retry")
     items = [item for item in {item["id"]: item for item in [*(previous or []), *updates]}.values()
              if item["id"] not in removed]
     for entry in updates:

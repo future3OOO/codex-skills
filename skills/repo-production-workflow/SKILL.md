@@ -32,10 +32,21 @@ The repository-scoped SQLite event ledger remembers accepted transitions, logica
 
 Follow the operation result's `next.command`; `next.input` names any judgment,
 document or argument still needed and its form. Retain the returned evidence IDs.
-On resume or after edits,
-use `workflow.py summary --repo <checkout>` for current recovery guidance;
-`status --fields <fields>` supplies missing facts. Resume the same pass.
-Use the runtime help and returned continuation for current commands and input forms.
+On resume or after edits, `summary` gives current recovery guidance and
+`status --fields` supplies missing facts. Resume the same pass.
+The returned continuation carries each next command. The lead's own forms
+(`workflow.py` is `python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py"`;
+[recorder.md](../tdd/recorder.md#record-a-case) has the `tdd` forms):
+
+```text
+workflow.py begin --repo "$PWD" --slug <task> --intent-file <request.md>
+workflow.py summary --repo "$PWD"
+workflow.py status --repo "$PWD" --fields nextAction,tdd,verification,codeReview,finalReview
+workflow.py record preflight --repo "$PWD"
+workflow.py verify --repo "$PWD"
+workflow.py evidence --repo "$PWD" --evidence-id <id> --full
+workflow.py complete --repo "$PWD"
+```
 
 ## Mandatory order
 
@@ -100,10 +111,9 @@ candidate. Follow the receipt for stale comparisons, failed checks and continuat
 
 ### 10. Delegate code review
 
-Request a completion verdict after the lead completes the investigation, repair,
-real outcome assessment and verification in steps 2–9. Investigation and incoming
-finding intake remain available while proof is pending. They do not replace
-the proof required for completion.
+Do not spawn or task the reviewer until the lead has completed the investigation,
+repair, real outcome assessment and verification in steps 2–9. Missing lead proof
+is work for the lead before initial or return review.
 
 Before final advisor review, obtain independent `code-review` of the original
 objective and current candidate. Lead self-cleanup and later GitHub review do not replace this
@@ -128,7 +138,8 @@ frozen proof and required surviving checks; necessary growth must buy demonstrat
 cost reduction. The runtime owns acceptance and rechecks retained findings after
 repair, including reopening when waste returns. For a missing request promise,
 reconcile the requirement and extend affected coverage before implementing it.
-Verification and review can run with open findings; they block completion.
+Every map item is closed before review. Verification and return review can run
+with open reviewer findings; those block completion.
 
 ### 11. Final Codex Advisor review
 

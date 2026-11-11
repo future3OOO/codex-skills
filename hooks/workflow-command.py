@@ -42,12 +42,13 @@ def ended(reader: int, wait: bool) -> bool:
 
 def waits(name: object, text: str) -> str:
     """What one tool call of an answer waits on, as a pattern for the earlier result that named it: a code cell given to the `wait` tool, or
-    the sessions a code cell polls with no characters written. Empty when the call does anything else."""
+    the bare numbers of the sessions a code cell polls with no characters written (a lead may print `SESSION 60607` in place of the raw result).
+    Empty when the call does anything else."""
     cells, polled, tools = re.findall(r"cell_id\W+(\d+)", text), re.findall(r"session_id\W+(\d+)", text), re.findall(r"\btools\.(\w+)\s*\(", text)
     if name == "wait" and cells and not re.search(r"terminate\W+true", text):  # ending a cell is not waiting on it
         return rf"cell ID (?:{'|'.join(cells)})\b"
     if name == "exec" and polled and set(tools) == {"write_stdin"} and len(tools) == len(re.findall(r"""\bchars["']?\s*:\s*(?:""|''|``)""", text)):
-        return rf"session_id\W+(?:{'|'.join(polled)})\b"
+        return rf"\b(?:{'|'.join(polled)})\b"
     return ""
 
 

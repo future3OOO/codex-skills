@@ -111,8 +111,6 @@ def _case_question(entry: JsonObject) -> list[str]:
     if not producer_proved(entry):
         return [(run.get("freshnessReason", "comparison inputs changed") if run.get("fresh") is False
                  else "no current valid command comparison") + "; replay the recorded batch: workflow.py tdd"]
-    if not run.get("sensitive"):
-        return [run.get("breakError") or "supply --change " + entry["id"] + "=FILE: every command must fail under this behavior break"]
     original, current = original_outcome(run), run["arms"][-1]["outcome"]
     if current != "passed":
         return ["candidate command " + current + ": " + run["command"]]
@@ -133,7 +131,7 @@ def _question(entry: JsonObject, proofs: list[JsonObject]) -> list[str]:
     for proof in candidates:
         reasons.extend(_case_question({**proof, "kind": entry.get("kind")}))
         behavior = behavior or entry.get("kind") != "preservation" or "WORKFLOW_GROWTH" not in (proof.get("comparison", {}).get("execution") or {}).get("assignments", {})
-    return list(dict.fromkeys(reasons)) or ([] if behavior else ["growth cases check scaling only; bind a behavior case and its break: workflow.py tdd --case " + entry["id"] + " 'COMMAND'"])
+    return list(dict.fromkeys(reasons)) or ([] if behavior else ["growth cases check scaling only; bind a behavior case: workflow.py tdd --case " + entry["id"] + " 'COMMAND'"])
 
 
 def current_cases(items: list[JsonObject], runs: list[JsonObject], retired: set[str] = frozenset()) -> list[JsonObject]:
@@ -169,19 +167,21 @@ def open_obligations(items: list[JsonObject], evaluation: list[JsonObject] | Non
 
 def retain_evaluation(items: list[JsonObject], required: set[str], retained: JsonObject,
                       runs: list[JsonObject] | None = None, retired: set[str] = frozenset()) -> None:
-    """Retain each first proved command and every later distinct one; a retired expectation frees its command for a new one."""
+    """Retain each first proved command and every later distinct one. A proved recapture of a command replaces its earlier captures,
+    except a retired one and except when it names support: candidate bytes of a test file never displace a frozen capture."""
     for entry in items:
         if entry["id"] not in required or _case_question(entry):
             continue
         run = entry["comparison"]
-        if any(old["id"] == entry["id"] and (runs is None or
-                runs[old["runIndex"]].get("sourceCommand", runs[old["runIndex"]]["command"]) == run.get("sourceCommand", run["command"])
-                and (not retired or case_key(old["id"], runs[old["runIndex"]]) not in retired))
-                for old in retained.values()):
-            continue
         key = entry["id"] if runs is None else case_key(entry["id"], runs[run["runIndex"]])
-        if key in retired:
+        earlier = {name: key if runs is None else case_key(old["id"], runs[old["runIndex"]]) for name, old in retained.items()
+                   if old["id"] == entry["id"] and (runs is None or
+                   runs[old["runIndex"]].get("sourceCommand", runs[old["runIndex"]]["command"]) == run.get("sourceCommand", run["command"])
+                   and (not retired or case_key(old["id"], runs[old["runIndex"]]) not in retired))}
+        if key in retired or key in earlier.values() or earlier and run.get("support"):
             continue
+        for name in earlier:
+            del retained[name]
         key = entry["id"] if entry["id"] not in retained else key
         retained[key] = {**copy.deepcopy({key: value for key, value in entry.items() if key != "comparison"}),
                          "runIndex": run["runIndex"]}

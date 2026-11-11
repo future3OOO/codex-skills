@@ -9,7 +9,7 @@ Apply this skill before writing any repository code or file content change, keep
 Use the production-preflight skill first on before-edit turns that require explicit preflight. `code-quality` owns the seven quality principles and wins on conflict; this skill extends them with implementation procedure.
 
 The repository workflow owns phase order and the typed quality gate. Use its
-continuation and runtime help for commands. Load [gate-policy](references/gate-policy.md)
+continuation for commands. Load [gate-policy](references/gate-policy.md)
 only for a failing gate or a hard rule marked incomplete; warning-only incomplete
 telemetry needs no action.
 

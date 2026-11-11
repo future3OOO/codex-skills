@@ -147,7 +147,7 @@ Use the existing probes and batch results.
 
 ## Attribution
 
-The existing reviewer must check that a claimed regression comes from the affected behavior, using the source and raw output. The recorder compares exit codes and requires each command to fail under its supplied behavior break. It does not classify collection, import, setup or missing-API failures; the reviewer must check the break’s validity. A failure before the asserted operation does not establish that operation's behavior.
+The existing reviewer must check that a claimed regression comes from the affected behavior, using the source and raw output. The recorder compares exit codes. It does not classify collection, import, setup or missing-API failures. A failure before the asserted operation does not establish that operation's behavior.
 
 Assert meaningful public outputs and state effects with real collaborators. For a rejected transfer, assert the error, unchanged independently read balances and uncommitted result. Keep every independently falsifiable obligation covered. The runner executes the same assertions on each source version; existing review checks whether those assertions express the original objective.
 

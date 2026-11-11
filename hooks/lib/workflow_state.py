@@ -172,22 +172,7 @@ def _allows_next(state: JsonObject, phase: str) -> bool:
     return STEPS[phase][1](state)
 
 
-def _review_assessed(state: JsonObject) -> bool:
-    """A recorded assessment may expose open findings to its final advisor.
-
-    The checkpoint and result recorder separately validate both tree bindings.
-    This is not completion authority and permits only the first final result.
-    """
-    review, final = state.get("codeReview"), state.get("finalReview")
-    return bool(state.get("codeReviewEvidence") and state.get("reviewManifestId")
-                and _allows_next(state, "tdd") and _allows_next(state, "verification")
-                and isinstance(review, dict) and review.get("status") in {"pending", "passed"}
-                and isinstance(final, dict) and final.get("source") is None)
-
-
 def _require_predecessor(state: JsonObject, phase: str) -> None:
-    if phase == "final-review" and _review_assessed(state):
-        return
     position = SEQUENCE.index(phase)
     if position and not _allows_next(state, SEQUENCE[position - 1]):
         raise WorkflowIncomplete(f"{phase} requires {SEQUENCE[position - 1]}")
@@ -1057,8 +1042,8 @@ def record_advisor_result(
                      and _allows_next(state, "code-review")
                      and (state.get("finalStarted") or not _binding_drift(identity, state, "review", transaction))
                      and not _binding_drift(identity, state, "quality-gate", transaction))
-            if verdict == "commit-ready" and not ready:
-                raise WorkflowIncomplete("commit-ready requires current proof, verification and independent review")
+            if not ready:
+                raise WorkflowIncomplete("a final result requires current proof, verification and independent review")
             if verdict == "context-mismatch":
                 mismatch = evidence_write(str(state["workflowId"]), "finding-context-mismatch-final", intake)
                 writes.append(mismatch)
@@ -1071,24 +1056,22 @@ def record_advisor_result(
                     transaction, state, intake_write.evidence_id, intake, intakes,
                 )
                 _settle_executed(state, execution, intake_reference)
-                state["finalReview"].update(status="pending", intakeEvidence=intake_write.evidence_id)
-                if ready:
-                    state["finalStarted"] = True
-                    reviewed = manifest_write(str(state["workflowId"]), "final-review-tree", tree_manifest(identity))
-                    state["reviewManifestId"] = reviewed.manifest_id
-                    state["finalReview"] = {
-                        "source": source, "status": verdict, "intakeEvidence": intake_write.evidence_id,
-                        "findings": "pending" if _stage_unresolved(state, stage, source) else "none",
-                    }
-                    state["judgedTree"] = expected_candidate_tree or _active_candidate_tree(identity)
-                    state.pop("finalReviewContextMismatchEvidence", None)
-                    state["phase"] = "final-review"
+                state["finalStarted"] = True
+                reviewed = manifest_write(str(state["workflowId"]), "final-review-tree", tree_manifest(identity))
+                state["reviewManifestId"] = reviewed.manifest_id
+                state["finalReview"] = {
+                    "source": source, "status": verdict, "intakeEvidence": intake_write.evidence_id,
+                    "findings": "pending" if _stage_unresolved(state, stage, source) else "none",
+                }
+                state["judgedTree"] = expected_candidate_tree or _active_candidate_tree(identity)
+                state.pop("finalReviewContextMismatchEvidence", None)
+                state["phase"] = "final-review"
         else:
             raise ValueError(f"unsupported advisor stage: {stage}")
         state["nextAction"] = _derive_next_action(state)
         return _commit(
             transaction, state, f"advisor-{stage}-result", evidence=writes,
-            manifests=[reviewed] if stage == "final" and verdict != "context-mismatch" and ready else (),
+            manifests=[reviewed] if stage == "final" and verdict != "context-mismatch" else (),
         )
 
 
@@ -1243,8 +1226,7 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
     requirements = (
         ("workflowId", workflow_id is not None),
         ("open-workflow", open_for_phase),
-        ("advisor-stage", reviewing or reconsult or state.get("nextAction") in stage_actions[phase]
-         or phase == "final-review" and _review_assessed(state)),
+        ("advisor-stage", reviewing or reconsult or state.get("nextAction") in stage_actions[phase]),
         ("passStartOid", _is_commit_oid(identity, state.get("passStartOid"))),
         *(
             (("repo-context-forge", _allows_next(state, "repo-context-forge")),)
@@ -1253,7 +1235,7 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
                 ("tdd", _allows_next(state, "tdd")),
                 ("preflight", _allows_next(state, "preflight")),
                 ("verification", _allows_next(state, "verification")),
-                *(() if reviewing else (("code-review", _allows_next(state, "code-review") or _review_assessed(state)),)),
+                *(() if reviewing else (("code-review", _allows_next(state, "code-review")),)),
             )
         ),
     )
@@ -1649,7 +1631,7 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
         ids = [str(entry["id"]) for entry in behavior_map.recorded_map(evidence_document(
             identity, state.get("tddEvidence") or state.get("preflightEvidence"), restore_runs=False)) or []]
         operation: JsonObject = {"command": shlex.join(command),
-                                "input": f"--case ID 'COMMAND' per case (recorded: {', '.join(ids) or 'none'}); use - for no item. Supply --change ID=FILE for each item’s behavior break. Omit cases to run every recorded command and frozen break."}
+                                "input": f"--case ID 'COMMAND' per case (recorded: {', '.join(ids) or 'none'}); use - for no item. Omit cases to run every recorded command."}
         if pending:
             operation["findings"] = pending
         if questions:

@@ -220,7 +220,7 @@ PY
     printf 'error: --slug %s does not match the active workflow %s\n' "$producer_slug" "$active_slug" >&2
     exit 2
   fi
-  if [[ "$phase" == preflight-advice && "$checkpoint_ready" != yes ]]; then
+  if [[ "$checkpoint_ready" != yes ]]; then
     printf 'error: %s checkpoint is not ready; missing: %s\n' "$phase" "$checkpoint_missing" >&2
     exit 2
   fi
@@ -429,8 +429,8 @@ fi
 if [[ -z "$phase" ]]; then
   cat "$output_file"
 else
-  # Record the complete answer, then return a bounded digest with the recorded continuation; the
-  # whole envelope stays readable from the ledger. A recording refusal returns the whole answer.
+  # Record the complete answer, then return a digest with the recorded continuation: material findings whole, the
+  # others within a shared budget; the whole envelope stays readable from the ledger. A recording refusal returns the whole answer.
   record_stage=preflight; [[ "$phase" == final-review ]] && record_stage=final
   if ! python3 "$workflow_cli" record advisor-result --repo "$repo_root" --slug "$producer_slug" \
       --workflow-id "$active_wid" --stage "$record_stage" --source codex-advisor \
@@ -460,7 +460,7 @@ tail = f"nextAction={receipt['nextAction']} next: {receipt['next'].get('command'
 room = max(0, (1900 - len((head + tail).encode())) // max(1, len(shown)) - 1)
 run = lambda item: " ".join(f"{key}={value}" for key, value in (item.get("execution") or {"kind": "none"}).items())
 lines = [f"{item['id']} material={str(item['material']).lower()} execution=[{run(item)}]: {item['claim']}" for item in shown]
-sys.stdout.write(head + "".join(line.encode()[:room].decode("utf-8", errors="ignore") + "\n" for line in lines) + tail)
+sys.stdout.write(head + "".join((line if item["material"] else line.encode()[:room].decode("utf-8", errors="ignore")) + "\n" for item, line in zip(shown, lines)) + tail)
 PY
 fi
 printf 'codex_advisor_complete status=0 provider=%s\n' "$provider" >&2

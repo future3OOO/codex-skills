@@ -71,7 +71,7 @@ Leave candidate files, Git state and workflow state unchanged. This is trusted a
 preflight skips the candidate-staleness check, which neither restores nor confines writes.
 
 Findings follow the workflow's [executable evidence and acceptance order](../repo-production-workflow/SKILL.md#10-delegate-code-review).
-Final advice remains available while proof is pending; only current proof permits approval. The wrapper records the verdict without running cases. Submit new executable findings through `tdd --as final` before returning the verdict; its payload contains only report lines or recorded references. Retained findings run at `verify` or `complete`, with results cached by candidate tree. `context-mismatch` is reserved for candidate/projection identity mismatch;
+The wrapper records the verdict without running cases. Submit new executable findings through `tdd --as final` before returning the verdict; its payload contains only report lines or recorded references. Retained findings run at `verify` or `complete`, with results cached by candidate tree. `context-mismatch` is reserved for candidate/projection identity mismatch;
 it advances nothing. State never authorizes Git.
 
 ## Invocation
