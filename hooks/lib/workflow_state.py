@@ -1608,7 +1608,7 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
         design = repo_state_dir(identity) / "designs" / f"{state['workflowId']}.md"
         declaration = evidence_document(identity, state.get("governedDesignEvidence")) or {}
         if preflight or declaration:
-            command = [str(scripts / "codex-advisor/scripts/ask-codex-advisor.sh"), "--slug", str(state["slug"]),
+            command = [str(scripts / "codex-advisor/scripts/ask-codex-advisor.sh"), "--quiet", "--slug", str(state["slug"]),
                        "--phase", "preflight-advice" if preflight else "final-review", "--cwd", str(identity.root)]
             if preflight:
                 if design.is_file():

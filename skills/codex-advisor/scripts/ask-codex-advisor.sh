@@ -4,7 +4,7 @@ set -euo pipefail
 umask 077
 
 usage() {
-  printf 'Usage: %s --slug <name> [--provider codex|claude] [--phase preflight-advice|final-review] [--reconsult] [--preflight-file draft.json] [--cwd path] [--design-file file | --design-absent reason] [--budget words] [--codex-model model] [--codex-effort effort] [--fresh] -- "question"\n' "$0" >&2
+  printf 'Usage: %s --slug <name> [--provider codex|claude] [--phase preflight-advice|final-review] [--reconsult] [--preflight-file draft.json] [--cwd path] [--design-file file | --design-absent reason] [--budget words] [--codex-model model] [--codex-effort effort] [--fresh] [--quiet] -- "question"\n' "$0" >&2
   printf '  Phased consults derive payload, candidate anchors, and create/resume mode from workflow checkpoint; phase-less consults carry only the question.\n' >&2
   printf '  Default budget: 600 words; values above 1200 are refused.\n' >&2
   printf '  Trust: all phases use the lead checkout and estate with full access; final findings are independently replayed.\n' >&2
@@ -16,7 +16,7 @@ if [[ -n "${CODEX_ADVISOR_ACTIVE:-}${ADVISOR_ACTIVE:-}" ]]; then
   exit 3
 fi
 
-slug=""; phase=""; cwd="$PWD"; design_file=""; design_absent=""; budget=600; fresh=0; question=""
+slug=""; phase=""; cwd="$PWD"; design_file=""; design_absent=""; budget=600; fresh=0; quiet=0; question=""
 reconsult_args=(); preflight_file=""; draft_args=(); submitted_args=()
 provider="${CODEX_ADVISOR_PROVIDER:-${ADVISOR_PROVIDER:-codex}}"
 codex_model="${CODEX_ADVISOR_MODEL:-gpt-6-astra}"
@@ -33,6 +33,7 @@ while [[ $# -gt 0 ]]; do
     --design-absent) design_absent="${2:?missing --design-absent value}"; shift 2 ;;
     --budget) budget="${2:?missing --budget value}"; shift 2 ;;
     --fresh) fresh=1; shift ;;
+    --quiet) quiet=1; shift ;;
     --reconsult) reconsult_args=(--reconsult); shift ;;
     --preflight-file) preflight_file="${2:?missing --preflight-file value}"; shift 2 ;;
     --) shift; question="$*"; break ;;
@@ -94,7 +95,9 @@ esac
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 transport_dir=$(mktemp -d)
-trap 'python3 -c "import tempfile,sys;tempfile.TemporaryDirectory._rmtree(sys.argv[1])" "$transport_dir"' EXIT
+# --quiet (a lead's call): from here stderr is held, and reaches the caller only if the consult fails.
+trap '[[ $? -eq 0 || $quiet -eq 0 ]] || cat "$transport_dir/stderr" >&7; python3 -c "import tempfile,sys;tempfile.TemporaryDirectory._rmtree(sys.argv[1])" "$transport_dir"' EXIT
+(( quiet == 0 )) || exec 7>&2 2>"$transport_dir/stderr"
 snapshot_file() {
   python3 - "$@" <<'PY'
 import os, stat, sys

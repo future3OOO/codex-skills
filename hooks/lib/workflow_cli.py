@@ -54,7 +54,7 @@ from .workflow_state import (
 
 ROOT = Path(__file__).resolve().parents[2]
 # The other two long-running entry points, so the one blocking tool reaches all three.
-ENTRY = {"consult": [str(ROOT / "skills/codex-advisor/scripts/ask-codex-advisor.sh")],
+ENTRY = {"consult": [str(ROOT / "skills/codex-advisor/scripts/ask-codex-advisor.sh"), "--quiet"],
          "context": [sys.executable, str(ROOT / "skills/repo-context-forge/scripts/bootstrap.py")]}
 # Failing checks' first five locations, then the first six active findings with three each. Each location
 # prints as at most 100 bytes of JSON, escapes included (file:line tail kept), so the whole stays under 4,200.

@@ -151,12 +151,11 @@ active — see the two standalone forms in the startup flow above.
 AGENTS.md — GitNexus owns required context/impact coverage.
 
 The packet's `<gitnexus_analysis>` already answers every `<check>` the plan
-listed — `kind="symbol_context"` entries carry their callers, `kind="symbol_impact"`
-entries their impacted files. Read those entries rather than reissuing the same
-calls. No entry carries callees, so the analysis never completes the
-callers-AND-callees requirement on its own. Spend one scoped `cypher` query on
-each relationship the packet did not fix: callees of anything you are about to
-edit, or a symbol the plan omitted. Post-edit validation is below.
+listed. Read its entries rather than reissuing the same calls: an entry states
+the relationships it carries (callers, impacted files and, where the producer
+provides them, callees). Spend one scoped `cypher` query only on a relationship
+you need that the entries do not carry, such as the callees of something you are
+about to edit, or a symbol the plan omitted. Post-edit validation is below.
 
 When you do call out:
 
