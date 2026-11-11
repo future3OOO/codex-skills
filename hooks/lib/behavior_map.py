@@ -165,18 +165,39 @@ def open_obligations(items: list[JsonObject], evaluation: list[JsonObject] | Non
     return lines
 
 
+def release(items: list[JsonObject], owner: JsonObject, run: JsonObject, runs: list[JsonObject]) -> None:
+    """A command just proved under `owner` leaves every other item it does not satisfy; an item it proves keeps it."""
+    if _case_question(owner):  # a recording that has not proved its own item takes nothing
+        return
+    source = run.get("sourceCommand", run["command"])
+    for entry in items:
+        cases = current_cases([entry], runs) if entry is not owner and (entry.get("comparison") or {}).get("caseRuns") else []
+        kept = {case["comparison"]["command"]: case["comparison"]["runIndex"] for case in cases
+                if case["comparison"].get("sourceCommand", case["comparison"]["command"]) != source or not _case_question(case)}
+        if len(kept) < len(cases):
+            recorded = entry.pop("comparison")["obligation"]  # left empty, current_cases would rebuild the binding from run history
+            if kept:
+                entry["comparison"] = {**runs[max(kept.values())], "obligation": recorded, "caseRuns": kept}
+
+
 def retain_evaluation(items: list[JsonObject], required: set[str], retained: JsonObject,
                       runs: list[JsonObject] | None = None, retired: set[str] = frozenset()) -> None:
-    """Retain each first proved command and every later distinct one. A proved recapture of a command replaces its earlier captures,
-    except a retired one and except when it names support: candidate bytes of a test file never displace a frozen capture."""
+    """Retain each first proved command and every later distinct one. A proved recapture of a command replaces its earlier captures
+    under its item and under map items no longer bound to the command, except a retired one and except when it names support:
+    candidate bytes of a pass-start test file never displace a frozen capture."""
+    binders: dict[str, set[str]] = {}  # per command, the map items bound to it
+    for case in current_cases(items, runs) if runs is not None else ():
+        binders.setdefault(case["comparison"].get("sourceCommand", case["comparison"]["command"]), set()).add(case["id"])
+    present = {entry["id"] for entry in items} if runs is not None else set()  # a removed item keeps its captures
     for entry in items:
         if entry["id"] not in required or _case_question(entry):
             continue
         run = entry["comparison"]
+        command = run.get("sourceCommand", run["command"])
         key = entry["id"] if runs is None else case_key(entry["id"], runs[run["runIndex"]])
         earlier = {name: key if runs is None else case_key(old["id"], runs[old["runIndex"]]) for name, old in retained.items()
-                   if old["id"] == entry["id"] and (runs is None or
-                   runs[old["runIndex"]].get("sourceCommand", runs[old["runIndex"]]["command"]) == run.get("sourceCommand", run["command"])
+                   if (old["id"] == entry["id"] or old["id"] in present and old["id"] not in binders.get(command, ())) and (runs is None or
+                   runs[old["runIndex"]].get("sourceCommand", runs[old["runIndex"]]["command"]) == command
                    and (not retired or case_key(old["id"], runs[old["runIndex"]]) not in retired))}
         if key in retired or key in earlier.values() or earlier and run.get("support"):
             continue

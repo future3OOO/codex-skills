@@ -800,6 +800,7 @@ def _probe_capture(identity: RepoIdentity, probe: object, candidate: str, timeou
              else sorted(set(inventory) | ({virtual} if virtual else set())))
     if preserved is not None:
         files = sorted(original_files | (set(files) & (overrides | ({virtual} if virtual else set()))))
+        support = sorted(overrides & _tree_entries(identity, preserved).keys())  # a file added since pass start has no pass-start bytes to protect
     return {"command": shlex.join(command), "candidateTree": candidate, "probeTree": tree,
             "probeFiles": files, "support": support or [], "timeout": timeout, "captureKey": os.urandom(16).hex(),
             "sourceCommand": source_command}
@@ -1579,7 +1580,9 @@ def _run_tdd(values: list[str]) -> int:
             references = {**references, run["command"]: run["runIndex"]}
             if prior.get("caseRuns") != references or any(prior.get(key) != run.get(key) for key in ("runIndex", "candidateKey", "breakOid", "controlKey", "sensitive", "breakExit")) or prior.get("obligation") != behavior_map.obligation(entry):
                 entry["comparison"] = {**run, "obligation": behavior_map.obligation(entry), "caseRuns": references}
-            behavior_map.retain_evaluation([entry], {entry["id"]}, evaluation, runs, retired)
+            if specs:
+                behavior_map.release(items, entry, run, runs)
+            behavior_map.retain_evaluation(items, {entry["id"]}, evaluation, runs, retired)
     for frozen in evaluation.values() if indexes else ():
         if behavior_map.case_key(frozen["id"], runs[frozen["runIndex"]]) not in retired:
             frozen["runIndex"] = indexes.get(frozen["runIndex"], frozen["runIndex"])

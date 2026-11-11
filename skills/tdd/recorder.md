@@ -37,7 +37,8 @@ Every required command must establish the item's outcome. New commands extend
 coverage without deleting the first proved command and its frozen source.
 Removing a current map item leaves its proved comparisons in the retained evaluation.
 The lead corrects its own item through `record tdd-map`: the item reads stale until
-`tdd` reruns it.
+`tdd` reruns it. A command proved under another item leaves an item it does not
+satisfy; a command that proves both stays with both.
 
 Both exits zero establish preservation. Original non-zero and candidate zero
 establish a requested difference. A failing candidate remains broken. The
@@ -56,6 +57,7 @@ Current and retained commands use the same readiness
 check, including after map narrowing and finding resolution.
 
 The first proved evaluation stays frozen until a proved recapture of its command
-replaces it; a recapture that names `--support` replaces nothing, and an attempted
+replaces it, along with captures held by map items no longer bound to the command; a
+kept-behavior recapture that names a pass-start test file with `--support` replaces nothing, and an attempted
 comparison freezes nothing. User scope requiring a new contract starts a
 new pass. Keep scratch resources outside production and workflow state.
