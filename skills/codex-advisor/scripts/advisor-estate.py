@@ -130,6 +130,11 @@ def main() -> int:
         if missing := set(config["mcp"]) - names:
             raise ValueError(f"advisor MCPs are not configured: {sorted(missing)}")
         flags = ["-c", "features.plugins=false", "-c", "features.apps=false", "-c", "features.memories=false",
+                 "-c", "features.goals=false", "-c", "features.image_generation=false", "-c", "features.view_image=false",
+                 "-c", "features.sleep_tool=false", "-c", "tools.experimental_request_user_input={enabled=false}",
+                 "-c", "include_collaboration_mode_instructions=false",
+                 # features.multi_agent does not remove the lead's multi-agent briefing or tools; these settings do.
+                 "-c", 'features.multi_agent_v2={disable_native_tools=true,root_agent_usage_hint_text="",multi_agent_mode_hint_text=""}',
                  "-c", "skills.bundled.enabled=false", "-c", "sqlite_home=" + json.dumps(str(native))]
         flags += ["-c", "skills.config=[" + ",".join("{name=" + json.dumps(name) + ",enabled=true}"
                                                     for name in config["skills"]) + "]"]

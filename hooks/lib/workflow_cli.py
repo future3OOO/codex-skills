@@ -88,7 +88,7 @@ def parser() -> argparse.ArgumentParser:
     command.add_argument("--workflow-id")
     command = _repo(commands.add_parser("history", help="read ordered accepted events"))
     command.add_argument("--workflow-id")
-    command = _repo(commands.add_parser("evidence", help="evidence metadata and compact comparisons; --full for the raw document"))
+    command = _repo(commands.add_parser("evidence", help="evidence metadata and compact comparisons, a finding intake without its replayed runs or their bytes; --full for the raw document"))
     command.add_argument("--evidence-id", required=True)
     command.add_argument("--full", action="store_true")
 
@@ -432,11 +432,13 @@ def _dispatch(args: argparse.Namespace) -> int:
     elif args.command == "history":
         _emit_json(history(identity, args.workflow_id))
     elif args.command == "evidence":
-        value = read_evidence(identity, args.evidence_id)
+        value = read_evidence(identity, args.evidence_id, restore_runs=lambda kind: args.full or not kind.startswith("finding-intake"))
         if value is None:
             raise WorkflowError("evidence not found")
         document = value.pop("document")
         if not args.full:
+            if value["kind"].startswith("finding-intake"):
+                document.pop("runs", None)
             value.update(bytes=len(_canonical(document).encode()), fields=sorted(document))
             document = {key: view for key, field in document.items() if (view := behavior_map.compact(field)) != field}
         _emit_json({**value, **({"document": document} if document or args.full else {})})

@@ -67,13 +67,11 @@ records as new evidence), the finding ledger, and one direct `passStartOid^{tree
 activeCandidateTree` diff, each deleted file as its header and line count.
 The consult runs in the lead checkout with full execution access and its installed estate.
 The wrapper supplies and cleans an original snapshot at passStartOid and scratch for probes.
-Use the supplied source prefixes and recorded project executable; check imported source paths.
-Run new preservation probes on original and candidate; test new behavior against the request.
-Leave candidate files, Git state and workflow state unchanged. This is trusted access;
+This is trusted access;
 preflight skips the candidate-staleness check, which neither restores nor confines writes.
 
 Findings follow the workflow's [executable evidence and acceptance order](../repo-production-workflow/SKILL.md#10-delegate-code-review).
-The wrapper records the verdict without running cases. Submit new executable findings through the `tdd --as final` command the prompt prints before returning the verdict; its payload contains only report lines or recorded references. Retained findings run at `verify` or `complete`, with results cached by candidate tree. `context-mismatch` is reserved for candidate/projection identity mismatch;
+The wrapper records the verdict without running cases. `context-mismatch` is reserved for candidate/projection identity mismatch;
 it advances nothing. State never authorizes Git.
 
 ## Invocation

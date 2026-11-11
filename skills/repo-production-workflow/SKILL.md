@@ -44,7 +44,7 @@ workflow.py summary --repo "$PWD"
 workflow.py status --repo "$PWD" --fields nextAction,tdd,verification,codeReview,finalReview
 workflow.py record preflight --repo "$PWD"
 workflow.py verify --repo "$PWD"
-workflow.py evidence --repo "$PWD" --evidence-id <id> --full
+workflow.py evidence --repo "$PWD" --evidence-id <id>
 workflow.py complete --repo "$PWD"
 ```
 
@@ -59,7 +59,7 @@ Stop on packet blockers. The packet fixes the initial target and coverage surfac
 
 Derive verification from the user's intended production behavior using
 [Production Code's outcome verification](../production-code/SKILL.md#minimum-implementation-decision).
-The lead owns correctness and optimization for every task, through implementation
+The lead owns correctness and performance for every task, through implementation
 and repair; the independent reviewer challenges it. Use the packet to trace affected paths, state skipped and
 preserved surfaces, and establish review-budget fit. Apply `diagnose` to bugs,
 regressions and performance failures before choosing a correction.
@@ -80,6 +80,8 @@ Submit the exact draft through [Codex Advisor's two-round preflight](../codex-ad
 The advisor investigates. The lead checks deletion claims against every original
 outcome controlled by the affected logic and corrects false premises. The advisor
 then finalises and approves the draft in the same session. Record only that approval.
+The first implementation builds the approved design, performance improvements
+included; setting one aside needs a measured reason.
 
 ### 5. Record approved preflight once
 
@@ -96,7 +98,7 @@ Invoke `production-code` for its standards and baseline gate. Reuse the existing
 
 ### 8. Implement and compare
 
-Continue TDD's [required probe loop](../tdd/SKILL.md#required-probe-loop): implement the chosen
+Continue TDD's [required probe loop](../tdd/SKILL.md#required-probe-loop): implement the approved
 design against the recorded baseline, reconcile the actual diff, and compare the same
 case commands on the candidate. Add commands for uncovered outcomes; reuse unchanged proof.
 
@@ -132,8 +134,7 @@ valid execution solely for handoff. The lead owns repairs, TDD and verification;
 the reviewer owns its evidence and verdict. Start a fresh reviewer only when its
 context is unavailable or scope/architecture makes it unusable, naming the reason.
 
-Required behavior stays fixed. Seek the lowest justified whole-system cost in the
-affected production path, including existing bloat. A replacement must preserve
+Required behavior stays fixed. A replacement must preserve
 frozen proof and required surviving checks; necessary growth must buy demonstrated
 cost reduction. The runtime owns acceptance and rechecks retained findings after
 repair, including reopening when waste returns. For a missing request promise,
@@ -150,7 +151,8 @@ acceptance gaps; load only missing evidence, not the verification history.
 The final Codex Advisor investigates in the lead checkout using the recorded project executable and original source. Invoke the wrapper's
 `final-review` phase with the same slug and follow its runtime continuation. The
 advisor records probes through the shared TDD command; the wrapper records its
-semantic verdict. After the first final verdict, a correction
+semantic verdict. A finding's intake, read with `workflow.py evidence`, carries its claim,
+replacement diff and failing output. After the first final verdict, a correction
 needs the affected `tdd` rerun, verification for the new tree, and the final advisor's re-check. Reuse independent review and applicable evidence. Retained findings run only at `verify` or `complete`; intermediate review calls skip them. Once every
 final finding is settled (`nextAction` `complete-workflow`), a requested
 reassessment of the unchanged candidate runs the same `final-review` phase and records
