@@ -76,6 +76,11 @@ it advances nothing. State never authorizes Git.
 
 ## Invocation
 
+A lead's phased consult is the pass's next step: the workflow tool runs the command below to
+its end and returns the digest. Its `args` carry `--preflight-file`, on the first consult the
+pass's design option if it has one (later consults take the recorded declaration) and, after
+`--`, the user's instructions.
+
 ```bash
 "$HOME/.codex/skills/codex-advisor/scripts/ask-codex-advisor.sh" \
   --slug "<task>" --phase preflight-advice --preflight-file "<draft.json>" \
@@ -86,7 +91,7 @@ it advances nothing. State never authorizes Git.
   --cwd "$PWD" --design-file "<design-artifact>"
 ```
 
-Phased consults carry no lead text. Pass only the user's instructions given after `begin`, each line quoted verbatim after `> `, on stdin.
+Phased consults carry no lead text. Pass only the user's instructions given after `begin`, each line quoted verbatim after `> `, after `--` (or on stdin in a shell).
 
 ## Failure and disposition
 

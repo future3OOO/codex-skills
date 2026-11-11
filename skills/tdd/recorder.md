@@ -14,6 +14,7 @@ workflow.py record tdd-map --repo "$PWD" --input map.json
 ```
 
 `workflow.py` is `python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py"`.
+A lead passes what follows `workflow.py` (`tdd --case BM_X 'COMMAND'`, without `--repo`) as the workflow tool's `args`; the call returns the finished receipt.
 `--case` takes one command per case and `-` for no item. A scratch file a command names is frozen
 with it, as is a temporary path the command or that file names; `--path` or `--support` freezes
 another beside it. A bare call replays every recorded

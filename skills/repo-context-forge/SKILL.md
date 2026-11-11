@@ -10,7 +10,10 @@ debug, refactor, explain, or plan work in a git repository.
 
 ## Required Startup Flow
 
-1. Run the bundled bootstrap wrapper from this skill via the Bash tool:
+1. Run the bundled bootstrap wrapper from this skill. It takes 30–90 s on a cold
+cache, so run it through the `mcp__workflow__run` tool, which returns when it has
+finished: with no `args` in a governed pass (the bootstrap is the next step `begin`
+returns), and with `args` `["context", ...]` and the options below otherwise.
 
 Governed production pass (an active workflow exists):
 
@@ -20,8 +23,7 @@ python3 "$HOME/.codex/skills/repo-context-forge/scripts/bootstrap.py" \
 ```
 
 `--workflow-slug` must be the active workflow's slug; the adapter records the
-Repo Context Forge step on that workflow and refuses a mismatched slug. The lead
-runs the command `begin` returns. Shell-quote any slug placeholder.
+Repo Context Forge step on that workflow and refuses a mismatched slug.
 When the packet resolves a real base (its base ref is not the head-ref
 sentinel), the adapter also records the packet's fork-point commit as the
 pass's immutable base OID (`baseOid` in the status projection): the first
@@ -44,14 +46,6 @@ Standalone exploration or review with no governed pass and no described work —
 ```bash
 python3 "$HOME/.codex/skills/repo-context-forge/scripts/bootstrap.py" --repo "$PWD"
 ```
-
-The bootstrap takes 30–90 s on a cold cache. Wait for it once instead of
-checking in short intervals: every check is a model turn that re-sends the
-whole context. Start it with `exec_command` `yield_time_ms` 30000 and, if it is
-still running, wait once with `write_stdin` `yield_time_ms` 120000, which
-returns as soon as the bootstrap exits. In code mode, make both calls in one
-cell whose first line is `// @exec: {"yield_time_ms": 120000}`; a cell without
-it stops waiting at about 30 s.
 
 2. The script prints the packet's intake banner, `<coverage_plan>` and
 `<gitnexus_analysis>`, then `full_packet: <path>`: the whole packet, saved

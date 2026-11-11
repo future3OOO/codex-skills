@@ -32,9 +32,10 @@ find "$DEST/skills" "$DEST/hooks" -type d \
 # Merge our hook entries into the live hooks.json. A managed command replaces
 # every installed copy of itself — a command-keyed append-only merge leaves
 # stale matchers, events, and timeouts behind forever. Entries the installer
-# does not own (gitnexus and any others) survive. Commands expand $HOME.
+# does not own (gitnexus and any others) survive. Commands expand $HOME. Retired
+# hooks go with their entries, files and (the poll hold's) leftover FIFOs.
 python3 - "$SRC/hooks.json" "$DEST/hooks.json" <<'PY'
-import json, os, sys
+import json, os, shutil, sys
 from pathlib import Path
 
 live_path = Path(sys.argv[2])
@@ -52,7 +53,8 @@ def expand(value):
 
 managed = expand(json.loads(Path(sys.argv[1]).read_text())["hooks"])
 ours = {h.get("command") for gs in managed.values() for g in gs for h in g.get("hooks", [])}
-ours.update(f"python3 {prefix}/hooks/rcf-intake-gate.py" for prefix in (home + "/.codex", str(live_path.parent)))
+ours.update(f"{run} {prefix}/hooks/{script}" for prefix in (home + "/.codex", str(live_path.parent)) for run, script in (
+    ("python3", "rcf-intake-gate.py"), ("sh", "workflow-command.sh"), ("sh", "workflow-command.sh answered")))
 
 for event, groups in live.setdefault("hooks", {}).items():
     for group in groups:
@@ -61,19 +63,40 @@ for event, groups in live.setdefault("hooks", {}).items():
 for event, groups in managed.items():
     live["hooks"].setdefault(event, []).extend(groups)
 live_path.write_text(json.dumps(live, indent=2) + "\n")
-(live_path.parent / "hooks/rcf-intake-gate.py").unlink(missing_ok=True)
+for script in ("rcf-intake-gate.py", "workflow-command.py", "workflow-command.sh"):
+    (live_path.parent / "hooks" / script).unlink(missing_ok=True)
+shutil.rmtree(Path(os.environ.get("CODEX_WORKFLOW_STATE_ROOT") or live_path.parent / "state") / "_running", ignore_errors=True)
 PY
 
-# config.toml: append the GitNexus MCP server if absent; every other key is
-# left untouched (model/provider/auth live there and are not ours to manage).
-if ! grep -q '^\[mcp_servers\.gitnexus\]' "$DEST/config.toml" 2>/dev/null; then
-  cat >> "$DEST/config.toml" <<'TOML'
+# config.toml: append the GitNexus MCP server and the workflow's blocking tool if absent: a
+# table is appended when the file still parses with it, so one the user wrote in any spelling
+# stays as it is; every other key is left untouched (model/provider/auth live there and are
+# not ours to manage). The tool is offered to every lead as a direct tool (not through tool
+# search or a code cell, which hands back at 30 s), with a timeout above the longest consult.
+python3 - "$DEST" <<'PY'
+import sys, tomllib
+from pathlib import Path
 
+config = Path(sys.argv[1]) / "config.toml"
+config.touch()
+for table in ("""
 [mcp_servers.gitnexus]
 command = "node"
 args = [ "/home/prop_/.local/share/gitnexus/current/gitnexus/dist/cli/index.js", "mcp" ]
-TOML
-fi
+""", f"""
+[mcp_servers.workflow]
+command = "python3"
+args = [ "{sys.argv[1]}/skills/repo-production-workflow/scripts/workflow_tool.py" ]
+tool_timeout_sec = 3600
+omit_tools_from = [ "code_mode", "deferred" ]
+"""):
+    try:
+        tomllib.loads(config.read_text() + table)
+    except tomllib.TOMLDecodeError:
+        continue
+    with config.open("a") as live:
+        live.write(table)
+PY
 
 python3 "$DEST/skills/codex-advisor/scripts/advisor-estate.py" codex --prepare
 
