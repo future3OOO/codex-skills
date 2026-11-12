@@ -486,7 +486,8 @@ shown = findings[:40]
 head = f"verdict={envelope['verdict']} findings={len(findings)} shown={len(shown)} intake={intake}\n"
 needed = (receipt["next"].get("input") or "").partition("\n")[0].encode()  # both ends: the argument and the command form
 needed = (needed if len(needed) <= 200 else needed[:97] + b" ... " + needed[-98:]).decode("utf-8", errors="ignore")
-tail = f"nextAction={receipt['nextAction']} next: {receipt['next'].get('tool')}\n" + (f"input: {needed}\n" if needed else "")
+unfinished = "final review ends at commit-ready: " if sys.argv[2] == "final" and receipt["nextAction"] != "complete-workflow" else ""
+tail = f"{unfinished}nextAction={receipt['nextAction']} next: {receipt['next'].get('tool')}\n" + (f"input: {needed}\n" if needed else "")
 room = max(0, (1900 - len((head + tail).encode())) // max(1, len(shown)) - 1)
 run = lambda item: " ".join(f"{key}={value}" for key, value in (item.get("execution") or {"kind": "none"}).items())
 lines = [f"{item['id']} material={str(item['material']).lower()} execution=[{run(item)}]: {item['claim']}" for item in shown]
