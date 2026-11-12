@@ -81,13 +81,13 @@ the contract and planned attacks.
 Submit the exact draft through [Codex Advisor's two-round preflight](../codex-advisor/SKILL.md#preflight-advice).
 The advisor investigates. The lead checks deletion claims against every original
 outcome controlled by the affected logic and corrects false premises. The advisor
-then finalises and approves the draft in the same session. Record only that approval.
+then finalises and approves the draft in the same session; that consult records it.
 The first implementation builds the approved design, performance improvements
 included; setting one aside needs a measured reason.
 
-### 5. Record approved preflight once
+### 5. One recorded preflight
 
-Record the approved draft through the returned continuation. Related corrections stay in this pass; reuse untouched proof.
+Related corrections stay in this pass; reuse untouched proof.
 
 ### 6. Select the probe batch
 

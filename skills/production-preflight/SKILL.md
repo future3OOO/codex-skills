@@ -96,10 +96,9 @@ Update changed items by id with `record tdd-map` when obligations change. The ru
 
 ## Recording
 
-Submit the exact artifact through [Codex Advisor's two-round preflight](../codex-advisor/SKILL.md#preflight-advice) before tracked edits.
-Record it once the advisor returns `approved` for that content.
+Submit the exact artifact through [Codex Advisor's two-round preflight](../codex-advisor/SKILL.md#preflight-advice) before tracked edits;
+its approving consult records it once.
 
-The runtime continuation supplies the recording command. Record the approved draft
-once; later corrections use the same map and pass. Changed command formatting is
+Later corrections use the same map and pass. Changed command formatting is
 not a changed contract. Resolve interpretations before dependent implementation;
 response prose is not execution evidence.

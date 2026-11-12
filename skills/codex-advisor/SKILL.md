@@ -25,7 +25,7 @@ paths as inputs, and proposes the performance cases with their bounds. The lead 
 its source claims and updates the draft, listing those cases' commands in it. Resume
 with `--reconsult` for the advisor to
 finalise and approve it. Preflight is exactly these two consultations in one advisor session:
-the second completes the draft, so `approved` is its only verdict and a third is refused.
+the second completes and records the draft, so `approved` is its only verdict and a third is refused.
 The first consult receives the whole draft. Reconsults send its delta with both
 content identities; failed results keep that base. A resumed consult, preflight or
 final, carries only the sections whose bytes changed since its session last received them.

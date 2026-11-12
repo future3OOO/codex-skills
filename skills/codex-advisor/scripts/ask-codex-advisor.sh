@@ -97,7 +97,7 @@ script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 transport_dir=$(mktemp -d)
 # --quiet (a lead's call): from here stderr is held, and reaches the caller only if the consult fails.
 trap '[[ $? -eq 0 || $quiet -eq 0 ]] || cat "$transport_dir/stderr" >&7; python3 -c "import tempfile,sys;tempfile.TemporaryDirectory._rmtree(sys.argv[1])" "$transport_dir"' EXIT
-(( quiet == 0 )) || exec 7>&2 2>"$transport_dir/stderr"
+exec 7>&2; (( quiet == 0 )) || exec 2>"$transport_dir/stderr"
 snapshot_file() {
   python3 - "$@" <<'PY'
 import os, stat, sys
@@ -471,7 +471,7 @@ else
   fi
   python3 "$workflow_cli" status --repo "$repo_root" --fields advisorPreflight,finalReview,finalReviewContextMismatchEvidence \
     >"$transport_dir/recorded.json"
-  python3 - "$script_dir/../../.." "$record_stage" "$transport_dir/recorded.json" "$repo_root" "$transport_dir/receipt.json" <<'PY'
+  python3 - "$script_dir/../../.." "$record_stage" "$transport_dir/recorded.json" "$repo_root" "$transport_dir/receipt.json" "${reconsult_args[@]}" <<'PY'
 import json, sys
 sys.path.insert(0, sys.argv[1])
 from hooks.lib.repo_identity import resolve_repo_identity
@@ -487,11 +487,16 @@ head = f"verdict={envelope['verdict']} findings={len(findings)} shown={len(shown
 needed = (receipt["next"].get("input") or "").partition("\n")[0].encode()  # both ends: the argument and the command form
 needed = (needed if len(needed) <= 200 else needed[:97] + b" ... " + needed[-98:]).decode("utf-8", errors="ignore")
 unfinished = "final review ends at commit-ready: " if sys.argv[2] == "final" and receipt["nextAction"] != "complete-workflow" else ""
-tail = f"{unfinished}nextAction={receipt['nextAction']} next: {receipt['next'].get('tool')}\n" + (f"input: {needed}\n" if needed else "")
+tail = "" if sys.argv[6:] else f"{unfinished}nextAction={receipt['nextAction']} next: {receipt['next'].get('tool')}\n" + (f"input: {needed}\n" if needed else "")
 room = max(0, (1900 - len((head + tail).encode())) // max(1, len(shown)) - 1)
 run = lambda item: " ".join(f"{key}={value}" for key, value in (item.get("execution") or {"kind": "none"}).items())
 lines = [f"{item['id']} material={str(item['material']).lower()} execution=[{run(item)}]: {item['claim']}" for item in shown]
 sys.stdout.write(head + "".join((line if item["material"] else line.encode()[:room].decode("utf-8", errors="ignore")) + "\n" for item, line in zip(shown, lines)) + tail)
 PY
+  if (( ${#reconsult_args[@]} )); then
+    # The approving consult records the draft it finalised: the recording's output and exit status end the call; the consult's diagnostics stay held.
+    quiet=0
+    python3 "$workflow_cli" record preflight --repo "$repo_root" --slug "$producer_slug" --workflow-id "$active_wid" 2>&7
+  fi
 fi
 printf 'codex_advisor_complete status=0 provider=%s\n' "$provider" >&2

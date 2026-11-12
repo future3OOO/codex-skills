@@ -153,9 +153,9 @@ AGENTS.md — GitNexus owns required context/impact coverage.
 The packet's `<gitnexus_analysis>` rows answer every `<check>` the plan listed:
 read them first, never reissue them. Before editing, run the rule's checks on
 what you will change (`impact` with tests, then any caller, callee or
-shared-state writer the rows lack) by the exact call forms the packet prints;
-never list or search tool definitions. For one relationship, a scoped `cypher`
-query. Post-edit validation is below.
+shared-state writer the rows lack, and the rule's other checks) by the exact
+call forms the packet prints; never list, search or print tool definitions.
+For one relationship, a scoped `cypher` query. Post-edit validation is below.
 
 When you do call out:
 
