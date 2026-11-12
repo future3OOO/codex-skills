@@ -74,11 +74,12 @@ PY
 # not ours to manage). The tool is offered to every lead as a direct tool (not through tool
 # search or a code cell, which hands back at 30 s), with a timeout above the longest consult.
 python3 - "$DEST" <<'PY'
-import sys, tomllib
+import json, sys, tomllib
 from pathlib import Path
 
 config = Path(sys.argv[1]) / "config.toml"
 config.touch()
+tool = json.dumps(sys.argv[1] + "/skills/repo-production-workflow/scripts/workflow_tool.py", ensure_ascii=False).replace("\x7f", "\\u007f")
 for table in ("""
 [mcp_servers.gitnexus]
 command = "node"
@@ -86,7 +87,7 @@ args = [ "/home/prop_/.local/share/gitnexus/current/gitnexus/dist/cli/index.js",
 """, f"""
 [mcp_servers.workflow]
 command = "python3"
-args = [ "{sys.argv[1]}/skills/repo-production-workflow/scripts/workflow_tool.py" ]
+args = [ {tool} ]
 tool_timeout_sec = 3600
 omit_tools_from = [ "code_mode", "deferred" ]
 """):

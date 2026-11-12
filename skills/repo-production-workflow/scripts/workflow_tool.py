@@ -71,7 +71,11 @@ def serve() -> None:
             send(ident, "result", {"content": [{"type": "text", "text": text}], "isError": bool(code)})
 
     for line in messages:
-        message = json.loads(line)
+        try:
+            message = json.loads(line)
+        except ValueError:  # JSON-RPC's parse error, invalid UTF-8 and a blank line included; the next request is answered
+            send(None, "error", {"code": -32700, "message": "parse error"})
+            continue
         method, ident, params = message.get("method"), message.get("id"), message.get("params") or {}
         if method == "tools/call":
             cancel = running[ident] = threading.Event()

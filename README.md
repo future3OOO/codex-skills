@@ -12,8 +12,9 @@ The project is the source of truth; the estate is an install artifact.
 
 ## Layout
 
-- `docs/agents/global-rules.md` and `proof-invariants.md` — assembled into
-  `~/.codex/AGENTS.md`. The proof fragment is also used by the advisor.
+- `docs/agents/global-rules.md` and `docs/agents/proof-invariants.md` —
+  assembled into `~/.codex/AGENTS.md`. The proof fragment is also used by the
+  advisor.
 - `decisions.md` — tracked project decisions; not installed globally.
 - `skills/` — custom skills, one directory per skill. Codex-only extras that
   do not exist upstream: `codex-advisor` (the codex-side advisor name),
@@ -97,7 +98,7 @@ The global rules install under a different name, so never list them in `paths`:
 
 ```bash
 mkdir -p "$backup" &&
-  cp -- "$estate/AGENTS.md" "$backup/AGENTS.md" &&
+  { [[ ! -e "$estate/AGENTS.md" ]] || cp -- "$estate/AGENTS.md" "$backup/AGENTS.md"; } &&
   cat docs/agents/global-rules.md docs/agents/proof-invariants.md > "$estate/AGENTS.md" &&
   cmp -- <(cat docs/agents/global-rules.md docs/agents/proof-invariants.md) "$estate/AGENTS.md"
 ```
@@ -121,8 +122,8 @@ and session storage remain available; there is no terminal or history transfer.
 Edit `$CODEX_HOME/docs/agents/advisor-launch.json` to select rule files, installed
 skill names and configured MCP server names. Rule paths are relative to that
 JSON file, or absolute. Changes take effect on the next consultation; installation
-preserves the JSON. The defaults select `code-quality`, `codebase-design`, `fff`
-and `gitnexus`. Other automatic skill sources and estate workflow hooks are
+preserves the JSON. The defaults select `code-quality`, `codebase-design` and
+`gitnexus`. Other automatic skill sources and estate workflow hooks are
 excluded. Repository instructions and unrelated user hooks remain active.
 
 Claude uses its native settings, credentials and session paths separately,
@@ -207,10 +208,11 @@ Codex fires the full Claude event set with the same payload contract
 - `SessionStart` matchers filter `source` directly: `startup|resume|compact|clear`.
 - A shell call is handed back to the model after at most 30 s and no hook
   fires for the polls that follow (`write_stdin`, `wait`). An MCP tool call
-  returns when the tool does, so workflow commands run through the `workflow`
-  server's one tool (`skills/repo-production-workflow/scripts/workflow_tool.py`),
-  which `install.sh` registers as a direct tool. Hooks matched on `Bash` do
-  not fire for it.
+  returns when the tool does, so workflow commands other than `begin` run
+  through the `workflow` server's one tool
+  (`skills/repo-production-workflow/scripts/workflow_tool.py`), which
+  `install.sh` registers as a direct tool. Hooks matched on `Bash` do not fire
+  for it.
 - Hooks require trust approval (`/hooks`, or `--dangerously-bypass-hook-trust`
   for automation).
 
