@@ -142,7 +142,7 @@ def undecided(decisions: list[JsonObject], traces: list[JsonObject | None]) -> l
     at its deciding value and the paired candidate decision, on the values that run observed, is not known to agree
     with the original. `traces` holds each recorded case's evaluations by decision id; None is a run the tracer
     could not observe, and such runs alone open nothing; a case not yet traced has no evaluations."""
-    lines = []
+    lines, cut = [], lambda text: text if len(text) <= 160 else text[:159] + "…"
     for decision in decisions:
         test, match = (ast.parse(str(decision[key]), mode="eval").body for key in ("test", "match"))
         spans = {tuple(node[:4]): (node[4], node[5]) for node in decision["nodes"]}
@@ -159,7 +159,7 @@ def undecided(decisions: list[JsonObject], traces: list[JsonObject | None]) -> l
                     decided = True
                     break
             if not decided and not (traces and all(trace is None for trace in traces)):
-                lines.append(f"removed condition {decision['file']}:{operand['line']} `{operand['operand']}`: no recorded case makes it "
-                             f"{str(operand['value']).lower()} on the original where the candidate's `{decision['match']}` then decides differently; "
+                lines.append(f"removed condition {decision['file']}:{operand['line']} `{cut(operand['operand'])}`: no recorded case makes it "
+                             f"{str(operand['value']).lower()} on the original where the candidate's `{cut(decision['match'])}` then decides differently; "
                              "reaching it otherwise does not count. Restore it, or record a case with such an input: workflow.py tdd --case ITEM 'COMMAND'")
     return lines
