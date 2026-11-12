@@ -67,12 +67,14 @@ def refresh_proof(identity: RepoIdentity, items: list[JsonObject], *, candidate:
         key = (proof["candidateKey"], target)
         if key not in freshness:
             try:
-                command, execution, _ = _comparison_input(identity, proof)
+                execution, command = proof["execution"], shlex.split(proof["command"])  # as recorded: the reader's own environment is no input
+                while re.match(r"[A-Za-z_][A-Za-z_0-9]*=", command[0]):
+                    del command[0]
                 arms = proof["arms"]
                 sizes = _growth(execution)
                 commands = [[arg.replace("{size}", str(size)) for arg in command] for size in (sizes[1], sizes[0], sizes[0], sizes[1])] if sizes else [command, command]
                 sources = (proof["originalTree"], proof["originalTree"], target, target) if sizes else (proof["originalTree"], target)
-                checked = [_input_identity(identity, execution, arm) for arm in arms]
+                checked = [_input_identity(identity, execution, arm, recorded=True) for arm in arms]
                 contexts = [_execution_key(identity, source, proof.get("probeTree", proof["candidateTree"]), _comparison_files(identity, proof), value, proof["timeout"], execution) for source, value in zip(sources, commands)]
                 freshness[key] = {"fresh": len(arms) == len(contexts) and all(inputs and arm.get("contextKey") == context and arm.get("inputs") == inputs
                                                and arm.get("key") == hashlib.sha256((context + inputs).encode()).hexdigest()
@@ -225,15 +227,17 @@ def _node_inputs(root: Path) -> list[tuple]:
     return metadata
 
 
-def _input_identity(identity: RepoIdentity, execution: JsonObject, arm: JsonObject) -> str:
+def _input_identity(identity: RepoIdentity, execution: JsonObject, arm: JsonObject, recorded: bool = False) -> str:
+    """The arm's tools and lookups as they stand now, under this process's environment and search path, or, for a
+    reader judging `recorded` proof, under the ones `execution` recorded."""
     tools = arm.get("tools", [])
-    scope = _EXECUTION.get()
+    scope = None if recorded else _EXECUTION.get()
     cache_key = json.dumps([identity.root, execution.get("lookup") or execution["executable"], execution.get("search"),
                             execution.get("assignments", {}), tools, arm.get("lookups", {})], sort_keys=True)
     if scope is not None and cache_key in scope["inputs"]:
         digest = scope["inputs"][cache_key]["digest"]
     else:
-        current = _sample_input(("environment", identity.root, tuple(sorted(execution.get("assignments", {}).items()))), lambda: _comparison_input(identity, {"command": shlex.join([
+        current = execution if recorded else _sample_input(("environment", identity.root, tuple(sorted(execution.get("assignments", {}).items()))), lambda: _comparison_input(identity, {"command": shlex.join([
             *(f"{name}={value}" for name, value in execution.get("assignments", {}).items()), execution.get("lookup") or execution["executable"]])})[1])
         tool_inputs = [_sample_input(("tool", name), lambda name=name: _tool_input(name)) for name in tools]
         metadata = [("environment", current["environment"]), *tool_inputs]
