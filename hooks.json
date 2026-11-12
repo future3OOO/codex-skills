@@ -34,6 +34,29 @@
           }
         ]
       }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh ~/.codex/hooks/workflow-command.sh",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PostModelRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh ~/.codex/hooks/workflow-command.sh answered",
+            "timeout": 3600
+          }
+        ]
+      }
     ]
   }
 }

@@ -38,6 +38,7 @@ from .state_store import (
     _candidate_matches,
     _comparison_scope,
     _flock,
+    _git,
     _paths,
     analysis_unchanged,
     is_governance_path,
@@ -172,22 +173,7 @@ def _allows_next(state: JsonObject, phase: str) -> bool:
     return STEPS[phase][1](state)
 
 
-def _review_assessed(state: JsonObject) -> bool:
-    """A recorded assessment may expose open findings to its final advisor.
-
-    The checkpoint and result recorder separately validate both tree bindings.
-    This is not completion authority and permits only the first final result.
-    """
-    review, final = state.get("codeReview"), state.get("finalReview")
-    return bool(state.get("codeReviewEvidence") and state.get("reviewManifestId")
-                and _allows_next(state, "tdd") and _allows_next(state, "verification")
-                and isinstance(review, dict) and review.get("status") in {"pending", "passed"}
-                and isinstance(final, dict) and final.get("source") is None)
-
-
 def _require_predecessor(state: JsonObject, phase: str) -> None:
-    if phase == "final-review" and _review_assessed(state):
-        return
     position = SEQUENCE.index(phase)
     if position and not _allows_next(state, SEQUENCE[position - 1]):
         raise WorkflowIncomplete(f"{phase} requires {SEQUENCE[position - 1]}")
@@ -1002,6 +988,11 @@ def record_advisor_result(
                 raise ValueError("preflight advisor source must be codex-advisor")
             if state.get("preflightLatestEvidence") and verdict in {"approved", "changes-required"}:
                 raise WorkflowError("preflight is already recorded; draft consultations are closed")
+            rounds = int(state.get("preflightRounds", 0))
+            if rounds >= 2 and not state.get("preflightLatestEvidence"):
+                raise WorkflowError("both preflight consultations are recorded; record preflight publishes the approved draft")
+            if verdict == "changes-required" and rounds:
+                raise WorkflowError("the second preflight consultation completes the draft; its only verdict is approved")
             if verdict not in {"unavailable", "approved", "changes-required"}:
                 raise ValueError("preflight verdict must be approved, changes-required or unavailable")
             if verdict in {"approved", "changes-required"}:
@@ -1052,8 +1043,8 @@ def record_advisor_result(
                      and _allows_next(state, "code-review")
                      and (state.get("finalStarted") or not _binding_drift(identity, state, "review", transaction))
                      and not _binding_drift(identity, state, "quality-gate", transaction))
-            if verdict == "commit-ready" and not ready:
-                raise WorkflowIncomplete("commit-ready requires current proof, verification and independent review")
+            if not ready:
+                raise WorkflowIncomplete("a final result requires current proof, verification and independent review")
             if verdict == "context-mismatch":
                 mismatch = evidence_write(str(state["workflowId"]), "finding-context-mismatch-final", intake)
                 writes.append(mismatch)
@@ -1066,24 +1057,22 @@ def record_advisor_result(
                     transaction, state, intake_write.evidence_id, intake, intakes,
                 )
                 _settle_executed(state, execution, intake_reference)
-                state["finalReview"].update(status="pending", intakeEvidence=intake_write.evidence_id)
-                if ready:
-                    state["finalStarted"] = True
-                    reviewed = manifest_write(str(state["workflowId"]), "final-review-tree", tree_manifest(identity))
-                    state["reviewManifestId"] = reviewed.manifest_id
-                    state["finalReview"] = {
-                        "source": source, "status": verdict, "intakeEvidence": intake_write.evidence_id,
-                        "findings": "pending" if _stage_unresolved(state, stage, source) else "none",
-                    }
-                    state["judgedTree"] = expected_candidate_tree or _active_candidate_tree(identity)
-                    state.pop("finalReviewContextMismatchEvidence", None)
-                    state["phase"] = "final-review"
+                state["finalStarted"] = True
+                reviewed = manifest_write(str(state["workflowId"]), "final-review-tree", tree_manifest(identity))
+                state["reviewManifestId"] = reviewed.manifest_id
+                state["finalReview"] = {
+                    "source": source, "status": verdict, "intakeEvidence": intake_write.evidence_id,
+                    "findings": "pending" if _stage_unresolved(state, stage, source) else "none",
+                }
+                state["judgedTree"] = expected_candidate_tree or _active_candidate_tree(identity)
+                state.pop("finalReviewContextMismatchEvidence", None)
+                state["phase"] = "final-review"
         else:
             raise ValueError(f"unsupported advisor stage: {stage}")
         state["nextAction"] = _derive_next_action(state)
         return _commit(
             transaction, state, f"advisor-{stage}-result", evidence=writes,
-            manifests=[reviewed] if stage == "final" and verdict != "context-mismatch" and ready else (),
+            manifests=[reviewed] if stage == "final" and verdict != "context-mismatch" else (),
         )
 
 
@@ -1167,14 +1156,8 @@ def completion_missing(state: JsonObject) -> list[str]:
 CHECKPOINT_PHASES = {"preflight-advice", "code-review", "final-review"}
 
 
-def _finding_ledger(
-    identity: RepoIdentity, state: JsonObject, items: list[JsonObject],
-) -> list[JsonObject]:
-    """Every recorded finding's immutable claim and status, with each binding case the runner re-executes."""
-    from .tdd_workflow import _retained
-    cases: dict[int, list[JsonObject]] = {}  # every binding case; the ledger is a file the advisor reads on demand
-    for entry, finding in _retained(identity, state):
-        cases.setdefault(id(entry), []).append({key: finding[key] for key in ("ref", "probe", "change", "execution") if key in finding})
+def _finding_ledger(identity: RepoIdentity, state: JsonObject) -> list[JsonObject]:
+    """Every recorded finding's immutable claim and status; its intake evidence holds the cases."""
     states = state.get("findingStates")
     intakes: dict[str, dict[str, JsonObject]] = {}
     ledger: list[JsonObject] = []
@@ -1193,7 +1176,6 @@ def _finding_ledger(
             "findingId": entry.get("findingId"), "kind": entry.get("kind"),
             "material": entry.get("material"), "status": entry.get("status"),
             "claim": recorded.get("claim"),
-            **({"cases": cases[id(entry)]} if id(entry) in cases else {}),
             **{key: entry[key] for key in ("canonicalFinding", "observations", "dispositionEvidenceId") if key in entry},
         })
     return ledger
@@ -1212,7 +1194,7 @@ CHANNELS = (
     ("intent", "original request: the completeness oracle this pass answers to"),
     ("advisor-projection", "advisor projection (schemaVersion 1)"),
     ("behavior-map", "preflight artifact / current probe list with bound comparison outcomes: challenge expectations and coverage"),
-    ("finding-ledger", "finding ledger: each finding's immutable claim, status and binding cases"),
+    ("finding-ledger", "finding ledger: each finding's immutable claim, status and evidence pointer"),
     ("quality-candidates", "non-blocking gate candidates: locations and matching rules; investigate their actual cost and necessity"),
     ("diff", "current-pass diff: passStartOid^{tree} -> activeCandidateTree; a deleted file is its header and line count"),
 )
@@ -1238,8 +1220,7 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
     requirements = (
         ("workflowId", workflow_id is not None),
         ("open-workflow", open_for_phase),
-        ("advisor-stage", reviewing or reconsult or state.get("nextAction") in stage_actions[phase]
-         or phase == "final-review" and _review_assessed(state)),
+        ("advisor-stage", reviewing or reconsult or state.get("nextAction") in stage_actions[phase]),
         ("passStartOid", _is_commit_oid(identity, state.get("passStartOid"))),
         *(
             (("repo-context-forge", _allows_next(state, "repo-context-forge")),)
@@ -1248,7 +1229,7 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
                 ("tdd", _allows_next(state, "tdd")),
                 ("preflight", _allows_next(state, "preflight")),
                 ("verification", _allows_next(state, "verification")),
-                *(() if reviewing else (("code-review", _allows_next(state, "code-review") or _review_assessed(state)),)),
+                *(() if reviewing else (("code-review", _allows_next(state, "code-review")),)),
             )
         ),
     )
@@ -1258,6 +1239,8 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
             missing.append("preflight draft (--preflight-file)")
         if state.get("preflightLatestEvidence"):
             missing.append("preflight is already recorded; draft consultations are closed")
+        elif (rounds := int(state.get("preflightRounds", 0))) != int(reconsult):
+            missing.append(f"preflight takes exactly two consultations, the second resuming the first with --reconsult; {rounds} recorded")
     evidence_id = state.get("repoContextForgeEvidence")
     graph_document = evidence_document(
         identity, evidence_id if isinstance(evidence_id, str) else None,
@@ -1318,14 +1301,16 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
         shape = json.loads(ADVISOR_SHAPES["preflight" if phase == "preflight-advice" else "final"])
         if phase == "final-review":
             shape.update(workflowId=workflow_id, candidateTree=candidate, tddEvidence=state.get("tddEvidence"))
+        elif reconsult:  # the second consultation completes the draft
+            shape["verdict"] = "approved"
         result["responseFormat"] = json.dumps(shape)
     if state.get("tddEvidence"):
         cli = Path(__file__).resolve().parents[2] / "skills/repo-production-workflow/scripts/workflow.py"
         result["evidenceCommand"] = shlex.join([sys.executable, str(cli), "evidence", "--repo", identity.root,
-            "--evidence-id", state["tddEvidence"], "--full"])
+            "--evidence-id", state["tddEvidence"]])
     if channel_dir is None:
         return result
-    ledger = _finding_ledger(identity, state, items)
+    ledger = _finding_ledger(identity, state)
     contract = ((evidence_document(identity, state.get("preflightEvidence")) or {}).get("document") or {}).get("authoritativeContract")
     views: dict[object, JsonObject] = {}
     rendered = []
@@ -1336,7 +1321,8 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
             entry["comparison"] = ({key: run[key] for key in ("runIndex", "valid", "fresh") if key in run}
                                    if run["runIndex"] in views else views.setdefault(run["runIndex"], behavior_map.comparison_view(run)))
         rendered.append(entry)
-    map_content = ({"preflightInterpretation": contract, **_readiness_lines(identity, state, items), "items": rendered}
+    map_content = ({"preflightInterpretation": contract, **_readiness_lines(identity, state, items), "items": rendered,
+                    **({"retired": lapsed} if (lapsed := (evidence_document(identity, state.get("tddEvidence")) or {}).get("retired")) else {})}
                    if contract or items else None)
     if phase == "preflight-advice" and preflight_draft is not None:
         previous = evidence_document(identity, (state.get("advisorPreflight") or {}).get("intakeEvidence")) or {}
@@ -1560,14 +1546,19 @@ def _readiness_lines(identity: RepoIdentity, state: JsonObject, items: list[Json
     observations = behavior_map.current_cases(items, (document or {}).get("runs", []), retired)
     refresh_proof(identity, [*observations, *evaluation], candidate=candidate, runs=(document or {}).get("runs", []))
     cases = behavior_map.open_obligations(items, evaluation, observations)
+    if document:
+        from . import removed_conditions
+        original = _git(identity, "rev-parse", f"{state['passStartOid']}^{{tree}}").decode().strip()
+        traces = document.get("conditions") or {}
+        cases += removed_conditions.undecided(removed_conditions.removed(identity, original, candidate), [
+            traces.get(run["arms"][0]["key"], {}) for run in (entry["comparison"] for entry in [*observations, *evaluation]) if run.get("arms")])
     review = review if review is not None else evidence_document(identity, state.get("codeReviewEvidence"))
     current = bool(review and review.get("workflowId") == state["workflowId"] and review.get("candidateTree") == candidate and review.get("verdict") == "complete" and not _stage_unresolved(state, "code-review", "code-review"))
     return {"open": cases, "reviewCurrent": current, "openCount": len(cases),
             "never": behavior_map.never_compared(items)}
 
 def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObject | None = None, *,
-                   preflight_draft: JsonObject | None = None, preflight_file: str | None = None,
-                   obligations: bool = True) -> JsonObject:
+                   preflight_file: str | None = None, obligations: bool = True) -> JsonObject:
     """Bind the selected operation once for command results and recovery."""
     scripts = Path(__file__).resolve().parents[2] / "skills"
     cli = [sys.executable, str(scripts / "repo-production-workflow/scripts/workflow.py")]
@@ -1610,16 +1601,15 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
         advice = state.get("advisorPreflight") or {}
         intake = (evidence_document(identity, advice.get("intakeEvidence")) or {}) if preflight else {}
         draft = intake.get("preflightDraft")
-        if (preflight and advice.get("status") == "approved" and intake.get("verdict") == "approved"
-                and isinstance(draft, dict) and (preflight_draft is None
-                or json.dumps(draft, sort_keys=True) == json.dumps(preflight_draft, sort_keys=True))):
+        # A first approval is held pending, so an approved status is the second consultation's: publish its draft.
+        if preflight and advice.get("status") == "approved" and intake.get("verdict") == "approved" and isinstance(draft, dict):
             return {"command": shlex.join([*cli, "record", "preflight", *bound])}
         design = repo_state_dir(identity) / "designs" / f"{state['workflowId']}.md"
         declaration = evidence_document(identity, state.get("governedDesignEvidence")) or {}
         if preflight or declaration:
             command = [str(scripts / "codex-advisor/scripts/ask-codex-advisor.sh"), "--slug", str(state["slug"]),
                        "--phase", "preflight-advice" if preflight else "final-review", "--cwd", str(identity.root)]
-            needed = ["This consult takes several minutes. Wait for it in a single call of up to 300 seconds; do not set a shorter wait or yield limit anywhere, and do not poll. The call returns as soon as the consult finishes."]
+            needed = ["Run it once. If the call returns while it is still running, collect its result with one empty poll of up to 300 seconds. Never sleep or poll in shorter steps."]
             if preflight:
                 if design.is_file():
                     command += ["--design-file", str(design)]
@@ -1642,7 +1632,7 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
         ids = [str(entry["id"]) for entry in behavior_map.recorded_map(evidence_document(
             identity, state.get("tddEvidence") or state.get("preflightEvidence"), restore_runs=False)) or []]
         operation: JsonObject = {"command": shlex.join(command),
-                                "input": f"--case ID 'COMMAND' per case (recorded: {', '.join(ids) or 'none'}); use - for no item. Supply --change ID=FILE for each item’s behavior break. Omit cases to run every recorded command and frozen break."}
+                                "input": f"--case ID 'COMMAND' per case (recorded: {', '.join(ids) or 'none'}); use - for no item. Omit cases to run every recorded command."}
         if pending:
             operation["findings"] = pending
         if questions:

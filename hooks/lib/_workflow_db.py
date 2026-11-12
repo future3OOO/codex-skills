@@ -15,7 +15,7 @@ import sqlite3
 import zlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator, NoReturn, Sequence
+from typing import Callable, Iterator, NoReturn, Sequence
 from .repo_identity import RepoIdentity
 from .state_store import _candidate_matches, codex_home, repo_state_dir, utc_timestamp
 DATABASE_NAME = "workflow.sqlite3"
@@ -524,7 +524,8 @@ def read_active(identity: RepoIdentity) -> JsonObject | None:
         if state is not None:
             _validate_state_identity(identity, state)
         return state
-def read_evidence(identity: RepoIdentity, evidence_id: str, *, restore_runs: bool = True) -> JsonObject | None:
+def read_evidence(identity: RepoIdentity, evidence_id: str, *, restore_runs: bool | Callable[[str], bool] = True) -> JsonObject | None:
+    """The evidence envelope; a callable `restore_runs` decides from the evidence kind within the one read."""
     if _store_exists(identity):
         with _connection(identity) as connection:
             row = connection.execute(
@@ -539,7 +540,8 @@ def read_evidence(identity: RepoIdentity, evidence_id: str, *, restore_runs: boo
                     "kind": str(row["kind"]),
                     "schemaVersion": int(row["schema_version"]),
                     "recordedAt": str(row["recorded_at"]),
-                    "document": _document(connection, str(row["document_json"]), restore_runs=restore_runs),
+                    "document": _document(connection, str(row["document_json"]), restore_runs=(
+                        restore_runs if isinstance(restore_runs, bool) else restore_runs(str(row["kind"])))),
                 }
     return None
 

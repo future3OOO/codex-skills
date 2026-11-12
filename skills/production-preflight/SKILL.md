@@ -85,8 +85,8 @@ removes. New terms use the existing owner's result; use request-grounded propert
 only when no owner exists. A round-trip must also establish the requested effect.
 The advisor's deciding work and runtime assertions supplement functional proof.
 
-Describe concrete inputs and outcomes. Bind a command after its executable probe
-exists; the runner captures it. Do not create obligations from proposed test names.
+Describe concrete inputs and outcomes. List a command under the item's `cases` once its executable
+probe exists (a draft whose command runs a missing script is refused); recording preflight captures and runs it. Do not create obligations from proposed test names.
 
 Remove every element whose deletion preserves required behavior and distinct necessary proof without increasing whole-system cost. Use real collaborators and observe results and state effects.
 
@@ -96,7 +96,7 @@ Update changed items by id with `record tdd-map` when obligations change. The ru
 
 ## Recording
 
-Submit the exact artifact through [Codex Advisor's preflight loop](../codex-advisor/SKILL.md#preflight-advice) before tracked edits.
+Submit the exact artifact through [Codex Advisor's two-round preflight](../codex-advisor/SKILL.md#preflight-advice) before tracked edits.
 Record it once the advisor returns `approved` for that content.
 
 The runtime continuation supplies the recording command. Record the approved draft

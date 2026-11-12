@@ -45,10 +45,10 @@ ACTIVE_PASS = "active-pass.json"
 STOP_PAYLOAD = ("blockFingerprint", "message")
 # The evidence producers write different fields; neither family is canonical.
 STAMPS = ("recordedAt", "updatedAt", "createdAt")
-# Wrapper-written session pointers: {repository key}-{slug}-{instance}.sid.
-# Only the trailing instance id is parsed; slugs may themselves contain "-".
+# Wrapper-written session files: {repository key}-{slug}-{instance}.{provider}.sid and its .held
+# sibling, or the legacy .sid. Only the instance id is parsed; slugs may themselves contain "-".
 ADVISOR_SESSIONS = "_advisor-sessions"
-SID = re.compile(r"-([0-9a-f]{32})\.sid\Z")
+SID = re.compile(r"-([0-9a-f]{32})(?:\.(?:codex|claude)\.(?:sid|held)|\.sid)\Z")
 
 
 def _stamp(document: dict[str, object]) -> datetime | None:

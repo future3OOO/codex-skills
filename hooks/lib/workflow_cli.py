@@ -13,6 +13,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+from . import behavior_map
 from ._workflow_db import CHECK_ONLY, LedgerError, _canonical, history, read_active, read_evidence
 from .command_runner import emit_json as _emit_json, print_output as _print_output, run as _run, run_entry as _run_entry
 from .repo_identity import RepoIdentity, RepoIdentityError, resolve_repo_identity
@@ -87,7 +88,7 @@ def parser() -> argparse.ArgumentParser:
     command.add_argument("--workflow-id")
     command = _repo(commands.add_parser("history", help="read ordered accepted events"))
     command.add_argument("--workflow-id")
-    command = _repo(commands.add_parser("evidence", help="evidence metadata; --full for the document"))
+    command = _repo(commands.add_parser("evidence", help="evidence metadata and compact comparisons, a finding intake without its replayed runs or their bytes; --full for the raw document"))
     command.add_argument("--evidence-id", required=True)
     command.add_argument("--full", action="store_true")
 
@@ -356,12 +357,17 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
         except WorkflowError as exc:
             print(str(exc), file=sys.stderr)
             _emit_json({"error": str(exc), "next": next_operation(
-                identity, bound_state(identity, slug, workflow_id), preflight_draft=document,
+                identity, bound_state(identity, slug, workflow_id),
                 preflight_file=str(Path(args.input).resolve()) if args.input and args.input != "-" else None)})
             return 2
-        emit(_receipt(state, identity, evidenceId=evidence_id, status="passed",
-                      **({"draftEdits": intake["draftEdits"]} if intake.get("draftEdits") else {})))
-        return 0
+        edits = {"draftEdits": intake["draftEdits"]} if intake.get("draftEdits") else {}
+        if args.check or not any(item.get("cases") for item in document["behaviorMap"]):
+            emit(_receipt(state, identity, evidenceId=evidence_id, status="passed", **edits))
+            return 0
+        _emit_json({"evidenceId": evidence_id, "status": "passed", **edits})  # the draft's declared cases run now; their receipt carries the continuation
+        from .tdd_workflow import _run_tdd
+        _run_tdd(["--repo", str(identity.root), "--slug", slug, "--workflow-id", workflow_id])
+        return 0  # the draft is recorded; the rows and open lines say which declared case does not yet hold
     if args.kind == "tdd-map":
         from .tdd_workflow import map_update
         emit(map_update(identity, state, _document(args, "TDD map update")))
@@ -431,12 +437,16 @@ def _dispatch(args: argparse.Namespace) -> int:
     elif args.command == "history":
         _emit_json(history(identity, args.workflow_id))
     elif args.command == "evidence":
-        value = read_evidence(identity, args.evidence_id, restore_runs=args.full)
+        value = read_evidence(identity, args.evidence_id, restore_runs=lambda kind: args.full or not kind.startswith("finding-intake"))
         if value is None:
             raise WorkflowError("evidence not found")
         document = value.pop("document")
-        _emit_json({**value, "document": document} if args.full else {
-            **value, "bytes": len(_canonical(document).encode()), "fields": sorted(document)})
+        if not args.full:
+            if value["kind"].startswith("finding-intake"):
+                document.pop("runs", None)
+            value.update(bytes=len(_canonical(document).encode()), fields=sorted(document))
+            document = {key: view for key, field in document.items() if (view := behavior_map.compact(field)) != field}
+        _emit_json({**value, **({"document": document} if document or args.full else {})})
     elif args.command == "set-phase":
         if (args.phase, args.status, args.findings) != ("code-review", "not-required", "none"):
             raise ValueError("set-phase records only --phase code-review --status not-required --findings none; "

@@ -21,11 +21,14 @@ The advisor designs against [Production Preflight's frozen evaluation and archit
 checking preservation against executed original results and challenging change expectations and costs.
 
 The advisor derives required work and outcomes using the proposed owners and reuse
-paths as inputs. The lead checks its source claims and updates the draft. Resume
+paths as inputs, and proposes the performance cases with their bounds. The lead checks
+its source claims and updates the draft, listing those cases' commands in it. Resume
 with `--reconsult` for the advisor to
-finalise and approve it. Further unresolved gaps stay in that session; there is no call quota.
+finalise and approve it. Preflight is exactly these two consultations in one advisor session:
+the second completes the draft, so `approved` is its only verdict and a third is refused.
 The first consult receives the whole draft. Reconsults send its delta with both
-content identities; failed results keep that base.
+content identities; failed results keep that base. A resumed consult, preflight or
+final, carries only the sections whose bytes changed since its session last received them.
 
 Preflight records the governing-design declaration: `--design-file` with the
 durable design artifact of a planned stack, or `--design-absent` with a reason; a
@@ -64,13 +67,11 @@ records as new evidence), the finding ledger, and one direct `passStartOid^{tree
 activeCandidateTree` diff, each deleted file as its header and line count.
 The consult runs in the lead checkout with full execution access and its installed estate.
 The wrapper supplies and cleans an original snapshot at passStartOid and scratch for probes.
-Use the supplied source prefixes and recorded project executable; check imported source paths.
-Run new preservation probes on original and candidate; test new behavior against the request.
-Leave candidate files, Git state and workflow state unchanged. This is trusted access;
+This is trusted access;
 preflight skips the candidate-staleness check, which neither restores nor confines writes.
 
 Findings follow the workflow's [executable evidence and acceptance order](../repo-production-workflow/SKILL.md#10-delegate-code-review).
-Final advice remains available while proof is pending; only current proof permits approval. The wrapper records the verdict without running cases. Submit new executable findings through `tdd --as final` before returning the verdict; its payload contains only report lines or recorded references. Retained findings run at `verify` or `complete`, with results cached by candidate tree. `context-mismatch` is reserved for candidate/projection identity mismatch;
+The wrapper records the verdict without running cases. `context-mismatch` is reserved for candidate/projection identity mismatch;
 it advances nothing. State never authorizes Git.
 
 ## Invocation

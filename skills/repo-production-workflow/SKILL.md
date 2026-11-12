@@ -32,10 +32,21 @@ The repository-scoped SQLite event ledger remembers accepted transitions, logica
 
 Follow the operation result's `next.command`; `next.input` names any judgment,
 document or argument still needed and its form. Retain the returned evidence IDs.
-On resume or after edits,
-use `workflow.py summary --repo <checkout>` for current recovery guidance;
-`status --fields <fields>` supplies missing facts. Resume the same pass.
-Use the runtime help and returned continuation for current commands and input forms.
+On resume or after edits, `summary` gives current recovery guidance and
+`status --fields` supplies missing facts. Resume the same pass.
+The returned continuation carries each next command. The lead's own forms
+(`workflow.py` is `python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py"`;
+[recorder.md](../tdd/recorder.md#record-a-case) has the `tdd` forms):
+
+```text
+workflow.py begin --repo "$PWD" --slug <task> --intent-file <request.md>
+workflow.py summary --repo "$PWD"
+workflow.py status --repo "$PWD" --fields nextAction,tdd,verification,codeReview,finalReview
+workflow.py record preflight --repo "$PWD"
+workflow.py verify --repo "$PWD"
+workflow.py evidence --repo "$PWD" --evidence-id <id>
+workflow.py complete --repo "$PWD"
+```
 
 ## Mandatory order
 
@@ -48,7 +59,7 @@ Stop on packet blockers. The packet fixes the initial target and coverage surfac
 
 Derive verification from the user's intended production behavior using
 [Production Code's outcome verification](../production-code/SKILL.md#minimum-implementation-decision).
-The lead owns correctness and optimization for every task, through implementation
+The lead owns correctness and performance for every task, through implementation
 and repair; the independent reviewer challenges it. Use the packet to trace affected paths, state skipped and
 preserved surfaces, and establish review-budget fit. Apply `diagnose` to bugs,
 regressions and performance failures before choosing a correction.
@@ -65,10 +76,12 @@ Its map states required outcomes, concrete inputs and any competing readings. In
 `codebase-design` when changing a Module, public Interface or Seam. The draft owns
 the contract and planned attacks.
 
-Submit the exact draft through [Codex Advisor's preflight loop](../codex-advisor/SKILL.md#preflight-advice).
+Submit the exact draft through [Codex Advisor's two-round preflight](../codex-advisor/SKILL.md#preflight-advice).
 The advisor investigates. The lead checks deletion claims against every original
 outcome controlled by the affected logic and corrects false premises. The advisor
 then finalises and approves the draft in the same session. Record only that approval.
+The first implementation builds the approved design, performance improvements
+included; setting one aside needs a measured reason.
 
 ### 5. Record approved preflight once
 
@@ -85,7 +98,7 @@ Invoke `production-code` for its standards and baseline gate. Reuse the existing
 
 ### 8. Implement and compare
 
-Continue TDD's [required probe loop](../tdd/SKILL.md#required-probe-loop): implement the chosen
+Continue TDD's [required probe loop](../tdd/SKILL.md#required-probe-loop): implement the approved
 design against the recorded baseline, reconcile the actual diff, and compare the same
 case commands on the candidate. Add commands for uncovered outcomes; reuse unchanged proof.
 
@@ -100,10 +113,9 @@ candidate. Follow the receipt for stale comparisons, failed checks and continuat
 
 ### 10. Delegate code review
 
-Request a completion verdict after the lead completes the investigation, repair,
-real outcome assessment and verification in steps 2–9. Investigation and incoming
-finding intake remain available while proof is pending. They do not replace
-the proof required for completion.
+Do not spawn or task the reviewer until the lead has completed the investigation,
+repair, real outcome assessment and verification in steps 2–9. Missing lead proof
+is work for the lead before initial or return review.
 
 Before final advisor review, obtain independent `code-review` of the original
 objective and current candidate. Lead self-cleanup and later GitHub review do not replace this
@@ -122,13 +134,13 @@ valid execution solely for handoff. The lead owns repairs, TDD and verification;
 the reviewer owns its evidence and verdict. Start a fresh reviewer only when its
 context is unavailable or scope/architecture makes it unusable, naming the reason.
 
-Required behavior stays fixed. Seek the lowest justified whole-system cost in the
-affected production path, including existing bloat. A replacement must preserve
+Required behavior stays fixed. A replacement must preserve
 frozen proof and required surviving checks; necessary growth must buy demonstrated
 cost reduction. The runtime owns acceptance and rechecks retained findings after
 repair, including reopening when waste returns. For a missing request promise,
 reconcile the requirement and extend affected coverage before implementing it.
-Verification and review can run with open findings; they block completion.
+Every map item is closed before review. Verification and return review can run
+with open reviewer findings; those block completion.
 
 ### 11. Final Codex Advisor review
 
@@ -139,7 +151,8 @@ acceptance gaps; load only missing evidence, not the verification history.
 The final Codex Advisor investigates in the lead checkout using the recorded project executable and original source. Invoke the wrapper's
 `final-review` phase with the same slug and follow its runtime continuation. The
 advisor records probes through the shared TDD command; the wrapper records its
-semantic verdict. After the first final verdict, a correction
+semantic verdict. A finding's intake, read with `workflow.py evidence`, carries its claim,
+replacement diff and failing output. After the first final verdict, a correction
 needs the affected `tdd` rerun, verification for the new tree, and the final advisor's re-check. Reuse independent review and applicable evidence. Retained findings run only at `verify` or `complete`; intermediate review calls skip them. Once every
 final finding is settled (`nextAction` `complete-workflow`), a requested
 reassessment of the unchanged candidate runs the same `final-review` phase and records

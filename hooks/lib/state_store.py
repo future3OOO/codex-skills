@@ -18,6 +18,7 @@ from typing import Iterable, Iterator
 import fcntl
 
 from .repo_identity import RepoIdentity
+from . import codex_home as codex_home, secure_dir, state_root  # codex_home: re-exported for this Module's importers
 
 _PATH_POLICY_FILE = (
     Path(__file__).resolve().parents[2]
@@ -50,21 +51,6 @@ def _comparison_scope():
                     finish()
             finally:
                 _EXECUTION.reset(token)
-
-
-def codex_home() -> Path:
-    return Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")).expanduser()
-
-
-def secure_dir(path: Path) -> Path:
-    path.mkdir(parents=True, exist_ok=True, mode=0o700)
-    path.chmod(0o700)
-    return path
-
-
-def state_root() -> Path:
-    override = os.environ.get("CODEX_WORKFLOW_STATE_ROOT")
-    return secure_dir(Path(override).expanduser() if override else codex_home() / "state")
 
 
 def repo_state_dir(identity: RepoIdentity) -> Path:

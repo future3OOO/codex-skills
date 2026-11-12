@@ -160,9 +160,9 @@ The packet's `<gitnexus_analysis>` already answers every `<check>` the plan
 listed — `kind="symbol_context"` entries carry their callers, `kind="symbol_impact"`
 entries their impacted files. Read those entries rather than reissuing the same
 calls. No entry carries callees, so the analysis never completes the
-callers-AND-callees requirement on its own. Spend MCP calls on what the packet
-did not fix: callees of anything you are about to edit, a symbol the plan
-omitted, and the post-edit validation below.
+callers-AND-callees requirement on its own. Spend one scoped `cypher` query on
+each relationship the packet did not fix: callees of anything you are about to
+edit, or a symbol the plan omitted. Post-edit validation is below.
 
 When you do call out:
 

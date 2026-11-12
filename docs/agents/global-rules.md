@@ -60,6 +60,8 @@ Repo Context Forge analysis copy. For codex-skills installation, follow
 
 ## Simplicity First
 
+- Performance is a requirement. Ask what the change costs the person using it: they demand bare-metal performance
+  with the required behavior and no regressions. Setting performance improvements aside needs a measured reason.
 - Assume your first implementation is bloated. Find the best justified whole-system design for the objective, including production code,
   tests, scripts, documentation, maintenance and execution; keep only what it needs while preserving required behavior and proof. Retain real
   attack probes; cut redundant scaffolding and mocked unit-test bloat from this change.
@@ -113,15 +115,14 @@ Delegated reviewers consume the lead's packet under `$code-review`; no bootstrap
 
 ## GitNexus
 
-Use FFF first for raw discovery; honor packet scope when present. Use GitNexus
-MCP for agent graph analysis; harness runtime may use scoped Cypher CLI queries. Follow `$repo-context-forge`
+Use FFF first for raw discovery; honor packet scope when present. Follow `$repo-context-forge`
 for repo selection, executed-check reuse, and required post-edit validation.
 
-Before edits, reuse applicable packet and graph results; query only what they
-leave unanswered: upstream `impact` with tests for changed indexed symbols and
-shared contracts (downstream too when moving, deepening, consolidating, or hiding
-behavior), callers and callees of changed symbols, every shared-state writer and
-its risk, and the tested owner of an internal Seam a new file consumes.
+Before edits, reuse the packet's graph results. For each relationship they leave
+unanswered (a caller, callee or shared-state writer of a changed symbol and its risk, the tested
+owner of an internal Seam a new file consumes) run one scoped `cypher` query; use
+`impact` with tests only for blast radius the packet omitted, downstream too when moving,
+deepening, consolidating or hiding behavior. Never list or print tool definitions.
 
 Never use `detect_changes` to select initial targets or as primary safety proof.
 Graph output must not shrink packet scope, the PR contract, or no-change surfaces.

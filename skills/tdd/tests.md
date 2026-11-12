@@ -127,7 +127,7 @@ The batch is complete only when every changed condition has a pair in each of it
 
 ### Context completeness
 
-The runner checks each bound command's exit on both sources. It does not prove Interface reach, context completeness or pair independence. Derive feasible contexts from the original decision and diff; the existing advisor and reviewer judge the evidence.
+The runner checks each bound command's exit on both sources and, for Python, keeps the pass open while a condition the edit removes has no recorded case deciding it on the original. It does not otherwise prove Interface reach, context completeness or pair independence. Derive feasible contexts from the original decision and diff; the existing advisor and reviewer judge the evidence.
 
 - Match pairs by **condition AND decisive context**, including contexts for retained outcomes.
 - Count a pair only if its executions show an original decision flip (the edited decision for an added condition) in that exact context. Establish the condition values from execution or independently checked fixture facts, never from labels.
@@ -147,7 +147,7 @@ Use the existing probes and batch results.
 
 ## Attribution
 
-The existing reviewer must check that a claimed regression comes from the affected behavior, using the source and raw output. The recorder compares exit codes and requires each command to fail under its supplied behavior break. It does not classify collection, import, setup or missing-API failures; the reviewer must check the break’s validity. A failure before the asserted operation does not establish that operation's behavior.
+The existing reviewer must check that a claimed regression comes from the affected behavior, using the source and raw output. The recorder compares exit codes. It does not classify collection, import, setup or missing-API failures. A failure before the asserted operation does not establish that operation's behavior.
 
 Assert meaningful public outputs and state effects with real collaborators. For a rejected transfer, assert the error, unchanged independently read balances and uncommitted result. Keep every independently falsifiable obligation covered. The runner executes the same assertions on each source version; existing review checks whether those assertions express the original objective.
 
