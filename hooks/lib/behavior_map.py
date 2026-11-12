@@ -10,8 +10,8 @@ JsonObject = dict[str, object]
 REQUIRED_FIELDS = frozenset({"id", "basis", "behavior", "seam", "expected"})
 KINDS = frozenset({"conformance", "contract", "preservation"})
 READING_FIELDS = frozenset({"interpretations", "interpretation", "authority"})
-# Optional map fields; witness and reading updates re-judge retained proof.
-JUDGEMENT_FIELDS = READING_FIELDS | {"kind", "basis", "boundaryInputs"}
+# Optional map fields; witness and reading updates re-judge retained proof. `cases` holds declared commands not yet captured.
+JUDGEMENT_FIELDS = READING_FIELDS | {"kind", "basis", "boundaryInputs", "cases"}
 IDENTIFIER = re.compile(r"^[A-Z][A-Z0-9_-]{1,63}$")
 
 
@@ -33,6 +33,8 @@ def _recorded_fields(raw: JsonObject) -> JsonObject:
         fields["kind"] = raw["kind"]
     if "boundaryInputs" in raw:
         fields["boundaryInputs"] = copy.deepcopy(raw["boundaryInputs"])
+    if values := _strings(raw.get("cases")):
+        fields["cases"] = values
     if (values := _strings(raw.get("interpretations"))) and len(values) >= 2:
         fields["interpretations"] = values
     if "interpretations" in fields and _text(raw.get("interpretation")) and _text(raw.get("authority")):
@@ -53,6 +55,8 @@ def map_errors(value: object, *, allow_runtime: bool) -> list[str]:
             errors.append("probe id must be a unique uppercase identifier: " + identifier)
         seen.add(identifier)
         errors.extend(f"probe {identifier} requires {field}" for field in REQUIRED_FIELDS if not _text(raw.get(field)))
+        if raw.get("cases") not in (None, []) and _strings(raw["cases"]) is None:
+            errors.append(f"probe {identifier} cases must be a list of commands")
         if not allow_runtime:
             if not (isinstance(raw.get("kind"), str) and raw["kind"] in KINDS):
                 errors.append(f"probe {identifier} requires kind: conformance, contract or preservation")

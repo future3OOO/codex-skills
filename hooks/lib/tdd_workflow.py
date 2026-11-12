@@ -95,7 +95,13 @@ def refresh_proof(identity: RepoIdentity, items: list[JsonObject], *, candidate:
                                            _source_input(identity, control["originalTree"], control["probeTree"], tuple(_comparison_files(identity, control)))))
 
 
-def _probe_files(command: list[str], identity: RepoIdentity, support: list[str], virtual: str | None = None) -> list[str]:
+def _scratch(identity: RepoIdentity, name: str) -> Path | None:
+    """The regular file outside the checkout that `name` resolves to."""
+    path = (Path(identity.root) / name).resolve()
+    return path if path.is_file() and not path.is_relative_to(identity.root) else None
+
+
+def _probe_files(command: list[str], identity: RepoIdentity, support: list[str], virtual: list[str] = ()) -> list[str]:
     root = Path(identity.root)
     names = _git(identity, "ls-files", "--cached", "--others", "--exclude-standard", "-z")
     paths = {name for raw in names.split(b"\0") if raw
@@ -108,16 +114,14 @@ def _probe_files(command: list[str], identity: RepoIdentity, support: list[str],
             name = os.path.relpath(root / value, root)
             if is_test_path(name) or not (root / name).resolve().is_relative_to(root):
                 paths.add(name)
-    paths.update(os.path.relpath(os.path.normpath(root / name), root) for name in support)
-    if virtual:
-        paths.add(virtual)
-    for name in paths - {virtual}:
+    paths.update(os.path.relpath(os.path.normpath(root / name), root) for name in support if not _scratch(identity, name))
+    for name in paths:
         path = root / name
         if not path.is_file() or not path.resolve().is_relative_to(root):
-            raise WorkflowError("probe support must be an in-repository regular file: " + name)
+            raise WorkflowError("probe support is not a regular file: " + name)
         if not is_test_path(name):
             raise WorkflowError("unsupported probe: production source cannot be overlaid as test support: " + name)
-    return sorted(paths)
+    return sorted(paths | set(virtual))
 
 
 def _comparison_files(identity: RepoIdentity, probe: JsonObject) -> list[str]:
@@ -759,39 +763,39 @@ def _kept_tests(identity: RepoIdentity, candidate: str, original: str, overrides
 
 def _probe_capture(identity: RepoIdentity, probe: object, candidate: str, timeout: float,
                    support: list[str] | None = None, inventory: list[str] | None = None, preserved: str | None = None) -> JsonObject:
-    """Freeze the command's existing sources, optionally reading one scratch probe file."""
+    """Freeze the command's sources. Every regular file outside the checkout that `path`, support or a command
+    argument names (a program binary aside) lands in one probe directory, each keeping its place relative to the others."""
     if not (isinstance(probe, dict) and set(probe) <= {"path", "command"}
-            and isinstance(probe.get("command"), str) and probe["command"].strip()):
-        raise ValueError("probe needs command and, for a new scratch file, path; source content is not an input")
+            and isinstance(probe.get("command"), str) and probe["command"].strip()
+            and ("path" not in probe or isinstance(probe["path"], str) and (Path(identity.root) / probe["path"]).is_file())):
+        raise ValueError("probe needs command and, for a scratch file no command names, a readable path; source content is not an input")
     command = shlex.split(probe["command"])
     source_command = shlex.join(command)
+    places = dict.fromkeys(path for name in (*([probe["path"]] if "path" in probe else []), *(support or [])) if (path := _scratch(identity, name)))
+    places.update(dict.fromkeys(path for arg in command[1:] if (path := _scratch(identity, arg.split("::", 1)[0]))
+                                and not (os.access(path, os.X_OK) and path.open("rb").read(4) == b"\x7fELF")))
+    support = [name for name in support or [] if not _scratch(identity, name)]
     overrides = {os.path.relpath(os.path.normpath(Path(identity.root) / name), identity.root) for name in support or []}
     tree, original_files = _kept_tests(identity, candidate, preserved, tuple(sorted(overrides))) if preserved else (candidate, set())
-    virtual = None
-    if "path" not in probe:
-        external = [arg for arg in command[1:] if os.path.isfile(Path(identity.root) / arg)
-                    and not (Path(identity.root) / arg).resolve().is_relative_to(identity.root)]
-        if len(external) == 1:
-            probe = {**probe, "path": external[0]}
-    if "path" in probe:
-        if not isinstance(probe["path"], str) or not probe["path"]:
-            raise ValueError("probe path must name a readable scratch file")
-        source = (Path(identity.root) / probe["path"]).resolve()
-        if source.is_relative_to(identity.root) or not source.is_file():
-            raise ValueError("use command for an existing case; a new probe path must be a scratch file outside the checkout")
-        positions = [index for index, arg in enumerate(command)
-                     if (Path(identity.root) / arg.split("::", 1)[0]).resolve() == source]
-        if not positions:
-            raise ValueError("the direct probe command must name its scratch file")
-        blob = _git(identity, "hash-object", "-w", "--", str(source)).decode().strip()
-        virtual = f"tests/.workflow-probes/{blob}/{source.name}"
-        mode = "100755" if source.stat().st_mode & 0o111 else "100644"
-        tree = _indexed(identity, tree, (("update-index", "--add", "--cacheinfo", f"{mode},{blob},{virtual}"), None))
-        for index in positions:
-            command[index] = virtual + command[index][len(command[index].split("::", 1)[0]):]
-    elif frozen := [match for arg in command[1:] if (match := re.fullmatch(r"tests/\.workflow-probes/([0-9a-f]{40,64})/[^/]+", arg.split("::", 1)[0]))]:
-        virtual = frozen[0][0]  # a captured probe command rebinds the blob its path names
-        tree = _indexed(identity, tree, (("update-index", "--add", "--cacheinfo", f"100644,{frozen[0][1]},{virtual}"), None))
+    virtual: list[str] = []
+    if places:
+        base = os.path.commonpath([path.parent for path in places])
+        places = {path: os.path.relpath(path, base) for path in places}
+        frozen = _indexed(identity, _git(identity, "hash-object", "-t", "tree", "--stdin", stdin=b"").decode().strip(), *(
+            (("update-index", "--add", "--cacheinfo", f"{'100755' if os.access(path, os.X_OK) else '100644'},"
+              f"{_git(identity, 'hash-object', '-w', '--', str(path)).decode().strip()},{place}"), None) for path, place in places.items()))
+        prefix = f"tests/.workflow-probes/{frozen}/"
+        tree = _indexed(identity, tree, (("read-tree", "--prefix=" + prefix, frozen), None))
+        virtual = [prefix + place for place in places.values()]
+        command = [prefix + places[path] + arg[len(arg.split("::", 1)[0]):] if (path := _scratch(identity, arg.split("::", 1)[0])) in places else arg
+                   for arg in command]
+    elif frozen := next((match for arg in command[1:] if (match := re.fullmatch(r"(tests/\.workflow-probes/([0-9a-f]{40,64})/).+", arg.split("::", 1)[0]))), None):
+        if _git(identity, "cat-file", "-t", frozen[2]).decode().strip() == "tree":  # a captured command rebinds the directory its path names
+            tree = _indexed(identity, tree, (("read-tree", "--prefix=" + frozen[1], frozen[2]), None))
+            virtual = [frozen[1] + os.fsdecode(name) for name in _git(identity, "ls-tree", "-r", "--name-only", "-z", frozen[2]).split(b"\0") if name]
+        else:  # or, from a capture before probe directories, the one blob
+            virtual = [frozen[0]]
+            tree = _indexed(identity, tree, (("update-index", "--add", "--cacheinfo", f"100644,{frozen[2]},{frozen[0]}"), None))
     selected = list(command)
     if selected and Path(selected[0]).name == "env":
         selected.pop(0)
@@ -800,9 +804,9 @@ def _probe_capture(identity: RepoIdentity, probe: object, candidate: str, timeou
     if not selected:
         raise ValueError("probe command must name an executable")
     files = (_probe_files(selected, identity, support or [], virtual) if inventory is None
-             else sorted(set(inventory) | ({virtual} if virtual else set())))
+             else sorted(set(inventory) | set(virtual)))
     if preserved is not None:
-        files = sorted(original_files | (set(files) & (overrides | ({virtual} if virtual else set()))))
+        files = sorted(original_files | (set(files) & (overrides | set(virtual))))
         support = sorted(overrides & _tree_entries(identity, preserved).keys())  # a file added since pass start has no pass-start bytes to protect
     return {"command": shlex.join(command), "candidateTree": candidate, "probeTree": tree,
             "probeFiles": files, "support": support or [], "timeout": timeout, "captureKey": os.urandom(16).hex(),
@@ -1395,11 +1399,11 @@ def _run_tdd(values: list[str]) -> int:
                         help="with --as and a finding probe: the retained key shown in readiness, or an unproved map item id")
     parser.add_argument("--change", action="append", default=[], help="with --as: probe=FILE supplies a behavior-breaking diff for the authored probe; a bare FILE submits an authored replacement")
     parser.add_argument("--as", dest="author", choices=("review", "final"), help="execute and record this author's finding in the same call")
-    parser.add_argument("--path", help="new probe file outside the checkout; a recorded command needs no --case")
+    parser.add_argument("--path", help="scratch file to freeze beside the probe; files a case command names are frozen without it")
     parser.add_argument("--behavior-id", help="map item for a single trailing command, or select recorded cases to replay")
     parser.add_argument("--case", action="append", nargs=2, default=[], metavar=("ITEM_OR_DASH", "COMMAND"),
                         help="one command per case; '-' is unbound. Growth: WORKFLOW_GROWTH=SMALL,LARGE,MAX_POWER COMMAND {size}; counts may grow by at most (LARGE/SMALL)**MAX_POWER. Print WORKFLOW_METRICS=<JSON object> or JSON alone for numeric metrics. Growth checks scaling; assert saved work and runtime in the probe.")
-    parser.add_argument("--support", action="append", help="name support; recorded replay uses its captured immutable bytes")
+    parser.add_argument("--support", action="append", help="name support, or a scratch file to freeze beside the probe; recorded replay uses its captured immutable bytes")
     parser.add_argument("--timeout", type=float, help="execution budget per source arm, at most 30 seconds")
     args = parser.parse_args(values[:dash])
     if sum(value.partition("=")[0] == "--behavior-id" for value in values[:dash]) > 1:
@@ -1545,9 +1549,11 @@ def _run_tdd(values: list[str]) -> int:
     candidate = _active_candidate_tree(identity)
     before = tree_manifest(identity)
     original = _git(identity, "rev-parse", f"{state['passStartOid']}^{{tree}}").decode().strip()
-    specs = [(identifier if identifier != "-" else None, shlex.join(shlex.split(value))) for identifier, value in args.case]
+    specs = [(identifier if identifier != "-" else None, value) for identifier, value in args.case]
     if command:
         specs = [(args.behavior_id, shlex.join(command))]
+    # A bare call also captures the commands map items still declare; a captured command leaves its item's `cases`.
+    drafted = [] if specs or args.behavior_id else list(dict.fromkeys((entry["id"], value) for entry in items for value in entry.get("cases", [])))
     selected = []
     retired = _retired(state)
     if not specs:
@@ -1576,14 +1582,22 @@ def _run_tdd(values: list[str]) -> int:
         if names - eligible:
             raise WorkflowError("recorded replay support must name a captured test or command input; supply a command to capture new support")
         selected = [(entry, support_overrides[probe["runIndex"]]) for entry, probe in selected]
-    inventory = _probe_files([], identity, args.support or []) if specs else None
-    for identifier, value in specs:
-        entry = behavior_map.item(items, identifier) if identifier else None
-        if identifier and entry is None:
-            raise WorkflowError("unknown Behavior Map item: " + identifier)
-        captured = _probe_capture(identity, {"command": value, **({"path": args.path} if args.path else {})},
-                                  candidate, args.timeout or MAX_CASE_SECONDS, args.support, inventory, original if entry and entry.get("kind") == "preservation" else None)
+    inventory = _probe_files([], identity, args.support or []) if specs or drafted else None
+    refused = []
+    for identifier, value in [*specs, *drafted]:
+        try:  # a case that cannot be captured or prepared is refused alone; the rest of the call is recorded
+            entry = behavior_map.item(items, identifier) if identifier else None
+            captured = _probe_capture(identity, {"command": value, **({"path": args.path} if args.path else {})},
+                                      candidate, args.timeout or MAX_CASE_SECONDS, args.support, inventory, original if entry and entry.get("kind") == "preservation" else None)
+            _comparison_input(identity, captured)
+        except (ValueError, RuntimeError) as exc:
+            refused.append({"case": value, "refused": str(exc)})
+            continue
         if entry is not None:
+            if (identifier, value) in drafted:
+                entry["cases"] = [other for other in entry["cases"] if other != value]
+                if not entry["cases"]:
+                    del entry["cases"]
             prior = entry.get("comparison") or {}
             references = prior.get("caseRuns")
             if not references:
@@ -1611,7 +1625,7 @@ def _run_tdd(values: list[str]) -> int:
             references = {**references, run["command"]: run["runIndex"]}
             if prior.get("caseRuns") != references or any(prior.get(key) != run.get(key) for key in ("runIndex", "candidateKey", "breakOid", "controlKey", "sensitive", "breakExit")) or prior.get("obligation") != behavior_map.obligation(entry):
                 entry["comparison"] = {**run, "obligation": behavior_map.obligation(entry), "caseRuns": references}
-            if specs:
+            if specs or drafted:
                 behavior_map.release(items, entry, run, runs)
             behavior_map.retain_evaluation(items, {entry["id"]}, evaluation, runs, retired)
     for frozen in evaluation.values() if indexes else ():
@@ -1639,7 +1653,7 @@ def _run_tdd(values: list[str]) -> int:
                     "conditions": conditions, "candidateTree": candidate, "updatedAt": utc_timestamp()}
         state, evidence, readiness = commit_tdd(identity, slug, workflow_id, document,
                     expected_evidence_id=state.get("tddEvidence"), tree_before=before, selected_only=selected_only)
-    rows = []
+    rows, baseline = [], candidate == original  # before any edit the candidate is the original: a map item's case is expected to behave as on it
     reported = {run["runIndex"]: (entry, run) for (entry, _), run in zip(selected, compared)}
     for entry, run in reported.values():
         row = {"case": run["command"], "exits": [arm["exitCode"] for arm in run["arms"]], "breakExit": run.get("breakExit"),
@@ -1653,16 +1667,17 @@ def _run_tdd(values: list[str]) -> int:
             identifier = "COST-" + hashlib.sha256(run["command"].encode()).hexdigest()[:16]
             if {entry.get("status") for entry in state.get("findingStates", []) if entry["findingId"] == identifier} == {"resolved"}:
                 errors = []
-        for side, outcome, arm, expected in (("original", original, run["arms"][0], expected_original), ("candidate", run["arms"][-1]["outcome"], run["arms"][-1], "passed")):
+        for side, outcome, arm, expected in (("original", original, run["arms"][0], expected_original),
+                                             ("candidate", run["arms"][-1]["outcome"], run["arms"][-1], expected_original if baseline and entry else "passed")):
             if outcome != expected:
                 errors.append(side + " " + outcome + ": " + str(arm.get("output") or arm.get("bindingError") or arm["outcome"])[-1200:])
         if errors:
             row["unexpected"] = errors
         rows.append(row)
     receipt = operation_receipt(state, identity, kind="tdd", summaryId=evidence, readiness=readiness, obligations=not selected_only,
-                                cases=rows)
+                                cases=[*rows, *refused])
     _emit_json(receipt)
-    return 0 if all(run["valid"] and not run.get("bindingError") for _, run in reported.values()) and not any(row.get("unexpected") for row in rows) else 2
+    return 2 if refused or any(row.get("unexpected") for row in rows) or any(run.get("bindingError") for _, run in reported.values()) else 0
 
 
 def map_update(identity: RepoIdentity, state: JsonObject, value: JsonObject) -> JsonObject:

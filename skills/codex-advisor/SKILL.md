@@ -22,7 +22,7 @@ checking preservation against executed original results and challenging change e
 
 The advisor derives required work and outcomes using the proposed owners and reuse
 paths as inputs, and proposes the performance cases with their bounds. The lead checks
-its source claims, updates the draft and runs those cases through `tdd`. Resume
+its source claims and updates the draft, listing those cases' commands in it. Resume
 with `--reconsult` for the advisor to
 finalise and approve it. Preflight is exactly these two consultations in one advisor session:
 the second completes the draft, so `approved` is its only verdict and a third is refused.

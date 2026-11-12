@@ -85,8 +85,8 @@ removes. New terms use the existing owner's result; use request-grounded propert
 only when no owner exists. A round-trip must also establish the requested effect.
 The advisor's deciding work and runtime assertions supplement functional proof.
 
-Describe concrete inputs and outcomes. Bind a command after its executable probe
-exists; the runner captures it. Do not create obligations from proposed test names.
+Describe concrete inputs and outcomes. List a command under the item's `cases` once its executable
+probe exists; recording preflight captures and runs it. Do not create obligations from proposed test names.
 
 Remove every element whose deletion preserves required behavior and distinct necessary proof without increasing whole-system cost. Use real collaborators and observe results and state effects.
 

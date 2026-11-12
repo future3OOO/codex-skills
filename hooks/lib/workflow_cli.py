@@ -360,9 +360,13 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
                 identity, bound_state(identity, slug, workflow_id),
                 preflight_file=str(Path(args.input).resolve()) if args.input and args.input != "-" else None)})
             return 2
-        emit(_receipt(state, identity, evidenceId=evidence_id, status="passed",
-                      **({"draftEdits": intake["draftEdits"]} if intake.get("draftEdits") else {})))
-        return 0
+        edits = {"draftEdits": intake["draftEdits"]} if intake.get("draftEdits") else {}
+        if args.check or not any(item.get("cases") for item in document["behaviorMap"]):
+            emit(_receipt(state, identity, evidenceId=evidence_id, status="passed", **edits))
+            return 0
+        _emit_json({"evidenceId": evidence_id, "status": "passed", **edits})  # the draft's declared cases run now; their receipt carries the continuation
+        from .tdd_workflow import _run_tdd
+        return _run_tdd(["--repo", str(identity.root), "--slug", slug, "--workflow-id", workflow_id])
     if args.kind == "tdd-map":
         from .tdd_workflow import map_update
         emit(map_update(identity, state, _document(args, "TDD map update")))

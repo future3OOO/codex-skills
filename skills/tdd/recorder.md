@@ -1,20 +1,21 @@
 # Record a case
 
-Submit the focused batch in one workflow TDD call.
+List each case's command under its map item's `cases` in the preflight draft: recording the approved
+preflight captures and runs them. Submit later cases in one workflow TDD call.
 The submitted command identifies the case; frozen source records its version. The probe asserts its required
 outcome and exits non-zero when the assertion fails. Output is diagnostic only;
 printing a value or `name: result` does not assert it.
 
 ```text
-workflow.py tdd --repo "$PWD" --case BM_X 'COMMAND' --case BM_Y 'COMMAND'
-workflow.py tdd --repo "$PWD" --path /scratch/probe.py --case BM_X 'python3 /scratch/probe.py'
+workflow.py tdd --repo "$PWD" --case BM_X 'COMMAND' --case BM_Y 'python3 /scratch/probe.py'
 workflow.py tdd --repo "$PWD"
 workflow.py record tdd-map --repo "$PWD" --input map.json
 ```
 
 `workflow.py` is `python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py"`.
-`--case` takes one command per case and `-` for no item; `--path` names a probe file
-outside the checkout; no `--case` replays every recorded command. `map.json` holds
+`--case` takes one command per case and `-` for no item. A scratch file a command names is frozen
+with it; `--path` or `--support` freezes another beside it. A bare call replays every recorded
+command and captures any still declared. A case that cannot be captured is refused alone. `map.json` holds
 `{"items":[{"id":"BM_X","expected":"..."}]}` (only the changed fields), `{"added":[...]}`
 or `{"removed":["BM_X"]}`. The receipt gives continuation, failures and evidence access.
 The runner owns source preparation and reuse; do not repeat them.
