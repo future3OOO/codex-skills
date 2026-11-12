@@ -1155,14 +1155,8 @@ def completion_missing(state: JsonObject) -> list[str]:
 CHECKPOINT_PHASES = {"preflight-advice", "code-review", "final-review"}
 
 
-def _finding_ledger(
-    identity: RepoIdentity, state: JsonObject, items: list[JsonObject],
-) -> list[JsonObject]:
-    """Every recorded finding's immutable claim and status, with each binding case the runner re-executes."""
-    from .tdd_workflow import _retained
-    cases: dict[int, list[JsonObject]] = {}  # every binding case; the ledger is a file the advisor reads on demand
-    for entry, finding in _retained(identity, state):
-        cases.setdefault(id(entry), []).append({key: finding[key] for key in ("ref", "probe", "change", "execution") if key in finding})
+def _finding_ledger(identity: RepoIdentity, state: JsonObject) -> list[JsonObject]:
+    """Every recorded finding's immutable claim and status; its intake evidence holds the cases."""
     states = state.get("findingStates")
     intakes: dict[str, dict[str, JsonObject]] = {}
     ledger: list[JsonObject] = []
@@ -1181,7 +1175,6 @@ def _finding_ledger(
             "findingId": entry.get("findingId"), "kind": entry.get("kind"),
             "material": entry.get("material"), "status": entry.get("status"),
             "claim": recorded.get("claim"),
-            **({"cases": cases[id(entry)]} if id(entry) in cases else {}),
             **{key: entry[key] for key in ("canonicalFinding", "observations", "dispositionEvidenceId") if key in entry},
         })
     return ledger
@@ -1200,7 +1193,7 @@ CHANNELS = (
     ("intent", "original request: the completeness oracle this pass answers to"),
     ("advisor-projection", "advisor projection (schemaVersion 1)"),
     ("behavior-map", "preflight artifact / current probe list with bound comparison outcomes: challenge expectations and coverage"),
-    ("finding-ledger", "finding ledger: each finding's immutable claim, status and binding cases"),
+    ("finding-ledger", "finding ledger: each finding's immutable claim, status and evidence pointer"),
     ("quality-candidates", "non-blocking gate candidates: locations and matching rules; investigate their actual cost and necessity"),
     ("diff", "current-pass diff: passStartOid^{tree} -> activeCandidateTree; a deleted file is its header and line count"),
 )
@@ -1316,7 +1309,7 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
             "--evidence-id", state["tddEvidence"]])
     if channel_dir is None:
         return result
-    ledger = _finding_ledger(identity, state, items)
+    ledger = _finding_ledger(identity, state)
     contract = ((evidence_document(identity, state.get("preflightEvidence")) or {}).get("document") or {}).get("authoritativeContract")
     views: dict[object, JsonObject] = {}
     rendered = []
