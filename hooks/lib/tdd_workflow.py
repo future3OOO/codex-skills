@@ -24,7 +24,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Callable, TypeVar
 
-from . import behavior_map
+from . import behavior_map, removed_conditions
 from ._workflow_db import cached_arms, history, read_active
 from .command_runner import emit_json as _emit_json, interruptible, run as _run, run_entry as _run_entry
 from .repo_identity import CanonicalRoot, RepoIdentity, resolve_repo_identity
@@ -719,6 +719,9 @@ def _execute_case(identity: RepoIdentity, source_tree: str, root: Path,
         cpu = json.loads(cpu_path.read_bytes()) if cpu_path.exists() else [None, None, 0]
         inputs = _observed_inputs(identity, root, Path(temporary), trace, offset, actual, env, binding, timeout, runtimes, lower=overlay["lower"] if overlay else None, work_root=cpu[0])
         inputs["work"]["cpuSeconds"] = cpu[1]
+        traced = Path(temporary) / "workflow-conditions.jsonl"  # written by condition_trace when the command's PYTHONPATH carries it
+        if traced.exists():
+            inputs["conditions"] = [json.loads(line) for line in traced.read_text(encoding="utf-8").splitlines()]
         from .command_runner import _tail
         output = _tail(raw)
         timing = {"totalSeconds": time.perf_counter() - started,
@@ -1346,6 +1349,34 @@ def _compare(identity: RepoIdentity, original: str, candidate: str, probe: JsonO
     return _compare_many(identity, original, candidate, [probe], runs, passing_original=passing_original)[0]
 
 
+def _condition_traces(identity: RepoIdentity, original: str, candidate: str, cases: list[JsonObject], retained: JsonObject) -> JsonObject:
+    """Each recorded case's evaluations of the decisions the candidate removes operands from, by original arm. Retained
+    traces answer first; only while an operand stays undecided do untraced cases run once more on the original under
+    the tracer, cheapest first in pool-sized groups, as executions of their own so no recorded arm or timing changes.
+    None marks a run the tracer could not observe."""
+    decisions = removed_conditions.removed(identity, original, candidate)
+    runs = {run["arms"][0]["key"]: run for run in cases if run.get("arms") and not _growth(run["execution"])}
+    traces = {key: retained[key] for key in runs if key in retained}
+    pending = sorted((key for key in runs if traces.get(key, {}) is not None
+                      and any(decision["id"] not in traces.get(key, {}) for decision in decisions)),
+                     key=lambda key: runs[key]["arms"][0]["timing"]["executionSeconds"])
+    width = min(len(os.sched_getaffinity(0)), 8)
+    while pending and removed_conditions.undecided(decisions, [traces.get(key, {}) for key in runs]):
+        group, pending = pending[:width], pending[width:]
+        with tempfile.TemporaryDirectory(prefix="workflow-conditions-") as directory:
+            shutil.copy(Path(__file__).with_name("condition_trace.py"), Path(directory, "sitecustomize.py"))
+            Path(directory, "conditions.json").write_text(json.dumps(decisions), encoding="utf-8")
+            path = os.pathsep.join(filter(None, (directory, os.environ.get("PYTHONPATH"))))
+            probes = [{**runs[key], "command": shlex.join(["PYTHONPATH=" + path, *(
+                f"PYTHONPATH={directory}{os.pathsep}{arg[11:]}" if arg.startswith("PYTHONPATH=") else arg
+                for arg in shlex.split(runs[key]["command"]))])} for key in group]
+            for key, run in zip(group, _compare_many(identity, original, original, probes, [], challenge=False)):
+                seen = run["arms"][0].get("conditions")
+                traces[key] = None if seen is None else {decision["id"]: [evaluation for line in seen for evaluation in line.get(decision["id"], [])]
+                                                         for decision in decisions}
+    return traces
+
+
 @interruptible()
 @_comparison_scope()
 def _run_tdd(values: list[str]) -> int:
@@ -1592,9 +1623,12 @@ def _run_tdd(values: list[str]) -> int:
             updated = {command: indexes.get(index, index) for command, index in references.items()}
             if updated != references or indexes.get(proof["runIndex"], proof["runIndex"]) != proof["runIndex"]:
                 entry["comparison"] = {**runs[indexes.get(proof["runIndex"], proof["runIndex"])], "obligation": proof["obligation"], "caseRuns": updated}
+    conditions = _condition_traces(identity, original, candidate, [
+        *(case["comparison"] for case in behavior_map.current_cases(items, runs, retired)),
+        *(runs[frozen["runIndex"]] for frozen in evaluation.values())], (current or {}).get("conditions") or {})
     selected_only = bool(specs or args.behavior_id)
     reused = bool(current and len(runs) == len(current.get("runs", [])) and signature == json.dumps(items, sort_keys=True)
-                  and frozen_signature == json.dumps(evaluation, sort_keys=True))
+                  and frozen_signature == json.dumps(evaluation, sort_keys=True) and conditions == (current.get("conditions") or {}))
     if reused:
         readiness = None if selected_only else _readiness_lines(identity, state, items,
                     documents=(current, None), candidate=_active_candidate_tree(identity))
@@ -1602,7 +1636,7 @@ def _run_tdd(values: list[str]) -> int:
     else:
         document = {"workflowId": workflow_id, "slug": slug, "kind": "comparison", "behaviorMap": items,
                     "evaluation": evaluation, "runs": runs, "comparedRuns": [run["runIndex"] for run in compared],
-                    "candidateTree": candidate, "updatedAt": utc_timestamp()}
+                    "conditions": conditions, "candidateTree": candidate, "updatedAt": utc_timestamp()}
         state, evidence, readiness = commit_tdd(identity, slug, workflow_id, document,
                     expected_evidence_id=state.get("tddEvidence"), tree_before=before, selected_only=selected_only)
     rows = []
@@ -1664,7 +1698,8 @@ def map_update(identity: RepoIdentity, state: JsonObject, value: JsonObject) -> 
     except RuntimeError as exc:
         raise WorkflowError(str(exc)) from exc
     document = {"workflowId": state["workflowId"], "slug": state["slug"], "kind": "comparison",
-                "behaviorMap": items, "runs": (current or {}).get("runs", []), "updatedAt": utc_timestamp()}
+                "behaviorMap": items, "runs": (current or {}).get("runs", []),
+                "conditions": (current or {}).get("conditions") or {}, "updatedAt": utc_timestamp()}
     state, evidence, readiness = commit_tdd(identity, str(state["slug"]), str(state["workflowId"]), document,
                                 expected_evidence_id=state.get("tddEvidence"))
     return operation_receipt(state, identity, summaryId=evidence, pending=behavior_map.unresolved(items, readiness["open"]))
