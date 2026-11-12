@@ -9,6 +9,7 @@ printing a value or `name: result` does not assert it.
 ```text
 workflow.py tdd --repo "$PWD" --case BM_X 'COMMAND' --case BM_Y 'python3 /scratch/probe.py'
 workflow.py tdd --repo "$PWD"
+workflow.py tdd --repo "$PWD" --retire CASE_KEY --case BM_X 'COMMAND'
 workflow.py record tdd-map --repo "$PWD" --input map.json
 ```
 
@@ -20,7 +21,9 @@ command and captures any still declared. A case that cannot be captured is refus
 or `{"removed":["BM_X"]}`. The receipt gives continuation, failures and evidence access.
 The runner owns source preparation and reuse; do not repeat them.
 
-Only the observation's author can withdraw it or retire a wrong expectation.
+Only a finding's author can withdraw it. The lead retires a case (`--retire` with its `caseKey`)
+once its item has left the map, or beside a case of the same call that proves the item when the
+item changed and the case no longer passes, or when its original result never could prove the item.
 Retirement never authorizes losing required behavior. Keep the raw evidence and
 other observations. The runtime rechecks retained findings at verification or
 completion and preserves their source identity.

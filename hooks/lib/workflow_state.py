@@ -1321,7 +1321,8 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
             entry["comparison"] = ({key: run[key] for key in ("runIndex", "valid", "fresh") if key in run}
                                    if run["runIndex"] in views else views.setdefault(run["runIndex"], behavior_map.comparison_view(run)))
         rendered.append(entry)
-    map_content = ({"preflightInterpretation": contract, **_readiness_lines(identity, state, items), "items": rendered}
+    map_content = ({"preflightInterpretation": contract, **_readiness_lines(identity, state, items), "items": rendered,
+                    **({"retired": lapsed} if (lapsed := (evidence_document(identity, state.get("tddEvidence")) or {}).get("retired")) else {})}
                    if contract or items else None)
     if phase == "preflight-advice" and preflight_draft is not None:
         previous = evidence_document(identity, (state.get("advisorPreflight") or {}).get("intakeEvidence")) or {}
