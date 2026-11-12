@@ -68,8 +68,8 @@ regressions and performance failures before choosing a correction.
 
 ### 3. Packet-scoped GitNexus
 
-The bootstrap already ran and recorded the packet's graph checks; there is no separate
-graph step. Run further MCP checks only when they widen the surface the packet fixed.
+The bootstrap already ran and recorded the packet's graph checks. Before editing, run
+AGENTS.md's GitNexus checks on what you will change; after editing, its change check.
 
 ### 4. Draft and advisor review
 

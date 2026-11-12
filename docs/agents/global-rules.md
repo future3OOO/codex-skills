@@ -115,14 +115,15 @@ Delegated reviewers consume the lead's packet under `$code-review`; no bootstrap
 
 ## GitNexus
 
-Use FFF first for raw discovery; honor packet scope when present. Follow `$repo-context-forge`
-for repo selection, executed-check reuse, and required post-edit validation.
+Use FFF first for discovery; honor packet scope. Follow `$repo-context-forge` for repo selection
+and post-edit validation.
 
-Before edits, reuse the packet's graph results. For each relationship they leave
-unanswered (a caller, callee or shared-state writer of a changed symbol and its risk, the tested
-owner of an internal Seam a new file consumes) run one scoped `cypher` query; use
-`impact` with tests only for blast radius the packet omitted, downstream too when moving,
-deepening, consolidating or hiding behavior. Never list or print tool definitions.
+Start from the packet's rows. Before edits, run `impact` with tests on any symbol you change
+(downstream too when moving, deepening, consolidating or hiding behavior) and query its callers,
+callees, shared-state writers and their risk, and the tested owner of an internal Seam a new
+file consumes; after edits, the change check. Use the packet's exact call forms; never list or
+search tool definitions. One relationship: a scoped `cypher` query. Never print raw graph output
+whole.
 
 Never use `detect_changes` to select initial targets or as primary safety proof.
 Graph output must not shrink packet scope, the PR contract, or no-change surfaces.

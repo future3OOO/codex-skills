@@ -150,12 +150,12 @@ active — see the two standalone forms in the startup flow above.
 
 AGENTS.md — GitNexus owns required context/impact coverage.
 
-The packet's `<gitnexus_analysis>` already answers every `<check>` the plan
-listed. Read its entries rather than reissuing the same calls: an entry states
-the relationships it carries (callers, impacted files and, where the producer
-provides them, callees). Spend one scoped `cypher` query only on a relationship
-you need that the entries do not carry, such as the callees of something you are
-about to edit, or a symbol the plan omitted. Post-edit validation is below.
+The packet's `<gitnexus_analysis>` rows answer every `<check>` the plan listed:
+read them first, never reissue them. Before editing, run the rule's checks on
+what you will change (`impact` with tests, then any caller, callee or
+shared-state writer the rows lack) by the exact call forms the packet prints;
+never list or search tool definitions. For one relationship, a scoped `cypher`
+query. Post-edit validation is below.
 
 When you do call out:
 
