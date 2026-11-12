@@ -15,7 +15,8 @@ workflow.py record tdd-map --repo "$PWD" --input map.json
 
 `workflow.py` is `python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py"`.
 `--case` takes one command per case and `-` for no item. A scratch file a command names is frozen
-with it; `--path` or `--support` freezes another beside it. A bare call replays every recorded
+with it, as is a temporary path the command or that file names; `--path` or `--support` freezes
+another beside it. A bare call replays every recorded
 command and captures any still declared. A case that cannot be captured is refused alone. `map.json` holds
 `{"items":[{"id":"BM_X","expected":"..."}]}` (only the changed fields), `{"added":[...]}`
 or `{"removed":["BM_X"]}`. The receipt gives continuation, failures and evidence access.

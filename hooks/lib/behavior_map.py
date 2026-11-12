@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import os
 import re
 import shlex
 
@@ -42,6 +43,36 @@ def _recorded_fields(raw: JsonObject) -> JsonObject:
     return fields
 
 
+def script_operand(command: str) -> str | None:
+    """The file a command asks Python to run, by the argument rules of Python and of the wrappers leads put before it:
+    `[NAME=VALUE | env | timeout [OPTION]... DURATION]... pythonX [OPTION]... FILE`. None for any other
+    command, for `-c` and `-m`, and for a program read from standard input: their other arguments are data."""
+    try:
+        words = shlex.split(command)
+    except ValueError:  # an unclosed quote is refused when the case is captured
+        return None
+    at = 0
+    while at < len(words) and (re.match(r"[A-Za-z_][A-Za-z_0-9]*=", words[at]) or os.path.basename(words[at]) in ("env", "timeout")):
+        at += 1
+        if os.path.basename(words[at - 1]) == "timeout":
+            while at < len(words) and words[at].startswith("-"):
+                at += 2 if words[at] in ("-k", "-s", "--kill-after", "--signal") else 1
+            at += 1  # its duration
+    if at >= len(words) or not re.fullmatch(r"python[0-9.]*", os.path.basename(words[at])):
+        return None
+    at += 1
+    while at < len(words) and words[at].startswith("-") and words[at] != "-":
+        option = words[at]
+        for index, letter in enumerate(option[1:] if not option.startswith("--") else "", 1):
+            if letter in "cm":
+                return None
+            if letter in "WX":  # its value is the rest of the word, or the next word
+                at += index == len(option) - 1
+                break
+        at += 2 if option == "--check-hash-based-pycs" else 1
+    return words[at] if at < len(words) and words[at] != "-" else None
+
+
 def map_errors(value: object, *, allow_runtime: bool) -> list[str]:
     if not isinstance(value, list):
         return ["behaviorMap must be an array"]
@@ -62,6 +93,9 @@ def map_errors(value: object, *, allow_runtime: bool) -> list[str]:
                 errors.append(f"probe {identifier} requires kind: conformance, contract or preservation")
             if extra := set(raw) - REQUIRED_FIELDS - JUDGEMENT_FIELDS:
                 errors.append(f"probe {identifier} has unknown fields: " + ", ".join(sorted(extra)))
+            errors.extend(f"probe {identifier} case runs {script}, which does not exist: write it before declaring its command, or leave "
+                          "the command out for the lead to bind" for script in map(script_operand, _strings(raw.get("cases")) or ())
+                          if script and os.path.isabs(script) and not os.path.lexists(script))
     return errors
 
 

@@ -366,7 +366,8 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
             return 0
         _emit_json({"evidenceId": evidence_id, "status": "passed", **edits})  # the draft's declared cases run now; their receipt carries the continuation
         from .tdd_workflow import _run_tdd
-        return _run_tdd(["--repo", str(identity.root), "--slug", slug, "--workflow-id", workflow_id])
+        _run_tdd(["--repo", str(identity.root), "--slug", slug, "--workflow-id", workflow_id])
+        return 0  # the draft is recorded; the rows and open lines say which declared case does not yet hold
     if args.kind == "tdd-map":
         from .tdd_workflow import map_update
         emit(map_update(identity, state, _document(args, "TDD map update")))
