@@ -1285,7 +1285,8 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
         "slug": state.get("slug"),
         "workflowId": state.get("workflowId"),
         "nextAction": state.get("nextAction"),
-        "sessionMode": "create" if phase == "preflight-advice" and not reconsult else "resume",
+        "sessionMode": "resume" if reconsult or phase == "final-review" and (  # the final review's own session exists once it has a result
+            state.get("judgedTree") or state.get("finalReviewContextMismatchEvidence")) else "create",
         "passStartOid": state.get("passStartOid"),
         "activeCandidateTree": candidate,
         "scratchPath": str(repo_state_dir(identity) / "execution-trees" / str(workflow_id) / "scratch"),  # kept with the pass's execution state

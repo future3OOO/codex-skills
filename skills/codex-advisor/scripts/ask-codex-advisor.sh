@@ -231,11 +231,6 @@ PY
     printf 'error: %s checkpoint is not ready; missing: %s\n' "$phase" "$checkpoint_missing" >&2
     exit 2
   fi
-  expected_mode=create; [[ "$phase" == final-review || ${#reconsult_args[@]} -gt 0 ]] && expected_mode=resume
-  if [[ "$session_mode" != "$expected_mode" ]]; then
-    printf 'error: checkpoint returned session mode %s for %s\n' "$session_mode" "$phase" >&2
-    exit 2
-  fi
   # Retained probes may read their scratch after this consult; the pass's execution state owns it.
   mkdir -p "$scratch_root"; scratch_dir=$(mktemp -d "$scratch_root/consult-XXXXXX")
 fi

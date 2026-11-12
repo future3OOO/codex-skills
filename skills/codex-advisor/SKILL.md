@@ -33,9 +33,9 @@ final, carries only the sections whose bytes changed since its session last rece
 Preflight records the governing-design declaration: `--design-file` with the
 durable design artifact of a planned stack, or `--design-absent` with a reason; a
 single-PR pass passes neither and records absence.
-Final review resumes the consult with that declaration; do not repeat it or
-supply `--reconsult`. Declare absence rather than manufacture a trivial design
-document. The declaration travels verbatim; reasons over 2000 bytes are refused.
+Final review reuses that declaration in its own advisor session, which later final
+consults resume; do not repeat it or supply `--reconsult`. Declare absence rather than
+manufacture a trivial design document. The declaration travels verbatim; reasons over 2000 bytes are refused.
 An architecture choice is settled by evidence, not by the consult.
 
 A design artifact carries: the chosen architecture and rationale; every
