@@ -64,6 +64,7 @@ MANIFEST_MISSING = "review-manifest-missing"
 MANIFEST_STALE = "review-manifest-stale"
 QUALITY_GATE_MISSING = "quality-gate-tree-missing"
 QUALITY_GATE_STALE = "quality-gate-tree-stale"
+STEP_TOOL = "mcp__workflow__run"  # skills/repo-production-workflow/scripts/workflow_tool.py, as a lead's tool list names it
 
 
 class WorkflowError(LedgerError):
@@ -1284,7 +1285,8 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
         "slug": state.get("slug"),
         "workflowId": state.get("workflowId"),
         "nextAction": state.get("nextAction"),
-        "sessionMode": "create" if phase == "preflight-advice" and not reconsult else "resume",
+        "sessionMode": "resume" if reconsult or phase == "final-review" and (  # the final review's own session exists once it has a result
+            state.get("judgedTree") or state.get("finalReviewContextMismatchEvidence")) else "create",
         "passStartOid": state.get("passStartOid"),
         "activeCandidateTree": candidate,
         "scratchPath": str(repo_state_dir(identity) / "execution-trees" / str(workflow_id) / "scratch"),  # kept with the pass's execution state
@@ -1559,7 +1561,7 @@ def _readiness_lines(identity: RepoIdentity, state: JsonObject, items: list[Json
 
 def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObject | None = None, *,
                    preflight_file: str | None = None, obligations: bool = True) -> JsonObject:
-    """Bind the selected operation once for command results and recovery."""
+    """Bind the selected operation once: `workflow.py next` and a stale context refresh run its command."""
     scripts = Path(__file__).resolve().parents[2] / "skills"
     cli = [sys.executable, str(scripts / "repo-production-workflow/scripts/workflow.py")]
     bound = ["--repo", str(identity.root), "--slug", str(state["slug"]),
@@ -1607,22 +1609,18 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
         design = repo_state_dir(identity) / "designs" / f"{state['workflowId']}.md"
         declaration = evidence_document(identity, state.get("governedDesignEvidence")) or {}
         if preflight or declaration:
-            command = [str(scripts / "codex-advisor/scripts/ask-codex-advisor.sh"), "--slug", str(state["slug"]),
+            command = [str(scripts / "codex-advisor/scripts/ask-codex-advisor.sh"), "--quiet", "--slug", str(state["slug"]),
                        "--phase", "preflight-advice" if preflight else "final-review", "--cwd", str(identity.root)]
-            needed = ["Run it once. If the call returns while it is still running, collect its result with one empty poll of up to 300 seconds. Never sleep or poll in shorter steps."]
             if preflight:
                 if design.is_file():
                     command += ["--design-file", str(design)]
                 elif declaration.get("status") == "absent":
                     command += ["--design-absent", str(declaration["reason"])]
-            if preflight:
                 if isinstance(draft, dict):
                     command += ["--reconsult"]
-                if preflight_file:
-                    command += ["--preflight-file", preflight_file]
-                else:
-                    needed.append("--preflight-file <current-draft.json>" + ("" if isinstance(draft, dict) else " shaped " + RECORD_SHAPES["preflight"]))
-            return {"command": shlex.join(command), "input": "; ".join(needed)}
+                return {"command": shlex.join(command), "input": "--preflight-file " + (
+                    preflight_file or "<current-draft.json>" + ("" if isinstance(draft, dict) else " shaped " + RECORD_SHAPES["preflight"]))}
+            return {"command": shlex.join(command)}
         command = [*cli, "paths", "--repo", str(identity.root), "--workflow-id", str(state["workflowId"])]
     elif action == "code-review":
         return {"command": None, "input": "Delegate code-review; its checkpoint supplies the verdict command. Reuse the reviewer for corrections; repair pending findings before return review."}
@@ -1643,6 +1641,12 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
     return {"command": shlex.join(command), **({"input": questions} if questions else {})}
 
 
+def next_step(identity: RepoIdentity, state: JsonObject, receipt: JsonObject | None = None, **options: object) -> JsonObject:
+    """The next operation as a lead is told it: the blocking tool runs the bound command, so none is printed to paste into a shell."""
+    operation = next_operation(identity, state, receipt, **options)
+    return {**({"tool": STEP_TOOL} if operation.pop("command", None) else {}), **operation}
+
+
 def operation_receipt(state: JsonObject, identity: RepoIdentity, *, readiness: JsonObject | None = None, obligations: bool = True, **details: object) -> JsonObject:
     """Return the committed operation's result and its current continuation."""
     if CHECK_ONLY.get():
@@ -1650,7 +1654,7 @@ def operation_receipt(state: JsonObject, identity: RepoIdentity, *, readiness: J
     current = public_status(state, fields={"schemaVersion", "workflowId", "slug", "phase", "nextAction"})
     if obligations and details.get("kind") == "tdd":
         details.update(readiness if readiness is not None else _readiness_lines(identity, state))
-    operation = next_operation(identity, {**state, **current}, details, obligations=obligations)
+    operation = next_step(identity, {**state, **current}, details, obligations=obligations)
     return {"nextAction": operation.pop("action", current.get("nextAction")), "next": operation,
             **{key: value for key, value in current.items() if key != "nextAction"}, **details}
 
@@ -1671,13 +1675,14 @@ def summary(identity: RepoIdentity, limit: int = 3000, *, labels: bool = True) -
     records = {"advisor-preflight": f"{advisor.get('status')}/{advisor.get('findings')}",
                "code-review": f"{code_review.get('status')}/{code_review.get('findings')}",
                "final-review": f"{final_review.get('status')}/{final_review.get('findings')}"}
-    operation = next_operation(identity, state, obligations=False)
+    operation = next_step(identity, state, obligations=False)
     action = operation.pop("action", state.get("nextAction"))
+    tool = operation.pop("tool", None)
     text = (
         f"Active workflow: slug={state.get('slug')} workflowId={state.get('workflowId')} "
         f"candidate={state.get('activeCandidateTree')} phase={state.get('phase')} next={action}. "
-        + "\nNext invocation: " + str(operation["command"] or ("none; see input" if operation.get("input") else "none; workflow complete")) + "\n"
-        + "".join(f"{key}: {value}\n" for key, value in operation.items() if key != "command")
+        + "\nNext invocation: " + (f"tool {tool}" if tool else "none; see input" if operation.get("input") else "none; workflow complete") + "\n"
+        + "".join(f"{key}: {value}\n" for key, value in operation.items())
         + (f"Binding: {gate_drift}. " if gate_drift else "")
         + " ".join(f"{field}={state[field]}" for field in (
             "preflightLatestEvidence", "tddEvidence", "verificationLatestEvidence", "qualityGateManifestId") if state.get(field)) + ". "

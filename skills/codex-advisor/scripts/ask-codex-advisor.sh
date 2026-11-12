@@ -4,7 +4,7 @@ set -euo pipefail
 umask 077
 
 usage() {
-  printf 'Usage: %s --slug <name> [--provider codex|claude] [--phase preflight-advice|final-review] [--reconsult] [--preflight-file draft.json] [--cwd path] [--design-file file | --design-absent reason] [--budget words] [--codex-model model] [--codex-effort effort] [--fresh] -- "question"\n' "$0" >&2
+  printf 'Usage: %s --slug <name> [--provider codex|claude] [--phase preflight-advice|final-review] [--reconsult] [--preflight-file draft.json] [--cwd path] [--design-file file | --design-absent reason] [--budget words] [--codex-model model] [--codex-effort effort] [--fresh] [--quiet] -- "question"\n' "$0" >&2
   printf '  Phased consults derive payload, candidate anchors, and create/resume mode from workflow checkpoint; phase-less consults carry only the question.\n' >&2
   printf '  Default budget: 600 words; values above 1200 are refused.\n' >&2
   printf '  Trust: all phases use the lead checkout and estate with full access; final findings are independently replayed.\n' >&2
@@ -16,7 +16,7 @@ if [[ -n "${CODEX_ADVISOR_ACTIVE:-}${ADVISOR_ACTIVE:-}" ]]; then
   exit 3
 fi
 
-slug=""; phase=""; cwd="$PWD"; design_file=""; design_absent=""; budget=600; fresh=0; question=""
+slug=""; phase=""; cwd="$PWD"; design_file=""; design_absent=""; budget=600; fresh=0; quiet=0; question=""
 reconsult_args=(); preflight_file=""; draft_args=(); submitted_args=()
 provider="${CODEX_ADVISOR_PROVIDER:-${ADVISOR_PROVIDER:-codex}}"
 codex_model="${CODEX_ADVISOR_MODEL:-gpt-6-astra}"
@@ -33,6 +33,7 @@ while [[ $# -gt 0 ]]; do
     --design-absent) design_absent="${2:?missing --design-absent value}"; shift 2 ;;
     --budget) budget="${2:?missing --budget value}"; shift 2 ;;
     --fresh) fresh=1; shift ;;
+    --quiet) quiet=1; shift ;;
     --reconsult) reconsult_args=(--reconsult); shift ;;
     --preflight-file) preflight_file="${2:?missing --preflight-file value}"; shift 2 ;;
     --) shift; question="$*"; break ;;
@@ -94,7 +95,9 @@ esac
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 transport_dir=$(mktemp -d)
-trap 'python3 -c "import tempfile,sys;tempfile.TemporaryDirectory._rmtree(sys.argv[1])" "$transport_dir"' EXIT
+# --quiet (a lead's call): from here stderr is held, and reaches the caller only if the consult fails.
+trap '[[ $? -eq 0 || $quiet -eq 0 ]] || cat "$transport_dir/stderr" >&7; python3 -c "import tempfile,sys;tempfile.TemporaryDirectory._rmtree(sys.argv[1])" "$transport_dir"' EXIT
+exec 7>&2; (( quiet == 0 )) || exec 2>"$transport_dir/stderr"
 snapshot_file() {
   python3 - "$@" <<'PY'
 import os, stat, sys
@@ -226,11 +229,6 @@ PY
   fi
   if [[ "$checkpoint_ready" != yes ]]; then
     printf 'error: %s checkpoint is not ready; missing: %s\n' "$phase" "$checkpoint_missing" >&2
-    exit 2
-  fi
-  expected_mode=create; [[ "$phase" == final-review || ${#reconsult_args[@]} -gt 0 ]] && expected_mode=resume
-  if [[ "$session_mode" != "$expected_mode" ]]; then
-    printf 'error: checkpoint returned session mode %s for %s\n' "$session_mode" "$phase" >&2
     exit 2
   fi
   # Retained probes may read their scratch after this consult; the pass's execution state owns it.
@@ -473,7 +471,7 @@ else
   fi
   python3 "$workflow_cli" status --repo "$repo_root" --fields advisorPreflight,finalReview,finalReviewContextMismatchEvidence \
     >"$transport_dir/recorded.json"
-  python3 - "$script_dir/../../.." "$record_stage" "$transport_dir/recorded.json" "$repo_root" "$transport_dir/receipt.json" <<'PY'
+  python3 - "$script_dir/../../.." "$record_stage" "$transport_dir/recorded.json" "$repo_root" "$transport_dir/receipt.json" "${reconsult_args[@]}" <<'PY'
 import json, sys
 sys.path.insert(0, sys.argv[1])
 from hooks.lib.repo_identity import resolve_repo_identity
@@ -488,11 +486,17 @@ shown = findings[:40]
 head = f"verdict={envelope['verdict']} findings={len(findings)} shown={len(shown)} intake={intake}\n"
 needed = (receipt["next"].get("input") or "").partition("\n")[0].encode()  # both ends: the argument and the command form
 needed = (needed if len(needed) <= 200 else needed[:97] + b" ... " + needed[-98:]).decode("utf-8", errors="ignore")
-tail = f"nextAction={receipt['nextAction']} next: {receipt['next'].get('command')}\n" + (f"input: {needed}\n" if needed else "")
+unfinished = "final review ends at commit-ready: " if sys.argv[2] == "final" and receipt["nextAction"] != "complete-workflow" else ""
+tail = "" if sys.argv[6:] else f"{unfinished}nextAction={receipt['nextAction']} next: {receipt['next'].get('tool')}\n" + (f"input: {needed}\n" if needed else "")
 room = max(0, (1900 - len((head + tail).encode())) // max(1, len(shown)) - 1)
 run = lambda item: " ".join(f"{key}={value}" for key, value in (item.get("execution") or {"kind": "none"}).items())
 lines = [f"{item['id']} material={str(item['material']).lower()} execution=[{run(item)}]: {item['claim']}" for item in shown]
 sys.stdout.write(head + "".join((line if item["material"] else line.encode()[:room].decode("utf-8", errors="ignore")) + "\n" for item, line in zip(shown, lines)) + tail)
 PY
+  if (( ${#reconsult_args[@]} )); then
+    # The approving consult records the draft it finalised: the recording's output and exit status end the call; the consult's diagnostics stay held.
+    quiet=0
+    python3 "$workflow_cli" record preflight --repo "$repo_root" --slug "$producer_slug" --workflow-id "$active_wid" 2>&7
+  fi
 fi
 printf 'codex_advisor_complete status=0 provider=%s\n' "$provider" >&2

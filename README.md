@@ -18,8 +18,8 @@ The project is the source of truth; the estate is an install artifact.
 - `skills/` — custom skills, one directory per skill. Codex-only extras that
   do not exist upstream: `codex-advisor` (the codex-side advisor name),
   `frontend-design`, `setup-pre-commit`, `.system/` is excluded.
-- `hooks/` — lifecycle hooks (workflow state lib, intake gate, quality gate,
-  discipline re-arm, workflow command).
+- `hooks/` — lifecycle hooks (workflow state lib, quality gate, discipline
+  re-arm).
 - `hooks.json` — managed hook entries; install merges them into the live
   `~/.codex/hooks.json` without dropping entries it does not own (the
   GitNexus hook stays live-managed).
@@ -72,7 +72,8 @@ For a full project installation:
 
 Backs up touched paths to `~/.codex-backups/<ts>/`, rsyncs `hooks/` and
 `skills/` (excluding tests), copies the global rules, merges `hooks.json` entries,
-and appends `[mcp_servers.gitnexus]` to `config.toml` when absent. Codex
+and appends `[mcp_servers.gitnexus]` and `[mcp_servers.workflow]` (the
+workflow's blocking tool) to `config.toml` when absent. Codex
 requires hook trust: approve the hooks once via `/hooks` in an interactive
 session, or run automation with `--dangerously-bypass-hook-trust`.
 
@@ -204,21 +205,12 @@ Codex fires the full Claude event set with the same payload contract
   `tool_input.command`; writes through shell arrive as `Bash` with the
   command in `tool_input.command`. Gate matchers must cover both.
 - `SessionStart` matchers filter `source` directly: `startup|resume|compact|clear`.
-- No hook fires for a poll (`write_stdin`, `wait`), so a hook cannot shorten a
-  model's wait on a running command, lengthen a call's own wait
-  (`updatedInput` carries only the command) or end a turn (`continue: false`
-  is ignored). At no model request, `PreToolUse` can rewrite a `Bash` command
-  (`permissionDecision: "allow"` with `updatedInput.command`), and
-  `PostModelRequest` runs after the model answers and before the answer's
-  tool calls start: it can hold them, and it finds them at the end of the
-  transcript. Nothing it prints reaches the model. `workflow-command.py` uses
-  the two: a command naming the workflow CLI, the context bootstrap or the
-  advisor consult runs as written, and an answer that only polls what that
-  command's call handed back is held until the command has ended, so the lead
-  polls once and the poll returns at once. No other answer is held, and a poll
-  of something else only when that same call's result also handed it back.
-  `workflow-command.sh` starts the interpreter only for those commands and
-  answers.
+- A shell call is handed back to the model after at most 30 s and no hook
+  fires for the polls that follow (`write_stdin`, `wait`). An MCP tool call
+  returns when the tool does, so workflow commands run through the `workflow`
+  server's one tool (`skills/repo-production-workflow/scripts/workflow_tool.py`),
+  which `install.sh` registers as a direct tool. Hooks matched on `Bash` do
+  not fire for it.
 - Hooks require trust approval (`/hooks`, or `--dangerously-bypass-hook-trust`
   for automation).
 

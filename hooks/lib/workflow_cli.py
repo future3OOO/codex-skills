@@ -31,6 +31,7 @@ from .workflow_state import (
     WorkflowError,
     _evidence_ready,
     _require_instance,
+    _require_state,
     _tree_drift,
     begin,
     bound_state,
@@ -40,6 +41,7 @@ from .workflow_state import (
     complete,
     evidence_document,
     next_operation,
+    next_step,
     operation_receipt as _receipt,
     pause,
     public_status,
@@ -51,6 +53,9 @@ from .workflow_state import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
+# The other two long-running entry points, so the one blocking tool reaches all three.
+ENTRY = {"consult": [str(ROOT / "skills/codex-advisor/scripts/ask-codex-advisor.sh"), "--quiet"],
+         "context": [sys.executable, str(ROOT / "skills/repo-context-forge/scripts/bootstrap.py")]}
 # Failing checks' first five locations, then the first six active findings with three each. Each location
 # prints as at most 100 bytes of JSON, escapes included (file:line tail kept), so the whole stays under 4,200.
 REPORT_PROJECTION = (
@@ -105,6 +110,9 @@ def parser() -> argparse.ArgumentParser:
     command.add_argument("--preflight-file", help="draft artifact reviewed before its single recording")
     _repo(commands.add_parser("complete", help="complete a ready workflow"), instance=True)
     commands.add_parser("tdd", help="compare a probe on recorded sources, reusing its recorded batch when no command is given")
+    commands.add_parser("next", help="run the active pass's next operation in this checkout, adding any arguments given")
+    commands.add_parser("consult", help="the advisor wrapper, with its arguments")
+    commands.add_parser("context", help="the context bootstrap, with its arguments")
 
     command = _repo(commands.add_parser("verify", help="execute and record typed verification"), instance=True)
     command.add_argument("--kind", choices=("quality-gate",), default="quality-gate")
@@ -356,7 +364,7 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
                 "recordedAt": utc_timestamp()})
         except WorkflowError as exc:
             print(str(exc), file=sys.stderr)
-            _emit_json({"error": str(exc), "next": next_operation(
+            _emit_json({"error": str(exc), "next": next_step(
                 identity, bound_state(identity, slug, workflow_id),
                 preflight_file=str(Path(args.input).resolve()) if args.input and args.input != "-" else None)})
             return 2
@@ -482,6 +490,18 @@ def main(argv: list[str] | None = None) -> int:
         if values and values[0] == "tdd":
             from .tdd_workflow import _run_tdd
             return _run_tdd(values[1:])
+        command = ENTRY.get(values[0]) if values else None
+        if values and values[0] == "next":
+            with _comparison_scope():
+                identity = resolve_repo_identity(".")
+                state = _require_state(read_workflow(identity))
+                bound = next_operation(identity, {**state, **public_status(state, fields={"nextAction"})}).get("command")
+                if not bound:  # the step is a judgment or a delegation: say what it needs
+                    _emit_json(_receipt(state, identity))
+                    return 0
+            command = shlex.split(bound)
+        if command:  # the operation replaces this process: its output and exit status are its own
+            os.execv(command[0], [*command, *values[1:]])
         with _comparison_scope():
             return _dispatch(parser().parse_args(values))
     except (RepoIdentityError, LedgerError, WorkflowError, ValueError, OSError) as exc:

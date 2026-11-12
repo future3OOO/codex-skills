@@ -25,7 +25,7 @@ paths as inputs, and proposes the performance cases with their bounds. The lead 
 its source claims and updates the draft, listing those cases' commands in it. Resume
 with `--reconsult` for the advisor to
 finalise and approve it. Preflight is exactly these two consultations in one advisor session:
-the second completes the draft, so `approved` is its only verdict and a third is refused.
+the second completes and records the draft, so `approved` is its only verdict and a third is refused.
 The first consult receives the whole draft. Reconsults send its delta with both
 content identities; failed results keep that base. A resumed consult, preflight or
 final, carries only the sections whose bytes changed since its session last received them.
@@ -33,9 +33,9 @@ final, carries only the sections whose bytes changed since its session last rece
 Preflight records the governing-design declaration: `--design-file` with the
 durable design artifact of a planned stack, or `--design-absent` with a reason; a
 single-PR pass passes neither and records absence.
-Final review resumes the consult with that declaration; do not repeat it or
-supply `--reconsult`. Declare absence rather than manufacture a trivial design
-document. The declaration travels verbatim; reasons over 2000 bytes are refused.
+Final review reuses that declaration in its own advisor session, which later final
+consults resume; do not repeat it or supply `--reconsult`. Declare absence rather than
+manufacture a trivial design document. The declaration travels verbatim; reasons over 2000 bytes are refused.
 An architecture choice is settled by evidence, not by the consult.
 
 A design artifact carries: the chosen architecture and rationale; every
@@ -76,6 +76,11 @@ it advances nothing. State never authorizes Git.
 
 ## Invocation
 
+A lead's phased consult is the pass's next step: the workflow tool runs the command below to
+its end and returns the digest. Its `args` carry `--preflight-file`, on the first consult the
+pass's design option if it has one (later consults take the recorded declaration) and, after
+`--`, the user's instructions.
+
 ```bash
 "$HOME/.codex/skills/codex-advisor/scripts/ask-codex-advisor.sh" \
   --slug "<task>" --phase preflight-advice --preflight-file "<draft.json>" \
@@ -86,7 +91,7 @@ it advances nothing. State never authorizes Git.
   --cwd "$PWD" --design-file "<design-artifact>"
 ```
 
-Phased consults carry no lead text. Pass only the user's instructions given after `begin`, each line quoted verbatim after `> `, on stdin.
+Phased consults carry no lead text. Pass only the user's instructions given after `begin`, each line quoted verbatim after `> `, after `--` (or on stdin in a shell).
 
 ## Failure and disposition
 

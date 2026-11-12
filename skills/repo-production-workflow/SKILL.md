@@ -30,29 +30,31 @@ The repository-scoped SQLite event ledger remembers accepted transitions, logica
 
 ## Continuation
 
-Follow the operation result's `next.command`; `next.input` names any judgment,
-document or argument still needed and its form. Retain the returned evidence IDs.
+Each operation's result names the next step. Where `next.tool` is set, call that
+tool with the checkout as `cwd`: it runs the step to its end and returns the
+result, so there is nothing to wait on or poll. `next.input` names any judgment,
+document or argument still needed and its form; arguments go in the tool's
+`args`. Retain the returned evidence IDs.
 On resume or after edits, `summary` gives current recovery guidance and
 `status --fields` supplies missing facts. Resume the same pass.
-The returned continuation carries each next command. The lead's own forms
-(`workflow.py` is `python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py"`;
-[recorder.md](../tdd/recorder.md#record-a-case) has the `tdd` forms):
+The lead's quick shell forms follow (`workflow.py` is
+`python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py"`;
+[recorder.md](../tdd/recorder.md#record-a-case) has the `tdd` arguments). The
+last is the same next step for a script or an estate without the tool:
 
 ```text
 workflow.py begin --repo "$PWD" --slug <task> --intent-file <request.md>
 workflow.py summary --repo "$PWD"
 workflow.py status --repo "$PWD" --fields nextAction,tdd,verification,codeReview,finalReview
-workflow.py record preflight --repo "$PWD"
-workflow.py verify --repo "$PWD"
 workflow.py evidence --repo "$PWD" --evidence-id <id>
-workflow.py complete --repo "$PWD"
+workflow.py next [arguments]
 ```
 
 ## Mandatory order
 
 ### 1. Repo Context Forge
 
-Invoke `repo-context-forge`, then run the bootstrap command `begin` returned as `next.command`.
+Invoke `repo-context-forge`, then run the next step `begin` returned: the context bootstrap.
 Stop on packet blockers. The packet fixes the initial target and coverage surface.
 
 ### 2. Task contract and diagnosis
@@ -66,8 +68,8 @@ regressions and performance failures before choosing a correction.
 
 ### 3. Packet-scoped GitNexus
 
-The bootstrap already ran and recorded the packet's graph checks; there is no separate
-graph step. Run further MCP checks only when they widen the surface the packet fixed.
+The bootstrap already ran and recorded the packet's graph checks. Before editing, run
+AGENTS.md's GitNexus checks on what you will change; after editing, its change check.
 
 ### 4. Draft and advisor review
 
@@ -79,13 +81,13 @@ the contract and planned attacks.
 Submit the exact draft through [Codex Advisor's two-round preflight](../codex-advisor/SKILL.md#preflight-advice).
 The advisor investigates. The lead checks deletion claims against every original
 outcome controlled by the affected logic and corrects false premises. The advisor
-then finalises and approves the draft in the same session. Record only that approval.
+then finalises and approves the draft in the same session; that consult records it.
 The first implementation builds the approved design, performance improvements
 included; setting one aside needs a measured reason.
 
-### 5. Record approved preflight once
+### 5. One recorded preflight
 
-Record the approved draft through the returned continuation. Related corrections stay in this pass; reuse untouched proof.
+Related corrections stay in this pass; reuse untouched proof.
 
 ### 6. Select the probe batch
 
