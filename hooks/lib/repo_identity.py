@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Canonical repository identity, owned in exactly one file.
 
-The byte contract is exact: resolve the Git top-level, canonicalise it through
-``realpath -e``, then feed the canonical root to the POSIX checksum utility
-without a trailing newline. All state writers and readers import this module;
-none may derive a repository key locally.
+The byte contract is exact: resolve the Git top-level, canonicalise it as
+``realpath -e`` does, then take the POSIX ``cksum`` of the canonical root
+without a trailing newline, both in this process. All state writers and
+readers import this module; none may derive a repository key locally.
 """
 from __future__ import annotations
 
@@ -40,6 +40,17 @@ class RepoIdentity:
         return {"root": str(self.root), "key": self.key}
 
 
+def _cksum(data: bytes) -> int:
+    """POSIX `cksum`: the CRC of polynomial 0x04C11DB7, most significant bit first, over the bytes and then their length
+    in the fewest octets that hold it, least significant first, complemented."""
+    crc = 0
+    for byte in data + len(data).to_bytes((len(data).bit_length() + 7) // 8, "little"):
+        crc ^= byte << 24
+        for _ in range(8):
+            crc = (crc << 1 ^ 0x04C11DB7 if crc & 0x80000000 else crc << 1) & 0xFFFFFFFF
+    return crc ^ 0xFFFFFFFF
+
+
 def _probe(path: str | os.PathLike[str]) -> str:
     candidate = Path(path).expanduser()
     if candidate.is_file():
@@ -66,24 +77,9 @@ def resolve_repo_identity(path: str | os.PathLike[str]) -> RepoIdentity:
     if not top:
         raise RepoIdentityError(f"git returned an empty top-level for {probe!r}")
     try:
-        root = subprocess.run(
-            ["realpath", "-e", top],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=True,
-        ).stdout.rstrip("\r\n")
-        if not root:
-            raise RepoIdentityError(f"realpath returned an empty root for {top!r}")
-        checksum_output = subprocess.run(
-            ["cksum"],
-            input=root.encode("utf-8"),
-            capture_output=True,
-            timeout=10,
-            check=True,
-        ).stdout.decode("ascii", errors="strict")
-        key = checksum_output.split()[0]
-    except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired, UnicodeError, IndexError) as exc:
+        root = os.path.realpath(top, strict=True)
+        key = str(_cksum(root.encode("utf-8")))
+    except (OSError, UnicodeError) as exc:
         raise RepoIdentityError(f"cannot derive canonical repository identity for {top!r}: {exc}") from exc
     return RepoIdentity(CanonicalRoot(root), key)
 

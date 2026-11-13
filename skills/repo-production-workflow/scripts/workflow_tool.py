@@ -18,7 +18,6 @@ from __future__ import annotations
 import json
 import os
 import signal
-import subprocess
 import sys
 import threading
 from pathlib import Path
@@ -30,11 +29,17 @@ TOOL = {"name": "run", "description": "Run the active workflow pass's next step 
 
 
 def lead(args: list[str]) -> int:
-    """A call's leader: run the command with no input. Leading a session of its own, as the server starts it, it ends
-    its whole group when the server is gone: the server's pipe, this stdin, then reads empty."""
+    """A call's leader: run the command here, with no input. Leading a session of its own, as the server starts it, it
+    ends its whole group when the server is gone: the server's pipe, held on a copy of this stdin, then reads empty."""
     if os.getsid(0) == os.getpid():
-        threading.Thread(target=lambda: os.read(0, 1) or os.killpg(0, signal.SIGKILL), daemon=True).start()
-    return subprocess.run([sys.executable, str(Path(__file__).with_name("workflow.py")), *args], stdin=subprocess.DEVNULL, check=False).returncode
+        watched = os.dup(0)
+        threading.Thread(target=lambda: os.read(watched, 1) or os.killpg(0, signal.SIGKILL), daemon=True).start()
+    empty = os.open(os.devnull, os.O_RDONLY)
+    os.dup2(empty, 0)
+    os.close(empty)
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+    from hooks.lib.workflow_cli import main
+    return main(args, replace=False)
 
 
 def serve() -> None:

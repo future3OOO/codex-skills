@@ -20,6 +20,7 @@ from . import behavior_map
 from ._workflow_db import (
     CHECK_ONLY,
     EvidenceWrite,
+    _canonical,
     LedgerError,
     LedgerMutation,
     ManifestWrite,
@@ -56,6 +57,8 @@ FINDING_STATUSES = {"pending", "none", "addressed"}
 LIVE_FINDING = {"pending", "accepted-for-proof", "accepted-follow-up", "rejected"}  # a recorded-again finding joins one of these
 REVIEW_SOURCES = {"codex-advisor"}
 FINAL_VERDICTS = {"commit-ready", "fix-before-commit", "context-mismatch"}
+READINESS_FIELDS = ("workflowId", "passStartOid", "tddEvidence", "preflightEvidence", "codeReviewEvidence", "findingStates", "rejections")  # all a readiness derivation reads
+WORKFLOW = [sys.executable, str(Path(__file__).resolve().parents[2] / "skills/repo-production-workflow/scripts/workflow.py")]
 FINAL_ACTIONS = {"final-review", "re-consult-final-review", "complete-workflow", "address-review-findings"}  # the final advisor may judge
 NO_INSTANCE_ID = "this state predates workflow instance identity and can no longer advance; begin a new workflow"
 SLUG_MISMATCH = "--slug does not match the active workflow"
@@ -115,8 +118,7 @@ def _effective(identity: RepoIdentity, state: JsonObject | None,
     """Derive readiness from bound proof, including reusable evidence after a reverted edit."""
     if not state or state.get("phase") == "complete" or not (state.get("tddEvidence") or state.get("tdd") in {"passed", "not-required"}):
         return state
-    documents = (evidence(state.get("tddEvidence")), evidence(state.get("preflightEvidence")))
-    readiness = _readiness_lines(identity, state, documents=documents)
+    readiness = _readiness_lines(identity, state, evidence=evidence)
     status = "in-progress" if readiness["open"] else "passed" if state.get("tddEvidence") else state["tdd"]
     restore_review = status == "passed" and readiness["reviewCurrent"] and state.get("codeReview") != {"status": "passed", "findings": "none"}
     if state.get("tdd") != status or restore_review:
@@ -1318,8 +1320,9 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
             missing.append(str(exc))
     from .tdd_workflow import current_map
     items = current_map(identity, state)[0] or []
+    readiness = None
     if phase == "final-review":
-        pending = [] if state.get("nextAction") == "re-consult-final-review" else _readiness_lines(identity, state, items)["open"]
+        pending = [] if state.get("nextAction") == "re-consult-final-review" else (readiness := _readiness_lines(identity, state, items))["open"]
         missing.extend(["unresolved named comparisons: " + ", ".join(pending)] if pending else [])
         if not state.get("finalStarted") and (drift := _binding_drift(identity, state, "review")):
             missing.append(drift)
@@ -1371,7 +1374,7 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
             entry["comparison"] = ({key: run[key] for key in ("runIndex", "valid", "fresh") if key in run}
                                    if run["runIndex"] in views else views.setdefault(run["runIndex"], behavior_map.comparison_view(run)))
         rendered.append(entry)
-    map_content = ({"preflightInterpretation": contract, **_readiness_lines(identity, state, items), "items": rendered,
+    map_content = ({"preflightInterpretation": contract, **(readiness or _readiness_lines(identity, state, items)), "items": rendered,
                     **({"retired": lapsed} if (lapsed := (evidence_document(identity, state.get("tddEvidence")) or {}).get("retired")) else {})}
                    if contract or items else None)
     if phase == "preflight-advice" and preflight_draft is not None:
@@ -1424,9 +1427,7 @@ def complete(
         state.pop("revalidation", None)
         # Behavior Map closure and design coverage are judged from the evidence
         # this transaction sees, so a concurrent map change cannot slip through.
-        tdd_document = transaction.evidence(state.get("tddEvidence"))
-        preflight_document = transaction.evidence(state.get("preflightEvidence"))
-        missing = _readiness_lines(identity, state, documents=(tdd_document, preflight_document))["open"] + _finding_state_blockers(state) + completion_missing(state)
+        missing = _readiness_lines(identity, state, evidence=transaction.evidence)["open"] + _finding_state_blockers(state) + completion_missing(state)
         graph_id = state.get("repoContextForgeEvidence")
         graph_document = transaction.evidence(graph_id) if isinstance(graph_id, str) else None
         if (
@@ -1586,17 +1587,35 @@ def scratch_path(identity: RepoIdentity, state: JsonObject) -> str:
 
 def _readiness_lines(identity: RepoIdentity, state: JsonObject, items: list[JsonObject] | None = None, *,
                      documents: tuple[JsonObject | None, JsonObject | None] | None = None,
-                     review: JsonObject | None = None, candidate: str | None = None) -> JsonObject:
-    """One readiness result: immutable named cases, with retained statements for review."""
-    from .tdd_workflow import _evaluation, _retired, current_map, refresh_proof
+                     review: JsonObject | None = None, candidate: str | None = None,
+                     evidence: Callable[[str | None], JsonObject | None] | None = None) -> JsonObject:
+    """One readiness result: immutable named cases, with retained statements for review. Given no items or documents
+    it reads the state's own, through `evidence` when given. Evidence is addressed by its content and a comparison
+    scope holds one candidate and one sample of every input, so within a scope that readiness is derived once for a
+    state; each caller gets its own copy."""
+    from .tdd_workflow import current_map
     candidate = candidate or _active_candidate_tree(identity)
-    if documents is None:
-        items, document = current_map(identity, state, fresh=False) if items is None else (items, evidence_document(identity, state.get("tddEvidence")))
-    else:
-        document = documents[0]
-        items = behavior_map.recorded_map(*documents) if items is None else items
+    held = scope.setdefault("readiness", {}) if items is documents is review is None and (scope := _EXECUTION.get()) else {}
+    key = (identity.root, candidate, evidence is None and state.get("preflight") == "pending" and state.get("preflightLatestEvidence"),
+           _canonical({field: state.get(field) for field in READINESS_FIELDS}))
+    if key not in held:
+        if evidence is not None:
+            documents = (evidence(state.get("tddEvidence")), evidence(state.get("preflightEvidence")))
+        if documents is None:
+            items, document = current_map(identity, state, fresh=False) if items is None else (items, evidence_document(identity, state.get("tddEvidence")))
+        else:
+            document = documents[0]
+            items = behavior_map.recorded_map(*documents) if items is None else items
+        held[key] = _derived_readiness(identity, {field: state[field] for field in READINESS_FIELDS if field in state},
+                                       items or [], document, documents[1] if documents else None, review, candidate)
+    return {name: list(value) if isinstance(value, list) else value for name, value in held[key].items()}
+
+
+def _derived_readiness(identity: RepoIdentity, state: JsonObject, items: list[JsonObject], document: JsonObject | None,
+                       preflight: JsonObject | None, review: JsonObject | None, candidate: str) -> JsonObject:
+    from .tdd_workflow import _evaluation, _retired, refresh_proof
     rejected = rejections(state, "item")  # the lead's measured set-asides
-    items = [entry for entry in items or [] if entry["id"] not in rejected]
+    items = [entry for entry in items if entry["id"] not in rejected]
     evaluation = [{**entry, "caseKey": behavior_map.case_key(entry["id"], document["runs"][entry["runIndex"]]),
                    "comparison": dict(document["runs"][entry["runIndex"]])}
                   for entry in _evaluation(identity, state, document, True).values() if entry["id"] not in rejected]
@@ -1609,7 +1628,7 @@ def _readiness_lines(identity: RepoIdentity, state: JsonObject, items: list[Json
         original = _git(identity, "rev-parse", f"{state['passStartOid']}^{{tree}}").decode().strip()
         if decisions := removed_conditions.removed(identity, original, candidate):
             traces, proofs = document.get("conditions") or {}, [entry for entry in [*observations, *evaluation] if entry["comparison"].get("arms")]
-            preflight = documents[1] if documents and documents[1] else evidence_document(identity, state.get("preflightEvidence"))
+            preflight = preflight or evidence_document(identity, state.get("preflightEvidence"))
             cases += sum(removed_conditions.unsettled(
                 decisions, [traces.get(entry["comparison"]["arms"][0]["key"], {}) for entry in proofs], proofs, behavior_map.recorded_map(None, preflight) or []), [])
     review = review if review is not None else evidence_document(identity, state.get("codeReviewEvidence"))
@@ -1621,7 +1640,7 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
                    preflight_file: str | None = None, obligations: bool = True) -> JsonObject:
     """Bind the selected operation once: `workflow.py next` and a stale context refresh run its command."""
     scripts = Path(__file__).resolve().parents[2] / "skills"
-    cli = [sys.executable, str(scripts / "repo-production-workflow/scripts/workflow.py")]
+    cli = WORKFLOW
     bound = ["--repo", str(identity.root), "--slug", str(state["slug"]),
              "--workflow-id", str(state["workflowId"])]
     action = state.get("nextAction")

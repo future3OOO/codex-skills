@@ -28,6 +28,7 @@ from .workflow_documents import (
     validate_gate_result,
 )
 from .workflow_state import (
+    WORKFLOW,
     WorkflowError,
     _evidence_ready,
     _require_instance,
@@ -484,7 +485,8 @@ def _dispatch(args: argparse.Namespace) -> int:
     return 0
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, *, replace: bool = True) -> int:
+    """Run one workflow command; with `replace` false an operation that would replace this process runs as its child."""
     values = list(sys.argv[1:] if argv is None else argv)
     try:
         # The TDD verb's parsing travels with its implementation.
@@ -500,16 +502,20 @@ def main(argv: list[str] | None = None) -> int:
                 if not bound:  # the step is a judgment or a delegation: say what it needs
                     _emit_json(_receipt(state, identity))
                     return 0
-            step = shlex.split(bound)
-            options = next(index for index, word in enumerate(step) if word.startswith("-"))
-            end = values.index("--") if "--" in values else len(values)
-            # The caller's options go first: the step's own binding is parsed last and stands, however theirs is spelled.
-            command = [*step[:options], *values[1:end], *step[options:], *values[end:]]
+                step = shlex.split(bound)
+                options = next(index for index, word in enumerate(step) if word.startswith("-"))
+                end = values.index("--") if "--" in values else len(values)
+                # The caller's options go first: the step's own binding is parsed last and stands, however theirs is spelled.
+                command = [*step[:options], *values[1:end], *step[options:], *values[end:]]
+                if step[:2] == WORKFLOW:  # a workflow step runs in this call's process and comparison scope
+                    return main(command[2:], replace=replace)
             if step[:2] == ENTRY["context"]:  # the bootstrap prints the packet and no continuation: the pass's next step follows it
                 if not (code := subprocess.run(command, check=False).returncode):
                     with _comparison_scope():
                         _emit_json(_receipt(_require_state(read_workflow(identity)), identity))
                 return code
+        if command and not replace:
+            return subprocess.run(command, check=False).returncode
         if command:  # the operation replaces this process: its output and exit status are its own
             os.execv(command[0], command)
         with _comparison_scope():
