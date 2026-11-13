@@ -1,12 +1,10 @@
-"""The Python conditions a candidate removes, and what settles each one: a recorded case, or a review ruling."""
+"""The Python conditions a candidate removes, and the recorded cases that settle each one."""
 from __future__ import annotations
 
 import ast
 import difflib
-import hashlib
 import os
 import re
-import textwrap
 from collections import Counter
 from functools import lru_cache
 
@@ -15,7 +13,6 @@ from .repo_identity import RepoIdentity
 from .state_store import _git, is_test_path
 
 JsonObject = dict[str, object]
-RULING = r"\W{1,8}the request (asks|does not ask) for this(?: change(?: of result)?)?(?![ \t]*\w)"  # not "asks for this condition to stay"
 
 
 def _functions(source: str) -> dict[str, ast.AST]:
@@ -24,6 +21,8 @@ def _functions(source: str) -> dict[str, ast.AST]:
 
     def visit(node: ast.AST, prefix: str) -> None:
         for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.expr):
+                continue
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 if not isinstance(child, ast.ClassDef):
                     found[prefix + child.name] = child
@@ -165,18 +164,22 @@ def clears(case: JsonObject, approved: list[JsonObject]) -> bool:
         for item in approved)
 
 
-def _uncleared(decisions: list[JsonObject], traces: list[JsonObject | None], cases: list[JsonObject], approved: list[JsonObject] | None):
-    """Each removed operand no recorded case clears, with the positions of the cases that decide it. A case decides it
-    when its original run evaluates it at its deciding value and the paired candidate decision, on the values that run
-    observed, is not known to agree with the original; it clears it by `clears`, and always when no `approved` is given.
-    `traces` holds each recorded case's evaluations by decision id; None is a run the tracer could not observe; a case
-    not yet traced has no evaluations."""
+def unsettled(decisions: list[JsonObject], traces: list[JsonObject | None], cases: list[JsonObject],
+              approved: list[JsonObject]) -> tuple[list[str], list[str]]:
+    """The open lines of the removed operands no recorded case clears: those no case decides, then those only uncleared
+    cases decide. A case decides an operand when its original run evaluates it at its deciding value and the paired
+    candidate decision, on the values that run observed, is not known to agree with the original; it clears it by `clears`.
+    `traces` holds the evaluations of each of `cases` by decision id; None is a run the tracer could not observe; a case
+    not yet traced has no evaluations. An operand no case decides opens no line when every run was unobservable. One only
+    uncleared cases decide is a change declared after preflight, which settles nothing."""
+    undecided, declared = [], []
+    cut = lambda text: text if len(text) <= 160 else text[:159] + "…"
     for decision in decisions:
         test, match = (ast.parse(str(decision[key]), mode="eval").body for key in ("test", "match"))
         spans = {tuple(node[:4]): (node[4], node[5]) for node in decision["nodes"]}
         for operand in decision["removed"]:
             node, deciders = ast.parse(str(operand["operand"]), mode="eval").body, []
-            for position, trace in enumerate(traces):
+            for case, trace in zip(cases, traces):
                 for evaluation in (trace or {}).get(decision["id"]) or ():
                     known = dict(evaluation["names"])
                     for *span, kind, jumped in evaluation["jumps"]:
@@ -188,55 +191,16 @@ def _uncleared(decisions: list[JsonObject], traces: list[JsonObject | None], cas
                         break
                 else:
                     continue  # this case does not decide it
-                if approved is None or clears(cases[position], approved):
+                if clears(case, approved):
                     break
-                deciders.append(position)
+                deciders.append(str(case["id"]))
             else:
-                yield decision, operand, deciders
-
-
-def unsettled(decisions: list[JsonObject], traces: list[JsonObject | None], cases: list[JsonObject] = (),
-              approved: list[JsonObject] | None = None, rulings=list, judged: bool = False) -> tuple[list[str], list[str]]:
-    """The open lines and the review questions of the removed operands no recorded case clears (see `_uncleared`; `cases`
-    are the recorded cases the traces belong to). One that no case decides is an open line, unless every run was unobservable.
-    One that only uncleared cases decide is a change declared after preflight: a question named RC-… for the reviewer
-    and the final advisor, not an open line. `rulings()` gives each recorded finding, as its id and claim, with whether the
-    final advisor made it, and one rules by following the name with "the request asks for this" or "the request does not
-    ask for this". The second is binding from either author and opens the line. The first clears it: the final
-    advisor's at once, the reviewer's when the final advisor has judged this tree (`judged`), having received the
-    question with it. A final verdict with no ruling opens the line."""
-    lines, questions, claims = [], [], None
-    cut = lambda text: text if len(text) <= 160 else text[:159] + "…"
-    for decision, operand, deciders in _uncleared(decisions, traces, cases, approved):
-        head = f"removed condition {decision['file']}:{operand['line']} `{cut(operand['operand'])}`"
-        if not deciders:
-            if not (traces and all(trace is None for trace in traces)):
-                lines.append(f"{head}: no recorded case makes it {str(operand['value']).lower()} on the original where the candidate's "
-                             f"`{cut(decision['match'])}` then decides differently; reaching it otherwise does not count. "
-                             "Restore it, or record a case with such an input: workflow.py tdd --case ITEM 'COMMAND'")
-            continue
-        name = "RC-" + hashlib.sha256(f"{decision['id']} {operand['operand']}".encode()).hexdigest()[:8]
-        claims = rulings() if claims is None else claims
-        said = [(final, found[1].lower() == "asks") for final, claim in claims
-                if (found := re.search(re.escape(name) + RULING, claim, re.IGNORECASE))]
-        if not all(asks for _, asks in said):
-            lines.append(f"{head}: review ruled on {name} that the request does not ask for this change. Restore it.")
-        elif judged and not said:
-            lines.append(f"{head}: the final review ended with no ruling on {name}, so nothing shows the request asks for this change. Restore it.")
-        elif not judged and not any(final for final, _ in said):
-            shown = {(cases[position]["id"], cases[position]["comparison"]["command"]): cases[position] for position in deciders}  # an item's retained copy shows once
-            questions.append("\n".join([
-                f"{name}: {head}. Where it is {str(operand['value']).lower()} on the original, the candidate's `{cut(decision['match'])}` "
-                "decides differently. The only recorded result of that difference was declared after the approved preflight:",
-                *(f"{identifier} `{command}`\n" + "\n".join(
-                    f"  {'candidate' if arm['source'] == 'current' else arm['source']}: {arm['outcome']} (exit {arm['exitCode']})"
-                    + ("\n" + textwrap.indent(str(arm["outputTail"]).strip("\n"), "    ") if arm.get("outputTail") else "")
-                    for arm in behavior_map.comparison_view(case["comparison"])["arms"]) for (identifier, command), case in shown.items()),
-                *(["reviewer: the request asks for this"] if said else []),
-                "Does the request ask for this change of result? Restore the condition to clear this now; otherwise a review ruling settles it."]))
-    return lines, questions
-
-
-def undecided(decisions: list[JsonObject], traces: list[JsonObject | None]) -> list[str]:
-    """One line per removed operand no recorded case decides, for the tracing that stops once every operand is decided."""
-    return unsettled(decisions, traces)[0]
+                head = f"removed condition {decision['file']}:{operand['line']} `{cut(operand['operand'])}`: "
+                where = f" it {str(operand['value']).lower()} on the original where the candidate's `{cut(decision['match'])}` then decides differently; "
+                if deciders:
+                    declared.append(f"{head}only {', '.join(dict.fromkeys(deciders))}, declared after the approved preflight, makes{where}"
+                                    "that settles nothing. Restore it, or record a case with such an input that passes on both sources.")
+                elif not (traces and all(trace is None for trace in traces)):
+                    undecided.append(f"{head}no recorded case makes{where}reaching it otherwise does not count. "
+                                     "Restore it, or record a case with such an input: workflow.py tdd --case ITEM 'COMMAND'")
+    return undecided, declared

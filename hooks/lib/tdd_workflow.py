@@ -1450,20 +1450,31 @@ def _compare(identity: RepoIdentity, original: str, candidate: str, probe: JsonO
     return _compare_many(identity, original, candidate, [probe], runs, passing_original=passing_original)[0]
 
 
-def _condition_traces(identity: RepoIdentity, original: str, candidate: str, cases: list[JsonObject], retained: JsonObject) -> JsonObject:
+def _condition_traces(identity: RepoIdentity, original: str, candidate: str, cases: list[JsonObject], retained: JsonObject,
+                      preflight: str | None) -> JsonObject:
     """Each recorded case's evaluations of the decisions the candidate removes operands from, by original arm. Retained
-    traces answer first; only while an operand stays undecided do untraced cases run once more on the original under
-    the tracer, cheapest first in pool-sized groups, as executions of their own so no recorded arm or timing changes.
+    traces answer first; only while an operand stays uncleared do untraced cases run once more on the original under
+    the tracer, those that can clear one first and then cheapest first, in pool-sized groups, as executions of their own
+    so no recorded arm or timing changes. Once every operand is decided, only cases that can clear one still run. Cases
+    that share an execution share its trace, and it can clear when any of them can (`preflight` holds the approved items).
     None marks a run the tracer could not observe."""
     decisions = removed_conditions.removed(identity, original, candidate)
-    runs = {run["arms"][0]["key"]: run for run in cases if run.get("arms") and not _growth(run["execution"])}
+    cases = [case for case in cases if case["comparison"].get("arms") and not _growth(case["comparison"]["execution"])]
+    keys = [case["comparison"]["arms"][0]["key"] for case in cases]
+    runs = {key: case["comparison"] for key, case in zip(keys, cases)}
     traces = {key: retained[key] for key in runs if key in retained}
+    approved = behavior_map.recorded_map(None, evidence_document(identity, preflight)) or [] if decisions else []
+    clearing = {key for key, case in zip(keys, cases) if removed_conditions.clears(case, approved)}
     pending = sorted((key for key in runs if traces.get(key, {}) is not None
                       and any(decision["id"] not in traces.get(key, {}) for decision in decisions)),
-                     key=lambda key: runs[key]["arms"][0]["timing"]["executionSeconds"])
+                     key=lambda key: (key not in clearing, runs[key]["arms"][0]["timing"]["executionSeconds"]))
     width = min(len(os.sched_getaffinity(0)), 8)
-    while pending and removed_conditions.undecided(decisions, [traces.get(key, {}) for key in runs]):
-        group, pending = pending[:width], pending[width:]
+    while pending:
+        undecided, declared = removed_conditions.unsettled(decisions, [traces.get(key, {}) for key in keys], cases, approved)
+        group = pending[:width] if undecided else [key for key in pending[:width] if key in clearing] if declared else []
+        if not group:
+            break
+        pending = pending[len(group):]
         with tempfile.TemporaryDirectory(prefix="workflow-conditions-") as directory:
             shutil.copy(Path(__file__).with_name("condition_trace.py"), Path(directory, "sitecustomize.py"))
             Path(directory, "conditions.json").write_text(json.dumps(decisions), encoding="utf-8")
@@ -1778,8 +1789,10 @@ def _run_tdd(values: list[str]) -> int:
         gone.append({"caseKey": key, "command": run["command"], "exits": [arm["exitCode"] for arm in run["arms"]],
                      **({"reason": " ".join(args.report)} if args.report else {})})
     conditions = _condition_traces(identity, original, candidate, [
-        *(case["comparison"] for case in behavior_map.current_cases(items, runs, retired)),
-        *(runs[frozen["runIndex"]] for frozen in evaluation.values())], (current or {}).get("conditions") or {})
+        *behavior_map.current_cases(items, runs, retired),
+        *({**frozen, "comparison": runs[frozen["runIndex"]]} for frozen in evaluation.values()
+          if behavior_map.case_key(frozen["id"], runs[frozen["runIndex"]]) not in retired)],
+        (current or {}).get("conditions") or {}, state.get("preflightEvidence"))
     selected_only = bool(args.behavior_id)
     reused = bool(current and len(runs) == len(current.get("runs", [])) and signature == json.dumps(items, sort_keys=True)
                   and frozen_signature == json.dumps(evaluation, sort_keys=True) and conditions == (current.get("conditions") or {}))
