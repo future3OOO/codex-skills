@@ -1,5 +1,5 @@
 {
   "rules": ["advisor-role.md", "proof-invariants.md"],
   "skills": ["code-quality", "codebase-design"],
-  "mcp": ["fff", "gitnexus"]
+  "mcp": ["gitnexus"]
 }
