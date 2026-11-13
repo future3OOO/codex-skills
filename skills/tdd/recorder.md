@@ -17,18 +17,23 @@ workflow.py record tdd-map --repo "$PWD" --input map.json
 A lead passes what follows `workflow.py` (`tdd --case BM_X 'COMMAND'`, without `--repo`) as the workflow tool's `args`; the call returns the finished receipt.
 `--case` takes one command per case and `-` for no item. A scratch file a command names is frozen
 with it, as is a temporary path the command or that file names; `--path` or `--support` freezes
-another beside it. A bare call replays every recorded
-command and captures any still declared. A case that cannot be captured is refused alone. `map.json` holds
-`{"items":[{"id":"BM_X","expected":"..."}]}` (only the changed fields), `{"added":[...]}`
-or `{"removed":["BM_X"]}`. The receipt gives continuation, failures and evidence access.
+another beside it. A `--case` call runs the cases it names, captures any command an item still
+declares and judges the rest of the map as recorded, without running it; a bare call replays every recorded command.
+A case that cannot be captured is refused alone; a failing case is a row, not a failed call. `map.json` holds
+`items` (only the changed fields), `added` and `removed`, alone or together:
+`{"items":[{"id":"BM_X","expected":"..."}],"removed":["BM_Y"]}`. The receipt gives continuation, failures and evidence access.
 The runner owns source preparation and reuse; do not repeat them.
 
-Only a finding's author can withdraw it. The lead retires a case (`--retire` with its `caseKey`)
-once its item has left the map, or beside a case of the same call that proves the item when the
-item changed and the case no longer passes, or when its original result never could prove the item.
+Only a finding's author can withdraw it, or retire a case beside its probe or replacement. The lead
+retires a case (`--retire` with its `caseKey`) under a conformance or contract item, or whose item
+has left the map; a preservation case only beside a named case of the same call that proves the
+item, when the item changed and the case no longer passes or it fails on the original. Reviewers
+receive each retired case with its command and exits.
 Retirement never authorizes losing required behavior. Keep the raw evidence and
 other observations. The runtime rechecks retained findings at verification or
-completion and preserves their source identity.
+completion and preserves their source identity. Once the final author's ready verdict judges a
+tree, a probe of its finding that it captured again there, passing on both sources, replays with
+that capture's files; the finding settles at `verify` or `complete` when all its probes pass so.
 
 ## Behavior Map
 

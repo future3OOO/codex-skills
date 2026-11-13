@@ -415,9 +415,9 @@ def commit_tdd(identity: RepoIdentity, slug: str, workflow_id: str | None,
         items = behavior_map.recorded_map(summary_doc) or []
         manifests = []
         candidate = _active_candidate_tree(identity)
-        if tree_before is not None and summary_doc["runs"]:
-            measured_tree = summary_doc.get("candidateTree", summary_doc["runs"][-1]["candidateTree"])
-            run = next(run for run in reversed(summary_doc["runs"]) if run["candidateTree"] == measured_tree)
+        # The latest run on the measured tree; none when every case of the call was refused after an edit.
+        if tree_before is not None and (run := next((run for run in reversed(summary_doc["runs"])
+                                                     if run["candidateTree"] == summary_doc.get("candidateTree", run["candidateTree"])), None)):
             drift = _manifest_drift(tree_before, tree_manifest(identity), stale="candidate changed during comparison")
             if not _candidate_matches(identity, run["candidateTree"]):
                 drift = drift or "candidate tree changed during comparison"
@@ -590,6 +590,10 @@ def commit_retained_checks(identity: RepoIdentity, slug: str, workflow_id: str, 
                     "inputIdentities": execution["inputIdentities"], "runs": execution["runs"]}
         write = evidence_write(workflow_id, "retained-checks", document)
         _settle_executed(state, execution, write.evidence_id)
+        final = state.get("finalReview") or {}
+        if final.get("status") == "commit-ready" and final.get("findings") == "pending" and not _stage_unresolved(state, "final", final["source"]):
+            final["findings"] = "none"  # the ready verdict's last open finding has settled on the tree it judged
+            state["nextAction"] = _derive_next_action(state)
         state.setdefault("retainedChecks", {})[execution["measuredTree"]] = write.evidence_id
         return _commit(transaction, state, "retained-checks", evidence=[write])
 
@@ -1647,8 +1651,9 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
     elif action == "code-review":
         return {"command": None, "input": "Delegate code-review; its checkpoint supplies the verdict command. Reuse the reviewer for corrections; repair pending findings before return review."}
     elif action in {"tdd", "address-review-findings"}:
-        command = [*cli, "tdd", *bound[:4]]
-        pending = [{"findingId": f["findingId"]} for f in state.get("findingStates", []) if _finding_unresolved(f)]
+        command = [*cli, "tdd", *bound]
+        # Each open finding with the evidence that holds its probe, results and diff.
+        pending = [{"findingId": f["findingId"], "evidenceId": f["intakeEvidenceId"]} for f in state.get("findingStates", []) if _finding_unresolved(f)]
         ids = [str(entry["id"]) for entry in behavior_map.recorded_map(evidence_document(
             identity, state.get("tddEvidence") or state.get("preflightEvidence"), restore_runs=False)) or []]
         operation: JsonObject = {"command": shlex.join(command),
