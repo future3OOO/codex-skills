@@ -34,8 +34,9 @@ def _unique(pairs: list[tuple[str, object]]) -> JsonObject:
     return result
 
 
-def preflight_document(path: str) -> JsonObject:
-    """The contract and its Behavior Map; every violation is named in one refusal."""
+def preflight_document(path: str, *, scripts: bool = True) -> JsonObject:
+    """The contract and its Behavior Map; every violation is named in one refusal. `scripts` keeps the missing-script
+    check, which a consult's recorded draft leaves to the recording of its preflight."""
     try:
         raw = sys.stdin.read() if path == "-" else Path(path).read_text(encoding="utf-8")
         value = json.loads(raw, object_pairs_hook=_unique)
@@ -47,11 +48,11 @@ def preflight_document(path: str) -> JsonObject:
         (f"preflight document has unknown sections: {', '.join(sorted(set(value) - PREFLIGHT_SECTIONS))}",
          set(value) - PREFLIGHT_SECTIONS),
         ("preflight authoritativeContract must be non-empty text", not _text(value.get("authoritativeContract"))),
-    ) if bad] + map_errors(value.get("behaviorMap"), allow_runtime=False)
+    ) if bad] + map_errors(value.get("behaviorMap"), allow_runtime=False, scripts=scripts)
     if errors:
         raise ValueError("; ".join(errors))
     return {"authoritativeContract": str(value["authoritativeContract"]).strip(),
-            "behaviorMap": initial_items(value["behaviorMap"])}
+            "behaviorMap": initial_items(value["behaviorMap"], scripts)}
 
 
 PREFLIGHT_SECTIONS = frozenset({"authoritativeContract", "behaviorMap"})

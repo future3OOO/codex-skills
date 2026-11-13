@@ -2,15 +2,17 @@
 from __future__ import annotations
 
 import ast
+import contextlib
 import difflib
 import os
 import re
 from collections import Counter
 from functools import lru_cache
+from pathlib import Path
 
 from . import behavior_map
 from .repo_identity import RepoIdentity
-from .state_store import _git, is_test_path
+from .state_store import _git, blob_reader, is_test_path
 
 JsonObject = dict[str, object]
 
@@ -122,23 +124,26 @@ def _removed(path: str, qualname: str, aligned: dict[int, set[int]], old: ast.AS
 def removed(identity: RepoIdentity, original: str, candidate: str) -> list[JsonObject]:
     """The original's decisions, in non-test Python files, that lose an operand a traced evaluation can judge."""
     decisions: list[JsonObject] = []
-    for raw in _git(identity, "diff", "--name-only", "--diff-filter=M", "-z", original, candidate, "--", "*.py").split(b"\0"):
-        if not raw or is_test_path(path := os.fsdecode(raw)):
-            continue
-        before, after = (_git(identity, "cat-file", "blob", f"{tree}:{path}").decode("utf-8", errors="replace")
-                         for tree in (original, candidate))
-        old, new = _functions(before), _functions(after)
-        lines = re.split(r"\r\n|\r|\n", before), re.split(r"\r\n|\r|\n", after)  # as Python numbers lines
-        source = lambda side, node: lines[side][min(part.lineno for part in (node, *node.decorator_list)) - 1:node.end_lineno]
-        aligned: dict[int, set[int]] = {}
-        for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, *lines, autojunk=False).get_opcodes():
-            for line in range(i1, i2):
-                aligned[line + 1] = {j1 + 1 + line - i1} if tag == "equal" else set(range(j1 + 1, j2 + 1))
-        for name in old.keys() & new.keys():
-            # A function whose source lines, decorators included, are the same on both sides is the same function; in the others,
-            # _removed passes over each decision the candidate keeps as it is.
-            if source(0, old[name]) != source(1, new[name]):
-                decisions += _removed(path, name, aligned, old[name], new[name])
+    raw = _git(identity, "diff", "--raw", "--no-abbrev", "--diff-filter=M", "-z", original, candidate, "--", "*.py").split(b"\0")
+    changed = [(path, header.split()[2:4]) for header, raw_path in zip(raw[::2], raw[1::2]) if not is_test_path(path := os.fsdecode(raw_path))]
+    with blob_reader(Path(identity.root)) if changed else contextlib.nullcontext() as read:
+        for path, oids in changed:  # one file pair held at a time
+            blobs = [read(oid.decode()) for oid in oids]
+            if None in blobs:
+                raise RuntimeError(f"source of {path} unavailable")
+            before, after = (blob.decode("utf-8", errors="replace") for blob in blobs)
+            old, new = _functions(before), _functions(after)
+            lines = re.split(r"\r\n|\r|\n", before), re.split(r"\r\n|\r|\n", after)  # as Python numbers lines
+            source = lambda side, node: lines[side][min(part.lineno for part in (node, *node.decorator_list)) - 1:node.end_lineno]
+            aligned: dict[int, set[int]] = {}
+            for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, *lines, autojunk=False).get_opcodes():
+                for line in range(i1, i2):
+                    aligned[line + 1] = {j1 + 1 + line - i1} if tag == "equal" else set(range(j1 + 1, j2 + 1))
+            for name in old.keys() & new.keys():
+                # A function whose source lines, decorators included, are the same on both sides is the same function; in the others,
+                # _removed passes over each decision the candidate keeps as it is.
+                if source(0, old[name]) != source(1, new[name]):
+                    decisions += _removed(path, name, aligned, old[name], new[name])
     return decisions
 
 

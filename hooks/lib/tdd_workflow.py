@@ -31,7 +31,7 @@ from .repo_identity import CanonicalRoot, RepoIdentity, resolve_repo_identity
 from .state_store import _EXECUTION, _comparison_scope, _active_candidate_tree, _git, is_test_path, read_blobs, blob_reader, tree_manifest, utc_timestamp, repo_state_dir, _flock
 from .workflow_state import (
     NO_INSTANCE_ID, WorkflowError, _bound_instance_state,
-    commit_tdd, commit_findings, evidence_document, instance_id, operation_receipt, _readiness_lines,
+    commit_tdd, commit_findings, evidence_document, instance_id, operation_receipt, rejections, _readiness_lines,
 )
 
 JsonObject = dict[str, object]
@@ -940,7 +940,8 @@ def _revised(identity: RepoIdentity, run: JsonObject, candidate: str, preserved:
 
 def _run_probe(identity: RepoIdentity, probe: object, candidate: str, original: str | None,
                timeout: float = PROBE_TIMEOUT, cached: list[JsonObject] | None = None,
-               frozen: JsonObject | None = None) -> JsonObject:
+               frozen: JsonObject | None = None, report: bool = False) -> JsonObject:
+    """`report`: a final author's plain probe, which passing on both sources records as a report line."""
     try:
         witnessed = bool(frozen and frozen.get("arms")) and (
             (frozen["arms"][0]["outcome"], _probe_outcome(frozen["arms"][-1])) in {("failed", "passed"), ("passed", "failed"), ("passed", "timed-out")})
@@ -950,7 +951,7 @@ def _run_probe(identity: RepoIdentity, probe: object, candidate: str, original: 
                               "candidate": _probe_outcome(compared["arms"][-1])}
         if original is not None:
             result["original"] = _probe_outcome(compared["arms"][0])
-        if all(arm["outcome"] == "passed" for arm in compared["arms"]) and not compared.get("sensitive") and not witnessed:
+        if all(arm["outcome"] == "passed" for arm in compared["arms"]) and not compared.get("sensitive") and not witnessed and not report:
             result["error"] = compared.get("breakError") or "probe did not fail under its behavior break; supply --change probe=FILE"
         if any(_probe_outcome(arm) == "incomplete" for arm in compared["arms"]):
             result["error"] = "; ".join(dict.fromkeys(str(arm.get("error") or "unproved execution") for arm in compared["arms"] if _probe_outcome(arm) == "incomplete"))
@@ -1078,7 +1079,7 @@ def _retained(identity: RepoIdentity, state: JsonObject) -> list[tuple[JsonObjec
     sources, replays with that capture's probe files: its verdict confirms the repair of a file the probe had frozen."""
     retained, rejected, intakes, recaptured, candidate = [], set(), {}, {}, _active_candidate_tree(identity)
     judged = (state.get("finalReview") or {}).get("status") == "commit-ready" and state.get("judgedTree") == candidate
-    for entry in state.get("findingStates") or []:
+    for entry in (entry for entry in state.get("findingStates") or [] if entry.get("status") != "rejected"):  # the lead's rejection stands without a rerun
         for ref in [{"evidenceId": entry["intakeEvidenceId"], "id": entry["findingId"]}, *entry.get("observations", [])]:
             ref = {"evidenceId": ref["evidenceId"], "id": ref["id"]}
             if ref["evidenceId"] not in intakes:
@@ -1103,8 +1104,9 @@ def _retained(identity: RepoIdentity, state: JsonObject) -> list[tuple[JsonObjec
 
 def execute_findings(identity: RepoIdentity, state: JsonObject, findings: list[JsonObject], *, captured: JsonObject | None = None,
                      retained: list[tuple[JsonObject, JsonObject]] | None = None, candidate: str | None = None,
-                     current: JsonObject | None = None) -> JsonObject:
-    """Execute only submitted observations; gates supply uncached retained observations explicitly."""
+                     current: JsonObject | None = None, report: bool = False) -> JsonObject:
+    """Execute only submitted observations; gates supply uncached retained observations explicitly. `report`: the
+    submitted probes are a final author's, whose plain both-passing probe records as a report line."""
     from .workflow_state import _finding_state
     candidate = candidate or _active_candidate_tree(identity)
     rejected = [finding["priorFinding"] for finding in findings if finding.get("rejected") is True]
@@ -1160,7 +1162,8 @@ def execute_findings(identity: RepoIdentity, state: JsonObject, findings: list[J
         prior = (finding.get("execution") or {}).get("comparison") or {}
         cost_recheck = not first and bool(prior.get("arms")) and prior["arms"][0]["outcome"] == "failed"
         return (_run_change(identity, batches, finding["change"], candidate, finding.get("probe"), timeout, cached, maintained, frozen, cost_recheck) if "change" in finding
-                else _run_probe(identity, finding["probe"], candidate, original, timeout, cached, frozen) if "probe" in finding
+                else _run_probe(identity, finding["probe"], candidate, original, timeout, cached, frozen,
+                                report and first and not (frozen or {}).get("breakOid")) if "probe" in finding
                 else {"kind": "claim"})
     for replacement in (False, True):
         probes = [captured[finding["probe"]["command"]] for finding in findings
@@ -1555,7 +1558,9 @@ def _condition_traces(identity: RepoIdentity, original: str, candidate: str, cas
 
 @interruptible()
 @_comparison_scope()
-def _run_tdd(values: list[str]) -> int:
+def _run_tdd(values: list[str], *, added: frozenset[str] = frozenset(), details: JsonObject | None = None) -> int:
+    """`added`: the map items the approving preflight consult added, which this call (its recording) keeps only if each
+    declared command ran on both sources; `details` joins the receipt."""
     dash = values.index("--") if "--" in values else len(values)
     parser = argparse.ArgumentParser(prog="workflow tdd", description="Compare and record probes or replacements; authors record verdicts from their checkpoint command", epilog=binds.__doc__)
     parser.add_argument("--repo", "--cwd", dest="repo", default=".")
@@ -1565,8 +1570,9 @@ def _run_tdd(values: list[str]) -> int:
     parser.add_argument("--tdd-evidence", default=argparse.SUPPRESS)
     parser.add_argument("--verdict", help="record review completion without running cases; use the source-bound checkpoint command")
     parser.add_argument("--report", action="append", default=[], help="finding's owning invariant, or non-executable report lines with a verdict")
-    parser.add_argument("--reject", action="append", default=[], metavar="EVIDENCE:ID=REASON",
-                        help="withdraw this author's invalid observation without running cases; retain its raw evidence")
+    parser.add_argument("--reject", action="append", nargs="+", default=[], metavar="ID 'COMMAND'",
+                        help="the lead closes a map item or final finding it rejects: the workflow runs the command once and keeps its "
+                             "output with the rejection; with --as, EVIDENCE:ID=REASON withdraws this author's invalid observation")
     parser.add_argument("--retire", action="append", default=[], metavar="CASE_KEY",
                         help="with --as and a finding probe: the retained key shown in readiness, or an unproved map item id")
     parser.add_argument("--change", action="append", default=[], help="with --as: probe=FILE supplies a behavior-breaking diff for the authored probe; a bare FILE submits an authored replacement")
@@ -1590,7 +1596,12 @@ def _run_tdd(values: list[str]) -> int:
     slug = str(state["slug"])
     if args.path and not (command or args.case) or args.timeout is not None and not 0 < args.timeout <= MAX_CASE_SECONDS:
         raise WorkflowError("a scratch path needs its command; timeout must be positive and at most 30 seconds")
-    if args.reject and not args.author or args.author and args.retire and not (command or args.case or args.change):
+    if args.reject and not args.author:
+        if command or args.case or args.change or args.retire or args.report or args.verdict or args.behavior_id or args.path:
+            raise WorkflowError("a rejection call carries only --reject ID 'COMMAND'")
+        _emit_json(_reject(identity, state, args.reject))
+        return 0
+    if args.author and args.retire and not (command or args.case or args.change):
         raise WorkflowError("only the finding author can withdraw an observation, or retire a case beside its probe or replacement")
     if args.verdict and (args.author != "review" or args.verdict not in {"complete", "incomplete"}
                          or command or args.case or args.change or args.path or args.behavior_id):
@@ -1662,7 +1673,7 @@ def _run_tdd(values: list[str]) -> int:
                 findings.append({"id": identifier, "claim": claim or "Recorded " + ("replacement" if change is not None else "probe")
                                  + ": " + (replacement or probe["command"]), **finding,
                                  **({"retires": retires} if retires else {})})
-        for value in args.reject:
+        for value in map(" ".join, args.reject):
             reference, equal, reason = value.partition("=")
             evidence, colon, identifier = reference.partition(":")
             if not equal or not colon or not evidence or not identifier or not reason.strip():
@@ -1672,7 +1683,7 @@ def _run_tdd(values: list[str]) -> int:
                              "priorFinding": {"evidenceId": evidence, "id": identifier}})
         if not args.verdict and any("probe" in finding or "change" in finding for finding in findings):
             _execution_cache(identity, state)
-        execution = execute_findings(identity, state, findings, captured=captured, candidate=candidate)
+        execution = execute_findings(identity, state, findings, captured=captured, candidate=candidate, report=args.author == "final")
         document = {"schemaVersion": 1, "kind": "intake", "workflowId": workflow_id, "slug": slug,
                     "stage": "code-review" if args.author == "review" else "final",
                     "producer": "code-review" if args.author == "review" else "codex-advisor",
@@ -1726,12 +1737,14 @@ def _run_tdd(values: list[str]) -> int:
         specs = [(args.behavior_id, shlex.join(command))]
     # A call that selects no item also captures the commands map items still declare and judges the whole map: beside
     # named cases the rest is judged as recorded, never run. A captured command leaves its item's `cases`.
-    drafted = [] if args.behavior_id else list(dict.fromkeys((entry["id"], value) for entry in items for value in entry.get("cases", [])))
+    rejected = rejections(state, "item")  # set aside: never replayed
+    drafted = [] if args.behavior_id else list(dict.fromkeys((entry["id"], value) for entry in items if entry["id"] not in rejected
+                                                             for value in entry.get("cases", [])))
     selected = []
     retired = _retired(state)
     if not specs:
         for entry in items:
-            if args.behavior_id and entry["id"] != args.behavior_id:
+            if args.behavior_id and entry["id"] != args.behavior_id or entry["id"] in rejected:
                 continue
             for case in behavior_map.current_cases([entry], runs, retired):
                 selected.append((entry, case["comparison"]))
@@ -1759,6 +1772,9 @@ def _run_tdd(values: list[str]) -> int:
     refused = []
     for identifier, value in dict.fromkeys([*specs, *drafted]):
         try:  # a case that cannot be captured or prepared is refused alone; the rest of the call is recorded
+            if identifier in added and (script := behavior_map.script_operand(value, shells=True)) and not script.startswith(PROBES) \
+                    and not os.path.lexists(Path(identity.root) / script):
+                raise ValueError(script + " does not exist")  # an added item's probe: the case is not run
             entry = behavior_map.item(items, identifier) if identifier else None
             captured = _probe_capture(identity, {"command": value, **({"path": args.path} if args.path else {})},
                                       candidate, args.timeout or MAX_CASE_SECONDS, args.support, inventory, original if entry and entry.get("kind") == "preservation" else None)
@@ -1790,7 +1806,7 @@ def _run_tdd(values: list[str]) -> int:
     for case in behavior_map.current_cases([entry for entry in items if args.behavior_id in (None, entry["id"])], runs):
         run, key = case["comparison"], behavior_map.case_key(case["id"], case["comparison"])
         source = (case["id"], run.get("sourceCommand", run["command"]))
-        if source in named or key in args.retire or not (key in retired or behavior_map._case_question(case)):
+        if source in named or key in args.retire or case["id"] in rejected or not (key in retired or behavior_map._case_question(case)):
             continue
         entry, captured = behavior_map.item(items, case["id"]), None
         try:
@@ -1810,7 +1826,7 @@ def _run_tdd(values: list[str]) -> int:
     selected_indexes = {probe.get("runIndex") for _, probe in selected}
     selected.extend((None, dict(support_overrides.get(index, runs[index])))
                     for frozen in evaluation.values() if behavior_map.case_key(frozen["id"], runs[frozen["runIndex"]]) not in retired and (not args.behavior_id or frozen["id"] == args.behavior_id)
-                    and (index := frozen["runIndex"]) not in selected_indexes and (frozen["id"], runs[index].get("sourceCommand", runs[index]["command"])) not in again
+                    and frozen["id"] not in rejected and (index := frozen["runIndex"]) not in selected_indexes and (frozen["id"], runs[index].get("sourceCommand", runs[index]["command"])) not in again
                     and (not specs or behavior_map._case_question({**frozen, "comparison": runs[index]})))
     def frozen_names():  # the retained first proofs by case key, as they stand: a case proved in this call is retained by it
         return {behavior_map.case_key(frozen["id"], runs[frozen["runIndex"]]): name for name, frozen in evaluation.items()} if args.retire else {}
@@ -1841,6 +1857,14 @@ def _run_tdd(values: list[str]) -> int:
             if specs or drafted:
                 behavior_map.release(items, entry, run, runs)
             behavior_map.retain_evaluation(items, {entry["id"]}, evaluation, runs, retired)
+    # An item the approving consult added stays only if it declares a case and each of them ran on both sources here.
+    turned = {entry["id"]: {"id": entry["id"], "cases": []} for entry in items if entry["id"] in added and (
+        not any(identifier == entry["id"] for identifier, _ in drafted)
+        or any(row["case"] == value for identifier, value in drafted if identifier == entry["id"] for row in refused)
+        or any(owner is entry and arm["outcome"] == "incomplete" for (owner, _), run in zip(selected, compared) for arm in run["arms"]))}
+    if turned:
+        items = [entry for entry in items if entry["id"] not in turned]
+        evaluation = {name: frozen for name, frozen in evaluation.items() if frozen["id"] not in turned}
     for frozen in evaluation.values() if indexes else ():
         if behavior_map.case_key(frozen["id"], runs[frozen["runIndex"]]) not in retired:
             frozen["runIndex"] = indexes.get(frozen["runIndex"], frozen["runIndex"])
@@ -1901,6 +1925,12 @@ def _run_tdd(values: list[str]) -> int:
         state, evidence, readiness = commit_tdd(identity, slug, workflow_id, document,
                     expected_evidence_id=state.get("tddEvidence"), tree_before=before, selected_only=selected_only)
     rows, baseline = [], candidate == original  # before any edit the candidate is the original: a map item's case is expected to behave as on it
+    owners = {value: turned[identifier]["cases"] for identifier, value in drafted   # a turned-away item's refusals are its own
+              if identifier in turned and not any(other == value and owner not in turned for owner, other in drafted)}
+    for row in refused:
+        if row["case"] in owners:
+            owners[row["case"]].append(row)
+    refused = [row for row in refused if row["case"] not in owners]
     reported = {run["runIndex"]: (entry, run) for (entry, probe), run in zip(selected, compared)
                 if all(latest[retiring[done["caseKey"]]] is not run for done in gone)}
     for entry, run in reported.values():
@@ -1921,10 +1951,11 @@ def _run_tdd(values: list[str]) -> int:
                 errors.append(side + " " + outcome + ": " + str(arm.get("output") or arm.get("bindingError") or arm["outcome"])[-1200:])
         if errors:
             row["unexpected"] = errors
-        rows.append(row)
+        (turned[entry["id"]]["cases"] if entry is not None and entry["id"] in turned else rows).append(row)
     receipt = operation_receipt(state, identity, kind="tdd", summaryId=evidence, readiness=readiness, obligations=not selected_only,
                                 cases=[*rows, *refused], **({"retired": [done["caseKey"] for done in gone]} if gone else {}),
-                                **({"unmatched": missing} if (missing := [key for key in dict.fromkeys(args.retire) if key not in retiring]) else {}))
+                                **({"unmatched": missing} if (missing := [key for key in dict.fromkeys(args.retire) if key not in retiring]) else {}),
+                                **({"turnedAway": list(turned.values())} if turned else {}), **(details or {}))
     _emit_json(receipt)
     # 2: a case was refused or its comparison is not bound to the candidate. 1: every case ran and one does not hold, which
     # the command line returns as a result.
@@ -1971,3 +2002,38 @@ def map_update(identity: RepoIdentity, state: JsonObject, value: JsonObject) -> 
     state, evidence, readiness = commit_tdd(identity, str(state["slug"]), str(state["workflowId"]), document,
                                 expected_evidence_id=state.get("tddEvidence"))
     return operation_receipt(state, identity, summaryId=evidence, pending=behavior_map.unresolved(items, readiness["open"]))
+
+
+def _reject(identity: RepoIdentity, state: JsonObject, requests: list[list[str]]) -> JsonObject:
+    """The lead's rejection of an advisor-added map item or final finding: the workflow runs its one command once, in the
+    checkout, and keeps the output with it. Without a command, or when the command does not finish, the target stays open."""
+    from .command_runner import _tail
+    from .workflow_state import commit_rejections
+    added = (evidence_document(identity, (state.get("advisorPreflight") or {}).get("intakeEvidence"), restore_runs=False) or {}).get("added", ())
+    items = {entry["id"]: entry for entry in current_map(identity, state, fresh=False)[0] or [] if entry["id"] in added}
+    findings = {ref["id"]: entry for entry in state.get("findingStates", []) if entry["stage"] == "final"
+                for ref in ({"id": entry["findingId"]}, *entry.get("observations", []))}
+    records, rows = [], []
+    for target, *words in requests:
+        command = shlex.join(words) if len(words) > 1 else next(iter(words), None)
+        if target not in items and target not in findings:
+            rows.append({"target": target, "open": "no advisor-added map item or final finding has this id"})
+            continue
+        target = findings[target]["findingId"] if target in findings else target
+        if not (command or "").strip():
+            rows.append({"target": target, "open": "a rejection closes its target only with one command, which the workflow runs and records"})
+            continue
+        try:
+            raw, code, timed_out = _run(shlex.split(command), identity, MAX_CASE_SECONDS)
+        except (OSError, ValueError) as exc:
+            raw, code, timed_out = str(exc).encode(), None, False
+        if code is None or timed_out:
+            rows.append({"target": target, "command": command, "open": f"the command did not finish: {_tail(raw)[-300:]}"})
+            continue
+        claim = items[target]["behavior"] if target in items else next((finding["claim"] for finding in (evidence_document(
+            identity, findings[target]["intakeEvidenceId"], restore_runs=False) or {}).get("findings", []) if finding["id"] == target), "")
+        records.append({"target": target, "kind": "item" if target in items else "finding", "claim": claim,
+                        "command": command, "exitCode": code, "output": _tail(raw)})
+    if records:
+        state = commit_rejections(identity, str(state["slug"]), str(state["workflowId"]), records)
+    return operation_receipt(state, identity, kind="tdd", rejected=[*records, *rows])

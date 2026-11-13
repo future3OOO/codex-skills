@@ -24,7 +24,8 @@ A case that cannot be captured is refused alone; a failing case is a row, not a 
 `{"items":[{"id":"BM_X","expected":"..."}],"removed":["BM_Y"]}`. The receipt gives continuation, failures and evidence access.
 The runner owns source preparation and reuse; do not repeat them.
 
-Only a finding's author can withdraw it, or retire a case beside its probe or replacement. The lead
+Only a finding's author can withdraw it, or retire a case beside its probe or replacement; the lead closes an
+advisor-added map item or final finding it rejects with `tdd --reject ID 'COMMAND'`, whose output the workflow records. The lead
 retires a case (`--retire` with its `caseKey`) under a conformance or contract item, or whose item
 has left the map; a preservation case only beside a named case of the same call that proves the
 item, when the item changed and the case no longer passes or it fails on the original. Reviewers
