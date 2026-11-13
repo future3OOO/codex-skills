@@ -774,7 +774,15 @@ def _freeze_temporary(identity: RepoIdentity, tree: str, files: list[str], comma
     directory with every regular file under it, and name its frozen place instead: the case no longer reads what its
     owner will remove. A probe directory whose file changes is renamed to its new content. Returns tree, files and command."""
     roots = tuple(root + os.sep for root in {"/tmp", tempfile.gettempdir()})
-    entries = {name: _tree_entries(identity, tree)[name] for name in files if name.startswith(PROBES)}
+    # Capture roots a probe directory at its files' common parent, so one whose files all lie below a single subdirectory is
+    # a temporary tree an earlier call froze: its files are not read again, as they were not when it was frozen.
+    spread: dict[str, set[str]] = {}
+    for name in files:
+        if name.startswith(PROBES):
+            directory, _, place = name[len(PROBES):].partition("/")
+            spread.setdefault(directory, set()).add(place.rpartition("/")[0].partition("/")[0])
+    entries = {name: _tree_entries(identity, tree)[name] for name in files if name.startswith(PROBES)
+               and (len(first := spread[name[len(PROBES):].partition("/")[0]]) > 1 or "" in first)}
     stored = read_blobs(Path(identity.root), [oid for _, oid in entries.values()])  # one reader for every frozen scratch file
     texts = {name: stored[oid].encode("utf-8", "surrogateescape") for name, (_, oid) in entries.items()}
     named = sorted({path for text in (*texts.values(), *map(os.fsencode, command[1:])) for token in TEMPORARY.findall(text)
@@ -798,6 +806,9 @@ def _freeze_temporary(identity: RepoIdentity, tree: str, files: list[str], comma
     empty = _git(identity, "hash-object", "-t", "tree", "--stdin", stdin=b"").decode().strip()
     kept = _indexed(identity, empty, (("update-index", "--index-info"), "".join(
         f"{'100755' if os.access(member, os.X_OK) else '100644'} {blob}\t{member.lstrip('/')}\n" for member, blob in zip(members, blobs)).encode()))
+    stored = set(_git(identity, "ls-tree", "-r", "--name-only", "-z", kept).split(b"\0"))  # git leaves out what a tree cannot hold, a `.git` entry say
+    if dropped := next((member for member in members if os.fsencode(member.lstrip("/")) not in stored), None):
+        refuse(dropped + " cannot be stored in a tree")
     def placed(match, root=os.fsencode(identity.root + os.sep)):  # an absolute place: the frozen file may be read from any directory
         path = os.path.normpath(os.fsdecode(match.group()))
         return root + os.fsencode(f"{PROBES}{kept}/" + path.lstrip("/")) if any(path == name or path.startswith(name + os.sep) for name in named) else match.group()
@@ -1016,8 +1027,11 @@ def binds(execution: JsonObject) -> bool:
 
 def _retained(identity: RepoIdentity, state: JsonObject) -> list[tuple[JsonObject, JsonObject]]:
     """Each observation of every review or final finding that binds by the current rule: a finding settles only with
-    all of them; one recorded under an earlier rule that no longer binds is re-executed as a report line."""
-    retained, rejected, intakes = [], set(), {}
+    all of them; one recorded under an earlier rule that no longer binds is re-executed as a report line. Once the final
+    author's ready verdict judges the candidate, a probe of its finding that it captured again there, passing on both
+    sources, replays with that capture's probe files: its verdict confirms the repair of a file the probe had frozen."""
+    retained, rejected, intakes, recaptured, candidate = [], set(), {}, {}, _active_candidate_tree(identity)
+    judged = (state.get("finalReview") or {}).get("status") == "commit-ready" and state.get("judgedTree") == candidate
     for entry in state.get("findingStates") or []:
         for ref in [{"evidenceId": entry["intakeEvidenceId"], "id": entry["findingId"]}, *entry.get("observations", [])]:
             ref = {"evidenceId": ref["evidenceId"], "id": ref["id"]}
@@ -1027,8 +1041,16 @@ def _retained(identity: RepoIdentity, state: JsonObject) -> list[tuple[JsonObjec
             finding = next((item for item in intake.get("findings", []) if item["id"] == ref["id"]), None)
             if finding and finding.get("rejected") is True:
                 rejected.add(tuple(finding["priorFinding"][key] for key in ("evidenceId", "id")))
+            run = ((finding or {}).get("execution") or {}).get("comparison") or {}
+            if judged and intake.get("stage") == "final" and intake.get("candidateTree") == candidate and all(
+                    arm["outcome"] == "passed" for arm in run.get("arms") or [{"outcome": None}]):
+                recaptured[intake.get("producer"), run["command"]] = run
             if intake.get("stage") in {"code-review", "final"} and finding and "execution" in finding and binds(finding["execution"]):
                 retained.append((entry, {**finding, "ref": ref, "sourceTree": intake["candidateTree"]}))
+    for _, finding in retained:
+        intake, held = intakes[finding["ref"]["evidenceId"]], finding["execution"]
+        if held["kind"] == "probe" and intake["stage"] == "final" and (again := recaptured.get((intake.get("producer"), held["comparison"]["command"]))):
+            finding["execution"] = {**held, "comparison": {**held["comparison"], "probeTree": again["probeTree"], "probeFiles": again["probeFiles"]}}
     return [(entry, finding) for entry, finding in retained
             if tuple(finding["ref"][key] for key in ("evidenceId", "id")) not in rejected]
 
@@ -1065,7 +1087,10 @@ def execute_findings(identity: RepoIdentity, state: JsonObject, findings: list[J
         """A retained finding's frozen probe; a temporary path it names that exists again is frozen in, so the probe replays."""
         prior = finding["execution"].get("comparison")
         if prior and "replay" not in finding:
-            tree, files, words = _freeze_temporary(identity, prior["probeTree"], prior["probeFiles"], shlex.split(prior["command"]))
+            try:
+                tree, files, words = _freeze_temporary(identity, prior["probeTree"], prior["probeFiles"], shlex.split(prior["command"]))
+            except ValueError:  # it exists again and cannot be frozen: the probe replays as captured and reads it where it is
+                tree = prior["probeTree"]
             finding["replay"] = prior if tree == prior["probeTree"] else {**prior, "probeTree": tree, "probeFiles": sorted(files), "command": shlex.join(words)}
         return finding.get("replay", prior)
     def run(finding: JsonObject, first: bool) -> JsonObject:
@@ -1624,8 +1649,9 @@ def _run_tdd(values: list[str]) -> int:
     specs = [(identifier if identifier != "-" else None, value) for identifier, value in args.case]
     if command:
         specs = [(args.behavior_id, shlex.join(command))]
-    # A bare call also captures the commands map items still declare; a captured command leaves its item's `cases`.
-    drafted = [] if specs or args.behavior_id else list(dict.fromkeys((entry["id"], value) for entry in items for value in entry.get("cases", [])))
+    # A call that selects no item also captures the commands map items still declare and judges the whole map: beside
+    # named cases the rest is judged as recorded, never run. A captured command leaves its item's `cases`.
+    drafted = [] if args.behavior_id else list(dict.fromkeys((entry["id"], value) for entry in items for value in entry.get("cases", [])))
     selected = []
     retired = _retired(state)
     if not specs:
@@ -1656,7 +1682,7 @@ def _run_tdd(values: list[str]) -> int:
         selected = [(entry, support_overrides[probe["runIndex"]]) for entry, probe in selected]
     inventory = _probe_files([], identity, args.support or []) if specs or drafted else None
     refused = []
-    for identifier, value in [*specs, *drafted]:
+    for identifier, value in dict.fromkeys([*specs, *drafted]):
         try:  # a case that cannot be captured or prepared is refused alone; the rest of the call is recorded
             entry = behavior_map.item(items, identifier) if identifier else None
             captured = _probe_capture(identity, {"command": value, **({"path": args.path} if args.path else {})},
@@ -1685,12 +1711,13 @@ def _run_tdd(values: list[str]) -> int:
         selected.extend((None, dict(support_overrides.get(index, runs[index])))
                         for frozen in evaluation.values() if behavior_map.case_key(frozen["id"], runs[frozen["runIndex"]]) not in retired and (not args.behavior_id or frozen["id"] == args.behavior_id)
                         and (index := frozen["runIndex"]) not in selected_indexes)
-    retiring, held = {}, {behavior_map.case_key(frozen["id"], runs[frozen["runIndex"]]): name for name, frozen in evaluation.items()} if args.retire else {}
+    def frozen_names():  # the retained first proofs by case key, as they stand: a case proved in this call is retained by it
+        return {behavior_map.case_key(frozen["id"], runs[frozen["runIndex"]]): name for name, frozen in evaluation.items()} if args.retire else {}
+    retiring, held = {}, frozen_names()
     for key in dict.fromkeys(args.retire):  # each named case is compared in this call, whatever else it selects
         run = next((case["comparison"] for case in behavior_map.current_cases(items, runs) if behavior_map.case_key(case["id"], case["comparison"]) == key),
                    runs[evaluation[held[key]]["runIndex"]] if key in held else None)
-        if run is None:
-            refused.append({"case": key, "refused": "names no case: a key is the caseKey of a receipt row or of a `retained` open line"})
+        if run is None:  # superseded by a later capture, released to another item, or its item removed: nothing is left to retire
             continue
         retiring[key] = run["runIndex"]
         if all(probe.get("runIndex") != run["runIndex"] for _, probe in selected):
@@ -1720,34 +1747,40 @@ def _run_tdd(values: list[str]) -> int:
             if updated != references or indexes.get(proof["runIndex"], proof["runIndex"]) != proof["runIndex"]:
                 entry["comparison"] = {**runs[indexes.get(proof["runIndex"], proof["runIndex"])], "obligation": proof["obligation"], "caseRuns": updated}
     latest = {probe.get("runIndex"): run for (_, probe), run in zip(selected, compared)} if retiring else {}
+    held = frozen_names()
     proving = {entry["id"] for (entry, probe), run in zip(selected, compared) if entry is not None and probe.get("runIndex") not in retiring.values()
                and not behavior_map._case_question({**entry, "comparison": {**run, "obligation": behavior_map.obligation(entry)}})} if retiring else ()
     gone = []
     for key, index in retiring.items():
-        # The lead retires a case the recorded contract no longer asks for: its item left the map; or, beside a case of this
+        # The lead retires a case the recorded contract no longer asks for: its item left the map, or its item declares a
+        # change (the item reads open until a case proves it). Proof of kept behaviour stays unless, beside a case of this
         # call that proves the item, the item changed since the case was first proved and the case no longer passes, or the
-        # case's result on the original contradicts the item's kind, so it never could prove it. A case that passes on the
-        # original and fails on the candidate is a regression under any kind and stays.
+        # case fails on the original, so it never could prove it: a kept-behaviour case that passes on the original and
+        # fails on the candidate is a regression and stays.
         identifier, run = key.rpartition(":")[0], latest[index]
         entry, first = next((entry for entry in items if entry["id"] == identifier), None), evaluation.get(held.get(key))
-        if entry is not None:
+        if entry is not None and entry.get("kind") == "preservation":
             was, now = behavior_map.original_outcome(run), run["arms"][-1]["outcome"]
-            unable = was != ("passed" if entry.get("kind") == "preservation" else "failed") and (was != "passed" or now == "passed")
+            unable = was != "passed"
             withdrawn = bool(first) and behavior_map.obligation(first)[1:] != behavior_map.obligation(entry)[1:] and now != "passed"
             if not (unable or withdrawn) or identifier not in proving:
                 refused.append({"case": key, "refused": (
                     f"no other case compared in this call proves {identifier}: record what replaces it, --case {identifier} 'COMMAND'" if unable or withdrawn
                     else f"still states {identifier} as recorded: change the item through record tdd-map when the request no longer asks for it")})
                 continue
+        if entry is not None and (proof := entry.get("comparison")):
             kept = {case["comparison"]["command"]: case["comparison"]["runIndex"] for case in behavior_map.current_cases([entry], runs)
                     if behavior_map.case_key(identifier, case["comparison"]) != key}
-            entry["comparison"] = {**runs[max(kept.values())], "obligation": entry["comparison"]["obligation"], "caseRuns": kept}
+            entry.pop("comparison")  # left empty, current_cases would rebuild the binding from run history
+            if kept:
+                entry["comparison"] = {**runs[max(kept.values())], "obligation": proof["obligation"], "caseRuns": kept}
         evaluation.pop(held.get(key), None)
-        gone.append({"caseKey": key, "command": run["command"], **({"reason": " ".join(args.report)} if args.report else {})})
+        gone.append({"caseKey": key, "command": run["command"], "exits": [arm["exitCode"] for arm in run["arms"]],
+                     **({"reason": " ".join(args.report)} if args.report else {})})
     conditions = _condition_traces(identity, original, candidate, [
         *(case["comparison"] for case in behavior_map.current_cases(items, runs, retired)),
         *(runs[frozen["runIndex"]] for frozen in evaluation.values())], (current or {}).get("conditions") or {})
-    selected_only = bool(specs or args.behavior_id)
+    selected_only = bool(args.behavior_id)
     reused = bool(current and len(runs) == len(current.get("runs", [])) and signature == json.dumps(items, sort_keys=True)
                   and frozen_signature == json.dumps(evaluation, sort_keys=True) and conditions == (current.get("conditions") or {}))
     if reused:
@@ -1786,18 +1819,21 @@ def _run_tdd(values: list[str]) -> int:
     receipt = operation_receipt(state, identity, kind="tdd", summaryId=evidence, readiness=readiness, obligations=not selected_only,
                                 cases=[*rows, *refused], **({"retired": [done["caseKey"] for done in gone]} if gone else {}))
     _emit_json(receipt)
-    return 2 if refused or any(row.get("unexpected") for row in rows) or any(run.get("bindingError") for _, run in reported.values()) else 0
+    # 2: a case was refused or its comparison is not bound to the candidate. 1: every case ran and one does not hold, which
+    # the command line returns as a result.
+    return 2 if refused or any(run.get("bindingError") for _, run in reported.values()) else 1 if any(row.get("unexpected") for row in rows) else 0
 
 
 def map_update(identity: RepoIdentity, state: JsonObject, value: JsonObject) -> JsonObject:
-    if set(value) not in ({"items"}, {"added"}, {"removed"}):
+    if not value or set(value) - {"items", "added", "removed"}:
         raise ValueError("tdd-map takes items, added or removed; statuses and dispositions are runner-owned")
     previous, current = current_map(identity, state)
     recorded = {entry["id"]: entry for entry in previous or []}
     removed = value.get("removed", [])
     if not isinstance(removed, list) or any(not isinstance(name, str) or name not in recorded for name in removed):
         raise ValueError("removed must contain existing probe ids")
-    merged = value.get("items", value.get("added", []))
+    parts = [value[key] for key in ("items", "added") if key in value]
+    merged = next((part for part in parts if not isinstance(part, list)), [entry for part in parts if isinstance(part, list) for entry in part])
     if isinstance(merged, list):  # an item names only what changes: a given field replaces, null removes, an omitted field stays
         fields = behavior_map.REQUIRED_FIELDS | behavior_map.JUDGEMENT_FIELDS
         for position, entry in enumerate(merged):

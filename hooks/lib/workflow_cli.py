@@ -96,6 +96,7 @@ def parser() -> argparse.ArgumentParser:
     command = _repo(commands.add_parser("evidence", help="evidence metadata and compact comparisons, a finding intake without its replayed runs or their bytes; --full for the raw document"))
     command.add_argument("--evidence-id", required=True)
     command.add_argument("--full", action="store_true")
+    command.add_argument("--fields", nargs="+", help="comma- or space-separated document fields; default is those holding comparisons, and findings")
 
     command = _repo(commands.add_parser("set-phase", help="record code-review not-required"), instance=True)
     command.add_argument("--phase", required=True)
@@ -199,7 +200,7 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity, *, review: bool = 
             result = _run_tdd(["--repo", str(identity.root), "--slug", slug, "--workflow-id", workflow_id])
         if result:
             print(receipt.getvalue(), end="")
-            return result
+            return 2
         refresh_context(identity)
         state = bound_state(identity, slug, workflow_id)
     if state.get("tdd") == "in-progress":
@@ -222,8 +223,7 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity, *, review: bool = 
         # The same typed gate is reused; retained observations have their own tree cache.
         _emit_json(_receipt(state, identity, evidenceId=state["qualityGateEvidence"], kind="quality-gate", reused=True,
                             verification="passed", valid=True, runIndex=last["runIndex"], workflowId=workflow_id))
-        from .workflow_state import _finding_state_blockers
-        return 2 if _finding_state_blockers(state) else 0
+        return 0  # verification holds; a finding still open is the receipt's continuation and closes only completion
 
     # The tree this run's result will describe. The recorder compares it with
     # the tree at commit; a run that could not sample it is recorded invalid.
@@ -334,8 +334,7 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity, *, review: bool = 
         reason = recorded.get("bindingError") or "the quality gate failed"
         print(f"{reason}; verification stays pending until its rerun is green", file=sys.stderr)
         return 2
-    from .workflow_state import _finding_state_blockers
-    return 2 if _finding_state_blockers(state) else 0
+    return 0
 
 
 def _document(args: argparse.Namespace, label: str) -> dict[str, object]:
@@ -422,6 +421,7 @@ def _dispatch(args: argparse.Namespace) -> int:
         _emit_json(prune(apply=args.apply))
         return 0
     identity = resolve_repo_identity(args.repo)
+    fields = set(" ".join(args.fields).replace(",", " ").split()) if getattr(args, "fields", None) else None
     if args.command == "begin":
         _emit_json(_receipt(begin(identity, args.slug, _intent(args)), identity))
     elif args.command == "status":
@@ -429,7 +429,6 @@ def _dispatch(args: argparse.Namespace) -> int:
         if state is None:
             raise WorkflowError("no active workflow")
         _require_instance(state, args.slug, args.workflow_id)
-        fields = set(" ".join(args.fields).replace(",", " ").split()) if args.fields else None
         result = public_status(state, identity, fields=fields)
         if "nextAction" in result:
             result["nextAction"] = next_operation(identity, state).get("action", result["nextAction"])
@@ -453,7 +452,8 @@ def _dispatch(args: argparse.Namespace) -> int:
             if value["kind"].startswith("finding-intake"):
                 document.pop("runs", None)
             value.update(bytes=len(_canonical(document).encode()), fields=sorted(document))
-            document = {key: view for key, field in document.items() if (view := behavior_map.compact(field)) != field}
+            views = {key: behavior_map.compact(field) for key, field in document.items()}
+            document = {key: view for key, view in views.items() if (key in fields if fields else view != document[key] or key == "findings")}
         _emit_json({**value, **({"document": document} if document or args.full else {})})
     elif args.command == "set-phase":
         if (args.phase, args.status, args.findings) != ("code-review", "not-required", "none"):
@@ -489,8 +489,8 @@ def main(argv: list[str] | None = None) -> int:
         # The TDD verb's parsing travels with its implementation.
         if values and values[0] == "tdd":
             from .tdd_workflow import _run_tdd
-            return _run_tdd(values[1:])
-        command = ENTRY.get(values[0]) if values else None
+            return _run_tdd(values[1:]) & 2  # a case that ran and does not hold is its receipt's result, not a failed call
+        command = [*ENTRY[values[0]], *values[1:]] if values and values[0] in ENTRY else None
         if values and values[0] == "next":
             with _comparison_scope():
                 identity = resolve_repo_identity(".")
@@ -499,9 +499,18 @@ def main(argv: list[str] | None = None) -> int:
                 if not bound:  # the step is a judgment or a delegation: say what it needs
                     _emit_json(_receipt(state, identity))
                     return 0
-            command = shlex.split(bound)
+            step = shlex.split(bound)
+            options = next(index for index, word in enumerate(step) if word.startswith("-"))
+            end = values.index("--") if "--" in values else len(values)
+            # The caller's options go first: the step's own binding is parsed last and stands, however theirs is spelled.
+            command = [*step[:options], *values[1:end], *step[options:], *values[end:]]
+            if step[:2] == ENTRY["context"]:  # the bootstrap prints the packet and no continuation: the pass's next step follows it
+                if not (code := subprocess.run(command, check=False).returncode):
+                    with _comparison_scope():
+                        _emit_json(_receipt(_require_state(read_workflow(identity)), identity))
+                return code
         if command:  # the operation replaces this process: its output and exit status are its own
-            os.execv(command[0], [*command, *values[1:]])
+            os.execv(command[0], command)
         with _comparison_scope():
             return _dispatch(parser().parse_args(values))
     except (RepoIdentityError, LedgerError, WorkflowError, ValueError, OSError) as exc:
