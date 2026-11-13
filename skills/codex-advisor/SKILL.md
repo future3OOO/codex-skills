@@ -87,8 +87,7 @@ pass's design option if it has one (later consults take the recorded declaration
   --cwd "$PWD" --design-file "<design-artifact>"
 
 "$HOME/.codex/skills/codex-advisor/scripts/ask-codex-advisor.sh" \
-  --slug "<task>" --phase final-review \
-  --cwd "$PWD" --design-file "<design-artifact>"
+  --slug "<task>" --phase final-review --cwd "$PWD"
 ```
 
 Phased consults carry no lead text. Pass only the user's instructions given after `begin`, each line quoted verbatim after `> `, after `--` (or on stdin in a shell).
