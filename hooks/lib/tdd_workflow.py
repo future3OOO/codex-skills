@@ -127,9 +127,12 @@ def _probe_files(command: list[str], identity: RepoIdentity, support: list[str],
 
 
 def _comparison_files(identity: RepoIdentity, probe: JsonObject) -> list[str]:
-    declared = _command_files(identity, probe) | {os.path.relpath(os.path.normpath(Path(identity.root) / name), identity.root)
-                for name in probe.get("support") or []}
-    return [path for path in probe["probeFiles"] if is_test_path(path) or path in declared]
+    """Derived once a comparison scope: each arm, context and freshness check of a case asks again."""
+    def derive():
+        declared = _command_files(identity, probe) | {os.path.relpath(os.path.normpath(Path(identity.root) / name), identity.root)
+                    for name in probe.get("support") or []}
+        return [path for path in probe["probeFiles"] if is_test_path(path) or path in declared]
+    return _sample_input(("files", probe["command"], *probe["probeFiles"], "", *(probe.get("support") or [])), derive)
 
 
 def _environment() -> dict[str, str]:
@@ -163,14 +166,19 @@ def _tree_entries(identity: RepoIdentity, tree: str) -> dict[str, tuple[str, str
     return entries
 
 
+def _reader(identity: RepoIdentity):
+    """The comparison scope's one object reader."""
+    scope = _EXECUTION.get()
+    if scope["reader"] is None:
+        scope["reader"] = scope["resources"].enter_context(blob_reader(Path(identity.root)))
+    return scope["reader"]
+
+
 @lru_cache(maxsize=128)
 def _source_input(identity: RepoIdentity, source: str, probe: str, files: tuple[str, ...]):
-    scope = _EXECUTION.get()
     def children(oid):
         def load():
-            if scope["reader"] is None:
-                scope["reader"] = scope["resources"].enter_context(blob_reader(Path(identity.root)))
-            data, result, offset = scope["reader"](oid, kind=b"tree"), {}, 0
+            data, result, offset = _reader(identity)(oid, kind=b"tree"), {}, 0
             if data is None:
                 raise WorkflowError("source tree unavailable: " + oid)
             width = len(oid) // 2
@@ -415,8 +423,6 @@ def _write_entry(root: Path, name: str, mode: str, data: bytes, previous: int = 
 
 
 def _prepared_tree(identity: RepoIdentity, scope, source: str, probe: str, files: list[str], *, isolated=False):
-    if scope["reader"] is None:
-        scope["reader"] = scope["resources"].enter_context(blob_reader(Path(identity.root)))
     key = (source, "growth") if isolated else source
     if key not in scope["sources"]:
         cache = None if isolated else scope.get("kept", {}).get(key)
@@ -461,7 +467,7 @@ def _prepared_tree(identity: RepoIdentity, scope, source: str, probe: str, files
                     for path in (root / ".git").rglob("*") if path.is_file()}
         scope["sources"][key] = {"root": root, "base": base, "managed": entries, "metadata": metadata,
                                      "directories": [str(path.relative_to(root)) for path in (root / ".git").rglob("*") if path.is_dir()],
-                                     "ignore": None, "read": scope["reader"], "resources": scope["resources"],
+                                     "ignore": None, "read": _reader(identity), "resources": scope["resources"],
                                      "cache": cache, "source": source, "wait": wait, "measure": measure, "times": [], "temporary": scope["root"]}
     frozen = _tree_entries(identity, probe)
     return scope["sources"][key], {path: frozen[path] for path in files}
@@ -774,58 +780,74 @@ def _freeze_temporary(identity: RepoIdentity, tree: str, files: list[str], comma
     directory with every regular file under it, and name its frozen place instead: the case no longer reads what its
     owner will remove. A probe directory whose file changes is renamed to its new content. Returns tree, files and command."""
     roots = tuple(root + os.sep for root in {"/tmp", tempfile.gettempdir()})
-    # Capture roots a probe directory at its files' common parent, so one whose files all lie below a single subdirectory is
-    # a temporary tree an earlier call froze: its files are not read again, as they were not when it was frozen.
-    spread: dict[str, set[str]] = {}
-    for name in files:
-        if name.startswith(PROBES):
-            directory, _, place = name[len(PROBES):].partition("/")
-            spread.setdefault(directory, set()).add(place.rpartition("/")[0].partition("/")[0])
-    entries = {name: _tree_entries(identity, tree)[name] for name in files if name.startswith(PROBES)
-               and (len(first := spread[name[len(PROBES):].partition("/")[0]]) > 1 or "" in first)}
-    stored = read_blobs(Path(identity.root), [oid for _, oid in entries.values()])  # one reader for every frozen scratch file
-    texts = {name: stored[oid].encode("utf-8", "surrogateescape") for name, (_, oid) in entries.items()}
-    named = sorted({path for text in (*texts.values(), *map(os.fsencode, command[1:])) for token in TEMPORARY.findall(text)
-                    if (path := os.path.normpath(os.fsdecode(token))).startswith(roots) and os.path.lexists(path)}, key=len, reverse=True)
-    if not named:
-        return tree, files, command
-    def refuse(error):
-        raise ValueError(f"probe names a temporary path that cannot be frozen ({error}): read pass-start source with "
-                         "`git show <passStartOid>:FILE`, or name readable scratch files with --support")
-    members = list(dict.fromkeys(member for path in named for member in (
-        [path] if not os.path.isdir(path) else (os.path.join(folder, name) for folder, _, names in os.walk(path, onerror=refuse) for name in names))))
-    if irregular := next((member for member in members if not os.path.isfile(member)), None):
-        refuse(irregular + " is not a regular file")
-    named = [name for name in named if any(member == name or member.startswith(name + os.sep) for member in members)]
-    if not named:  # an empty directory holds nothing to freeze: the case keeps writing where it wrote
-        return tree, files, command
-    try:
-        blobs = _git(identity, "hash-object", "-w", "--stdin-paths", stdin=os.fsencode("\n".join(members))).decode().split()
-    except RuntimeError as exc:
-        refuse(exc)
-    empty = _git(identity, "hash-object", "-t", "tree", "--stdin", stdin=b"").decode().strip()
-    kept = _indexed(identity, empty, (("update-index", "--index-info"), "".join(
-        f"{'100755' if os.access(member, os.X_OK) else '100644'} {blob}\t{member.lstrip('/')}\n" for member, blob in zip(members, blobs)).encode()))
-    stored = set(_git(identity, "ls-tree", "-r", "--name-only", "-z", kept).split(b"\0"))  # git leaves out what a tree cannot hold, a `.git` entry say
-    if dropped := next((member for member in members if os.fsencode(member.lstrip("/")) not in stored), None):
-        refuse(dropped + " cannot be stored in a tree")
-    def placed(match, root=os.fsencode(identity.root + os.sep)):  # an absolute place: the frozen file may be read from any directory
-        path = os.path.normpath(os.fsdecode(match.group()))
-        return root + os.fsencode(f"{PROBES}{kept}/" + path.lstrip("/")) if any(path == name or path.startswith(name + os.sep) for name in named) else match.group()
-    steps, changed = [(("read-tree", f"--prefix={PROBES}{kept}/", kept), None)], set()
-    for name, text in texts.items():
-        if (rewritten := TEMPORARY.sub(placed, text)) != text:
-            changed.add(name[len(PROBES):].split("/", 1)[0])
-            steps.append((("update-index", "--add", "--cacheinfo", f"{entries[name][0]},"
-                           f"{_git(identity, 'hash-object', '-w', '--stdin', stdin=rewritten).decode().strip()},{name}"), None))
-    tree = _indexed(identity, tree, *steps)
-    renamed = {old: _git(identity, "rev-parse", f"{tree}:{PROBES}{old}").decode().strip() for old in changed}
-    tree = _indexed(identity, tree, *(step for old, new in renamed.items() for step in (
-        (("update-index", "--index-info"), "".join(f"0 {'0' * len(kept)}\t{name}\n" for name in files if name.startswith(PROBES + old + "/")).encode()),
-        (("read-tree", f"--prefix={PROBES}{new}/", new), None))))
-    moved = lambda text: re.sub(PROBES + "([0-9a-f]{40,64})/", lambda match: PROBES + renamed.get(match[1], match[1]) + "/", text)
-    return (tree, [*map(moved, files), *(f"{PROBES}{kept}/" + member.lstrip("/") for member in members)],
-            [command[0], *(moved(os.fsdecode(TEMPORARY.sub(lambda match: placed(match, b""), os.fsencode(word)))) for word in command[1:])])
+    def existing(texts):
+        return {path for text in texts for token in TEMPORARY.findall(text)
+                if (path := os.path.normpath(os.fsdecode(token))).startswith(roots) and os.path.lexists(path)}
+    command_paths = tuple(sorted(existing(map(os.fsencode, command[1:]))))
+    def capture(tree=tree):
+        # Capture roots a probe directory at its files' common parent, so one whose files all lie below a single subdirectory is
+        # a temporary tree an earlier call froze: its files are not read again, as they were not when it was frozen.
+        spread: dict[str, set[str]] = {}
+        for name in files:
+            if name.startswith(PROBES):
+                directory, _, place = name[len(PROBES):].partition("/")
+                spread.setdefault(directory, set()).add(place.rpartition("/")[0].partition("/")[0])
+        entries = {name: _tree_entries(identity, tree)[name] for name in files if name.startswith(PROBES)
+                   and (len(first := spread[name[len(PROBES):].partition("/")[0]]) > 1 or "" in first)}
+        stored = read_blobs(Path(identity.root), [oid for _, oid in entries.values()])  # one reader for every frozen scratch file
+        texts = {name: stored[oid].encode("utf-8", "surrogateescape") for name, (_, oid) in entries.items()}
+        named = sorted(existing(texts.values()) | set(command_paths), key=len, reverse=True)
+        if not named:
+            return tree, files, lambda match, root=b"": match.group(), lambda word: word
+        def refuse(error):
+            raise ValueError(f"probe names a temporary path that cannot be frozen ({error}): read pass-start source with "
+                             "`git show <passStartOid>:FILE`, or name readable scratch files with --support")
+        members = list(dict.fromkeys(member for path in named for member in (
+            [path] if not os.path.isdir(path) else (os.path.join(folder, name) for folder, _, names in os.walk(path, onerror=refuse) for name in names))))
+        if irregular := next((member for member in members if not os.path.isfile(member)), None):
+            refuse(irregular + " is not a regular file")
+        named = [name for name in named if any(member == name or member.startswith(name + os.sep) for member in members)]
+        if not named:  # an empty directory holds nothing to freeze: the case keeps writing where it wrote
+            return tree, files, lambda match, root=b"": match.group(), lambda word: word
+        try:
+            blobs = _git(identity, "hash-object", "-w", "--stdin-paths", stdin=os.fsencode("\n".join(members))).decode().split()
+        except RuntimeError as exc:
+            refuse(exc)
+        empty = _git(identity, "hash-object", "-t", "tree", "--stdin", stdin=b"").decode().strip()
+        kept = _indexed(identity, empty, (("update-index", "--index-info"), "".join(
+            f"{'100755' if os.access(member, os.X_OK) else '100644'} {blob}\t{member.lstrip('/')}\n" for member, blob in zip(members, blobs)).encode()))
+        stored = set(_git(identity, "ls-tree", "-r", "--name-only", "-z", kept).split(b"\0"))  # git leaves out what a tree cannot hold, a `.git` entry say
+        if dropped := next((member for member in members if os.fsencode(member.lstrip("/")) not in stored), None):
+            refuse(dropped + " cannot be stored in a tree")
+        def placed(match, root=os.fsencode(identity.root + os.sep)):  # an absolute place: the frozen file may be read from any directory
+            path = os.path.normpath(os.fsdecode(match.group()))
+            return root + os.fsencode(f"{PROBES}{kept}/" + path.lstrip("/")) if any(path == name or path.startswith(name + os.sep) for name in named) else match.group()
+        steps, changed = [(("read-tree", f"--prefix={PROBES}{kept}/", kept), None)], set()
+        for name, text in texts.items():
+            if (rewritten := TEMPORARY.sub(placed, text)) != text:
+                changed.add(name[len(PROBES):].split("/", 1)[0])
+                steps.append((("update-index", "--add", "--cacheinfo", f"{entries[name][0]},"
+                               f"{_git(identity, 'hash-object', '-w', '--stdin', stdin=rewritten).decode().strip()},{name}"), None))
+        tree = _indexed(identity, tree, *steps)
+        renamed = {old: _git(identity, "rev-parse", f"{tree}:{PROBES}{old}").decode().strip() for old in changed}
+        tree = _indexed(identity, tree, *(step for old, new in renamed.items() for step in (
+            (("update-index", "--index-info"), "".join(f"0 {'0' * len(kept)}\t{name}\n" for name in files if name.startswith(PROBES + old + "/")).encode()),
+            (("read-tree", f"--prefix={PROBES}{new}/", new), None))))
+        moved = lambda text: re.sub(PROBES + "([0-9a-f]{40,64})/", lambda match: PROBES + renamed.get(match[1], match[1]) + "/", text)
+        return tree, [*map(moved, files), *(f"{PROBES}{kept}/" + member.lstrip("/") for member in members)], placed, moved
+    tree, files, placed, moved = _sample_input(("temporary", tree, *files, "", *command_paths), capture)
+    return tree, files, [command[0], *(moved(os.fsdecode(TEMPORARY.sub(lambda match: placed(match, b""), os.fsencode(word)))) for word in command[1:])]
+
+
+
+def _places(identity: RepoIdentity, command: list[str], named: list[str]) -> dict[Path, str]:
+    """Each regular file outside the checkout that `named` or a command argument names (a program binary aside), with
+    its place below those files' common directory: where a capture freezes it."""
+    paths = dict.fromkeys(path for name in named if (path := _scratch(identity, name)))
+    paths.update(dict.fromkeys(path for arg in command[1:] if (path := _scratch(identity, arg.split("::", 1)[0]))
+                               and not (os.access(path, os.X_OK) and path.open("rb").read(4) == b"\x7fELF")))
+    base = os.path.commonpath([path.parent for path in paths]) if paths else ""
+    return {path: os.path.relpath(path, base) for path in paths}
 
 
 def _probe_capture(identity: RepoIdentity, probe: object, candidate: str, timeout: float,
@@ -838,21 +860,21 @@ def _probe_capture(identity: RepoIdentity, probe: object, candidate: str, timeou
         raise ValueError("probe needs command and, for a scratch file no command names, a readable path; source content is not an input")
     command = shlex.split(probe["command"])
     source_command = shlex.join(command)
-    places = dict.fromkeys(path for name in (*([probe["path"]] if "path" in probe else []), *(support or [])) if (path := _scratch(identity, name)))
-    places.update(dict.fromkeys(path for arg in command[1:] if (path := _scratch(identity, arg.split("::", 1)[0]))
-                                and not (os.access(path, os.X_OK) and path.open("rb").read(4) == b"\x7fELF")))
+    named = [*([probe["path"]] if "path" in probe else []), *(support or [])]
+    places = _places(identity, command, named)
+    scratch = [str(path) for path in _places(identity, [], named)]  # kept with the case: a later capture of its command freezes these again
     support = [name for name in support or [] if not _scratch(identity, name)]
     overrides = {os.path.relpath(os.path.normpath(Path(identity.root) / name), identity.root) for name in support or []}
     tree, original_files = _kept_tests(identity, candidate, preserved, tuple(sorted(overrides))) if preserved else (candidate, set())
     virtual: list[str] = []
     if places:
-        base = os.path.commonpath([path.parent for path in places])
-        places = {path: os.path.relpath(path, base) for path in places}
-        frozen = _indexed(identity, _git(identity, "hash-object", "-t", "tree", "--stdin", stdin=b"").decode().strip(), *(
-            (("update-index", "--add", "--cacheinfo", f"{'100755' if os.access(path, os.X_OK) else '100644'},"
-              f"{_git(identity, 'hash-object', '-w', '--', str(path)).decode().strip()},{place}"), None) for path, place in places.items()))
+        def freeze(tree=tree):  # cases that share their scratch files freeze them once a call
+            frozen = _indexed(identity, _git(identity, "hash-object", "-t", "tree", "--stdin", stdin=b"").decode().strip(), *(
+                (("update-index", "--add", "--cacheinfo", f"{'100755' if os.access(path, os.X_OK) else '100644'},"
+                  f"{_git(identity, 'hash-object', '-w', '--', str(path)).decode().strip()},{place}"), None) for path, place in places.items()))
+            return frozen, _indexed(identity, tree, (("read-tree", f"--prefix={PROBES}{frozen}/", frozen), None))
+        frozen, tree = _sample_input(("bundle", tree, *places.items()), freeze)
         prefix = f"tests/.workflow-probes/{frozen}/"
-        tree = _indexed(identity, tree, (("read-tree", "--prefix=" + prefix, frozen), None))
         virtual = [prefix + place for place in places.values()]
         command = [prefix + places[path] + arg[len(arg.split("::", 1)[0]):] if (path := _scratch(identity, arg.split("::", 1)[0])) in places else arg
                    for arg in command]
@@ -885,11 +907,35 @@ def _probe_capture(identity: RepoIdentity, probe: object, candidate: str, timeou
         support = sorted(overrides & _tree_entries(identity, preserved).keys())  # a file added since pass start has no pass-start bytes to protect
     return {"command": shlex.join(command), "candidateTree": candidate, "probeTree": tree,
             "probeFiles": files, "support": support or [], "timeout": timeout, "captureKey": os.urandom(16).hex(),
-            "sourceCommand": source_command}
+            "sourceCommand": source_command, **({"scratch": scratch} if scratch else {})}
 
 
 def _probe_outcome(arm: JsonObject) -> str:
     return "timed-out" if arm["timedOut"] else str(arm["outcome"])
+
+
+def _revised(identity: RepoIdentity, run: JsonObject, candidate: str, preserved: str | None) -> JsonObject | None:
+    """The recorded case captured again as naming it would, from its command, support and scratch files, when a file it
+    froze holds other bytes on disk or in the candidate and the capture then freezes bytes the recorded one lacks.
+    A file gone from disk changes nothing, so the frozen copy stays; nothing is captured to find either out."""
+    command = run.get("sourceCommand", run["command"])
+    support = [*run["support"], *filter(os.path.isfile, run.get("scratch", ()))]
+    origins = {place: path for path, place in _places(identity, shlex.split(command), support).items()}
+    placed = re.compile(re.escape(os.fsencode(identity.root + os.sep + PROBES)) + rb"[0-9a-f]{40,64}/")
+    files, read = _comparison_files(identity, run), _reader(identity)
+    def edited(name):  # a frozen temporary file keeps its whole path, and a frozen file names it at that frozen place
+        place = name.split("/", 3)[3]
+        origin = origins.get(place) or next((path for path in origins.values() if str(path).endswith("/" + place)), Path("/" + place))  # a file gone moves the common directory
+        return _sample_input(("edited", origin, run["probeTree"], name), lambda: origin.is_file() and origin.read_bytes() != placed.sub(b"/", read(_tree_entries(identity, run["probeTree"])[name][1]) or b""))
+    moved = _sample_input(("moved", run["candidateTree"]), lambda: _changed_entries(identity, run["candidateTree"], candidate)) if run["candidateTree"] != candidate else ()
+    if not (any(name in moved for name in (run["support"] if preserved else files)) or any(edited(name) for name in files if name.startswith(PROBES))):
+        return None
+    captured = _probe_capture(identity, {"command": command}, candidate, run["timeout"], support,
+                              _sample_input(("inventory", *run["support"]), lambda: _probe_files([], identity, run["support"])), preserved)
+    def frozen(probe):  # by place: a probe directory is named by its content, and git may store other bytes than a file holds
+        entries = _tree_entries(identity, probe["probeTree"])
+        return {(re.sub(PROBES + "[0-9a-f]{40,64}/", PROBES, name), entries[name][1]) for name in _comparison_files(identity, probe)}
+    return captured if frozen(captured) - frozen(run) else None
 
 
 def _run_probe(identity: RepoIdentity, probe: object, candidate: str, original: str | None,
@@ -1279,6 +1325,11 @@ def _identifiers(path: str, text: str) -> Counter[str]:
         raise ValueError("break refused: invalid Python tokens: " + str(exc)) from exc
 
 
+def _memory_available() -> int:
+    with open("/proc/meminfo") as meminfo:
+        return next(int(line.split()[1]) for line in meminfo if line.startswith("MemAvailable:")) * 1024
+
+
 @_comparison_scope()
 def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes: list[JsonObject],
                   runs: list[JsonObject], *, challenge: bool = True, passing_original: bool = False) -> list[JsonObject]:
@@ -1294,7 +1345,7 @@ def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes:
         arms = []
         for source, context, found in selected:
             if not isinstance(found, dict):
-                found = found.result()
+                found = pending[context].result()
             if "key" not in found:
                 inputs = _input_identity(identity, execution, found)
                 found = {**found, "contextKey": context, "inputs": inputs,
@@ -1303,12 +1354,12 @@ def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes:
             arms.append({**found, "requestedTree": source})
         keys = [arm["key"] for arm in arms]
         metadata = {"command": probe["command"], "support": probe.get("support") or [], "timeout": probe["timeout"],
-                    **({"sourceCommand": probe["sourceCommand"]} if "sourceCommand" in probe else {}),
+                    **{key: probe[key] for key in ("sourceCommand", "scratch") if key in probe},
                     "behaviorId": probe.get("behaviorId"), "probeFiles": probe["probeFiles"],
                     "candidateTree": after, "probeTree": tree, "originalTree": before,
                     "captureKey": probe.get("captureKey", probe.get("candidateKey", keys[-1]))}
         retained = next((run for run in reversed(runs) if run["candidateTree"] == after
-                         and [arm.get("key") for arm in run["arms"]] == keys
+                         and run["arms"] == arms
                          and all(run.get(key) == value for key, value in metadata.items())), None)
         if retained is not None:
             return retained
@@ -1320,7 +1371,7 @@ def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes:
                "timedOut": any(arm["timedOut"] for arm in arms)}
         runs.append(run)
         return run
-    pending = {}
+    pending, alone = {}, {}
     def schedule(source, probe, prepared, parent=None, size=None, passing=None):
         files, timeout = _comparison_files(identity, probe), probe["timeout"]
         command, execution, environment = prepared
@@ -1328,8 +1379,10 @@ def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes:
             command = [arg.replace("{size}", str(size)) for arg in command]
         tree = probe.get("probeTree", probe["candidateTree"])
         context = _execution_key(identity, source, tree, files, command, timeout, execution)
+        # A lead's case names the sources its failure is accepted on; any other failure is run again, never served.
         found = next((arm for arm in reversed(list(cache.get(context, {}).values()))
-                      if (inputs := _input_identity(identity, execution, arm)) and arm["key"] == hashlib.sha256((context + inputs).encode()).hexdigest()), None)
+                      if (arm["outcome"] == "passed" or source in probe.get("failing", (source,)))
+                      and (inputs := _input_identity(identity, execution, arm)) and arm["key"] == hashlib.sha256((context + inputs).encode()).hexdigest()), None)
         if found is None:
             pending_key = context
             if pending_key not in pending:
@@ -1343,15 +1396,16 @@ def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes:
                     cpus = sorted(os.sched_getaffinity(0))
                     starts = iter(range(os.getpid(), os.getpid() + 8))  # advanced in C: concurrent initializers cannot collide
                     scope["pool"] = ThreadPoolExecutor(min(len(cpus), 8), initializer=lambda: os.sched_setaffinity(0, [cpus[next(starts) % len(cpus)]]))
-                    with open("/proc/meminfo") as meminfo:  # and an equal share of the memory available when the pool starts
-                        scope["memory"] = next(int(line.split()[1]) for line in meminfo if line.startswith("MemAvailable:")) * 1024 // min(len(cpus), 8)
+                    scope["memory"] = _memory_available() // min(len(cpus), 8)  # and an equal share of the memory available when the pool starts
                 root_key = parent or source
                 previous = scope["first"].get(root_key) if state["wait"] and size is None else None
                 _require_overlay(_executable(identity, "bwrap", environment))
                 execute = partial(_after, previous, identity, source, (state, frozen), command, timeout, environment, scope["cancel"],
-                                  scope["memory"], tuple(scope["objects"].items()), derived=bool(parent), passing=passing,
+                                  derived=bool(parent), passing=passing,
                                   first=size is None and not parent and root_key not in scope["first"])
-                pending[pending_key] = scope["pool"].submit(execute)
+                pending[pending_key] = scope["pool"].submit(execute, scope["memory"], tuple(scope["objects"].items()))
+                if not parent:
+                    alone[pending_key] = execute, id(probe)
                 if not parent and size is None:
                     scope["first"].setdefault(root_key, pending[pending_key])
             found = pending[pending_key]
@@ -1404,7 +1458,7 @@ def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes:
     if identity.key not in workflows:
         workflows[identity.key] = instance_id(read_active(identity) or {})
     for arm in cached_arms(identity, workflows[identity.key], contexts, keys):
-        cache.setdefault(arm["contextKey"], {})[arm["key"]] = arm
+        cache.setdefault(arm["contextKey"], {}).setdefault(arm["key"], arm)  # a result the caller recorded later stands
     jobs, controls = [], []
     def selections(first, last, probe, prepared, parent=None):
         sizes = _growth(prepared[1])
@@ -1415,6 +1469,16 @@ def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes:
         execution = prepared[1]
         selected = selections(original, candidate, probe, prepared)
         jobs.append((probe, tree, execution, selected, original, candidate))
+    # A case out of time or memory beside other cases runs each incomplete arm alone with all available memory.
+    # Only its own run is held to the limit. Every case has ended before the first such run starts.
+    cases, again = {case for _, case in alone.values()}, {}
+    for key, (_, case) in alone.items():
+        if (result := pending[key].result())["outcome"] == "incomplete" and (len(cases) > 1 or not result["timedOut"]):
+            again.setdefault(case, []).append(key)
+    for keys in again.values():
+        for key in keys:
+            pending[key] = scope["pool"].submit(alone[key][0], _memory_available(), tuple(scope["objects"].items()))
+            pending[key].result()
     compared = [finish(*job) for job in jobs]
     for (probe, tree, prepared, control), result in zip(plans, compared):
         result["sensitive"] = bool(_growth(result["execution"])) or (not passing_original
@@ -1590,9 +1654,7 @@ def _run_tdd(values: list[str]) -> int:
                     available[key] = {**entry, "key": key}
                     if alias is not None:
                         available[alias] = available[key]
-            if unknown := set(args.retire) - available.keys():
-                raise WorkflowError("--retire names a retained case key or unproved map item id: " + ", ".join(sorted(unknown)))
-            retires = [{"id": entry["id"], "key": entry.get("key")} for entry in (available[key] for key in dict.fromkeys(args.retire))]
+            retires = [{"id": available[key]["id"], "key": available[key].get("key")} for key in dict.fromkeys(args.retire) if key in available]
             findings = []
             for probe in list({probe["command"]: probe for probe in probes}.values()) or ([None] if replacement else []):
                 finding = {**({"probe": probe} if probe else {}), **({"change": change} if change is not None else {})}
@@ -1639,6 +1701,8 @@ def _run_tdd(values: list[str]) -> int:
                 row["unexpected"] = str(result["error"])
             rows.append(row)
         receipt["cases"] = rows
+        if missing := [key for key in dict.fromkeys(args.retire) if key not in available]:
+            receipt["unmatched"] = missing  # a retained case key or unproved map item id that names nothing
         _emit_json(receipt)
         return 2 if any(row["result"] == "refused" and "retired" not in row for row in rows) else 0
     if replacement or breaks or args.report and not args.retire:
@@ -1717,11 +1781,37 @@ def _run_tdd(values: list[str]) -> int:
                 captured["sourceCommand"] = known.get("sourceCommand", captured["sourceCommand"])
             captured["behaviorId"] = entry["id"]
         selected.append((entry, captured))
-    if not specs:
-        selected_indexes = {probe.get("runIndex") for _, probe in selected}
-        selected.extend((None, dict(support_overrides.get(index, runs[index])))
-                        for frozen in evaluation.values() if behavior_map.case_key(frozen["id"], runs[frozen["runIndex"]]) not in retired and (not args.behavior_id or frozen["id"] == args.behavior_id)
-                        and (index := frozen["runIndex"]) not in selected_indexes)
+    # On every call a recorded case without accepted proof is run again where it failed, and one whose probe files changed
+    # on disk is first captured again from them, as naming it would; a case a finding retired is reopened and is captured
+    # again once its files change. A case holding accepted proof keeps its frozen copy.
+    named = {(probe.get("behaviorId"), probe["sourceCommand"]) for _, probe in selected if "runIndex" not in probe}
+    replayed = {probe["runIndex"]: position for position, (_, probe) in enumerate(selected) if "runIndex" in probe}
+    again = set()
+    for case in behavior_map.current_cases([entry for entry in items if args.behavior_id in (None, entry["id"])], runs):
+        run, key = case["comparison"], behavior_map.case_key(case["id"], case["comparison"])
+        source = (case["id"], run.get("sourceCommand", run["command"]))
+        if source in named or key in args.retire or not (key in retired or behavior_map._case_question(case)):
+            continue
+        entry, captured = behavior_map.item(items, case["id"]), None
+        try:
+            captured = _revised(identity, run, candidate, original if case.get("kind") == "preservation" else None)
+        except (ValueError, RuntimeError, OSError) as exc:  # refused alone: the case stays pending on its recorded copy, its command kept
+            refused.append({"case": source[1], "refused": str(exc)})
+        if captured:
+            captured["behaviorId"] = entry["id"]
+            again.add(source)
+        position = replayed.get(run["runIndex"])
+        if captured and position is not None:
+            selected[position] = (entry, captured)
+        elif captured or position is None and key not in retired:
+            selected.append((entry, captured or dict(run)))
+    # Retained first proofs: all of them without named cases, beside named cases those without accepted proof; none beside
+    # the capture this call makes of its command.
+    selected_indexes = {probe.get("runIndex") for _, probe in selected}
+    selected.extend((None, dict(support_overrides.get(index, runs[index])))
+                    for frozen in evaluation.values() if behavior_map.case_key(frozen["id"], runs[frozen["runIndex"]]) not in retired and (not args.behavior_id or frozen["id"] == args.behavior_id)
+                    and (index := frozen["runIndex"]) not in selected_indexes and (frozen["id"], runs[index].get("sourceCommand", runs[index]["command"])) not in again
+                    and (not specs or behavior_map._case_question({**frozen, "comparison": runs[index]})))
     def frozen_names():  # the retained first proofs by case key, as they stand: a case proved in this call is retained by it
         return {behavior_map.case_key(frozen["id"], runs[frozen["runIndex"]]): name for name, frozen in evaluation.items()} if args.retire else {}
     retiring, held = {}, frozen_names()
@@ -1733,6 +1823,9 @@ def _run_tdd(values: list[str]) -> int:
         retiring[key] = run["runIndex"]
         if all(probe.get("runIndex") != run["runIndex"] for _, probe in selected):
             selected.append((None, dict(run)))
+    kinds = {entry["id"]: entry.get("kind") for entry in (*evaluation.values(), *items)}
+    for _, probe in selected:  # only the original of a changed result may fail: any other failure is run again, never served
+        probe["failing"] = () if kinds.get(probe.get("behaviorId")) == "preservation" else (original,)
     compared = _compare_many(identity, original, candidate, [probe for _, probe in selected], runs, challenge=False)
     indexes = {probe["runIndex"]: run["runIndex"] for (_, probe), run in zip(selected, compared) if "runIndex" in probe}
     for (entry, _), run in zip(selected, compared):
@@ -1830,7 +1923,8 @@ def _run_tdd(values: list[str]) -> int:
             row["unexpected"] = errors
         rows.append(row)
     receipt = operation_receipt(state, identity, kind="tdd", summaryId=evidence, readiness=readiness, obligations=not selected_only,
-                                cases=[*rows, *refused], **({"retired": [done["caseKey"] for done in gone]} if gone else {}))
+                                cases=[*rows, *refused], **({"retired": [done["caseKey"] for done in gone]} if gone else {}),
+                                **({"unmatched": missing} if (missing := [key for key in dict.fromkeys(args.retire) if key not in retiring]) else {}))
     _emit_json(receipt)
     # 2: a case was refused or its comparison is not bound to the candidate. 1: every case ran and one does not hold, which
     # the command line returns as a result.
