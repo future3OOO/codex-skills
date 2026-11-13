@@ -127,7 +127,7 @@ The batch is complete only when every changed condition has a pair in each of it
 
 ### Context completeness
 
-The runner checks each bound command's exit on both sources and, for Python, keeps the pass open while a condition the edit removes has no recorded case deciding it on the original. It does not otherwise prove Interface reach, context completeness or pair independence. Derive feasible contexts from the original decision and diff; the existing advisor and reviewer judge the evidence.
+The runner checks each bound command's exit on both sources and, for Python where its tracer can observe a recorded run, keeps the pass open until each condition the edit removes is settled: restored, decided on the original by a recorded case that passes on both sources, or decided by a recorded case of an approved preflight item that states the change. It does not otherwise prove Interface reach, context completeness or pair independence. Derive feasible contexts from the original decision and diff; the existing advisor and reviewer judge the evidence.
 
 - Match pairs by **condition AND decisive context**, including contexts for retained outcomes.
 - Count a pair only if its executions show an original decision flip (the edited decision for an added condition) in that exact context. Establish the condition values from execution or independently checked fixture facts, never from labels.

@@ -115,7 +115,7 @@ rerun the bootstrap.
   editing production code: the bootstrap already executed the packet-scoped
   checks against the freshly indexed analysis repo and recorded that resolved
   result as this pass's `repo-context-forge` evidence, so
-  `<gitnexus_required_checks>` records the plan it ran, not work still to do
+  `<gitnexus_required_checks>` records the plan it ran
 - for `pr`, use the live `base...HEAD` packet surface; for `local`, use dirty
   worktree packet targets; for `intent`, use the intent-ranked packet targets
 - do not let unscoped `gitnexus_detect_changes(compare)` choose the target
@@ -151,7 +151,7 @@ active — see the two standalone forms in the startup flow above.
 AGENTS.md — GitNexus owns required context/impact coverage.
 
 The packet's `<gitnexus_analysis>` rows answer every `<check>` the plan listed:
-read them first, never reissue them. Before editing, run the rule's checks on
+read them first; they do not replace the rule's checks on what you change. Before editing, run the rule's checks on
 what you will change (`impact` with tests, then any caller, callee or
 shared-state writer the rows lack, and the rule's other checks) by the exact
 call forms the packet prints; never list, search or print tool definitions.
@@ -203,9 +203,8 @@ Use that source path as the repo for targeted checks. Apply the checkout-cleanup
 rule above. `gitnexus clean --force` removes only the index and registry entry,
 not other generated artifacts.
 
-On a governed pass, use `workflow.py summary` to check the retained graph's
-applicability. Documentation and Python comment corrections with unchanged
-parsed code and source positions can reuse it; the projection keeps its original
+On a governed pass, documentation and Python comment corrections with unchanged
+parsed code and source positions can reuse the retained graph; the projection keeps its original
 indexed tree and names the current reuse candidate. Current quality and review
 still run. Changed code, positions, paths, modes or dependencies are re-analyzed
 automatically: typed quality-gate verification and the advisor checkpoint run the
@@ -213,8 +212,8 @@ bootstrap wrapper's `--revalidate` themselves when the recorded projection is st
 so do not run it by hand. That wrapper owns the governed candidate index and
 executed checks: do not also force-index the source checkout or repeat those
 checks. Use the refreshed packet's exact repo selector for any remaining gap.
-`detect_changes` is optional supplemental evidence for a named question; scope
-it to the actual delta and retain its full output externally like other graph
+`detect_changes` is the rule's after-edit change check: run it by the packet's
+exact form and retain its full output externally like other graph
 responses. `--revalidate` is the post-intake form:
 it refuses without an active governed workflow, forces `--mode local`, and
 skips the SoulForge map rebuild (`--map-build never`) — the one heavy producer

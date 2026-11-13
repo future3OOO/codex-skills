@@ -664,6 +664,17 @@ def record_base_oid(identity: RepoIdentity, slug: str, workflow_id: str | None, 
         return _commit(transaction, state, "record-base-oid")
 
 
+def record_pass_start_index(identity: RepoIdentity, slug: str, workflow_id: str | None, repo: str, tree: str) -> JsonObject:
+    """Record the pass's first GitNexus index and the tree it holds; the first recorded wins, so
+    every later intake's change check compares with the start of the pass."""
+    with mutation(identity) as transaction:
+        state = _bound_instance_state(transaction.state, slug, workflow_id)
+        if state.get("passStartIndex"):
+            return state
+        state["passStartIndex"] = [repo, tree]
+        return _commit(transaction, state, "record-pass-start-index")
+
+
 def commit_verification(
     identity: RepoIdentity,
     slug: str,
@@ -1202,9 +1213,6 @@ CHANNELS = (
     ("finding-ledger", "finding ledger: each finding's immutable claim, status and evidence pointer"),
     ("quality-candidates", "non-blocking gate candidates: locations and matching rules; investigate their actual cost and necessity"),
     ("diff", "current-pass diff: passStartOid^{tree} -> activeCandidateTree; a deleted file is its header and line count"),
-    ("removed-conditions", "removed conditions only a result declared after the approved preflight accounts for: rule on each in a finding or "
-     "report line that starts with its name, `RC-...: the request asks for this` or `RC-...: the request does not ask for this`; "
-     "the second is binding, and with no ruling at the final verdict the condition is restored"),
 )
 
 
@@ -1328,9 +1336,7 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
             entry["comparison"] = ({key: run[key] for key in ("runIndex", "valid", "fresh") if key in run}
                                    if run["runIndex"] in views else views.setdefault(run["runIndex"], behavior_map.comparison_view(run)))
         rendered.append(entry)
-    readiness = _readiness_lines(identity, state, items) if contract or items else {}
-    questions = readiness.pop("reviewQuestions", [])  # stated once, in their own channel
-    map_content = ({"preflightInterpretation": contract, **readiness, "items": rendered,
+    map_content = ({"preflightInterpretation": contract, **_readiness_lines(identity, state, items), "items": rendered,
                     **({"retired": lapsed} if (lapsed := (evidence_document(identity, state.get("tddEvidence")) or {}).get("retired")) else {})}
                    if contract or items else None)
     if phase == "preflight-advice" and preflight_draft is not None:
@@ -1351,7 +1357,6 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
         "quality-candidates": (state.get("qualityGateEvidence"), gate_candidates(identity, state) or None),
         "diff": (None, None if "passStartOid" in missing else current_pass_evidence(
             str(identity.root), f"{state['passStartOid']}^{{tree}}", candidate, since=since)),
-        "removed-conditions": (None, "\n\n".join(questions)),
     }
     result["channels"] = []
     Path(channel_dir).mkdir(parents=True, exist_ok=True)
@@ -1537,24 +1542,10 @@ def public_status(state: JsonObject, identity: RepoIdentity | None = None, *,
     return {key: value for key, value in result.items() if key in fields}
 
 
-def _finding_claims(identity: RepoIdentity, state: JsonObject) -> list[tuple[bool, str]]:
-    """Every recorded finding, as its id and claim, a finding's later observations included, with whether the final advisor made it."""
-    intakes: dict[str, JsonObject] = {}
-    claims = []
-    for entry in state.get("findingStates") or []:
-        for ref in ({"evidenceId": entry["intakeEvidenceId"], "id": entry["findingId"], "stage": entry["stage"]}, *entry.get("observations", [])):
-            if ref["evidenceId"] not in intakes:
-                intakes[ref["evidenceId"]] = evidence_document(identity, ref["evidenceId"], restore_runs=False) or {}
-            claims += [(ref.get("stage") == "final", f"{ref['id']}: {finding.get('claim')}") for finding in intakes[ref["evidenceId"]].get("findings", [])
-                       if finding.get("id") == ref["id"]]
-    return claims
-
-
 def _readiness_lines(identity: RepoIdentity, state: JsonObject, items: list[JsonObject] | None = None, *,
                      documents: tuple[JsonObject | None, JsonObject | None] | None = None,
                      review: JsonObject | None = None, candidate: str | None = None) -> JsonObject:
-    """One readiness result: immutable named cases, with retained statements for review, and the removed conditions
-    that go to review as questions."""
+    """One readiness result: immutable named cases, with retained statements for review."""
     from .tdd_workflow import _evaluation, _retired, current_map, refresh_proof
     candidate = candidate or _active_candidate_tree(identity)
     if documents is None:
@@ -1570,21 +1561,18 @@ def _readiness_lines(identity: RepoIdentity, state: JsonObject, items: list[Json
     observations = behavior_map.current_cases(items, (document or {}).get("runs", []), retired)
     refresh_proof(identity, [*observations, *evaluation], candidate=candidate, runs=(document or {}).get("runs", []))
     cases = behavior_map.open_obligations(items, evaluation, observations)
-    questions: list[str] = []
     if document:
         from . import removed_conditions
         original = _git(identity, "rev-parse", f"{state['passStartOid']}^{{tree}}").decode().strip()
         if decisions := removed_conditions.removed(identity, original, candidate):
             traces, proofs = document.get("conditions") or {}, [entry for entry in [*observations, *evaluation] if entry["comparison"].get("arms")]
             preflight = documents[1] if documents and documents[1] else evidence_document(identity, state.get("preflightEvidence"))
-            opened, questions = removed_conditions.unsettled(
-                decisions, [traces.get(entry["comparison"]["arms"][0]["key"], {}) for entry in proofs], proofs, behavior_map.recorded_map(None, preflight) or [],
-                lambda: _finding_claims(identity, state), state.get("judgedTree") == candidate)
-            cases += opened
+            cases += sum(removed_conditions.unsettled(
+                decisions, [traces.get(entry["comparison"]["arms"][0]["key"], {}) for entry in proofs], proofs, behavior_map.recorded_map(None, preflight) or []), [])
     review = review if review is not None else evidence_document(identity, state.get("codeReviewEvidence"))
     current = bool(review and review.get("workflowId") == state["workflowId"] and review.get("candidateTree") == candidate and review.get("verdict") == "complete" and not _stage_unresolved(state, "code-review", "code-review"))
     return {"open": cases, "reviewCurrent": current, "openCount": len(cases),
-            "never": behavior_map.never_compared(items), **({"reviewQuestions": questions} if questions else {})}
+            "never": behavior_map.never_compared(items)}
 
 def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObject | None = None, *,
                    preflight_file: str | None = None, obligations: bool = True) -> JsonObject:

@@ -31,6 +31,7 @@ from hooks.lib.workflow_state import (  # noqa: E402
     instance_id,
     read_workflow,
     record_base_oid,
+    record_pass_start_index,
     safe_slug,
 )
 
@@ -159,7 +160,7 @@ def _remove_option(argv: list[str], name: str) -> tuple[list[str], str | None]:
     return output, value
 
 
-def _record_pass_base(identity: RepoIdentity, slug: str, workflow_id: str, packet: Path) -> None:
+def _record_pass_base(identity: RepoIdentity, slug: str, workflow_id: str, payload: dict) -> None:
     """Record the packet's already-resolved base as the pass's immutable OID.
 
     The producer owns base resolution, and its no-base sentinel is the head
@@ -170,7 +171,6 @@ def _record_pass_base(identity: RepoIdentity, slug: str, workflow_id: str, packe
     The first recorded OID survives reruns; a rerun that resolves a different
     commit is reported, never silently absorbed.
     """
-    payload = json.loads(packet.read_text(encoding="utf-8"))
     target = payload.get("target_state")
     git_facts = payload.get("git")
     base_ref = target.get("base_ref") if isinstance(target, dict) else None
@@ -526,6 +526,9 @@ def main(argv: list[str]) -> int:
         captured_workflow_id = instance_id(state)
         if captured_workflow_id is None:
             raise WorkflowError(NO_INSTANCE_ID)
+        if start := state.get("passStartIndex"):
+            # A later intake of this pass: leave its first index as it is and compare with it.
+            args += ["--pass-start-index", *map(str, start)]
     except (WorkflowError, RepoIdentityError, ValueError) as exc:
         sys.stderr.write(f"<blocker>cannot bind Repo Context Forge to the active workflow: {exc}</blocker>\n")
         return 2
@@ -561,7 +564,12 @@ def main(argv: list[str]) -> int:
                     snapshot_gap=snapshot_gap or None,
                 ),
             )
-            _record_pass_base(identity, slug, captured_workflow_id, packet)
+            payload = json.loads(packet.read_text(encoding="utf-8"))
+            _record_pass_base(identity, slug, captured_workflow_id, payload)
+            gitnexus = payload.get("gitnexus") or {}
+            if not start and gitnexus.get("index_fresh") and gitnexus.get("repo") and gitnexus.get("indexed_candidate_tree"):
+                record_pass_start_index(identity, slug, captured_workflow_id,
+                                        str(gitnexus["repo"]), str(gitnexus["indexed_candidate_tree"]))
         except (WorkflowError, RepoIdentityError, ValueError) as exc:
             sys.stderr.write(
                 f"<blocker>cannot record Repo Context Forge graph evidence: {exc}; "
