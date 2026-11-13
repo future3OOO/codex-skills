@@ -134,6 +134,7 @@ def parser() -> argparse.ArgumentParser:
             command.add_argument("--reason")
             command.add_argument("--design-declaration")
             command.add_argument("--expected-candidate-tree")
+            command.add_argument("--tdd-evidence", help="the comparison evidence the final consult's checkpoint named")
             command.add_argument("--preflight-file")
             command.add_argument("--submitted-draft", help="the draft as submitted, before the advisor's in-place edits")
 
@@ -397,8 +398,7 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
     execution = None
     if args.stage == "final" and intake is not None:
         from .tdd_workflow import execute_findings
-        if intake["candidateTree"] != candidate:
-            raise WorkflowError("final review names a different candidate tree")
+        intake["tddEvidence"] = args.tdd_evidence or None
         if any("probe" in finding or "change" in finding for finding in intake["findings"]):
             raise WorkflowError("execute findings through tdd --as final before recording their verdict")
         execution = execute_findings(identity, state, intake["findings"], candidate=candidate)

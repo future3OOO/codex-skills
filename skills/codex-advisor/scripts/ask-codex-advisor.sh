@@ -188,6 +188,7 @@ if [[ -n "$phase" ]]; then
     IFS= read -r -d '' session_mode
     IFS= read -r -d '' pass_start
     IFS= read -r -d '' candidate
+    IFS= read -r -d '' reviewed_evidence
     IFS= read -r -d '' scratch_root
   } < <(python3 - "$checkpoint_file" "$channels_prompt" "$phase" <<'PY'
 import hashlib, json, sys
@@ -196,7 +197,6 @@ with open(checkpoint_path, encoding="utf-8") as handle:
     state = json.load(handle)
 with open(prompt_path, "wb") as prompt:
     prompt.write(("\n--- Runtime response form ---\n" + state["responseFormat"] + "\n").encode())
-    prompt.write(("\n--- Advisor source/evidence binding ---\n" + json.dumps({"workflowId": state.get("workflowId"), "candidateTree": state.get("activeCandidateTree"), "tddEvidence": state.get("tddEvidence")})).encode() + b"\n")
     for channel in state.get("channels") or []:
         data = open(channel["contentPath"], "rb").read()
         name = channel["name"]
@@ -217,7 +217,7 @@ values = (
     state.get("slug") or "", state.get("workflowId") or "",
     "yes" if state.get("ready") else "no", ",".join(state.get("missing") or []),
     state.get("nextAction") or "", state.get("sessionMode") or "",
-    state.get("passStartOid") or "", state.get("activeCandidateTree") or "", state.get("scratchPath") or "",
+    state.get("passStartOid") or "", state.get("activeCandidateTree") or "", state.get("tddEvidence") or "", state.get("scratchPath") or "",
 )
 for value in values:
     sys.stdout.write(str(value) + "\0")
@@ -329,7 +329,7 @@ Preserve frozen proof and required surviving regression checks when reducing mai
 esac
 if [[ "$phase" == preflight-advice ]]; then
   if (( ${#reconsult_args[@]} == 0 )); then
-    phase_prompt+=$'\n'"This consult owns architecture and core efficiency. Use the draft's owner paths and reuse proposals, verify them against source, and replace costly design choices. Derive the least required work and settle the deciding assumption through existing owners. Return every material finding, functional and performance, in this consult: the cost model, cheaper design, proposed cases and deciding evidence."
+    phase_prompt+=$'\n'"This consult owns architecture and core efficiency. Use the draft's owner paths and reuse proposals, verify them against source, and replace costly design choices. Measure before designing, in one profiling run: profile the real operation the change edits on a production-size input, report its three largest costs with their measured shares, and design the removal of the largest; if the largest stays, give the measurement that shows it must. Derive the least required work and settle the deciding assumption through existing owners. Return every material finding, functional and performance, in this consult: the cost model, cheaper design, proposed cases and deciding evidence."
   else
     dry_run=$(printf '%q ' python3 "$workflow_cli" record advisor-result --check --repo "$repo_root" --slug "$producer_slug" \
       --workflow-id "$active_wid" --stage preflight --source codex-advisor --input - --preflight-file "$transport_dir/preflight.json" \
@@ -465,7 +465,7 @@ else
   if ! python3 "$workflow_cli" record advisor-result --repo "$repo_root" --slug "$producer_slug" \
       --workflow-id "$active_wid" --stage "$record_stage" --source codex-advisor \
       --input "$output_file" --design-declaration "$design_declaration_file" \
-      --expected-candidate-tree "$candidate" "${draft_args[@]}" "${submitted_args[@]}" >"$transport_dir/receipt.json"; then
+      --expected-candidate-tree "$candidate" --tdd-evidence "$reviewed_evidence" "${draft_args[@]}" "${submitted_args[@]}" >"$transport_dir/receipt.json"; then
     cat "$output_file"
     exit 2
   fi

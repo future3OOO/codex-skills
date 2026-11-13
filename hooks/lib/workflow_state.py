@@ -13,6 +13,7 @@ import subprocess
 import sys
 import uuid
 from pathlib import Path
+from functools import cache
 from typing import Callable, Sequence
 
 from . import behavior_map
@@ -283,12 +284,13 @@ def _tree_drift(
     missing: str,
     stale: str,
     transaction: LedgerMutation | None = None,
+    current_manifest: Callable[[], dict[str, str]] | None = None,
 ) -> str | None:
     recorded = _stored_manifest(identity, state, field, transaction)
     if recorded is None:
         return missing
     try:
-        current = tree_manifest(identity)
+        current = current_manifest() if current_manifest is not None else tree_manifest(identity)
     except RuntimeError as exc:
         return f"{missing} (uncomputable: {exc})"
     return _manifest_drift(recorded, current, stale=stale)
@@ -309,6 +311,7 @@ def _binding_drift(
     state: JsonObject,
     binding: str,
     transaction: LedgerMutation | None = None,
+    *, current_manifest: Callable[[], dict[str, str]] | None = None,
 ) -> str | None:
     field, missing, stale = {
         "review": ("reviewManifestId", MANIFEST_MISSING, MANIFEST_STALE),
@@ -318,6 +321,7 @@ def _binding_drift(
         return None if _stored_manifest(identity, state, field, transaction) is not None else missing
     return _tree_drift(
         identity, state, field=field, missing=missing, stale=stale, transaction=transaction,
+        current_manifest=current_manifest,
     )
 
 
@@ -966,10 +970,7 @@ def record_advisor_result(
             raise WorkflowError("advisor finding intake does not match this workflow result")
         replayed_design = False
         if intake is not None:
-            if stage == "preflight":
-                intake["candidateTree"] = expected_candidate_tree or _active_candidate_tree(identity)
-            elif intake.get("candidateTree") != _active_candidate_tree(identity):
-                raise WorkflowError("final review names a different candidate tree")
+            intake["candidateTree"] = expected_candidate_tree or _active_candidate_tree(identity)
         if design is not None:
             # The design is a falsifiable hypothesis: a deepened declaration is
             # recorded append-only in the same pass, never a reason to restart.
@@ -1032,18 +1033,16 @@ def record_advisor_result(
             if not state.get("preflightEvidence"):
                 state["phase"] = "advisor-preflight"
         elif stage == "final":
-            if intake is not None:
-                seen = transaction.evidence(intake["tddEvidence"], restore_runs=False) if intake["tddEvidence"] else None
-                if intake["tddEvidence"] is not None and (not seen or seen.get("workflowId") != state["workflowId"] or "behaviorMap" not in seen or "runs" not in seen):
-                    raise WorkflowError("final review comparison evidence is absent or foreign")
             _review_evidence(state, intake)
             state.pop("paused", None)
             if verdict not in FINAL_VERDICTS:
                 raise ValueError(f"unsupported final-review verdict: {verdict}")
-            ready = (all(_allows_next(state, phase) for phase in SEQUENCE[:SEQUENCE.index("code-review")])
+            current_manifest = cache(lambda: tree_manifest(identity))  # one working-tree scan serves both bindings and the stored manifest
+            # the final advisor's own retirement can reopen the map mid-consult; only an approval needs it closed
+            ready = (all(_allows_next(state, phase) for phase in SEQUENCE[:SEQUENCE.index("code-review")] if phase != "tdd" or verdict == "commit-ready")
                      and _allows_next(state, "code-review")
-                     and (state.get("finalStarted") or not _binding_drift(identity, state, "review", transaction))
-                     and not _binding_drift(identity, state, "quality-gate", transaction))
+                     and (state.get("finalStarted") or not _binding_drift(identity, state, "review", transaction, current_manifest=current_manifest))
+                     and not _binding_drift(identity, state, "quality-gate", transaction, current_manifest=current_manifest))
             if not ready:
                 raise WorkflowIncomplete("a final result requires current proof, verification and independent review")
             if verdict == "context-mismatch":
@@ -1059,7 +1058,7 @@ def record_advisor_result(
                 )
                 _settle_executed(state, execution, intake_reference)
                 state["finalStarted"] = True
-                reviewed = manifest_write(str(state["workflowId"]), "final-review-tree", tree_manifest(identity))
+                reviewed = manifest_write(str(state["workflowId"]), "final-review-tree", current_manifest())
                 state["reviewManifestId"] = reviewed.manifest_id
                 state["finalReview"] = {
                     "source": source, "status": verdict, "intakeEvidence": intake_write.evidence_id,
@@ -1301,9 +1300,7 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
             "--tdd-evidence", str(state.get("tddEvidence") or "null")]) + " --verdict complete"
     else:
         shape = json.loads(ADVISOR_SHAPES["preflight" if phase == "preflight-advice" else "final"])
-        if phase == "final-review":
-            shape.update(workflowId=workflow_id, candidateTree=candidate, tddEvidence=state.get("tddEvidence"))
-        elif reconsult:  # the second consultation completes the draft
+        if reconsult:  # the second consultation completes the draft
             shape["verdict"] = "approved"
         result["responseFormat"] = json.dumps(shape)
     if state.get("tddEvidence"):

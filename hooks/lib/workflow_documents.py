@@ -67,11 +67,9 @@ def advisor_envelope(
         value = json.loads(text, object_pairs_hook=_unique)
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise ValueError(f"cannot read advisor envelope JSON: {exc}") from exc
-    fields = {"schemaVersion", "findings", "verdict"} | ({"workflowId", "candidateTree", "tddEvidence"} if stage == "final" else set())
-    if not isinstance(value, dict) or set(value) != fields:
+    fields = {"schemaVersion", "findings", "verdict"}  # the recorder binds workflow, tree and evidence; an echoed id is ignored
+    if not isinstance(value, dict) or not fields <= set(value) <= fields | ({"workflowId", "candidateTree", "tddEvidence"} if stage == "final" else set()):
         raise ValueError("advisor envelope fields do not match its stage: " + ", ".join(sorted(fields)))
-    if stage == "final" and (value.get("workflowId") != workflow_id or not isinstance(value.get("candidateTree"), str) or not re.fullmatch(r"[0-9a-f]{40}", value["candidateTree"]) or value["tddEvidence"] is not None and not _text(value["tddEvidence"])):
-        raise ValueError("final review must echo its workflow and candidate tree")
     findings, verdict = value.get("findings"), value.get("verdict")
     if type(value.get("schemaVersion")) is not int or value.get("schemaVersion") != 1 or not isinstance(findings, list):
         raise ValueError("advisor envelope requires schemaVersion 1 and a findings array")
@@ -111,7 +109,6 @@ def advisor_envelope(
         "stage": stage,
         "verdict": verdict,
         "findings": typed,
-        **({key: value[key] for key in ("candidateTree", "tddEvidence")} if stage == "final" else {}),
         "sha256": hashlib.sha256(raw).hexdigest(),
         "recordedAt": utc_timestamp(),
         "observationId": uuid.uuid4().hex,
@@ -131,7 +128,7 @@ ITEM_SHAPE = ('{"id":"BM_X","kind":"conformance|contract|preservation","basis":"
               '"interpretations":["reading a","reading b"],"interpretation":"...","authority":"..."}')
 ADVISOR_SHAPES = {
     "preflight": '{"schemaVersion":1,"findings":[{"id":"SPEC-1","claim":"...","material":true}],"verdict":"approved|changes-required"}',
-    "final": '{"schemaVersion":1,"workflowId":"<reviewed workflow>","candidateTree":"<reviewed tree>","tddEvidence":"<reviewed evidence, or JSON null>","findings":[{"id":"SPEC-1","claim":"report line"}],"verdict":"commit-ready|fix-before-commit|context-mismatch"}',
+    "final": '{"schemaVersion":1,"findings":[{"id":"SPEC-1","claim":"report line"}],"verdict":"commit-ready|fix-before-commit|context-mismatch"}',
 }
 RECORD_SHAPES = {
     "preflight": f'{{"authoritativeContract":"text","behaviorMap":[{ITEM_SHAPE}]}}',
