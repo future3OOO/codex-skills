@@ -43,10 +43,11 @@ def _recorded_fields(raw: JsonObject) -> JsonObject:
     return fields
 
 
-def script_operand(command: str) -> str | None:
+def script_operand(command: str, *, shells: bool = False) -> str | None:
     """The file a command asks Python to run, by the argument rules of Python and of the wrappers leads put before it:
     `[NAME=VALUE | env | timeout [OPTION]... DURATION]... pythonX [OPTION]... FILE`. None for any other
-    command, for `-c` and `-m`, and for a program read from standard input: their other arguments are data."""
+    command, for `-c` and `-m`, and for a program read from standard input: their other arguments are data. With
+    `shells`, also the file `sh` or `bash` runs."""
     try:
         words = shlex.split(command)
     except ValueError:  # an unclosed quote is refused when the case is captured
@@ -58,6 +59,8 @@ def script_operand(command: str) -> str | None:
             while at < len(words) and words[at].startswith("-"):
                 at += 2 if words[at] in ("-k", "-s", "--kill-after", "--signal") else 1
             at += 1  # its duration
+    if shells and at + 1 < len(words) and os.path.basename(words[at]) in {"sh", "bash"} and not words[at + 1].startswith("-"):
+        return words[at + 1]
     if at >= len(words) or not re.fullmatch(r"python[0-9.]*", os.path.basename(words[at])):
         return None
     at += 1
@@ -73,7 +76,7 @@ def script_operand(command: str) -> str | None:
     return words[at] if at < len(words) and words[at] != "-" else None
 
 
-def map_errors(value: object, *, allow_runtime: bool) -> list[str]:
+def map_errors(value: object, *, allow_runtime: bool, scripts: bool = True) -> list[str]:
     if not isinstance(value, list):
         return ["behaviorMap must be an array"]
     errors, seen = [], set()
@@ -93,14 +96,14 @@ def map_errors(value: object, *, allow_runtime: bool) -> list[str]:
                 errors.append(f"probe {identifier} requires kind: conformance, contract or preservation")
             if extra := set(raw) - REQUIRED_FIELDS - JUDGEMENT_FIELDS:
                 errors.append(f"probe {identifier} has unknown fields: " + ", ".join(sorted(extra)))
-            errors.extend(f"probe {identifier} case runs {script}, which does not exist: write it before declaring its command, or leave "
-                          "the command out for the lead to bind" for script in map(script_operand, _strings(raw.get("cases")) or ())
+            errors.extend(f"probe {identifier} case runs {script}, which does not exist: write it before declaring its command"
+                          for script in map(script_operand, (scripts and _strings(raw.get("cases"))) or ())
                           if script and os.path.isabs(script) and not os.path.lexists(script))
     return errors
 
 
-def validate_items(value: object, *, allow_runtime: bool) -> list[JsonObject]:
-    if errors := map_errors(value, allow_runtime=allow_runtime):
+def validate_items(value: object, *, allow_runtime: bool, scripts: bool = True) -> list[JsonObject]:
+    if errors := map_errors(value, allow_runtime=allow_runtime, scripts=scripts):
         raise ValueError("; ".join(errors))
     items = []
     for raw in value:
@@ -111,8 +114,8 @@ def validate_items(value: object, *, allow_runtime: bool) -> list[JsonObject]:
     return items
 
 
-def initial_items(value: object) -> list[JsonObject]:
-    return validate_items(value, allow_runtime=False)
+def initial_items(value: object, scripts: bool = True) -> list[JsonObject]:
+    return validate_items(value, allow_runtime=False, scripts=scripts)
 
 
 def runtime_items(value: object) -> list[JsonObject]:
@@ -147,8 +150,8 @@ def _case_question(entry: JsonObject) -> list[str]:
         return ["readings unsettled: " + " | ".join(entry["interpretations"]) + " - record interpretation and authority"]
     run = entry.get("comparison") or {}
     if not producer_proved(entry):
-        return [(run.get("freshnessReason", "comparison inputs changed") if run.get("fresh") is False
-                 else "no current valid command comparison") + "; replay the recorded batch: workflow.py tdd"]
+        return [run.get("freshnessReason", "comparison inputs changed") if run.get("fresh") is False
+                else "no current valid command comparison"]
     original, current = original_outcome(run), run["arms"][-1]["outcome"]
     if current != "passed":
         return ["candidate command " + current + ": " + run["command"]]

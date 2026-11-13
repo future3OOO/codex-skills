@@ -344,7 +344,7 @@ def _document(args: argparse.Namespace, label: str) -> dict[str, object]:
 
 
 def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
-    """One ingest seam; --check runs the whole recording and rolls it back."""
+    """One ingest seam; --check runs the whole recording, refusing a case that runs a missing script, and rolls it back."""
     CHECK_ONLY.set(args.check)
     from .workflow_state import _bound_instance_state
     state = (_bound_instance_state(read_active(identity), args.slug, args.workflow_id) if args.kind == "advisor-result"
@@ -369,13 +369,13 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
                 preflight_file=str(Path(args.input).resolve()) if args.input and args.input != "-" else None)})
             return 2
         edits = {"draftEdits": intake["draftEdits"]} if intake.get("draftEdits") else {}
-        if args.check or not any(item.get("cases") for item in document["behaviorMap"]):
+        if args.check or not (intake.get("added") or any(item.get("cases") for item in document["behaviorMap"])):
             emit(_receipt(state, identity, evidenceId=evidence_id, status="passed", **edits))
             return 0
-        _emit_json({"evidenceId": evidence_id, "status": "passed", **edits})  # the draft's declared cases run now; their receipt carries the continuation
         from .tdd_workflow import _run_tdd
-        _run_tdd(["--repo", str(identity.root), "--slug", slug, "--workflow-id", workflow_id])
-        return 0  # the draft is recorded; the rows and open lines say which declared case does not yet hold
+        # The draft's declared cases run now: one receipt, which turns away an added item whose commands did not run there.
+        return _run_tdd(["--repo", str(identity.root), "--slug", slug, "--workflow-id", workflow_id],
+                        added=frozenset(intake.get("added", ())), details=edits) & 2
     if args.kind == "tdd-map":
         from .tdd_workflow import map_update
         emit(map_update(identity, state, _document(args, "TDD map update")))
@@ -410,7 +410,7 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
         identity, slug, workflow_id, args.stage, args.source, verdict, reason=args.reason,
         design=design_declaration(args.design_declaration) if args.design_declaration else None,
         intake=intake, expected_candidate_tree=expected or candidate, execution=execution,
-        preflight_draft=preflight_document(args.preflight_file) if args.preflight_file else None,
+        preflight_draft=preflight_document(args.preflight_file, scripts=args.check) if args.preflight_file else None,
         submitted_draft=preflight_document(args.submitted_draft) if args.submitted_draft else None)
     emit(_receipt(state, identity, obligations=False))
     return 0
@@ -474,8 +474,9 @@ def _dispatch(args: argparse.Namespace) -> int:
         _emit_json(checkpoint(identity, args.phase, reconsult=args.reconsult, channel_dir=args.channel_dir,
                               preflight_draft=preflight_document(args.preflight_file) if args.preflight_file else None))
     elif args.command == "complete":
-        _emit_json(_receipt(complete(identity, slug=args.slug, workflow_id=args.workflow_id,
-                                     expected_candidate_tree=_active_candidate_tree(identity)), identity))
+        state = complete(identity, slug=args.slug, workflow_id=args.workflow_id, expected_candidate_tree=_active_candidate_tree(identity))
+        rejections = {"finalReportBeginsWith": state["rejections"]} if state.get("rejections") else {}
+        _emit_json({**rejections, **_receipt(state, identity)}, sort_keys=not rejections)
     elif args.command == "verify":
         return _verify(args, identity)
     elif args.command == "record":

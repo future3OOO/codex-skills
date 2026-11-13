@@ -35,8 +35,7 @@ tool with the checkout as `cwd`: it runs the step to its end and returns the
 result, so there is nothing to wait on or poll. `next.input` names any judgment,
 document or argument still needed and its form; arguments go in the tool's
 `args`. Retain the returned evidence IDs.
-On resume or after edits, `summary` gives current recovery guidance and
-`status --fields` supplies missing facts. Resume the same pass.
+Resume the same pass.
 The lead's quick shell forms follow (`workflow.py` is
 `python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py"`;
 [recorder.md](../tdd/recorder.md#record-a-case) has the `tdd` arguments). The
@@ -167,7 +166,7 @@ the PR when intended for integration. Run AGENTS.md's reviewer completion gate
 (Reviewer Findings And Completion) on the current head. Merge only with explicit
 maintainer authorization; passing checks and reviews do not authorize merge.
 Keep the pass active through reviewer closure; corrections repeat only the
-affected steps, including verification and independent review.
+affected steps.
 
 ### 13. Complete the workflow
 

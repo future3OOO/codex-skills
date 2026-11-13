@@ -88,10 +88,6 @@ if [[ -n "$phase" ]] && grep -qv '^\(>\( .*\)\?\|[[:space:]]*\)$' <<<"$question"
 fi
 
 normalized_slug="$(printf '%s' "$slug" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed 's/^-//; s/-$//')"
-case "$normalized_slug" in
-  *pre-edit*|*pre-commit*|*review*|*challenge*|*final*|*preflight*)
-    printf 'warning: slug contains a phase word; phase belongs in --phase, not identity\n' >&2 ;;
-esac
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 transport_dir=$(mktemp -d)
@@ -231,8 +227,8 @@ PY
     printf 'error: %s checkpoint is not ready; missing: %s\n' "$phase" "$checkpoint_missing" >&2
     exit 2
   fi
-  # Retained probes may read their scratch after this consult; the pass's execution state owns it.
-  mkdir -p "$scratch_root"; scratch_dir=$(mktemp -d "$scratch_root/consult-XXXXXX")
+  # Every consult of the pass shares its scratch, kept with the pass's execution state: a later consult finds an earlier one's probes.
+  mkdir -p "$scratch_root"; scratch_dir=$scratch_root
 fi
 sid_file="$state_dir/${repo_key}-${normalized_slug}${active_wid:+-$active_wid}.${provider}.sid"
 if [[ ${#reconsult_args[@]} -gt 0 && ! -s "$sid_file" ]]; then
