@@ -591,7 +591,8 @@ def commit_retained_checks(identity: RepoIdentity, slug: str, workflow_id: str, 
         write = evidence_write(workflow_id, "retained-checks", document)
         _settle_executed(state, execution, write.evidence_id)
         final = state.get("finalReview") or {}
-        if final.get("status") == "commit-ready" and final.get("findings") == "pending" and not _stage_unresolved(state, "final", final["source"]):
+        if (final.get("status") == "commit-ready" and final.get("findings") == "pending" and state.get("judgedTree") == execution["measuredTree"]
+                and not _stage_unresolved(state, "final", final["source"])):
             final["findings"] = "none"  # the ready verdict's last open finding has settled on the tree it judged
             state["nextAction"] = _derive_next_action(state)
         state.setdefault("retainedChecks", {})[execution["measuredTree"]] = write.evidence_id
