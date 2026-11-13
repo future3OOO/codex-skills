@@ -73,7 +73,7 @@ def serve() -> None:
     for line in messages:
         try:
             message = json.loads(line)
-        except ValueError:  # JSON-RPC's parse error, invalid UTF-8 and a blank line included; the next request is answered
+        except (ValueError, RecursionError):  # JSON-RPC's parse error (invalid UTF-8, a blank line, nesting too deep); the next request is answered
             send(None, "error", {"code": -32700, "message": "parse error"})
             continue
         method, ident, params = message.get("method"), message.get("id"), message.get("params") or {}

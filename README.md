@@ -98,7 +98,7 @@ The global rules install under a different name, so never list them in `paths`:
 
 ```bash
 mkdir -p "$backup" &&
-  { [[ ! -e "$estate/AGENTS.md" ]] || cp -- "$estate/AGENTS.md" "$backup/AGENTS.md"; } &&
+  { [[ ! -e "$estate/AGENTS.md" && ! -L "$estate/AGENTS.md" ]] || cp -- "$estate/AGENTS.md" "$backup/AGENTS.md"; } &&
   cat docs/agents/global-rules.md docs/agents/proof-invariants.md > "$estate/AGENTS.md" &&
   cmp -- <(cat docs/agents/global-rules.md docs/agents/proof-invariants.md) "$estate/AGENTS.md"
 ```
