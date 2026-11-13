@@ -17,7 +17,7 @@ workflow.py record tdd-map --repo "$PWD" --input map.json
 A lead passes what follows `workflow.py` (`tdd --case BM_X 'COMMAND'`, without `--repo`) as the workflow tool's `args`; the call returns the finished receipt.
 `--case` takes one command per case and `-` for no item. A scratch file a command names is frozen
 with it, as is a temporary path the command or that file names; `--path` or `--support` freezes
-another beside it. A `--case` call runs the cases it names, captures any command an item still
+another beside it. A `--case` call runs the cases it names and any recorded case still without accepted proof, captures any command an item still
 declares and judges the rest of the map as recorded, without running it; a bare call captures those too and replays every recorded command.
 A case that cannot be captured is refused alone; a failing case is a row, not a failed call. `map.json` holds
 `items` (only the changed fields), `added` and `removed`, alone or together:
@@ -61,8 +61,8 @@ Reuse the original defect's failure as sensitivity proof.
 
 ## Replay and continuation
 
-Capture edited probe source explicitly; continuation replays immutable recorded
-inputs. Reuse valid results instead of repeating execution for handoff. Installed
+A case with accepted proof replays its immutable recorded inputs; one without is
+captured again when its probe files change. Reuse valid results instead of repeating execution for handoff. Installed
 library edits without package metadata changes remain unbound.
 Current and retained commands use the same readiness
 check, including after map narrowing and finding resolution.
