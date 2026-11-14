@@ -228,14 +228,14 @@ def open_obligations(items: list[JsonObject], evaluation: list[JsonObject] | Non
 
 
 def release(items: list[JsonObject], owner: JsonObject, run: JsonObject, runs: list[JsonObject]) -> None:
-    """A command just proved under `owner` leaves every other item it does not satisfy; an item it proves keeps it."""
-    if _case_question(owner):  # a recording that has not proved its own item takes nothing
-        return
+    """A command proved under `owner` leaves every other item it does not satisfy; an item it proves keeps it, and a
+    kept-behaviour item keeps one that passes on the original: failing on the candidate it is a regression."""
     source = run.get("sourceCommand", run["command"])
     for entry in items:
         cases = current_cases([entry], runs) if entry is not owner and (entry.get("comparison") or {}).get("caseRuns") else []
         kept = {case["comparison"]["command"]: case["comparison"]["runIndex"] for case in cases
-                if case["comparison"].get("sourceCommand", case["comparison"]["command"]) != source or not _case_question(case)}
+                if case["comparison"].get("sourceCommand", case["comparison"]["command"]) != source or not _case_question(case)
+                or entry.get("kind") == "preservation" and original_outcome(case["comparison"]) == "passed"}
         if len(kept) < len(cases):
             recorded = entry.pop("comparison")["obligation"]  # left empty, current_cases would rebuild the binding from run history
             if kept:

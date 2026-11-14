@@ -6,7 +6,7 @@ The [workflow skill](SKILL.md) owns the lead's method and review obligations.
 
 ## State Interface
 
-Use the runtime's emitted continuation and the [literal forms](SKILL.md#continuation). Status reports current state;
+Use the runtime's emitted [continuation](SKILL.md#continuation). Status reports current state;
 checkpoint supplies the role's source-bound package and commands; evidence exposes
 retained execution details. Follow the returned continuation.
 

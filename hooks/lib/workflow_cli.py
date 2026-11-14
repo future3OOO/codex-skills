@@ -137,7 +137,7 @@ def parser() -> argparse.ArgumentParser:
         command = _repo(kinds.add_parser(kind, epilog=f"accepted shape: {shape}",
                                          formatter_class=argparse.RawDescriptionHelpFormatter), instance=True)
         command.add_argument("--check", action="store_true", help="validate against the ledger without recording")
-        command.add_argument("--input", help="document path, or - for stdin" + (
+        command.add_argument("--input", help=("the JSON object itself, a " if kind == "tdd-map" else "") + "document path, or - for stdin" + (
             "; defaults to the retained approved draft" if kind == "preflight" else ""))
         if kind == "advisor-result":
             command.add_argument("--stage", required=True)
@@ -175,6 +175,10 @@ def _opening_message() -> str | None:
                     if text != relocated and opening is not None:
                         return None
                     opening, relocated = opening if text == relocated else text, None
+                elif (item.get("type"), item.get("server"), item.get("tool")) == ("McpToolCall", "workflow", "run"):  # a begin through the workflow tool
+                    words = (item.get("arguments") or {}).get("args") or [None]
+                    if words[0] == "begin" and not {"--help", "-h"} & set(words) and not (item.get("result") or {}).get("isError", True):
+                        return None
                 elif item.get("type") == "CommandExecution":
                     relocation = re.search(r"codex-relocate\S*\s+\"?(/\S+?)\"?(?:\s|$)", command)
                     relocated = f"continue from {relocation.group(1)}" if relocation and item.get("exit_code") == 0 else None
@@ -351,7 +355,12 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity, *, review: bool = 
 
 def _document(args: argparse.Namespace, label: str) -> dict[str, object]:
     if not args.input:
-        raise ValueError(f"record {args.kind} requires --input <path|->")
+        raise ValueError(f"record {args.kind} requires --input <JSON|path|->")
+    if args.input.startswith("{"):  # the document itself: the workflow tool gives a command no stdin
+        try:
+            return json.loads(args.input)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"cannot read {label} JSON: {exc}") from exc
     return load_json(args.input, label=label)
 
 

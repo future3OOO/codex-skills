@@ -1,15 +1,9 @@
 ---
 name: codex-advisor
-description: Consult the Codex advisor at the workflow preflight and final-review checkpoints through the sole local wrapper.
+description: Consult the Codex advisor at the workflow preflight and final-review checkpoints through the sole local wrapper, for planned stacks and work outside a governed pass; a governed pass's next step runs each consult.
 ---
 
 # Codex advisor
-
-Use `scripts/ask-codex-advisor.sh` as the sole production transport. Do not use
-the plugin forwarder, Agent tool, or a second wrapper as a fallback.
-
-Choose one short stable slug per production pass. Reuse it for both checkpoints;
-phase belongs in `--phase`, not in the slug.
 
 ## Checkpoints
 
@@ -74,24 +68,6 @@ preflight skips the candidate-staleness check, which neither restores nor confin
 Findings follow the workflow's [executable evidence and acceptance order](../repo-production-workflow/SKILL.md#10-delegate-code-review).
 The wrapper records the verdict without running cases. `context-mismatch` is reserved for candidate/projection identity mismatch;
 it advances nothing. State never authorizes Git.
-
-## Invocation
-
-A lead's phased consult is the pass's next step: the workflow tool runs the command below to
-its end and returns the digest. Its `args` carry `--preflight-file`, on the first consult the
-pass's design option if it has one (later consults take the recorded declaration) and, after
-`--`, the user's instructions.
-
-```bash
-"$HOME/.codex/skills/codex-advisor/scripts/ask-codex-advisor.sh" \
-  --slug "<task>" --phase preflight-advice --preflight-file "<draft.json>" \
-  --cwd "$PWD" --design-file "<design-artifact>"
-
-"$HOME/.codex/skills/codex-advisor/scripts/ask-codex-advisor.sh" \
-  --slug "<task>" --phase final-review --cwd "$PWD"
-```
-
-Phased consults carry no lead text. Pass only the user's instructions given after `begin`, each line quoted verbatim after `> `, after `--` (or on stdin in a shell).
 
 ## Failure and disposition
 

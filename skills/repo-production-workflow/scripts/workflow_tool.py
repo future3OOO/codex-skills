@@ -16,16 +16,34 @@ is this file again (`workflow_tool.py <args>`), which runs the command and watch
 from __future__ import annotations
 
 import json
+import io
 import os
+import re
 import signal
 import sys
 import threading
+from contextlib import redirect_stdout
 from pathlib import Path
 
 TOOL = {"name": "run", "description": "Run the active workflow pass's next step for the repository at `cwd` to its end and return its whole output. "
-        "`args`: the arguments the step's `input` names, or another workflow.py verb with its arguments (summary, status, tdd, verify, consult, context).",
+        "`args`: the arguments the step's `input` names, or another workflow.py verb with its arguments (begin, summary, status, tdd, verify, consult, context).",
         "inputSchema": {"type": "object", "required": ["cwd"], "properties": {
             "cwd": {"type": "string"}, "args": {"type": "array", "items": {"type": "string"}}}}}
+LOG = re.compile(r"/sessions/.+/rollout-.+-([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})\.jsonl$")
+
+
+def session(parent: int) -> str | None:
+    """The thread whose session log `parent`, the Codex process, holds open: a live thread holds its own. None unless
+    exactly one is open."""
+    threads = set()
+    for descriptor in os.listdir(f"/proc/{parent}/fd"):
+        try:
+            match = LOG.search(os.readlink(f"/proc/{parent}/fd/{descriptor}"))
+        except OSError:  # closed since it was listed
+            continue
+        if match:
+            threads.add(match[1])
+    return threads.pop() if len(threads) == 1 else None
 
 
 def lead(args: list[str]) -> int:
@@ -39,6 +57,17 @@ def lead(args: list[str]) -> int:
     os.close(empty)
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
     from hooks.lib.workflow_cli import main
+    if args[0] == "begin":  # its receipt names its next step, the bootstrap, which this same call runs and reports
+        begun = io.StringIO()
+        try:
+            with redirect_stdout(begun):
+                code = main(args, replace=False)
+        except SystemExit:  # --help: its text is the reply
+            print(begun.getvalue(), end="")
+            raise
+        if code:
+            return code
+        args = ["next"]
     return main(args, replace=False)
 
 
@@ -65,9 +94,11 @@ def serve() -> None:
                 raise ValueError("run takes cwd, a path, and args, a list of strings")
             if not args or args[0].startswith("-"):
                 args = ["next", *args]
-            if args[0] == "begin":
-                raise ValueError("begin reads the session's opening message: run it in the shell")
-            raw, code, _ = run([sys.executable, __file__, *args], resolve_repo_identity(cwd), float("inf"), environment, cancel)
+            env = environment
+            if args[0] == "begin":  # it reads the calling session's opening message by CODEX_THREAD_ID; with no single session, none
+                thread = session(os.getppid())
+                env = {key: value for key, value in environment.items() if key != "CODEX_THREAD_ID"} | ({"CODEX_THREAD_ID": thread} if thread else {})
+            raw, code, _ = run([sys.executable, __file__, *args], resolve_repo_identity(cwd), float("inf"), env, cancel)
             text = raw.decode(errors="replace") + (f"exit status {code}" if code else "")
         except (RepoIdentityError, ValueError, OSError) as exc:
             code, text = 2, f"error: {exc}"
