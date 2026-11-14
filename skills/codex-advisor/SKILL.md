@@ -1,6 +1,6 @@
 ---
 name: codex-advisor
-description: Consult the Codex advisor at the workflow preflight and final-review checkpoints through the sole local wrapper, for planned stacks and work outside a governed pass; a governed pass's next step runs each consult.
+description: Consult the Codex advisor at the workflow preflight and final-review checkpoints through the sole local wrapper; a governed pass's next step runs each consult.
 ---
 
 # Codex advisor

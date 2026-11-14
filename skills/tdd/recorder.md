@@ -19,8 +19,8 @@ The runner owns source preparation and reuse; do not repeat them.
 Only a finding's author can withdraw it, or retire a case beside its probe or replacement; the lead closes an
 advisor-added map item or final finding it rejects with `tdd --reject ID 'COMMAND'`, whose output the workflow records. The lead
 retires a case (`--retire` with its `caseKey`) under a conformance or contract item, or whose item
-has left the map; a preservation case only while another recorded case proves the item, when the
-item changed and the case no longer passes or it fails on the original. Reviewers
+has left the map; a preservation case only while another recorded case proves the item, and only when
+the item changed and the case no longer passes, or when the case fails on the original. Reviewers
 receive each retired case with its command and exits.
 Retirement never authorizes losing required behavior. Keep the raw evidence and
 other observations. The runtime rechecks retained findings at verification or

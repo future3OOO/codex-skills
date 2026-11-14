@@ -356,7 +356,7 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity, *, review: bool = 
 def _document(args: argparse.Namespace, label: str) -> dict[str, object]:
     if not args.input:
         raise ValueError(f"record {args.kind} requires --input <JSON|path|->")
-    if args.input.startswith("{"):  # the document itself: the workflow tool gives a command no stdin
+    if args.input.lstrip().startswith("{"):  # the document itself: the workflow tool gives a command no stdin
         try:
             return json.loads(args.input)
         except json.JSONDecodeError as exc:

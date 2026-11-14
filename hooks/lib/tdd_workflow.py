@@ -1997,7 +1997,7 @@ def _run_tdd(values: list[str], *, added: frozenset[str] = frozenset(), details:
                 errors.append(side + " " + outcome + ": " + str(arm.get("output") or arm.get("bindingError") or arm["outcome"])[-1200:])
         if entry is not None and entry.get("kind") == "preservation" and original != "passed" and edited.intersection(run["probeFiles"]):
             read = sorted(edited.intersection(run["probeFiles"]).difference(run.get("support") or []))
-            row["why"] = "a kept-behaviour case passes on the original: a test of the change belongs under the item that declares it" + (
+            row["why"] = "a kept-behaviour case must pass on the original: a test of the change belongs under the item that declares it" + (
                 "; one stating kept behaviour runs the current " + ", ".join(read) + " with " + " ".join("--support " + name for name in read) if read else "")
         if errors:
             row["unexpected"] = errors
