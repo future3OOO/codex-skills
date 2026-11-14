@@ -36,7 +36,7 @@ work names the full surrounding surface.
 
 State the request, preserved behavior and responsible production path. Include
 source facts and proposed reuse as revisable reasoning.
-The [preflight advisor](../codex-advisor/SKILL.md#preflight-advice)
+The preflight advisor
 independently challenges the lead's cost model and architecture; the lead checks the source
 claims before the same advisor finalizes the draft. Keep unresolved predictions
 visible. Preserve required outcomes rather than a proposed mechanism's intermediate
@@ -96,7 +96,7 @@ Update changed items by id with `record tdd-map` when obligations change. The ru
 
 ## Recording
 
-Submit the exact artifact through [Codex Advisor's two-round preflight](../codex-advisor/SKILL.md#preflight-advice) before tracked edits;
+Submit the exact artifact to the pass's two-round preflight consult before tracked edits;
 its approving consult records it once.
 
 Later corrections use the same map and pass. Changed command formatting is

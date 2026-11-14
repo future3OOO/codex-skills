@@ -1874,6 +1874,7 @@ def _run_tdd(values: list[str], *, added: frozenset[str] = frozenset(), details:
         probe["failing"] = () if kinds.get(probe.get("behaviorId")) == "preservation" else (original,)
     compared = _compare_many(identity, original, candidate, [probe for _, probe in selected], runs, challenge=False)
     indexes = {probe["runIndex"]: run["runIndex"] for (_, probe), run in zip(selected, compared) if "runIndex" in probe}
+    released = []
     for (entry, _), run in zip(selected, compared):
         if entry is not None:
             prior = entry.get("comparison") or {}
@@ -1884,9 +1885,12 @@ def _run_tdd(values: list[str], *, added: frozenset[str] = frozenset(), details:
             references = {**references, run["command"]: run["runIndex"]}
             if prior.get("caseRuns") != references or any(prior.get(key) != run.get(key) for key in ("runIndex", "candidateKey", "breakOid", "controlKey", "sensitive", "breakExit")) or prior.get("obligation") != behavior_map.obligation(entry):
                 entry["comparison"] = {**run, "obligation": behavior_map.obligation(entry), "caseRuns": references}
-            if specs or drafted:
+            if (specs or drafted) and not behavior_map._case_question(entry):  # a recording that has not proved its own item takes nothing
                 behavior_map.release(items, entry, run, runs)
+                released.append((entry, run))
             behavior_map.retain_evaluation(items, {entry["id"]}, evaluation, runs, retired)
+    for entry, run in released:  # again on this call's results: a later rerun of another item can bind the command again
+        behavior_map.release(items, entry, run, runs)
     # An item the approving consult added stays only if it declares a case and each of them ran on both sources here.
     turned = {entry["id"]: {"id": entry["id"], "cases": []} for entry in items if entry["id"] in added and (
         not any(identifier == entry["id"] for identifier, _ in drafted)
@@ -1906,15 +1910,19 @@ def _run_tdd(values: list[str], *, added: frozenset[str] = frozenset(), details:
                 entry["comparison"] = {**runs[indexes.get(proof["runIndex"], proof["runIndex"])], "obligation": proof["obligation"], "caseRuns": updated}
     latest = {probe.get("runIndex"): run for (_, probe), run in zip(selected, compared)} if retiring else {}
     held = frozen_names()
-    proving = {entry["id"] for (entry, probe), run in zip(selected, compared) if entry is not None and probe.get("runIndex") not in retiring.values()
-               and not behavior_map._case_question({**entry, "comparison": {**run, "obligation": behavior_map.obligation(entry)}})} if retiring else ()
+    present = {entry["id"]: entry for entry in items}  # an item's recorded cases that hold, current and retained, beside those this call retires
+    proving = {case["id"] for case in [*behavior_map.current_cases(items, runs, retired), *(
+        {**present[frozen["id"]], "comparison": {**runs[frozen["runIndex"]], "obligation": behavior_map.obligation(frozen)}}
+        for frozen in evaluation.values() if frozen["id"] in present)]
+        if (key := behavior_map.case_key(case["id"], case["comparison"])) not in retiring and key not in retired
+        and not behavior_map._case_question(case)} if retiring else ()
     gone = []
     for key, index in retiring.items():
         # The lead retires a case the recorded contract no longer asks for: its item left the map, or its item declares a
-        # change (the item reads open until a case proves it). Proof of kept behaviour stays unless, beside a case of this
-        # call that proves the item, the item changed since the case was first proved and the case no longer passes, or the
-        # case fails on the original, so it never could prove it: a kept-behaviour case that passes on the original and
-        # fails on the candidate is a regression and stays.
+        # change (the item reads open until a case proves it). Proof of kept behaviour stays unless another recorded case
+        # still proves the item and either the item changed since the case was first proved and the case no longer passes,
+        # or the case fails on the original, so it never could prove it: a kept-behaviour case that passes on the original
+        # and fails on the candidate is a regression and stays.
         identifier, run = key.rpartition(":")[0], latest[index]
         entry, first = next((entry for entry in items if entry["id"] == identifier), None), evaluation.get(held.get(key))
         if entry is not None and entry.get("kind") == "preservation":
@@ -1923,8 +1931,9 @@ def _run_tdd(values: list[str], *, added: frozenset[str] = frozenset(), details:
             withdrawn = bool(first) and behavior_map.obligation(first)[1:] != behavior_map.obligation(entry)[1:] and now != "passed"
             if not (unable or withdrawn) or identifier not in proving:
                 refused.append({"case": key, "refused": (
-                    f"no other case compared in this call proves {identifier}: record what replaces it, --case {identifier} 'COMMAND'" if unable or withdrawn
-                    else f"still states {identifier} as recorded: change the item through record tdd-map when the request no longer asks for it")})
+                    f"no other recorded case proves {identifier}: record what replaces it, --case {identifier} 'COMMAND'" if unable or withdrawn
+                    else f"still states {identifier} as recorded: change the item when the request no longer asks for it, "
+                         f"record tdd-map --input '{{\"items\":[{{\"id\":\"{identifier}\",\"expected\":\"...\"}}]}}'")})
                 continue
         if entry is not None and (proof := entry.get("comparison")):
             kept = {case["comparison"]["command"]: case["comparison"]["runIndex"] for case in behavior_map.current_cases([entry], runs)
@@ -1960,8 +1969,11 @@ def _run_tdd(values: list[str], *, added: frozenset[str] = frozenset(), details:
         if row["case"] in owners:
             owners[row["case"]].append(row)
     refused = [row for row in refused if row["case"] not in owners]
+    bound = {case["comparison"]["runIndex"] for case in cases}  # a run its item no longer binds, a moved case's, gets no row
     reported = {run["runIndex"]: (entry, run) for (entry, probe), run in zip(selected, compared)
-                if all(latest[retiring[done["caseKey"]]] is not run for done in gone)}
+                if all(latest[retiring[done["caseKey"]]] is not run for done in gone)
+                and (entry is None or entry["id"] in turned or run["runIndex"] in bound)}
+    edited = {name for name in _changed_entries(identity, original, candidate) if is_test_path(name)}
     # A row for each case the call names and each recorded case that does not hold on this candidate; the rest are counted.
     called = {run["runIndex"] for (_, probe), run in zip(selected, compared) if args.behavior_id or any(probe is other for other in asked)}
     recorded = {case["comparison"]["runIndex"]: (None, case["comparison"]) for case in frozen_cases if case["id"] not in rejected}
@@ -1983,6 +1995,10 @@ def _run_tdd(values: list[str], *, added: frozenset[str] = frozenset(), details:
                                              ("candidate", run["arms"][-1]["outcome"], run["arms"][-1], expected_original if baseline and entry else "passed")):
             if outcome != expected:
                 errors.append(side + " " + outcome + ": " + str(arm.get("output") or arm.get("bindingError") or arm["outcome"])[-1200:])
+        if entry is not None and entry.get("kind") == "preservation" and original != "passed" and edited.intersection(run["probeFiles"]):
+            read = sorted(edited.intersection(run["probeFiles"]).difference(run.get("support") or []))
+            row["why"] = "a kept-behaviour case must pass on the original: a test of the change belongs under the item that declares it" + (
+                "; one stating kept behaviour runs the current " + ", ".join(read) + " with " + " ".join("--support " + name for name in read) if read else "")
         if errors:
             row["unexpected"] = errors
         if (away := entry is not None and entry["id"] in turned) or errors or run.get("bindingError") or index in called:

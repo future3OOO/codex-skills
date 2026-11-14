@@ -1,6 +1,6 @@
 ---
 name: repo-context-forge
-description: Use at the start of coding, debugging, review, refactor, or repo exploration tasks inside a git repository to inject a targeted Repo Context Forge packet before deciding files, edits, or GitNexus queries.
+description: Use at the start of coding, debugging, review, refactor, or repo exploration tasks inside a git repository to inject a targeted Repo Context Forge packet before deciding files, edits, or GitNexus queries. Not in a governed workflow pass: its `begin` runs the bootstrap.
 ---
 
 # Repo Context Forge
@@ -12,24 +12,7 @@ debug, refactor, explain, or plan work in a git repository.
 
 1. Run the bundled bootstrap wrapper from this skill. It takes 30–90 s on a cold
 cache, so run it through the `mcp__workflow__run` tool, which returns when it has
-finished: with no `args` in a governed pass (the bootstrap is the next step `begin`
-returns), and with `args` `["context", ...]` and the options below otherwise.
-
-Governed production pass (an active workflow exists):
-
-```bash
-python3 "$HOME/.codex/skills/repo-context-forge/scripts/bootstrap.py" \
-  --repo "$PWD" --workflow-slug "<active-pass-slug>"
-```
-
-`--workflow-slug` must be the active workflow's slug; the adapter records the
-Repo Context Forge step on that workflow and refuses a mismatched slug.
-When the packet resolves a real base (its base ref is not the head-ref
-sentinel), the adapter also records the packet's fork-point commit as the
-pass's immutable base OID (`baseOid` in the status projection): the first
-recorded OID survives reruns, a rerun resolving a different commit is
-reported on stderr, and the per-edit quality-gate hook passes the recorded
-OID as `--base-ref` so growth warnings read branch-cumulative.
+finished, with `args` `["context", ...]` and the options below.
 
 Standalone planned work with no governed pass — `intent` mode needs `--intent`
 and must not pass `--workflow-slug`, which would be refused with no active
@@ -142,9 +125,7 @@ ignore is allowed only when indexing the source checkout; never commit the index
 Use the task checkout selected under AGENTS.md's worktree rule; standalone
 read-only work uses the current checkout. Do not switch task targets during intake.
 
-For a user-described implementation before edits, pass `--intent "<task>"`, and
-add `--workflow-slug "<active-pass-slug>"` only when a governed pass is already
-active — see the two standalone forms in the startup flow above.
+For a user-described implementation before edits, pass `--intent "<task>"`.
 
 ## GitNexus Follow-Up
 
@@ -202,29 +183,6 @@ gitnexus status
 Use that source path as the repo for targeted checks. Apply the checkout-cleanup
 rule above. `gitnexus clean --force` removes only the index and registry entry,
 not other generated artifacts.
-
-On a governed pass, documentation and Python comment corrections with unchanged
-parsed code and source positions can reuse the retained graph; the projection keeps its original
-indexed tree and names the current reuse candidate. Current quality and review
-still run. Changed code, positions, paths, modes or dependencies are re-analyzed
-automatically: typed quality-gate verification and the advisor checkpoint run the
-bootstrap wrapper's `--revalidate` themselves when the recorded projection is stale,
-so do not run it by hand. That wrapper owns the governed candidate index and
-executed checks: do not also force-index the source checkout or repeat those
-checks. Use the refreshed packet's exact repo selector for any remaining gap.
-`detect_changes` is the rule's after-edit change check: run it by the packet's
-exact form and retain its full output externally like other graph
-responses. `--revalidate` is the post-intake form:
-it refuses without an active governed workflow, forces `--mode local`, and
-skips the SoulForge map rebuild (`--map-build never`) — the one heavy producer
-phase the gate never consumes — while the producer still analyzes the dirty
-candidate and re-records the graph evidence with a gate-shaped context bound
-to the measured snapshot tree. The typed runner hands that context to the
-gate, whose binding check alone adjudicates match, stale, or absent. Evidence
-whose inputs changed stays stale, so the re-run lets the owner-competition rules
-evaluate. The remaining revalidation cost is the
-producer's GitNexus phase; reducing it below the current ~30s is producer-side
-work tracked on issue #182.
 
 Measured producer limit: the producer's GitNexus freshness check is keyed on
 the committed head, so a same-head re-run whose overlay adds new symbols can

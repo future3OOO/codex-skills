@@ -15,7 +15,7 @@ It turns planning and remediation into durable governing designs under workflow 
 For new non-trivial planning work, use this order:
 
 1. [repo-production-workflow](../repo-production-workflow/SKILL.md) to begin the workflow state
-2. [repo-context-forge](../repo-context-forge/SKILL.md) to establish repository context
+2. the context bootstrap that `begin` runs, to establish repository context
 3. delivery-governance skill, when planning needs delivery-shape decisions
 4. execution-planning (this skill)
 

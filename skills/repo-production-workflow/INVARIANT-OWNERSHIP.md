@@ -22,7 +22,7 @@ second source of truth that drifts on its own.
 | Public workflow status JSON | `hooks/lib/workflow_state.py` | `workflow.py status` emits the canonical `schemaVersion: 1` projection; hooks and advisor automation consume semantic fields only |
 | SQLite ledger schema and transaction mechanics | `hooks/lib/_workflow_db.py` | `workflow_state.py` supplies policy mutations; `state_prune.py` supplies estate retention decisions through the ledger's private inventory/apply Interface |
 | Hook operational behavior | configured scripts in `hooks/` | `config.toml` and the hook scripts remain the executable Interface; `AGENTS.md` — GitNexus keeps only what changes lead action |
-| Repo Context Forge downstream contract | `repo-context-forge/SKILL.md` | `AGENTS.md` — Repo Context Forge owns the intake gate |
+| Repo Context Forge downstream contract | `repo-context-forge/SKILL.md` | `begin` runs the bootstrap; the packet owns the intake gate |
 | Review-budget measurement | `delivery-governance/SKILL.md` | `AGENTS.md` — Production Repo Workflow states the ~500 net-line target |
 | Advisor transport | `codex-advisor/SKILL.md` | The workflow retains the stable slug, phase, and terminal-marker contract |
 | Transaction doctrine | `production-code/references/transaction-doctrine.md` | Preflight, production-code, and planning skills point to it |

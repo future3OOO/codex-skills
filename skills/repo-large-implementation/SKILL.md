@@ -15,7 +15,7 @@ It enforces the workflow order that large work must follow in this repo.
 For qualifying work, use the following order:
 
 1. [repo-production-workflow](../repo-production-workflow/SKILL.md) to begin the workflow state
-2. [repo-context-forge](../repo-context-forge/SKILL.md) to establish repository context
+2. the context bootstrap that `begin` runs, to establish repository context
 3. delivery-governance skill, when planning needs delivery-shape decisions
 4. [execution-planning](../execution-planning/SKILL.md) to create the durable governing design under the selected workflow state root when the work is new and non-trivial
 5. continue the same repo-production-workflow pass for the first implementation

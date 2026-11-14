@@ -6,30 +6,21 @@ The submitted command identifies the case; frozen source records its version. Th
 outcome and exits non-zero when the assertion fails. Output is diagnostic only;
 printing a value or `name: result` does not assert it.
 
-```text
-workflow.py tdd --repo "$PWD" --case BM_X 'COMMAND' --case BM_Y 'python3 /scratch/probe.py'
-workflow.py tdd --repo "$PWD"
-workflow.py tdd --repo "$PWD" --retire CASE_KEY --case BM_X 'COMMAND'
-workflow.py record tdd-map --repo "$PWD" --input map.json
-```
-
-`workflow.py` is `python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py"`.
-A lead passes what follows `workflow.py` (`tdd --case BM_X 'COMMAND'`, without `--repo`) as the workflow tool's `args`; the call returns the finished receipt.
 `--case` takes one command per case and `-` for no item. A scratch file a command names is frozen
 with it, as is a temporary path the command or that file names; `--path` or `--support` freezes
 another beside it. A `--case` call runs the cases it names and any recorded case still without accepted proof, captures any command an item still
 declares and judges the rest of the map as recorded, without running it; a bare call captures those too, replays every recorded command and,
 when all hold and nothing is open, verifies.
-A case that cannot be captured is refused alone; a failing case is a row, not a failed call. `map.json` holds
-`items` (only the changed fields), `added` and `removed`, alone or together:
+A case that cannot be captured is refused alone; a failing case is a row, not a failed call. `record tdd-map --input`
+takes the map change itself, `items` (only the changed fields), `added` and `removed`, alone or together:
 `{"items":[{"id":"BM_X","expected":"..."}],"removed":["BM_Y"]}`. The receipt gives continuation, failures and evidence access.
 The runner owns source preparation and reuse; do not repeat them.
 
 Only a finding's author can withdraw it, or retire a case beside its probe or replacement; the lead closes an
 advisor-added map item or final finding it rejects with `tdd --reject ID 'COMMAND'`, whose output the workflow records. The lead
 retires a case (`--retire` with its `caseKey`) under a conformance or contract item, or whose item
-has left the map; a preservation case only beside a named case of the same call that proves the
-item, when the item changed and the case no longer passes or it fails on the original. Reviewers
+has left the map; a preservation case only while another recorded case proves the item, and only when
+the item changed and the case no longer passes, or when the case fails on the original. Reviewers
 receive each retired case with its command and exits.
 Retirement never authorizes losing required behavior. Keep the raw evidence and
 other observations. The runtime rechecks retained findings at verification or

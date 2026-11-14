@@ -18,9 +18,10 @@ source-bound evidence instead of repeating project verification at each stage.
 
 ## One stable workflow
 
-Follow AGENTS.md's Production Repo Workflow section for isolation and pass reuse.
-After the required relocation confirms the task checkout, use `begin` for a new
-task. Reuse its slug and pass for related corrections, including after review.
+Follow AGENTS.md's Production Repo Workflow section for isolation.
+After the required relocation confirms the task checkout, begin a new task with the
+workflow tool, `args` `["begin", "--slug", "<task>"]`; the same call runs the context
+bootstrap. Reuse its slug and pass for related corrections, including after review.
 
 In a fresh session `begin` records the opening message verbatim; add `--intent-file`
 with the verbatim body of a document it names. Deep in a session, or outside Codex,
@@ -31,30 +32,18 @@ The repository-scoped SQLite event ledger remembers accepted transitions, logica
 ## Continuation
 
 Each operation's result names the next step. Where `next.tool` is set, call that
-tool with the checkout as `cwd`: it runs the step to its end and returns the
-result, so there is nothing to wait on or poll. `next.input` names any judgment,
-document or argument still needed and its form; arguments go in the tool's
-`args`. Retain the returned evidence IDs.
+tool with the checkout as `cwd` and `next.args` as its `args`, filling the `<…>`
+placeholders `next.input` describes: it runs the step to its end and returns the
+result, so there is nothing to wait on or poll. Without a tool, `next.input` names
+the judgment or delegation still needed. Retain the returned evidence IDs.
 Resume the same pass.
-The lead's quick shell forms follow (`workflow.py` is
-`python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py"`;
-[recorder.md](../tdd/recorder.md#record-a-case) has the `tdd` arguments). The
-last is the same next step for a script or an estate without the tool:
-
-```text
-workflow.py begin --repo "$PWD" --slug <task> --intent-file <request.md>
-workflow.py summary --repo "$PWD"
-workflow.py status --repo "$PWD" --fields nextAction,tdd,verification,codeReview,finalReview
-workflow.py evidence --repo "$PWD" --evidence-id <id>
-workflow.py next [arguments]
-```
 
 ## Mandatory order
 
 ### 1. Repo Context Forge
 
-Invoke `repo-context-forge`, then run the next step `begin` returned: the context bootstrap.
-Stop on packet blockers. The packet fixes the initial target and coverage surface.
+`begin` returns the context packet. Stop on packet blockers. The packet fixes the
+initial target and coverage surface.
 
 ### 2. Task contract and diagnosis
 
@@ -77,7 +66,8 @@ Its map states required outcomes, concrete inputs and any competing readings. In
 `codebase-design` when changing a Module, public Interface or Seam. The draft owns
 the contract and planned attacks.
 
-Submit the exact draft through [Codex Advisor's two-round preflight](../codex-advisor/SKILL.md#preflight-advice).
+Submit the exact draft as the next step's `--preflight-file`; after `--`, pass only user
+instructions given after `begin`, each line verbatim after `> `.
 The advisor investigates. The lead checks deletion claims against every original
 outcome controlled by the affected logic and corrects false premises. The advisor
 then finalises and approves the draft in the same session; that consult records it.
@@ -149,8 +139,7 @@ Before the consult, reconcile known material obligations using step 2's verifica
 and the delegate's findings. Reference the applicable observations and unresolved
 acceptance gaps; load only missing evidence, not the verification history.
 
-The final Codex Advisor investigates in the lead checkout using the recorded project executable and original source. Invoke the wrapper's
-`final-review` phase with the same slug and follow its runtime continuation. The
+The final Codex Advisor investigates in the lead checkout using the recorded project executable and original source. The
 advisor records probes through the shared TDD command; the wrapper records its
 semantic verdict. After the first final verdict, a correction
 needs the affected `tdd` rerun, verification for the new tree, and the final advisor's re-check. Reuse independent review and applicable evidence. Retained findings run only at `verify` or `complete`; intermediate review calls skip them. Once every
@@ -183,8 +172,9 @@ remains until the next `begin` replaces it; no reviewer gate applies.
 
 ## Failure semantics
 
-Missing or corrupt workflow state is pending, never success. For an unavailable
-advisor, follow [Failure and disposition](../codex-advisor/SKILL.md#failure-and-disposition).
+Missing or corrupt workflow state is pending, never success. A genuinely unavailable
+preflight advisor is recorded `unavailable` with the measured reason and approves nothing;
+final review has no such exception.
 Incoming findings can be recorded while verification is pending; that receipt
 does not certify review. [Hook roles](WORKFLOW-MAP.md#hook-roles) owns edit observation
 and documentation exceptions. Use the task repository as the tool workdir.

@@ -21,14 +21,12 @@ jump from Repo Context Forge straight to edits.
 failures, flaky behavior, and performance regressions.
 
 Docs-only work creates no workflow or slug. Verify checkout/branch, inspect files
-directly, edit minimally, clean up, and run diff checks. Skip Repo Context Forge
+directly, edit minimally, clean up, run diff checks, and after any required review
+commit, then push and open/update the PR when a remote exists. Skip Repo Context Forge
 and GitNexus. Governance docs that change agent behavior (`AGENTS.md`,
 `CLAUDE.md`, `docs/agents/`) also require independent `$code-review` before
 handoff.
 
-- Keep related fixes and review corrections in the same workflow pass. Resume
-  after compaction; reuse applicable evidence and rerun only invalidated gates.
-  Start a new pass for separate work, never merely for another edit or review.
 - Escalate to `$repo-large-implementation` before coding when work needs a new
   tracked plan, branch strategy, remediation map, or multi-PR coordination.
 - Target ~500 net lines of human-authored code per PR. `$delivery-governance`
@@ -39,8 +37,6 @@ handoff.
 - `$production-preflight` owns Module shape, reuse-before-new, and shallow-helper
   debt; `$codebase-design` owns Module/Interface/Seam vocabulary.
 
-After required review, commit, push, and open/update the PR when a remote exists
-and branch/PR alignment is verified, unless the user or workflow says otherwise.
 Once the task's PR has merged, `git worktree remove` its worktree and remove its
 Repo Context Forge analysis copy. For codex-skills installation, follow
 [README](https://github.com/future3OOO/codex-skills/blob/main/README.md#scoped-updates).
@@ -103,15 +99,6 @@ and remaining seconds; wait once for the remaining time plus a small buffer,
 unless external completion requires polling. Immediately audit when the wait
 returns. For PR quiet windows, calculate the deadline from the latest
 reviewer/check event and repeat the reviewer re-query below before merging.
-
-## Repo Context Forge
-
-Before code analysis or edits in Git, invoke `$repo-context-forge` (docs-only
-exception under Production Repo Workflow). Use only
-`~/.codex/skills/repo-context-forge/scripts/bootstrap.py`, never the producer
-snapshot under `~/.local/share/repo-context-forge/current`.
-Stop on packet blockers; satisfy packet scope and coverage before narrowing work.
-Delegated reviewers consume the lead's packet under `$code-review`; no bootstrap.
 
 ## GitNexus
 
