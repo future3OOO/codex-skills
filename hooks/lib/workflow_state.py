@@ -1713,8 +1713,9 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
                     command += ["--design-absent", str(declaration["reason"])]
                 if isinstance(draft, dict):
                     command += ["--reconsult"]
-                return {"command": shlex.join(command), "input": "--preflight-file " + (
-                    preflight_file or "<current-draft.json>" + ("" if isinstance(draft, dict) else " shaped " + RECORD_SHAPES["preflight"]))}
+                return {"command": shlex.join(command), "args": ["--preflight-file", preflight_file or "<current-draft.json>"],
+                        **({} if preflight_file else {"input": "<current-draft.json>: the corrected draft" if isinstance(draft, dict)
+                                                      else "<current-draft.json>: the draft, shaped " + RECORD_SHAPES["preflight"]})}
             return {"command": shlex.join(command)}
         command = [*cli, "paths", "--repo", str(identity.root), "--workflow-id", str(state["workflowId"])]
     elif action == "code-review":
@@ -1725,10 +1726,12 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
         ids = [str(entry["id"]) for entry in behavior_map.recorded_map(evidence_document(
             identity, state.get("tddEvidence") or state.get("preflightEvidence"), restore_runs=False)) or []]
         operation: JsonObject = {"command": shlex.join(command),
-                                "input": f"--case ID 'COMMAND' per case (recorded: {', '.join(ids) or 'none'}); use - for no item. Without arguments the call reruns every recorded case and, when all hold and nothing is open, verifies."}
+                                "args": ["--case", "<ID>", "<COMMAND>"],
+                                "input": f"<ID> <COMMAND>: a map item (recorded: {', '.join(ids) or 'none'}), or - for no item, and the case's command; "
+                                         "repeat the three for each case. args [] reruns every recorded case and, when all hold and nothing is open, verifies."}
         if pending:
             operation["findings"] = pending
-            operation["input"] += " A final finding closes when its repair passes, or with --reject FINDING_ID 'COMMAND'."
+            operation["input"] += " A final finding closes when its repair passes, or with args [\"--reject\", \"<FINDING_ID>\", \"<COMMAND>\"]."
         if questions:
             operation["input"] += "\n" + questions
         return operation
@@ -1768,7 +1771,8 @@ def open_findings(identity: RepoIdentity, state: JsonObject, *, detail: bool = F
 def next_step(identity: RepoIdentity, state: JsonObject, receipt: JsonObject | None = None, **options: object) -> JsonObject:
     """The next operation as a lead is told it: the blocking tool runs the bound command, so none is printed to paste into a shell."""
     operation = next_operation(identity, state, receipt, **options)
-    return {**({"tool": STEP_TOOL} if operation.pop("command", None) else {}), **operation}
+    args = operation.pop("args", [])  # the tool's args as given, <…> placeholders filled as input describes
+    return {**({"tool": STEP_TOOL, "args": args} if operation.pop("command", None) else {}), **operation}
 
 
 def operation_receipt(state: JsonObject, identity: RepoIdentity, *, readiness: JsonObject | None = None, obligations: bool = True, **details: object) -> JsonObject:
@@ -1806,7 +1810,7 @@ def summary(identity: RepoIdentity, limit: int = 3000, *, labels: bool = True) -
         f"Active workflow: slug={state.get('slug')} workflowId={state.get('workflowId')} "
         f"candidate={state.get('activeCandidateTree')} phase={state.get('phase')} next={action}. "
         + "\nNext invocation: " + (f"tool {tool}" if tool else "none; see input" if operation.get("input") else "none; workflow complete") + "\n"
-        + "".join(f"{key}: {value}\n" for key, value in operation.items())
+        + "".join(f"{key}: {json.dumps(value) if isinstance(value, list) else value}\n" for key, value in operation.items())
         + (f"Binding: {gate_drift}. " if gate_drift else "")
         + " ".join(f"{field}={state[field]}" for field in (
             "preflightLatestEvidence", "tddEvidence", "verificationLatestEvidence", "qualityGateManifestId") if state.get(field)) + ". "

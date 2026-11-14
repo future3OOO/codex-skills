@@ -32,10 +32,10 @@ The repository-scoped SQLite event ledger remembers accepted transitions, logica
 ## Continuation
 
 Each operation's result names the next step. Where `next.tool` is set, call that
-tool with the checkout as `cwd`: it runs the step to its end and returns the
-result, so there is nothing to wait on or poll. `next.input` names any judgment,
-document or argument still needed and its form; arguments go in the tool's
-`args`. Retain the returned evidence IDs.
+tool with the checkout as `cwd` and `next.args` as its `args`, filling the `<…>`
+placeholders `next.input` describes: it runs the step to its end and returns the
+result, so there is nothing to wait on or poll. Without a tool, `next.input` names
+the judgment or delegation still needed. Retain the returned evidence IDs.
 Resume the same pass.
 
 ## Mandatory order

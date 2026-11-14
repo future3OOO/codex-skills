@@ -21,7 +21,8 @@ jump from Repo Context Forge straight to edits.
 failures, flaky behavior, and performance regressions.
 
 Docs-only work creates no workflow or slug. Verify checkout/branch, inspect files
-directly, edit minimally, clean up, and run diff checks. Skip Repo Context Forge
+directly, edit minimally, clean up, run diff checks, and after any required review
+commit, then push and open/update the PR when a remote exists. Skip Repo Context Forge
 and GitNexus. Governance docs that change agent behavior (`AGENTS.md`,
 `CLAUDE.md`, `docs/agents/`) also require independent `$code-review` before
 handoff.
