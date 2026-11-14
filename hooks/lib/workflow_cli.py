@@ -23,6 +23,7 @@ from .workflow_documents import (
     RECORD_SHAPES,
     advisor_envelope,
     design_declaration,
+    finalised_draft,
     load_json,
     preflight_document,
     validate_gate_result,
@@ -147,7 +148,6 @@ def parser() -> argparse.ArgumentParser:
             command.add_argument("--expected-candidate-tree")
             command.add_argument("--tdd-evidence", help="the comparison evidence the final consult's checkpoint named")
             command.add_argument("--preflight-file")
-            command.add_argument("--submitted-draft", help="the draft as submitted, before the advisor's in-place edits")
 
     command = commands.add_parser("prune", help="report or apply workflow-state retirement")
     command.add_argument("--apply", action="store_true")
@@ -356,7 +356,7 @@ def _document(args: argparse.Namespace, label: str) -> dict[str, object]:
 
 
 def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
-    """One ingest seam; --check runs the whole recording, refusing a case that runs a missing script, and rolls it back."""
+    """One ingest seam; --check runs the whole recording and rolls it back."""
     CHECK_ONLY.set(args.check)
     from .workflow_state import _bound_instance_state
     state = (_bound_instance_state(read_active(identity), args.slug, args.workflow_id) if args.kind == "advisor-result"
@@ -418,12 +418,15 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
             from .tdd_workflow import binds
             if any(binds(item["execution"]) for item in execution["reexecuted"]):
                 verdict = "fix-before-commit"
+    # The lead's draft; an approving answer's `draft` changes it, and recording the preflight judges the items it added.
+    submitted = preflight_document(args.preflight_file, scripts=False) if args.preflight_file else None
+    changes = intake.pop("draft", None) if intake else None
     state = record_advisor_result(
         identity, slug, workflow_id, args.stage, args.source, verdict, reason=args.reason,
         design=design_declaration(args.design_declaration) if args.design_declaration else None,
         intake=intake, expected_candidate_tree=expected or candidate, execution=execution,
-        preflight_draft=preflight_document(args.preflight_file, scripts=args.check) if args.preflight_file else None,
-        submitted_draft=preflight_document(args.submitted_draft) if args.submitted_draft else None)
+        preflight_draft=finalised_draft(submitted, changes) if submitted and changes is not None else submitted,
+        submitted_draft=submitted if changes is not None else None)
     emit(_receipt(state, identity, obligations=False))
     return 0
 

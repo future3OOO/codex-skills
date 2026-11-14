@@ -122,6 +122,27 @@ def runtime_items(value: object) -> list[JsonObject]:
     return validate_items(value, allow_runtime=True)
 
 
+def merge(previous: list[JsonObject], value: JsonObject, scripts: bool = True, keep: list[str] | tuple[str, ...] = ()) -> tuple[list[JsonObject], list[JsonObject]]:
+    """`value`'s `items` and `added` over `previous`, without its `removed` ids apart from those in `keep`: an item names
+    only what changes (a given field replaces, null removes, an omitted field stays). Returns the updated items, then the map."""
+    recorded = {entry["id"]: entry for entry in previous}
+    removed = value.get("removed", [])
+    if not isinstance(removed, list) or any(not isinstance(name, str) or name not in recorded for name in removed):
+        raise ValueError("removed must contain existing probe ids")
+    parts = [value[key] for key in ("items", "added") if key in value]
+    merged = next((part for part in parts if not isinstance(part, list)), [entry for part in parts if isinstance(part, list) for entry in part])
+    if isinstance(merged, list):
+        fields = REQUIRED_FIELDS | JUDGEMENT_FIELDS
+        for position, entry in enumerate(merged):
+            if isinstance(entry, dict):
+                prior = recorded.get(str(entry.get("id")).strip(), {})
+                kept = {key: prior[key] for key in fields if prior.get(key) not in (None, [])
+                        and not ("interpretations" in entry and key in ("interpretation", "authority"))}
+                merged[position] = {key: field for key, field in {**kept, **entry}.items() if field is not None}
+    updates = initial_items(merged, scripts)
+    return updates, [entry for entry in {entry["id"]: entry for entry in [*previous, *updates]}.values() if entry["id"] not in removed or entry["id"] in keep]
+
+
 def item(items: list[JsonObject], identifier: str) -> JsonObject:
     try:
         return next(entry for entry in items if entry["id"] == identifier)

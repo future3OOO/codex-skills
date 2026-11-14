@@ -8,7 +8,7 @@ import re
 import sys
 import uuid
 from pathlib import Path
-from .behavior_map import initial_items, map_errors
+from .behavior_map import initial_items, map_errors, merge
 from .state_store import utc_timestamp
 
 JsonObject = dict[str, object]
@@ -58,6 +58,17 @@ def preflight_document(path: str, *, scripts: bool = True) -> JsonObject:
 PREFLIGHT_SECTIONS = frozenset({"authoritativeContract", "behaviorMap"})
 
 
+def finalised_draft(draft: JsonObject, changes: object) -> JsonObject:
+    """The lead's draft with the approving consult's changes: the contract text when it changes, then `items` and
+    `removed` by tdd-map's merge rule. An added item's commands are judged when the preflight records."""
+    if not isinstance(changes, dict) or set(changes) - {"authoritativeContract", "items", "removed"}:
+        raise ValueError("an answer's draft takes authoritativeContract, items and removed")
+    contract = changes.get("authoritativeContract", draft["authoritativeContract"])
+    if not _text(contract):
+        raise ValueError("preflight authoritativeContract must be non-empty text")
+    return {"authoritativeContract": contract.strip(), "behaviorMap": merge(draft["behaviorMap"], changes, scripts=False)[1]}
+
+
 def advisor_envelope(
     path: str, *, slug: str, workflow_id: str, stage: str, producer: str,
 ) -> tuple[JsonObject, str]:
@@ -69,7 +80,7 @@ def advisor_envelope(
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise ValueError(f"cannot read advisor envelope JSON: {exc}") from exc
     fields = {"schemaVersion", "findings", "verdict"}  # the recorder binds workflow, tree and evidence; an echoed id is ignored
-    if not isinstance(value, dict) or not fields <= set(value) <= fields | ({"workflowId", "candidateTree", "tddEvidence"} if stage == "final" else set()):
+    if not isinstance(value, dict) or not fields <= set(value) <= fields | ({"workflowId", "candidateTree", "tddEvidence"} if stage == "final" else {"draft"}):
         raise ValueError("advisor envelope fields do not match its stage: " + ", ".join(sorted(fields)))
     findings, verdict = value.get("findings"), value.get("verdict")
     if type(value.get("schemaVersion")) is not int or value.get("schemaVersion") != 1 or not isinstance(findings, list):
@@ -110,6 +121,7 @@ def advisor_envelope(
         "stage": stage,
         "verdict": verdict,
         "findings": typed,
+        **({"draft": value["draft"]} if "draft" in value else {}),  # the approving consult's changes to the lead's draft
         "sha256": hashlib.sha256(raw).hexdigest(),
         "recordedAt": utc_timestamp(),
         "observationId": uuid.uuid4().hex,
