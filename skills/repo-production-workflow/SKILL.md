@@ -152,8 +152,7 @@ acceptance gaps; load only missing evidence, not the verification history.
 The final Codex Advisor investigates in the lead checkout using the recorded project executable and original source. Invoke the wrapper's
 `final-review` phase with the same slug and follow its runtime continuation. The
 advisor records probes through the shared TDD command; the wrapper records its
-semantic verdict. A finding's intake, read with `workflow.py evidence`, carries its claim,
-replacement diff and failing output. After the first final verdict, a correction
+semantic verdict. After the first final verdict, a correction
 needs the affected `tdd` rerun, verification for the new tree, and the final advisor's re-check. Reuse independent review and applicable evidence. Retained findings run only at `verify` or `complete`; intermediate review calls skip them. Once every
 final finding is settled (`nextAction` `complete-workflow`), a requested
 reassessment of the unchanged candidate runs the same `final-review` phase and records

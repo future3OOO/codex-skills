@@ -167,12 +167,12 @@ def _question(entry: JsonObject, proofs: list[JsonObject]) -> list[str]:
     candidates = [proof for proof in proofs if proof["id"] == entry["id"] and proof.get("comparison")
                   and obligation(proof)[1:] == obligation(entry)[1:]]
     if not candidates:
-        return ["bind the case command: workflow.py tdd --case " + entry["id"] + " 'COMMAND'"]
+        return ["no case is bound"]
     reasons, behavior = [], False
     for proof in candidates:
         reasons.extend(_case_question({**proof, "kind": entry.get("kind")}))
         behavior = behavior or entry.get("kind") != "preservation" or "WORKFLOW_GROWTH" not in (proof.get("comparison", {}).get("execution") or {}).get("assignments", {})
-    return list(dict.fromkeys(reasons)) or ([] if behavior else ["growth cases check scaling only; bind a behavior case: workflow.py tdd --case " + entry["id"] + " 'COMMAND'"])
+    return list(dict.fromkeys(reasons)) or ([] if behavior else ["growth cases check scaling only: no behavior case is bound"])
 
 
 def current_cases(items: list[JsonObject], runs: list[JsonObject], retired: set[str] = frozenset()) -> list[JsonObject]:
