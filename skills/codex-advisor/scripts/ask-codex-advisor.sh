@@ -200,7 +200,7 @@ with open(prompt_path, "wb") as prompt:
         rows = [(None, data)]
         if phase == "final-review" and name in {"behavior-map", "finding-ledger"}:  # one held section per result: a resumed consult gets the changed ones
             source += f"One section per entry; the JSON file keeps every entry whole: {channel['contentPath']}\n"
-            rows = [((row["intakeEvidenceId"] + ":" + row["findingId"]) if name == "finding-ledger" else row["id"], json.dumps(row, sort_keys=True).encode())
+            rows = [(":".join(filter(None, (row.get("intakeEvidenceId"), row["findingId"]))) if name == "finding-ledger" else row["id"], json.dumps(row, sort_keys=True).encode())
                     for row in (json.loads(data) if name == "finding-ledger" else json.loads(data)["items"])]
         sys.stderr.write(f"codex_advisor_evidence name={name} shown={sum(len(body) for _, body in rows)} total={len(data)} truncated=no "
                          f"sha256={hashlib.sha256(data).hexdigest()} framing=channel-line-prefix\n")
@@ -325,7 +325,7 @@ Preserve frozen proof and required surviving regression checks when reducing mai
 esac
 if [[ "$phase" == preflight-advice ]]; then
   if (( ${#reconsult_args[@]} == 0 )); then
-    phase_prompt+=$'\n'"This consult owns architecture and core efficiency. Use the draft's owner paths and reuse proposals, verify them against source, and replace costly design choices. Measure before designing, in one profiling run: profile the real operation the change edits on a production-size input, report its three largest costs with their measured shares, and design the removal of the largest; if the largest stays, give the measurement that shows it must. Derive the least required work and settle the deciding assumption through existing owners. Return every material finding, functional and performance, in this consult: the cost model, cheaper design, proposed cases and deciding evidence."
+    phase_prompt+=$'\n'"This consult owns architecture and core efficiency. Use the draft's owner paths and reuse proposals, verify them against source, and replace costly design choices. Measure before designing: profile the real operation the change edits on production-size inputs that together reach every costly path in your cost model, report the largest costs with their measured shares, and design the removal of every material one; where a cost stays, give the measurement that shows it must. Derive the least required work and settle the deciding assumption through existing owners. Return every material finding, functional and performance, in this consult: the cost model, cheaper design, proposed cases and deciding evidence."
   else
     dry_run=$(printf '%q ' python3 "$workflow_cli" record advisor-result --check --repo "$repo_root" --slug "$producer_slug" \
       --workflow-id "$active_wid" --stage preflight --source codex-advisor --input - --preflight-file "$transport_dir/preflight.json" \
@@ -465,21 +465,26 @@ else
     cat "$output_file"
     exit 2
   fi
-  python3 "$workflow_cli" status --repo "$repo_root" --fields advisorPreflight,finalReview,finalReviewContextMismatchEvidence \
+  python3 "$workflow_cli" status --repo "$repo_root" --fields advisorPreflight,finalReview,finalReviewContextMismatchEvidence,findingStates,workflowId \
     >"$transport_dir/recorded.json"
   python3 - "$script_dir/../../.." "$record_stage" "$transport_dir/recorded.json" "$repo_root" "$transport_dir/receipt.json" "${reconsult_args[@]}" <<'PY'
 import json, sys
 sys.path.insert(0, sys.argv[1])
 from hooks.lib.repo_identity import resolve_repo_identity
-from hooks.lib.workflow_state import evidence_document
+from hooks.lib.workflow_state import evidence_document, open_findings
 state = json.load(open(sys.argv[3], encoding="utf-8"))
 receipt = json.load(open(sys.argv[5], encoding="utf-8"))
 record = state.get("advisorPreflight" if sys.argv[2] == "preflight" else "finalReview") or {}
 intake = state.get("finalReviewContextMismatchEvidence") or record.get("intakeEvidence") or "none"
-envelope = evidence_document(resolve_repo_identity(sys.argv[4]), intake)
-findings = envelope["findings"]
+identity = resolve_repo_identity(sys.argv[4])
+envelope = evidence_document(identity, intake)
+# Each open finding as its author recorded it, whole: its claim, its diff as a file, its probe as a command and both results.
+recorded = open_findings(identity, state, detail=True) if sys.argv[2] == "final" else []
+findings = [item for item in envelope["findings"] if item["id"] not in {row["findingId"] for row in recorded}]
 shown = findings[:40]
-head = f"verdict={envelope['verdict']} findings={len(findings)} shown={len(shown)} intake={intake}\n"
+head = f"verdict={envelope['verdict']} findings={len(recorded) + len(findings)} shown={len(recorded) + len(shown)}" + ("" if sys.argv[2] == "final" else f" intake={intake}") + "\n"
+head += "".join(f"{row['findingId']}: {row['claim']}\n" + "".join(f"  {key}: {row[key]}\n" for key in ("diff", "probe") if key in row)
+                + "".join(f"  {line}\n" for line in row.get("results", ())) for row in recorded)
 needed = (receipt["next"].get("input") or "").partition("\n")[0].encode()  # both ends: the argument and the command form
 needed = (needed if len(needed) <= 200 else needed[:97] + b" ... " + needed[-98:]).decode("utf-8", errors="ignore")
 unfinished = "final review ends at commit-ready: " if sys.argv[2] == "final" and receipt["nextAction"] != "complete-workflow" else ""

@@ -98,9 +98,9 @@ def refresh_proof(identity: RepoIdentity, items: list[JsonObject], *, candidate:
 
 
 def _scratch(identity: RepoIdentity, name: str) -> Path | None:
-    """The regular file outside the checkout that `name` resolves to."""
+    """The regular file outside the checkout that `name` resolves to; an argument too long to name a file names none."""
     path = (Path(identity.root) / name).resolve()
-    return path if path.is_file() and not path.is_relative_to(identity.root) else None
+    return path if os.path.isfile(path) and not path.is_relative_to(identity.root) else None
 
 
 def _probe_files(command: list[str], identity: RepoIdentity, support: list[str], virtual: list[str] = ()) -> list[str]:
@@ -850,6 +850,27 @@ def _places(identity: RepoIdentity, command: list[str], named: list[str]) -> dic
     return {path: os.path.relpath(path, base) for path in paths}
 
 
+def shown(identity: RepoIdentity, state: JsonObject, run: JsonObject) -> str:
+    """The case's command as a lead runs it from the checkout, with the assignments and PYTHONPATH the runner gives it. The
+    files it froze are written once, with their modes, to a directory per capture kept with the pass's execution state;
+    a path into one of its frozen directories, in the command or in those files, names that copy."""
+    command, frozen = run["command"], [name for name in run.get("probeFiles", ()) if name.startswith(PROBES)]
+    if frozen:
+        kept, entries = repo_state_dir(identity) / "execution-trees" / str(state["workflowId"]), _tree_entries(identity, run["probeTree"])
+        directories = {name[len(PROBES):].partition("/")[0] for name in frozen}
+        relocate = lambda prefix, data: re.sub(re.escape(prefix) + rb"([0-9a-f]{40,64})/", lambda match: os.fsencode(f"{kept}/probes/") + match[1] + b"/"
+                                               if os.fsdecode(match[1]) in directories else match[0], data)
+        copies = [name for name in frozen if not (kept / "probes" / name[len(PROBES):]).exists()]
+        blobs = read_blobs(Path(identity.root), [entries[name][1] for name in copies])
+        for name in copies:
+            kept.mkdir(parents=True, exist_ok=True)
+            _write_entry(kept, "probes/" + name[len(PROBES):], entries[name][0],
+                         relocate(os.fsencode(identity.root + os.sep + PROBES), blobs[entries[name][1]].encode("utf-8", "surrogateescape")))
+        command = os.fsdecode(relocate(os.fsencode(PROBES), os.fsencode(command)))
+    words, assignments, environment = _case_environment(identity, command)
+    return " ".join([*(f"{name}={shlex.quote(value)}" for name, value in {**assignments, "PYTHONPATH": environment["PYTHONPATH"]}.items()), shlex.join(words)])
+
+
 def _probe_capture(identity: RepoIdentity, probe: object, candidate: str, timeout: float,
                    support: list[str] | None = None, inventory: list[str] | None = None, preserved: str | None = None) -> JsonObject:
     """Freeze the command's sources. Every regular file outside the checkout that `path`, support or a command
@@ -1252,16 +1273,20 @@ def _evaluation(identity: RepoIdentity, state: JsonObject, current: JsonObject |
     return retained
 
 
-def _comparison_input(identity: RepoIdentity, probe: JsonObject) -> tuple[list[str], JsonObject, dict[str, str]]:
-    command = shlex.split(probe["command"])
-    environment = {}
+def _case_environment(identity: RepoIdentity, text: str) -> tuple[list[str], dict[str, str], dict[str, str]]:
+    """A case command's words after its leading assignments, those assignments, and the environment the runner gives it."""
+    command, assignments = shlex.split(text), {}
     while command and re.match(r"[A-Za-z_][A-Za-z_0-9]*=", command[0]):
         name, value = command.pop(0).split("=", 1)
-        environment[name] = value
-    assignments = environment.copy()
-    environment = _environment() | environment
+        assignments[name] = value
+    environment = _environment() | assignments
     environment["PYTHONPATH"] = os.pathsep.join(dict.fromkeys(
         os.path.normpath(os.path.join(identity.root, entry)) for entry in (str(identity.root), *environment.get("PYTHONPATH", "").split(os.pathsep))))
+    return command, assignments, environment
+
+
+def _comparison_input(identity: RepoIdentity, probe: JsonObject) -> tuple[list[str], JsonObject, dict[str, str]]:
+    command, assignments, environment = _case_environment(identity, probe["command"])
     execution = {"executable": _executable(identity, command[0], environment, probe),
                  "assignments": assignments,
                  "search": os.pathsep.join(os.path.join(identity.root, entry) for entry in os.get_exec_path(environment)),
@@ -1769,7 +1794,7 @@ def _run_tdd(values: list[str], *, added: frozenset[str] = frozenset(), details:
             raise WorkflowError("recorded replay support must name a captured test or command input; supply a command to capture new support")
         selected = [(entry, support_overrides[probe["runIndex"]]) for entry, probe in selected]
     inventory = _probe_files([], identity, args.support or []) if specs or drafted else None
-    refused = []
+    refused, asked = [], []
     for identifier, value in dict.fromkeys([*specs, *drafted]):
         try:  # a case that cannot be captured or prepared is refused alone; the rest of the call is recorded
             if identifier in added and (script := behavior_map.script_operand(value, shells=True)) and not script.startswith(PROBES) \
@@ -1797,6 +1822,7 @@ def _run_tdd(values: list[str], *, added: frozenset[str] = frozenset(), details:
                 captured["sourceCommand"] = known.get("sourceCommand", captured["sourceCommand"])
             captured["behaviorId"] = entry["id"]
         selected.append((entry, captured))
+        asked += [captured] if (identifier, value) in specs else []
     # On every call a recorded case without accepted proof is run again where it failed, and one whose probe files changed
     # on disk is first captured again from them, as naming it would; a case a finding retired is reopened and is captured
     # again once its files change. A case holding accepted proof keeps its frozen copy.
@@ -1905,11 +1931,10 @@ def _run_tdd(values: list[str], *, added: frozenset[str] = frozenset(), details:
         evaluation.pop(held.get(key), None)
         gone.append({"caseKey": key, "command": run["command"], "exits": [arm["exitCode"] for arm in run["arms"]],
                      **({"reason": " ".join(args.report)} if args.report else {})})
-    conditions = _condition_traces(identity, original, candidate, [
-        *behavior_map.current_cases(items, runs, retired),
-        *({**frozen, "comparison": runs[frozen["runIndex"]]} for frozen in evaluation.values()
-          if behavior_map.case_key(frozen["id"], runs[frozen["runIndex"]]) not in retired)],
-        (current or {}).get("conditions") or {}, state.get("preflightEvidence"))
+    cases = behavior_map.current_cases(items, runs, retired)
+    frozen_cases = [{**frozen, "comparison": runs[frozen["runIndex"]]} for frozen in evaluation.values()
+                    if behavior_map.case_key(frozen["id"], runs[frozen["runIndex"]]) not in retired]
+    conditions = _condition_traces(identity, original, candidate, [*cases, *frozen_cases], (current or {}).get("conditions") or {}, state.get("preflightEvidence"))
     selected_only = bool(args.behavior_id)
     reused = bool(current and len(runs) == len(current.get("runs", [])) and signature == json.dumps(items, sort_keys=True)
                   and frozen_signature == json.dumps(evaluation, sort_keys=True) and conditions == (current.get("conditions") or {}))
@@ -1933,8 +1958,13 @@ def _run_tdd(values: list[str], *, added: frozenset[str] = frozenset(), details:
     refused = [row for row in refused if row["case"] not in owners]
     reported = {run["runIndex"]: (entry, run) for (entry, probe), run in zip(selected, compared)
                 if all(latest[retiring[done["caseKey"]]] is not run for done in gone)}
-    for entry, run in reported.values():
-        row = {"case": run["command"], "exits": [arm["exitCode"] for arm in run["arms"]], "breakExit": run.get("breakExit"),
+    # A row for each case the call names and each recorded case that does not hold on this candidate; the rest are counted.
+    called = {run["runIndex"] for (_, probe), run in zip(selected, compared) if args.behavior_id or any(probe is other for other in asked)}
+    recorded = {case["comparison"]["runIndex"]: (None, case["comparison"]) for case in frozen_cases if case["id"] not in rejected}
+    recorded.update((case["comparison"]["runIndex"], (case, case["comparison"])) for case in cases if case["id"] not in rejected)
+    listed = set()
+    for index, (entry, run) in {**{index: pair for index, pair in recorded.items() if pair[1]["candidateTree"] == candidate}, **reported}.items():
+        row = {"exits": [arm["exitCode"] for arm in run["arms"]], "breakExit": run.get("breakExit"),
                **({"caseKey": behavior_map.case_key(run["behaviorId"], run)} if run.get("behaviorId") else {})}
         if _growth(run["execution"]):
             row["work"] = [arm.get("work") for arm in run["arms"]]
@@ -1951,9 +1981,11 @@ def _run_tdd(values: list[str], *, added: frozenset[str] = frozenset(), details:
                 errors.append(side + " " + outcome + ": " + str(arm.get("output") or arm.get("bindingError") or arm["outcome"])[-1200:])
         if errors:
             row["unexpected"] = errors
-        (turned[entry["id"]]["cases"] if entry is not None and entry["id"] in turned else rows).append(row)
+        if (away := entry is not None and entry["id"] in turned) or errors or run.get("bindingError") or index in called:
+            (turned[entry["id"]]["cases"] if away else rows).append({"case": shown(identity, state, run), **row})
+            listed.add(index)
     receipt = operation_receipt(state, identity, kind="tdd", summaryId=evidence, readiness=readiness, obligations=not selected_only,
-                                cases=[*rows, *refused], **({"retired": [done["caseKey"] for done in gone]} if gone else {}),
+                                cases=[*rows, *refused], otherCases=len(recorded.keys() - listed), **({"retired": [done["caseKey"] for done in gone]} if gone else {}),
                                 **({"unmatched": missing} if (missing := [key for key in dict.fromkeys(args.retire) if key not in retiring]) else {}),
                                 **({"turnedAway": list(turned.values())} if turned else {}), **(details or {}))
     _emit_json(receipt)
@@ -2005,19 +2037,22 @@ def map_update(identity: RepoIdentity, state: JsonObject, value: JsonObject) -> 
 
 
 def _reject(identity: RepoIdentity, state: JsonObject, requests: list[list[str]]) -> JsonObject:
-    """The lead's rejection of an advisor-added map item or final finding: the workflow runs its one command once, in the
-    checkout, and keeps the output with it. Without a command, or when the command does not finish, the target stays open."""
+    """The lead's rejection of an advisor-added map item, a final finding or, once the pass has a final verdict, an open
+    removed-condition line by the id it names: the workflow runs its one command once, in the checkout, and keeps the
+    output with it. Without a command, or when the command does not finish, the target stays open."""
     from .command_runner import _tail
     from .workflow_state import commit_rejections
     added = (evidence_document(identity, (state.get("advisorPreflight") or {}).get("intakeEvidence"), restore_runs=False) or {}).get("added", ())
     items = {entry["id"]: entry for entry in current_map(identity, state, fresh=False)[0] or [] if entry["id"] in added}
     findings = {ref["id"]: entry for entry in state.get("findingStates", []) if entry["stage"] == "final"
                 for ref in ({"id": entry["findingId"]}, *entry.get("observations", []))}
+    lines = {match[1]: line.split(": the change assumes", 1)[0] for line in _readiness_lines(identity, state)["open"]
+             if (match := re.search(r"--reject (\S+) 'COMMAND'", line))} if state.get("finalStarted") else {}
     records, rows = [], []
     for target, *words in requests:
         command = shlex.join(words) if len(words) > 1 else next(iter(words), None)
-        if target not in items and target not in findings:
-            rows.append({"target": target, "open": "no advisor-added map item or final finding has this id"})
+        if target not in items and target not in findings and target not in lines:
+            rows.append({"target": target, "open": "no advisor-added map item, final finding or open removed-condition line after a final verdict has this id"})
             continue
         target = findings[target]["findingId"] if target in findings else target
         if not (command or "").strip():
@@ -2030,9 +2065,9 @@ def _reject(identity: RepoIdentity, state: JsonObject, requests: list[list[str]]
         if code is None or timed_out:
             rows.append({"target": target, "command": command, "open": f"the command did not finish: {_tail(raw)[-300:]}"})
             continue
-        claim = items[target]["behavior"] if target in items else next((finding["claim"] for finding in (evidence_document(
+        claim = items[target]["behavior"] if target in items else lines[target] if target in lines else next((finding["claim"] for finding in (evidence_document(
             identity, findings[target]["intakeEvidenceId"], restore_runs=False) or {}).get("findings", []) if finding["id"] == target), "")
-        records.append({"target": target, "kind": "item" if target in items else "finding", "claim": claim,
+        records.append({"target": target, "kind": "item" if target in items else "condition" if target in lines else "finding", "claim": claim,
                         "command": command, "exitCode": code, "output": _tail(raw)})
     if records:
         state = commit_rejections(identity, str(state["slug"]), str(state["workflowId"]), records)

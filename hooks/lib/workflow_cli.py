@@ -59,13 +59,22 @@ ENTRY = {"consult": [str(ROOT / "skills/codex-advisor/scripts/ask-codex-advisor.
          "context": [sys.executable, str(ROOT / "skills/repo-context-forge/scripts/bootstrap.py")]}
 # Failing checks' first five locations, then the first six active findings with three each. Each location
 # prints as at most 100 bytes of JSON, escapes included (file:line tail kept), so the whole stays under 4,200.
-REPORT_PROJECTION = (
-    'def clip: if (tojson | utf8bytelength) > 100 then "…" + (.[-100:] | until((tojson | utf8bytelength) <= 97; .[1:])) '
-    'else . end; .document.report[0] | (.checks[] | select(.passed == false) | {check: .name, count: (.sample | length), '
-    'at: (.sample[:5] | map(clip))}), ([.findings[] | select(.status == "finding" and .region.scope != "evaluation")] | '
-    '.[:6][] | {rule: .ruleId, id: .findingId, state, at: ([.evidence.gaps[]?, .evidence.owners[]?, '
-    '(.evidence.duplicates[]?.regions[] | "\\(.path):\\(.displayLine)")] | .[:3] | map(clip))})'
-)
+def _report_projection(report: dict[str, object]) -> bytes:
+    def clip(text):
+        if len(json.dumps(text, ensure_ascii=False).encode()) <= 100:
+            return text
+        text = text[-100:]
+        while len(json.dumps(text, ensure_ascii=False).encode()) > 97:
+            text = text[1:]
+        return "…" + text
+    rows = [{"check": check["name"], "count": len(check["sample"]), "at": list(map(clip, check["sample"][:5]))}
+            for check in report["checks"] if check["passed"] is False]
+    for finding in [item for item in report["findings"] if item["status"] == "finding" and item["region"]["scope"] != "evaluation"][:6]:
+        evidence = finding["evidence"]
+        places = [*evidence.get("gaps", []), *evidence.get("owners", []), *(f"{region['path']}:{region['displayLine']}"
+                  for duplicate in evidence.get("duplicates", []) for region in duplicate["regions"])]
+        rows.append({"rule": finding["ruleId"], "id": finding["findingId"], "state": finding.get("state"), "at": list(map(clip, places[:3]))})
+    return b"".join((json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n").encode() for row in rows)
 
 
 def _repo(command: argparse.ArgumentParser, *, instance: bool = False) -> argparse.ArgumentParser:
@@ -192,16 +201,20 @@ def _intent(args: argparse.Namespace) -> str:
     return text
 
 
-def _verify(args: argparse.Namespace, identity: RepoIdentity, *, review: bool = False) -> int:
+def _verify(args: argparse.Namespace, identity: RepoIdentity, *, review: bool = False, continuation: bool = False) -> int:
+    """`continuation`: the tdd verb without a selection, which stops at the cases with the status tdd gives them."""
     state = bound_state(identity, args.slug, args.workflow_id)
     slug, workflow_id = str(state["slug"]), str(state["workflowId"])
+    cases = {}
     if not review:
         from .tdd_workflow import _run_tdd
         with redirect_stdout(io.StringIO()) as receipt:
             result = _run_tdd(["--repo", str(identity.root), "--slug", slug, "--workflow-id", workflow_id])
-        if result:
+        replay = json.loads(receipt.getvalue())
+        if result or replay["open"]:  # the cases stop the call: their receipt is its reply
             print(receipt.getvalue(), end="")
-            return 2
+            return result & 2 if continuation else 2
+        cases = {key: replay[key] for key in ("cases", "otherCases")}
         refresh_context(identity)
         state = bound_state(identity, slug, workflow_id)
     if state.get("tdd") == "in-progress":
@@ -223,7 +236,7 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity, *, review: bool = 
             state = check_retained(identity, slug, workflow_id)
         # The same typed gate is reused; retained observations have their own tree cache.
         _emit_json(_receipt(state, identity, evidenceId=state["qualityGateEvidence"], kind="quality-gate", reused=True,
-                            verification="passed", valid=True, runIndex=last["runIndex"], workflowId=workflow_id))
+                            verification="passed", valid=True, runIndex=last["runIndex"], workflowId=workflow_id, **cases))
         return 0  # verification holds; a finding still open is the receipt's continuation and closes only completion
 
     # The tree this run's result will describe. The recorder compares it with
@@ -310,14 +323,11 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity, *, review: bool = 
     state, evidence_id, recorded = commit_verification(identity, slug, workflow_id, run, tree_before=tree_before,
                                                        report=report if gate is not None else None)
     if recorded.get("reportEvidenceId") and recorded["valid"] is not True:
-        # Retrieval stays outside chat: the save prints nothing, and the example projection is bounded.
-        location = shlex.quote(str(Path(tempfile.gettempdir()) / f"{recorded['reportEvidenceId']}.json"))
-        shown += (f"complete report: {len(report['findings'])} findings "
-                  f"({sum(item.get('status') == 'finding' for item in report['findings'])} active), "
-                  f"{len(json.dumps(report)):,} bytes; save it outside chat, then read bounded projections:\n  "
-                  + shlex.join([sys.executable, str(ROOT / "skills" / "repo-production-workflow" / "scripts" / "workflow.py"),
-                                "evidence", "--repo", str(identity.root), "--evidence-id", str(recorded["reportEvidenceId"]),
-                                "--full"]) + f" > {location}\n  jq -c {shlex.quote(REPORT_PROJECTION)} {location}\n").encode()
+        # The whole report is saved outside chat; the reply carries its bounded projection.
+        location = Path(tempfile.gettempdir()) / f"{recorded['reportEvidenceId']}.json"
+        location.write_text(json.dumps(read_evidence(identity, str(recorded["reportEvidenceId"]))), encoding="utf-8")
+        shown += (f"complete report: {len(report['findings'])} findings ({sum(item.get('status') == 'finding' for item in report['findings'])} "
+                  f"active), {len(json.dumps(report)):,} bytes, at {location}; its failing checks and first active findings:\n").encode() + _report_projection(report)
     with redirect_stdout(sys.stderr):  # stdout carries only the receipt
         _print_output(shown)
     state = read_workflow(identity) or state
@@ -330,6 +340,7 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity, *, review: bool = 
         "runIndex": recorded["runIndex"],
         "workflowId": workflow_id,
         "treeManifestId": recorded.get("treeManifestId"),
+        **cases,
     }))
     if recorded["valid"] is not True:
         reason = recorded.get("bindingError") or "the quality gate failed"
@@ -491,6 +502,10 @@ def main(argv: list[str] | None = None, *, replace: bool = True) -> int:
     try:
         # The TDD verb's parsing travels with its implementation.
         if values and values[0] == "tdd":
+            if not _repo(argparse.ArgumentParser(add_help=False, allow_abbrev=False), instance=True).parse_known_args(values[1:])[1]:  # no selection: rerun and verify
+                args = parser().parse_args(["verify", *values[1:]])
+                with _comparison_scope():
+                    return _verify(args, resolve_repo_identity(args.repo), continuation=True)
             from .tdd_workflow import _run_tdd
             return _run_tdd(values[1:]) & 2  # a case that ran and does not hold is its receipt's result, not a failed call
         command = [*ENTRY[values[0]], *values[1:]] if values and values[0] in ENTRY else None

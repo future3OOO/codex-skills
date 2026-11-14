@@ -18,7 +18,8 @@ A lead passes what follows `workflow.py` (`tdd --case BM_X 'COMMAND'`, without `
 `--case` takes one command per case and `-` for no item. A scratch file a command names is frozen
 with it, as is a temporary path the command or that file names; `--path` or `--support` freezes
 another beside it. A `--case` call runs the cases it names and any recorded case still without accepted proof, captures any command an item still
-declares and judges the rest of the map as recorded, without running it; a bare call captures those too and replays every recorded command.
+declares and judges the rest of the map as recorded, without running it; a bare call captures those too, replays every recorded command and,
+when all hold and nothing is open, verifies.
 A case that cannot be captured is refused alone; a failing case is a row, not a failed call. `map.json` holds
 `items` (only the changed fields), `added` and `removed`, alone or together:
 `{"items":[{"id":"BM_X","expected":"..."}],"removed":["BM_Y"]}`. The receipt gives continuation, failures and evidence access.
