@@ -868,6 +868,8 @@ def shown(identity: RepoIdentity, state: JsonObject, run: JsonObject) -> str:
                          relocate(os.fsencode(identity.root + os.sep + PROBES), blobs[entries[name][1]].encode("utf-8", "surrogateescape")))
         command = os.fsdecode(relocate(os.fsencode(PROBES), os.fsencode(command)))
     words, assignments, environment = _case_environment(identity, command)
+    if sizes := _growth({"assignments": assignments}):  # a growth case runs at the size the runner runs first
+        words = [word.replace("{size}", str(sizes[1])) for word in words]
     return " ".join([*(f"{name}={shlex.quote(value)}" for name, value in {**assignments, "PYTHONPATH": environment["PYTHONPATH"]}.items()), shlex.join(words)])
 
 
