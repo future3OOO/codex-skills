@@ -28,7 +28,8 @@ finalise and approve it. Preflight is exactly these two consultations in one adv
 the second completes and records the draft, so `approved` is its only verdict and a third is refused.
 The first consult receives the whole draft. Reconsults send its delta with both
 content identities; failed results keep that base. A resumed consult, preflight or
-final, carries only the sections whose bytes changed since its session last received them.
+final, carries only the sections whose content, tree, run and evidence ids aside, changed
+since its session last received them.
 
 Preflight records the governing-design declaration: `--design-file` with the
 durable design artifact of a planned stack, or `--design-absent` with a reason; a

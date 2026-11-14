@@ -1366,8 +1366,9 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
             "--tdd-evidence", str(state.get("tddEvidence") or "null")]) + " --verdict complete"
     else:
         shape = json.loads(ADVISOR_SHAPES["preflight" if phase == "preflight-advice" else "final"])
-        if reconsult:  # the second consultation completes the draft
-            shape["verdict"] = "approved"
+        if reconsult:  # the second consultation completes the draft in its answer
+            shape.update(findings=[{"id": "SPEC-1", "claim": "..."}], verdict="approved", draft={
+                "authoritativeContract": "text", "items": [{"id": "BM_X", "expected": "..."}], "removed": ["BM_Y"]})
         result["responseFormat"] = json.dumps(shape)
     if state.get("tddEvidence"):
         cli = Path(__file__).resolve().parents[2] / "skills/repo-production-workflow/scripts/workflow.py"

@@ -127,7 +127,9 @@ def main() -> int:
         if not isinstance(servers, list) or any(not isinstance(s, dict) or not isinstance(s.get("name"), str) for s in servers):
             raise ValueError("native Codex returned an invalid MCP catalog")
         names = {s["name"] for s in servers}
-        if missing := set(config["mcp"]) - names:
+        # A final advisor records through the workflow tool, whose call returns the result; no other consult is given it.
+        selected = {*config["mcp"], *["workflow"] * (os.environ.get("ADVISOR_PHASE") == "final-review")}
+        if missing := selected - names:
             raise ValueError(f"advisor MCPs are not configured: {sorted(missing)}")
         flags = ["-c", "features.plugins=false", "-c", "features.apps=false", "-c", "features.memories=false",
                  "-c", "features.goals=false", "-c", "features.image_generation=false", "-c", "features.view_image=false",
@@ -142,7 +144,7 @@ def main() -> int:
             entries = [json.dumps(key) + "={" + ",".join(json.dumps(k) + "=" + json.dumps(v) for k, v in state.items()) + "}"
                        for key, state in trust.items()]
             flags += ["-c", "hooks.state={" + ",".join(entries) + "}"]
-        flags += ["-c", "mcp_servers={" + ",".join(json.dumps(name) + "={enabled=" + str(name in config["mcp"]).lower() + "}"
+        flags += ["-c", "mcp_servers={" + ",".join(json.dumps(name) + "={enabled=" + str(name in selected).lower() + "}"
                                                  for name in sorted(names)) + "}"]
         environment["CODEX_HOME"] = str(home)
         command = ["codex", *flags, *arguments]

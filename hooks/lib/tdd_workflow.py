@@ -959,6 +959,9 @@ def _revised(identity: RepoIdentity, run: JsonObject, candidate: str, preserved:
     return captured if frozen(captured) - frozen(run) else None
 
 
+UNBROKEN = "probe did not fail under its behavior break; supply --change probe=FILE"
+
+
 def _run_probe(identity: RepoIdentity, probe: object, candidate: str, original: str | None,
                timeout: float = PROBE_TIMEOUT, cached: list[JsonObject] | None = None,
                frozen: JsonObject | None = None, report: bool = False) -> JsonObject:
@@ -973,7 +976,7 @@ def _run_probe(identity: RepoIdentity, probe: object, candidate: str, original: 
         if original is not None:
             result["original"] = _probe_outcome(compared["arms"][0])
         if all(arm["outcome"] == "passed" for arm in compared["arms"]) and not compared.get("sensitive") and not witnessed and not report:
-            result["error"] = compared.get("breakError") or "probe did not fail under its behavior break; supply --change probe=FILE"
+            result["error"] = compared.get("breakError") or UNBROKEN
         if any(_probe_outcome(arm) == "incomplete" for arm in compared["arms"]):
             result["error"] = "; ".join(dict.fromkeys(str(arm.get("error") or "unproved execution") for arm in compared["arms"] if _probe_outcome(arm) == "incomplete"))
         return result
@@ -1039,7 +1042,8 @@ def _run_change(identity: RepoIdentity, batches: list[JsonObject], change: objec
     cached = list(batches) if cached is None else cached
     measured = _run_probe(identity, probe, candidate, None, timeout, cached, frozen) if probe is not None else None
     if measured and measured.get("candidate") == "passed" and "error" in measured:
-        return {"kind": "change", "error": measured["error"]}
+        return {"kind": "change", "error": "a replacement's probe must fail on the candidate and pass with the replacement"
+                if measured["error"] == UNBROKEN else measured["error"]}
     if cost_recheck and measured is not None:
         return measured
     patch = change.encode("utf-8", "replace") + (b"" if change.endswith("\n") else b"\n")  # unencodable text cannot apply
@@ -1999,22 +2003,11 @@ def map_update(identity: RepoIdentity, state: JsonObject, value: JsonObject) -> 
         raise ValueError("tdd-map takes items, added or removed; statuses and dispositions are runner-owned")
     previous, current = current_map(identity, state)
     recorded = {entry["id"]: entry for entry in previous or []}
-    removed = value.get("removed", [])
-    if not isinstance(removed, list) or any(not isinstance(name, str) or name not in recorded for name in removed):
-        raise ValueError("removed must contain existing probe ids")
-    parts = [value[key] for key in ("items", "added") if key in value]
-    merged = next((part for part in parts if not isinstance(part, list)), [entry for part in parts if isinstance(part, list) for entry in part])
-    if isinstance(merged, list):  # an item names only what changes: a given field replaces, null removes, an omitted field stays
-        fields = behavior_map.REQUIRED_FIELDS | behavior_map.JUDGEMENT_FIELDS
-        for position, entry in enumerate(merged):
-            if isinstance(entry, dict):
-                prior = recorded.get(str(entry.get("id")).strip(), {})
-                kept = {key: prior[key] for key in fields if prior.get(key) not in (None, [])
-                        and not ("interpretations" in entry and key in ("interpretation", "authority"))}
-                merged[position] = {key: field for key, field in {**kept, **entry}.items() if field is not None}
-    updates = behavior_map.initial_items(merged)
-    items = [item for item in {item["id"]: item for item in [*(previous or []), *updates]}.values()
-             if item["id"] not in removed]
+    added = _advisor_added(identity, state)  # an item the approving consult added leaves only through --reject
+    updates, items = behavior_map.merge(previous or [], value, keep=added)
+    kept = [name for name in value.get("removed", []) if name in added]
+    notice = {"kept": [f"{name} stays: an item the approving consult added leaves the map only through tdd --reject {name} 'COMMAND'"
+                       for name in kept]} if kept else {}
     for entry in updates:
         prior = recorded.get(entry["id"])
         if "runIndex" in (prior or {}).get("comparison", {}):
@@ -2022,7 +2015,7 @@ def map_update(identity: RepoIdentity, state: JsonObject, value: JsonObject) -> 
             entry["comparison"] = comparison
     if items == previous:
         return operation_receipt(state, identity, summaryId=state.get("tddEvidence") or state["preflightEvidence"],
-                                 pending=behavior_map.unresolved(items, _readiness_lines(identity, state, items)["open"]), reused=True)
+                                 pending=behavior_map.unresolved(items, _readiness_lines(identity, state, items)["open"]), reused=True, **notice)
     try:
         tree_manifest(identity)
     except RuntimeError as exc:
@@ -2033,7 +2026,12 @@ def map_update(identity: RepoIdentity, state: JsonObject, value: JsonObject) -> 
                 **({"retired": current["retired"]} if (current or {}).get("retired") else {})}
     state, evidence, readiness = commit_tdd(identity, str(state["slug"]), str(state["workflowId"]), document,
                                 expected_evidence_id=state.get("tddEvidence"))
-    return operation_receipt(state, identity, summaryId=evidence, pending=behavior_map.unresolved(items, readiness["open"]))
+    return operation_receipt(state, identity, summaryId=evidence, pending=behavior_map.unresolved(items, readiness["open"]), **notice)
+
+
+def _advisor_added(identity: RepoIdentity, state: JsonObject) -> list[str]:
+    """The map items the approving preflight consult added."""
+    return (evidence_document(identity, (state.get("advisorPreflight") or {}).get("intakeEvidence"), restore_runs=False) or {}).get("added", [])
 
 
 def _reject(identity: RepoIdentity, state: JsonObject, requests: list[list[str]]) -> JsonObject:
@@ -2042,7 +2040,7 @@ def _reject(identity: RepoIdentity, state: JsonObject, requests: list[list[str]]
     output with it. Without a command, or when the command does not finish, the target stays open."""
     from .command_runner import _tail
     from .workflow_state import commit_rejections
-    added = (evidence_document(identity, (state.get("advisorPreflight") or {}).get("intakeEvidence"), restore_runs=False) or {}).get("added", ())
+    added = _advisor_added(identity, state)
     items = {entry["id"]: entry for entry in current_map(identity, state, fresh=False)[0] or [] if entry["id"] in added}
     findings = {ref["id"]: entry for entry in state.get("findingStates", []) if entry["stage"] == "final"
                 for ref in ({"id": entry["findingId"]}, *entry.get("observations", []))}
