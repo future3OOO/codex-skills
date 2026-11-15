@@ -160,7 +160,7 @@ When you do call out:
 - trust blast-radius claims only when `<gitnexus_status>` is `fresh` or
   `reindexed` and `required_checks_resolved` is true
 
-## Post-Edit Validation
+## Index Refresh
 
 For standalone work without a workflow, refresh the source index when needed:
 
