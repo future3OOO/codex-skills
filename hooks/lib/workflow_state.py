@@ -1241,8 +1241,6 @@ def _finding_ledger(identity: RepoIdentity, state: JsonObject) -> list[JsonObjec
             **{key: entry[key] for key in ("canonicalFinding", "observations", "dispositionEvidenceId") if key in entry},
             **({"rejection": rejected[entry["findingId"]]} if entry.get("status") == "rejected" else {}),
         })
-    ledger.extend({"findingId": target, "kind": "removed-condition", "status": "rejected", "claim": record["claim"], "rejection": record}
-                  for target, record in rejections(state, "condition").items())
     return ledger
 
 
@@ -1647,8 +1645,7 @@ def _derived_readiness(identity: RepoIdentity, state: JsonObject, items: list[Js
             traces, proofs = document.get("conditions") or {}, [entry for entry in [*observations, *evaluation] if entry["comparison"].get("arms")]
             preflight = preflight or evidence_document(identity, state.get("preflightEvidence"))
             cases += sum(removed_conditions.unsettled(
-                decisions, [traces.get(entry["comparison"]["arms"][0]["key"], {}) for entry in proofs], proofs, behavior_map.recorded_map(None, preflight) or [],
-                set(rejections(state, "condition")) if state.get("finalStarted") else None), [])
+                decisions, [traces.get(entry["comparison"]["arms"][0]["key"], {}) for entry in proofs], proofs, behavior_map.recorded_map(None, preflight) or []), [])
     review = review if review is not None else evidence_document(identity, state.get("codeReviewEvidence"))
     current = bool(review and review.get("workflowId") == state["workflowId"] and review.get("candidateTree") == candidate and review.get("verdict") == "complete" and not _stage_unresolved(state, "code-review", "code-review"))
     return {"open": cases, "reviewCurrent": current, "openCount": len(cases),
@@ -1723,17 +1720,21 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
     elif action in {"tdd", "address-review-findings"}:
         command = [*cli, "tdd", *bound]
         pending = open_findings(identity, state)
-        ids = [str(entry["id"]) for entry in behavior_map.recorded_map(evidence_document(
-            identity, state.get("tddEvidence") or state.get("preflightEvidence"), restore_runs=False)) or []]
-        operation: JsonObject = {"command": shlex.join(command),
-                                "args": ["--case", "<ID>", "<COMMAND>"],
-                                "input": f"<ID> <COMMAND>: a map item (recorded: {', '.join(ids) or 'none'}), or - for no item, and the case's command; "
-                                         "repeat the three for each case. args [] reruns every recorded case and, when all hold and nothing is open, verifies."}
+        # The --case template only when an open line asks for a case; after an edit the call that reruns and verifies is [].
+        asks = any(line.startswith("removed condition ") or line.endswith("case is bound")
+                   for line in [*((receipt or {}).get("open") or []), *questions.splitlines()])
+        operation: JsonObject = {"command": shlex.join(command), "args": ["--case", "<ID>", "<COMMAND>"] if asks else []}
+        text = ""
+        if asks:
+            ids = [str(entry["id"]) for entry in behavior_map.recorded_map(evidence_document(
+                identity, state.get("tddEvidence") or state.get("preflightEvidence"), restore_runs=False)) or []]
+            text = (f"<ID> <COMMAND>: a map item (recorded: {', '.join(ids) or 'none'}), or - for no item, and the case's command; "
+                    "repeat the three for each case. args [] reruns every recorded case and, when all hold and nothing is open, verifies.")
         if pending:
             operation["findings"] = pending
-            operation["input"] += " A final finding closes when its repair passes, or with args [\"--reject\", \"<FINDING_ID>\", \"<COMMAND>\"]."
-        if questions:
-            operation["input"] += "\n" + questions
+            text += " A final finding closes when its repair passes, or with args [\"--reject\", \"<FINDING_ID>\", \"<COMMAND>\"]."
+        if text := "\n".join(filter(None, (text.strip(), questions))):
+            operation["input"] = text
         return operation
     else:
         command = [*cli, "status", "--repo", str(identity.root)]
@@ -1741,19 +1742,22 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
 
 
 def open_findings(identity: RepoIdentity, state: JsonObject, *, detail: bool = False) -> list[JsonObject]:
-    """Each unresolved finding as its author recorded it: `diff` applies its replacement, a file kept with the pass's
-    execution state, and `probe` runs its probe from the checkout as the workflow ran it; `detail` adds its claim and
-    the probe's result on both versions."""
+    """Each unresolved finding as its author recorded it where it bound (its latest binding recording, else its first):
+    `diff` applies its replacement, a file kept with the pass's execution state, and `probe` runs its probe from the
+    checkout as the workflow ran it; `detail` adds its claim and the probe's result on both versions."""
     from .tdd_workflow import shown
     rows = []
     for entry in state.get("findingStates", []):
-        finding = _finding_unresolved(entry) and next((item for item in (evidence_document(
-            identity, entry["intakeEvidenceId"], restore_runs=False) or {}).get("findings", []) if item["id"] == entry["findingId"]), None)
-        if not finding:
+        if not _finding_unresolved(entry):
             continue
+        recorded = [item for ref in ({"evidenceId": entry["intakeEvidenceId"], "id": entry["findingId"]}, *entry.get("observations", []))
+                    for item in (evidence_document(identity, ref["evidenceId"], restore_runs=False) or {}).get("findings", []) if item["id"] == ref["id"]]
+        if not recorded:
+            continue
+        finding = next((item for item in reversed(recorded) if item.get("material")), recorded[0])
         row, run = {"findingId": entry["findingId"], **({"claim": finding["claim"]} if detail else {})}, (finding.get("execution") or {}).get("comparison")
         if "change" in finding:
-            path = Path(scratch_path(identity, state)).with_name("findings") / (entry["findingId"] + ".diff")
+            path = Path(scratch_path(identity, state)).with_name("findings") / (finding["id"] + ".diff")  # the recording shown
             if not path.exists():
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(finding["change"].encode("utf-8", "replace"))

@@ -132,11 +132,7 @@ For a user-described implementation before edits, pass `--intent "<task>"`.
 AGENTS.md — GitNexus owns required context/impact coverage.
 
 The packet's `<gitnexus_analysis>` rows answer every `<check>` the plan listed:
-read them first; they do not replace the rule's checks on what you change. Before editing, run the rule's checks on
-what you will change (`impact` with tests, then any caller, callee or
-shared-state writer the rows lack, and the rule's other checks) by the exact
-call forms the packet prints; never list, search or print tool definitions.
-For one relationship, a scoped `cypher` query. Post-edit validation is below.
+read them first. For one relationship, a scoped `cypher` query.
 
 When you do call out:
 
@@ -164,14 +160,7 @@ When you do call out:
 - trust blast-radius claims only when `<gitnexus_status>` is `fresh` or
   `reindexed` and `required_checks_resolved` is true
 
-## Post-Edit Validation
-
-Run post-edit GitNexus validation when the edit touches indexed symbols,
-shared APIs/contracts, persistence, config/runtime/deploy surfaces, external
-integrations, browser automation, transaction-sensitive flows, or PR-review
-graph proof, or a stale index. Skip docs-only work and small leaf edits touching
-no shared contract or indexed symbol; state the skip reason and rely on targeted
-tests plus the production-code gate.
+## Index Refresh
 
 For standalone work without a workflow, refresh the source index when needed:
 

@@ -21,7 +21,7 @@ jump from Repo Context Forge straight to edits.
 failures, flaky behavior, and performance regressions.
 
 Docs-only work creates no workflow or slug. Verify checkout/branch, inspect files
-directly, edit minimally, clean up, run diff checks, and after any required review
+directly, edit minimally, clean up, run diff checks, and after any required review,
 commit, then push and open/update the PR when a remote exists. Skip Repo Context Forge
 and GitNexus. Governance docs that change agent behavior (`AGENTS.md`,
 `CLAUDE.md`, `docs/agents/`) also require independent `$code-review` before
@@ -57,7 +57,7 @@ Repo Context Forge analysis copy. For codex-skills installation, follow
 ## Simplicity First
 
 - Performance is a requirement. Ask what the change costs the person using it: they demand bare-metal performance
-  with the required behavior and no regressions. Setting performance improvements aside needs a measured reason.
+  with the required behavior and no regressions. Build every demonstrated improvement that keeps required behavior; skip one only when measured to cost more than it saves.
 - Assume your first implementation is bloated. Find the best justified whole-system design for the objective, including production code,
   tests, scripts, documentation, maintenance and execution; keep only what it needs while preserving required behavior and proof. Retain real
   attack probes; cut redundant scaffolding and mocked unit-test bloat from this change.
@@ -66,7 +66,7 @@ Repo Context Forge analysis copy. For codex-skills installation, follow
 - Preserve required behavior and proof. Every changed line must serve the request
   or lower the whole-system cost of code the change touches.
 
-## Surgical Changes
+## Root-Cause Changes
 
 - Match existing style. Code the change edits or its requested operation runs
   through is in scope: refactor or optimize inefficient, duplicated or dead code
@@ -102,15 +102,13 @@ reviewer/check event and repeat the reviewer re-query below before merging.
 
 ## GitNexus
 
-Use FFF first for raw discovery; honor packet scope. Follow `$repo-context-forge` for repo selection
-and post-edit validation.
+Use FFF first for raw discovery; honor packet scope. Follow `$repo-context-forge` for repo selection.
 
-Start from the packet's rows. Before edits, run `impact` with tests on any symbol you change
-(downstream too when moving, deepening, consolidating or hiding behavior) and query its callers,
-callees, shared-state writers and their risk, and the tested owner of an internal Seam a new
-file consumes; after edits, the change check. Use the packet's exact call forms; never list,
-search or print tool definitions. One relationship: a scoped `cypher` query. Never print raw graph
-output whole.
+The packet's rows give the callers, callees and upstream impact of the symbols they list. Before editing any
+other symbol, run `impact` with tests on it. Query only what no row answers: downstream impact of a symbol you
+delete, move, deepen, consolidate or hide behavior in; shared-state writers and their risk; and the tested owner
+of an internal Seam a new file consumes. Use the packet's exact call forms; never list, search or print tool
+definitions. One relationship: a scoped `cypher` query. Never print raw graph output whole.
 
 Never use `detect_changes` to select initial targets or as primary safety proof.
 Graph output must not shrink packet scope, the PR contract, or no-change surfaces.

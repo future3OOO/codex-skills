@@ -57,7 +57,7 @@ regressions and performance failures before choosing a correction.
 ### 3. Packet-scoped GitNexus
 
 The bootstrap already ran and recorded the packet's graph checks. Before editing, run
-AGENTS.md's GitNexus checks on what you will change; after editing, its change check.
+AGENTS.md's GitNexus checks on what the packet's rows leave unanswered.
 
 ### 4. Draft and advisor review
 
@@ -72,7 +72,7 @@ The advisor investigates. The lead checks deletion claims against every original
 outcome controlled by the affected logic and corrects false premises. The advisor
 then finalises and approves the draft in the same session; that consult records it.
 The first implementation builds the approved design, performance improvements
-included; setting one aside needs a measured reason.
+included.
 
 ### 5. One recorded preflight
 
