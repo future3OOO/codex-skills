@@ -8,6 +8,7 @@ import os
 import re
 from collections import Counter
 from functools import lru_cache
+from itertools import product
 from pathlib import Path
 
 from . import behavior_map
@@ -107,14 +108,17 @@ def _removed(path: str, qualname: str, aligned: dict[int, set[int]], old: ast.AS
                 elif not rewritten:
                     removed[text] = {"operand": text, "line": operand.lineno, "column": operand.col_offset, "value": isinstance(group.op, ast.Or)}
         if removed and not any(isinstance(node, ast.Compare) and len(node.ops) > 1 for node in ast.walk(test)):
+            names = sorted({node.id for tree in (test, match) for node in ast.walk(tree) if isinstance(node, ast.Name)})
             found.append({"id": f"{path}:{test.lineno}:{test.col_offset}", "file": path, "qualname": qualname,
                           "test": whole, "match": candidates[match], "removed": list(removed.values()),
                           "repeated": sorted(repeated),
-                          "span": [test.lineno, test.end_lineno, test.col_offset, test.end_col_offset],
-                          "names": sorted({node.id for node in ast.walk(test) if isinstance(node, ast.Name)}),
-                          "nodes": [[node.lineno, node.end_lineno, node.col_offset, node.end_col_offset, ast.unparse(node),
-                                     isinstance(node, ast.Compare) and isinstance(node.ops[0], ast.Is)]
-                                    for node in ast.walk(test) if isinstance(node, ast.expr)]})
+                          "sides": [{"id": f"{path}:{test.lineno}:{test.col_offset}:{side}", "file": path, "qualname": qualname,
+                                     "span": [expr.lineno, expr.end_lineno, expr.col_offset, expr.end_col_offset],
+                                     "names": names,
+                                     "nodes": [[node.lineno, node.end_lineno, node.col_offset, node.end_col_offset, ast.unparse(node),
+                                                isinstance(node, ast.Compare) and isinstance(node.ops[0], ast.Is)]
+                                               for node in ast.walk(expr) if isinstance(node, ast.expr)]}
+                                    for side, expr in enumerate((test, match))]})
     if found and list(tests.values()) == list(candidates.values()) and ast.dump(old) == ast.dump(new):
         return []  # layout alone can misalign equal decisions
     return found
@@ -172,7 +176,7 @@ def unsettled(decisions: list[JsonObject], traces: list[JsonObject | None], case
               approved: list[JsonObject]) -> tuple[list[str], list[str]]:
     """The open lines of the removed operands no recorded case clears: those no case decides, then those only uncleared
     cases decide. A case decides an operand when its original run evaluates it at its deciding value and the paired
-    candidate decision, on the values that run observed, is not known to agree with the original; it clears it by `clears`.
+    candidate decision observed on that input disagrees with the original; it clears it by `clears`.
     `traces` holds the evaluations of each of `cases` by decision id; None is a run the tracer could not observe; a case
     not yet traced has no evaluations. An operand no case decides opens no line when every run was unobservable. One only
     uncleared cases decide settles nothing. No rejection closes a line."""
@@ -180,18 +184,33 @@ def unsettled(decisions: list[JsonObject], traces: list[JsonObject | None], case
     cut = lambda text: text if len(text) <= 160 else text[:159] + "…"
     for decision in decisions:
         test, match = (ast.parse(str(decision[key]), mode="eval").body for key in ("test", "match"))
-        spans = {tuple(node[:4]): (node[4], node[5]) for node in decision["nodes"]}
+        spans = [{tuple(entry[:4]): (entry[4], entry[5]) for entry in side["nodes"]} for side in decision["sides"]]
         for operand in decision["removed"]:
             node, deciders = ast.parse(str(operand["operand"]), mode="eval").body, []
             for case, trace in zip(cases, traces):
-                for evaluation in (trace or {}).get(decision["id"]) or ():
-                    known = dict(evaluation["names"])
-                    for *span, kind, jumped in evaluation["jumps"]:
-                        text, is_none = spans.get(tuple(span), (None, False))
-                        if text is not None:
-                            known[text] = jumped is (kind == "true") if kind in ("true", "false") else (jumped is (kind == "none")) is is_none
-                    before = _truth(test, known)
-                    if _truth(node, known) is operand["value"] and (before is None or before is not _truth(match, known)):
+                observations = (trace or {}).get(decision["id"], [])
+                if len(observations) != 2:
+                    continue
+                sides = [{}, {}]
+                for groups, rows in zip(sides, observations):
+                    for value, _ in rows:
+                        group = groups.setdefault(value["input"], [])
+                        if value not in group:
+                            group.append(value)
+                pairs = (pair for key, before in sides[0].items() if (after := sides[1].get(key)) for pair in product(before, after))
+                for before, after in pairs:
+                    values = []
+                    for evaluation, locations in zip((before, after), spans):
+                        known = dict(evaluation["names"])
+                        for *span, kind, jumped in evaluation["jumps"]:
+                            text, is_none = locations.get(tuple(span), (None, False))
+                            if text is not None:
+                                known[text] = jumped is (kind == "true") if kind in ("true", "false") else (jumped is (kind == "none")) is is_none
+                        values.append(known)
+                    before, after = _truth(test, values[0]), _truth(match, values[1])
+                    if any(values[0][name] is not values[1][name] for name in values[0].keys() & values[1].keys()):
+                        continue  # shared observations must agree; a removed expression is observed only on the original
+                    if before is not None and after is not None and before is not after and _truth(node, values[0]) is operand["value"]:
                         break
                 else:
                     continue  # this case does not decide it
@@ -199,7 +218,7 @@ def unsettled(decisions: list[JsonObject], traces: list[JsonObject | None], case
                     break
                 deciders.append(str(case["id"]))
             else:
-                where = f"it {str(operand['value']).lower()} on the original where the candidate's `{cut(decision['match'])}` is not known to decide the same"
+                where = f"it {str(operand['value']).lower()} on the original where the candidate's `{cut(decision['match'])}` is observed to decide differently"
                 line = (f"removed condition {decision['file']}:{operand['line']} `{cut(operand['operand'])}` of `{cut(decision['test'])}`: the change "
                         "assumes that removing it loses no result the request keeps. " + (f"Only {', '.join(dict.fromkeys(deciders))} makes {where}, "
                         "without passing on both versions, which settles nothing. " if deciders else "") + f"One case settles that: its input makes "

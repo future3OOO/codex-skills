@@ -1550,15 +1550,15 @@ def _compare(identity: RepoIdentity, original: str, candidate: str, probe: JsonO
 
 def _condition_traces(identity: RepoIdentity, original: str, candidate: str, cases: list[JsonObject], retained: JsonObject,
                       preflight: str | None) -> JsonObject:
-    """Each recorded case's evaluations of the decisions the candidate removes operands from, by original arm. Retained
-    traces answer first; only while an operand stays uncleared do untraced cases run once more on the original under
+    """Each recorded case's distinct evaluations of removed-operand decisions, keyed by both arms. Retained
+    traces answer first; only while an operand stays uncleared do untraced cases run once more on both sources under
     the tracer, those that can clear one first and then cheapest first, in pool-sized groups, as executions of their own
     so no recorded arm or timing changes. Once every operand is decided, only cases that can clear one still run. Cases
     that share an execution share its trace, and it can clear when any of them can (`preflight` holds the approved items).
     None marks a run the tracer could not observe."""
     decisions = removed_conditions.removed(identity, original, candidate)
     cases = [case for case in cases if case["comparison"].get("arms") and not _growth(case["comparison"]["execution"])]
-    keys = [case["comparison"]["arms"][0]["key"] for case in cases]
+    keys = ["inputs:" + ":".join(case["comparison"]["arms"][side]["key"] for side in (0, -1)) for case in cases]
     runs = {key: case["comparison"] for key, case in zip(keys, cases)}
     traces = {key: retained[key] for key in runs if key in retained}
     approved = behavior_map.recorded_map(None, evidence_document(identity, preflight)) or [] if decisions else []
@@ -1575,15 +1575,16 @@ def _condition_traces(identity: RepoIdentity, original: str, candidate: str, cas
         pending = pending[len(group):]
         with tempfile.TemporaryDirectory(prefix="workflow-conditions-") as directory:
             shutil.copy(Path(__file__).with_name("condition_trace.py"), Path(directory, "sitecustomize.py"))
-            Path(directory, "conditions.json").write_text(json.dumps(decisions), encoding="utf-8")
+            Path(directory, "conditions.json").write_text(json.dumps([side for decision in decisions for side in decision["sides"]]), encoding="utf-8")
             path = os.pathsep.join(filter(None, (directory, os.environ.get("PYTHONPATH"))))
             probes = [{**runs[key], "command": shlex.join(["PYTHONPATH=" + path, *(
                 f"PYTHONPATH={directory}{os.pathsep}{arg[11:]}" if arg.startswith("PYTHONPATH=") else arg
                 for arg in shlex.split(runs[key]["command"]))])} for key in group]
-            for key, run in zip(group, _compare_many(identity, original, original, probes, [], challenge=False)):
-                seen = run["arms"][0].get("conditions")
-                traces[key] = None if seen is None else {decision["id"]: [evaluation for line in seen for evaluation in line.get(decision["id"], [])]
-                                                         for decision in decisions}
+            for key, run in zip(group, _compare_many(identity, original, candidate, probes, [], challenge=False)):
+                seen = [run["arms"][side].get("conditions") for side in (0, -1)]
+                traces[key] = None if all(side is None for side in seen) else {
+                    decision["id"]: [[evaluation for line in side or [] for evaluation in line.get(metadata["id"], [])]
+                                     for side, metadata in zip(seen, decision["sides"])] for decision in decisions}
     return traces
 
 

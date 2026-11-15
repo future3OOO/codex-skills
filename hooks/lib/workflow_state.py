@@ -1645,7 +1645,7 @@ def _derived_readiness(identity: RepoIdentity, state: JsonObject, items: list[Js
             traces, proofs = document.get("conditions") or {}, [entry for entry in [*observations, *evaluation] if entry["comparison"].get("arms")]
             preflight = preflight or evidence_document(identity, state.get("preflightEvidence"))
             cases += sum(removed_conditions.unsettled(
-                decisions, [traces.get(entry["comparison"]["arms"][0]["key"], {}) for entry in proofs], proofs, behavior_map.recorded_map(None, preflight) or []), [])
+                decisions, [traces.get("inputs:" + ":".join(entry["comparison"]["arms"][side]["key"] for side in (0, -1)), {}) for entry in proofs], proofs, behavior_map.recorded_map(None, preflight) or []), [])
     review = review if review is not None else evidence_document(identity, state.get("codeReviewEvidence"))
     current = bool(review and review.get("workflowId") == state["workflowId"] and review.get("candidateTree") == candidate and review.get("verdict") == "complete" and not _stage_unresolved(state, "code-review", "code-review"))
     return {"open": cases, "reviewCurrent": current, "openCount": len(cases),
