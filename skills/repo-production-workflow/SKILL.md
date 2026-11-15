@@ -72,7 +72,7 @@ The advisor investigates. The lead checks deletion claims against every original
 outcome controlled by the affected logic and corrects false premises. The advisor
 then finalises and approves the draft in the same session; that consult records it.
 The first implementation builds the approved design, performance improvements
-included; setting one aside needs a measured reason.
+included.
 
 ### 5. One recorded preflight
 

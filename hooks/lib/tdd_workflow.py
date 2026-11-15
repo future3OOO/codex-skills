@@ -1067,7 +1067,7 @@ def _run_change(identity: RepoIdentity, batches: list[JsonObject], change: objec
                                   measured.get("comparison") if measured else None):
         return {"kind": "change", "error": error}
     for run in batches:
-        replay = _compare_many(identity, before, after, [dict(run)], cached, challenge=False)[0]
+        replay = _compare_many(identity, after, after, [dict(run)], cached, challenge=False)[0]  # only the replacement's arm is read
         arm = replay["arms"][-1]
         outcome = "timed-out" if arm["timedOut"] else arm["outcome"]
         if outcome != "passed":
@@ -1149,8 +1149,10 @@ def execute_findings(identity: RepoIdentity, state: JsonObject, findings: list[J
                 "reexecuted": withdrawn, "runs": []}
     original = _git(identity, "rev-parse", f"{state['passStartOid']}^{{tree}}").decode().strip()
     current = current if current is not None else evidence_document(identity, state.get("tddEvidence")) or {}
-    maintained = [*behavior_map.current_cases(current.get("behaviorMap") or [], current.get("runs") or [], _retired(state)),
-                  *({**entry, "comparison": current["runs"][entry["runIndex"]]} for entry in _evaluation(identity, state, current, True).values())]
+    set_aside = rejections(state, "item")  # a rejected item's cases replay nowhere
+    maintained = [entry for entry in [*behavior_map.current_cases(current.get("behaviorMap") or [], current.get("runs") or [], _retired(state)), *(
+        {**entry, "comparison": current["runs"][entry["runIndex"]]} for entry in _evaluation(identity, state, current, True).values())]
+        if entry["id"] not in set_aside]
     used = {(item.get("comparison") or {}).get("runIndex") for item in maintained}
     batches = [run for run in current.get("runs") or [] if run["runIndex"] in used]
     cached = list(current.get("runs") or [])
@@ -1588,8 +1590,8 @@ def _condition_traces(identity: RepoIdentity, original: str, candidate: str, cas
 @interruptible()
 @_comparison_scope()
 def _run_tdd(values: list[str], *, added: frozenset[str] = frozenset(), details: JsonObject | None = None) -> int:
-    """`added`: the map items the approving preflight consult added, which this call (its recording) keeps only if each
-    declared command ran on both sources; `details` joins the receipt."""
+    """`added`: the map items the approving preflight consult added, which this call (its recording) keeps: a case of
+    theirs that cannot run is turned away, leaving the item with no case bound; `details` joins the receipt."""
     dash = values.index("--") if "--" in values else len(values)
     parser = argparse.ArgumentParser(prog="workflow tdd", description="Compare and record probes or replacements; authors record verdicts from their checkpoint command", epilog=binds.__doc__)
     parser.add_argument("--repo", "--cwd", dest="repo", default=".")
@@ -1600,8 +1602,8 @@ def _run_tdd(values: list[str], *, added: frozenset[str] = frozenset(), details:
     parser.add_argument("--verdict", help="record review completion without running cases; use the source-bound checkpoint command")
     parser.add_argument("--report", action="append", default=[], help="finding's owning invariant, or non-executable report lines with a verdict")
     parser.add_argument("--reject", action="append", nargs="+", default=[], metavar="ID 'COMMAND'",
-                        help="the lead closes a map item or final finding it rejects: the workflow runs the command once and keeps its "
-                             "output with the rejection; with --as, EVIDENCE:ID=REASON withdraws this author's invalid observation")
+                        help="the lead closes a map item or final finding it rejects: the workflow runs the command once and, when it "
+                             "exits 0, keeps its output with the rejection; with --as, EVIDENCE:ID=REASON withdraws this author's invalid observation")
     parser.add_argument("--retire", action="append", default=[], metavar="CASE_KEY",
                         help="with --as and a finding probe: the retained key shown in readiness, or an unproved map item id")
     parser.add_argument("--change", action="append", default=[], help="with --as: probe=FILE supplies a behavior-breaking diff for the authored probe; a bare FILE submits an authored replacement")
@@ -1800,22 +1802,25 @@ def _run_tdd(values: list[str], *, added: frozenset[str] = frozenset(), details:
     inventory = _probe_files([], identity, args.support or []) if specs or drafted else None
     refused, asked = [], []
     for identifier, value in dict.fromkeys([*specs, *drafted]):
+        entry = captured = None
         try:  # a case that cannot be captured or prepared is refused alone; the rest of the call is recorded
+            entry = behavior_map.item(items, identifier) if identifier else None
             if identifier in added and (script := behavior_map.script_operand(value, shells=True)) and not script.startswith(PROBES) \
                     and not os.path.lexists(Path(identity.root) / script):
                 raise ValueError(script + " does not exist")  # an added item's probe: the case is not run
-            entry = behavior_map.item(items, identifier) if identifier else None
             captured = _probe_capture(identity, {"command": value, **({"path": args.path} if args.path else {})},
                                       candidate, args.timeout or MAX_CASE_SECONDS, args.support, inventory, original if entry and entry.get("kind") == "preservation" else None)
             _comparison_input(identity, captured)
         except (ValueError, RuntimeError) as exc:
             refused.append({"case": value, "refused": str(exc)})
+            captured = None
+        if (identifier, value) in drafted and (captured or identifier in added):  # captured, or an added item's case turned away
+            entry["cases"] = [other for other in entry["cases"] if other != value]
+            if not entry["cases"]:
+                del entry["cases"]
+        if captured is None:
             continue
         if entry is not None:
-            if (identifier, value) in drafted:
-                entry["cases"] = [other for other in entry["cases"] if other != value]
-                if not entry["cases"]:
-                    del entry["cases"]
             prior = entry.get("comparison") or {}
             references = prior.get("caseRuns")
             if not references:
@@ -1877,6 +1882,9 @@ def _run_tdd(values: list[str], *, added: frozenset[str] = frozenset(), details:
     released = []
     for (entry, _), run in zip(selected, compared):
         if entry is not None:
+            if entry["id"] in added and any(arm["outcome"] == "incomplete" for arm in run["arms"]):
+                refused.append({"case": run["command"], "refused": "an advisor-added case did not finish on both sources"})
+                continue
             prior = entry.get("comparison") or {}
             references = prior.get("caseRuns")
             if not references:
@@ -1891,14 +1899,6 @@ def _run_tdd(values: list[str], *, added: frozenset[str] = frozenset(), details:
             behavior_map.retain_evaluation(items, {entry["id"]}, evaluation, runs, retired)
     for entry, run in released:  # again on this call's results: a later rerun of another item can bind the command again
         behavior_map.release(items, entry, run, runs)
-    # An item the approving consult added stays only if it declares a case and each of them ran on both sources here.
-    turned = {entry["id"]: {"id": entry["id"], "cases": []} for entry in items if entry["id"] in added and (
-        not any(identifier == entry["id"] for identifier, _ in drafted)
-        or any(row["case"] == value for identifier, value in drafted if identifier == entry["id"] for row in refused)
-        or any(owner is entry and arm["outcome"] == "incomplete" for (owner, _), run in zip(selected, compared) for arm in run["arms"]))}
-    if turned:
-        items = [entry for entry in items if entry["id"] not in turned]
-        evaluation = {name: frozen for name, frozen in evaluation.items() if frozen["id"] not in turned}
     for frozen in evaluation.values() if indexes else ():
         if behavior_map.case_key(frozen["id"], runs[frozen["runIndex"]]) not in retired:
             frozen["runIndex"] = indexes.get(frozen["runIndex"], frozen["runIndex"])
@@ -1947,7 +1947,8 @@ def _run_tdd(values: list[str], *, added: frozenset[str] = frozenset(), details:
     cases = behavior_map.current_cases(items, runs, retired)
     frozen_cases = [{**frozen, "comparison": runs[frozen["runIndex"]]} for frozen in evaluation.values()
                     if behavior_map.case_key(frozen["id"], runs[frozen["runIndex"]]) not in retired]
-    conditions = _condition_traces(identity, original, candidate, [*cases, *frozen_cases], (current or {}).get("conditions") or {}, state.get("preflightEvidence"))
+    conditions = _condition_traces(identity, original, candidate, [case for case in [*cases, *frozen_cases] if case["id"] not in rejected],
+                                   (current or {}).get("conditions") or {}, state.get("preflightEvidence"))
     selected_only = bool(args.behavior_id)
     reused = bool(current and len(runs) == len(current.get("runs", [])) and signature == json.dumps(items, sort_keys=True)
                   and frozen_signature == json.dumps(evaluation, sort_keys=True) and conditions == (current.get("conditions") or {}))
@@ -1963,16 +1964,10 @@ def _run_tdd(values: list[str], *, added: frozenset[str] = frozenset(), details:
         state, evidence, readiness = commit_tdd(identity, slug, workflow_id, document,
                     expected_evidence_id=state.get("tddEvidence"), tree_before=before, selected_only=selected_only)
     rows, baseline = [], candidate == original  # before any edit the candidate is the original: a map item's case is expected to behave as on it
-    owners = {value: turned[identifier]["cases"] for identifier, value in drafted   # a turned-away item's refusals are its own
-              if identifier in turned and not any(other == value and owner not in turned for owner, other in drafted)}
-    for row in refused:
-        if row["case"] in owners:
-            owners[row["case"]].append(row)
-    refused = [row for row in refused if row["case"] not in owners]
     bound = {case["comparison"]["runIndex"] for case in cases}  # a run its item no longer binds, a moved case's, gets no row
     reported = {run["runIndex"]: (entry, run) for (entry, probe), run in zip(selected, compared)
                 if all(latest[retiring[done["caseKey"]]] is not run for done in gone)
-                and (entry is None or entry["id"] in turned or run["runIndex"] in bound)}
+                and (entry is None or run["runIndex"] in bound)}
     edited = {name for name in _changed_entries(identity, original, candidate) if is_test_path(name)}
     # A row for each case the call names and each recorded case that does not hold on this candidate; the rest are counted.
     called = {run["runIndex"] for (_, probe), run in zip(selected, compared) if args.behavior_id or any(probe is other for other in asked)}
@@ -2001,13 +1996,13 @@ def _run_tdd(values: list[str], *, added: frozenset[str] = frozenset(), details:
                 "; one stating kept behaviour runs the current " + ", ".join(read) + " with " + " ".join("--support " + name for name in read) if read else "")
         if errors:
             row["unexpected"] = errors
-        if (away := entry is not None and entry["id"] in turned) or errors or run.get("bindingError") or index in called:
-            (turned[entry["id"]]["cases"] if away else rows).append({"case": shown(identity, state, run), **row})
+        if errors or run.get("bindingError") or index in called:
+            rows.append({"case": shown(identity, state, run), **row})
             listed.add(index)
     receipt = operation_receipt(state, identity, kind="tdd", summaryId=evidence, readiness=readiness, obligations=not selected_only,
                                 cases=[*rows, *refused], otherCases=len(recorded.keys() - listed), **({"retired": [done["caseKey"] for done in gone]} if gone else {}),
                                 **({"unmatched": missing} if (missing := [key for key in dict.fromkeys(args.retire) if key not in retiring]) else {}),
-                                **({"turnedAway": list(turned.values())} if turned else {}), **(details or {}))
+                                **(details or {}))
     _emit_json(receipt)
     # 2: a case was refused or its comparison is not bound to the candidate. 1: every case ran and one does not hold, which
     # the command line returns as a result.
@@ -2051,22 +2046,20 @@ def _advisor_added(identity: RepoIdentity, state: JsonObject) -> list[str]:
 
 
 def _reject(identity: RepoIdentity, state: JsonObject, requests: list[list[str]]) -> JsonObject:
-    """The lead's rejection of an advisor-added map item, a final finding or, once the pass has a final verdict, an open
-    removed-condition line by the id it names: the workflow runs its one command once, in the checkout, and keeps the
-    output with it. Without a command, or when the command does not finish, the target stays open."""
+    """The lead's rejection of an advisor-added map item or a final finding by the id it names: the workflow runs its one
+    command once, in the checkout, and keeps the output with it. Without a command, or unless the command exits 0, the
+    target stays open."""
     from .command_runner import _tail
     from .workflow_state import commit_rejections
     added = _advisor_added(identity, state)
     items = {entry["id"]: entry for entry in current_map(identity, state, fresh=False)[0] or [] if entry["id"] in added}
     findings = {ref["id"]: entry for entry in state.get("findingStates", []) if entry["stage"] == "final"
                 for ref in ({"id": entry["findingId"]}, *entry.get("observations", []))}
-    lines = {match[1]: line.split(": the change assumes", 1)[0] for line in _readiness_lines(identity, state)["open"]
-             if (match := re.search(r"--reject (\S+) 'COMMAND'", line))} if state.get("finalStarted") else {}
     records, rows = [], []
     for target, *words in requests:
         command = shlex.join(words) if len(words) > 1 else next(iter(words), None)
-        if target not in items and target not in findings and target not in lines:
-            rows.append({"target": target, "open": "no advisor-added map item, final finding or open removed-condition line after a final verdict has this id"})
+        if target not in items and target not in findings:
+            rows.append({"target": target, "open": "no advisor-added map item or final finding has this id"})
             continue
         target = findings[target]["findingId"] if target in findings else target
         if not (command or "").strip():
@@ -2079,9 +2072,12 @@ def _reject(identity: RepoIdentity, state: JsonObject, requests: list[list[str]]
         if code is None or timed_out:
             rows.append({"target": target, "command": command, "open": f"the command did not finish: {_tail(raw)[-300:]}"})
             continue
-        claim = items[target]["behavior"] if target in items else lines[target] if target in lines else next((finding["claim"] for finding in (evidence_document(
+        if code:
+            rows.append({"target": target, "command": command, "open": f"the command exited {code}: {_tail(raw)[-300:]}"})
+            continue
+        claim = items[target]["behavior"] if target in items else next((finding["claim"] for finding in (evidence_document(
             identity, findings[target]["intakeEvidenceId"], restore_runs=False) or {}).get("findings", []) if finding["id"] == target), "")
-        records.append({"target": target, "kind": "item" if target in items else "condition" if target in lines else "finding", "claim": claim,
+        records.append({"target": target, "kind": "item" if target in items else "finding", "claim": claim,
                         "command": command, "exitCode": code, "output": _tail(raw)})
     if records:
         state = commit_rejections(identity, str(state["slug"]), str(state["workflowId"]), records)

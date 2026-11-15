@@ -21,7 +21,7 @@ jump from Repo Context Forge straight to edits.
 failures, flaky behavior, and performance regressions.
 
 Docs-only work creates no workflow or slug. Verify checkout/branch, inspect files
-directly, edit minimally, clean up, run diff checks, and after any required review
+directly, edit minimally, clean up, run diff checks, and after any required review,
 commit, then push and open/update the PR when a remote exists. Skip Repo Context Forge
 and GitNexus. Governance docs that change agent behavior (`AGENTS.md`,
 `CLAUDE.md`, `docs/agents/`) also require independent `$code-review` before
@@ -57,7 +57,7 @@ Repo Context Forge analysis copy. For codex-skills installation, follow
 ## Simplicity First
 
 - Performance is a requirement. Ask what the change costs the person using it: they demand bare-metal performance
-  with the required behavior and no regressions. Setting performance improvements aside needs a measured reason.
+  with the required behavior and no regressions. Build every demonstrated improvement that keeps required behavior; skip one only when measured to cost more than it saves.
 - Assume your first implementation is bloated. Find the best justified whole-system design for the objective, including production code,
   tests, scripts, documentation, maintenance and execution; keep only what it needs while preserving required behavior and proof. Retain real
   attack probes; cut redundant scaffolding and mocked unit-test bloat from this change.
@@ -66,7 +66,7 @@ Repo Context Forge analysis copy. For codex-skills installation, follow
 - Preserve required behavior and proof. Every changed line must serve the request
   or lower the whole-system cost of code the change touches.
 
-## Surgical Changes
+## Root-Cause Changes
 
 - Match existing style. Code the change edits or its requested operation runs
   through is in scope: refactor or optimize inefficient, duplicated or dead code

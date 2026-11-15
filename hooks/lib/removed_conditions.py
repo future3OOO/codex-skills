@@ -161,33 +161,27 @@ def _truth(node: ast.expr, known: dict[str, bool]) -> bool | None:
 
 
 def clears(case: JsonObject, approved: list[JsonObject]) -> bool:
-    """Whether a case that decides a removed operand clears it: it passes on the original, where its own line holds the
-    candidate to that result, or its item is a change the approved preflight states (`approved`, that preflight's items),
-    with the same behavior, Seam and expected result. Any other is a change declared after preflight."""
-    return behavior_map.original_outcome(case["comparison"]) == "passed" or any(
+    """Whether a case that decides a removed operand clears it: it passes on both versions, or its item is a change the
+    approved preflight states (`approved`, that preflight's items), with the same behavior, Seam and expected result."""
+    return behavior_map.original_outcome(case["comparison"]) == "passed" == case["comparison"]["arms"][-1]["outcome"] or any(
         item["id"] == case["id"] and item.get("kind") != "preservation" and behavior_map.obligation(item)[1:] == behavior_map.obligation(case)[1:]
         for item in approved)
 
 
 def unsettled(decisions: list[JsonObject], traces: list[JsonObject | None], cases: list[JsonObject],
-              approved: list[JsonObject], rejected: set[str] | None = None) -> tuple[list[str], list[str]]:
+              approved: list[JsonObject]) -> tuple[list[str], list[str]]:
     """The open lines of the removed operands no recorded case clears: those no case decides, then those only uncleared
     cases decide. A case decides an operand when its original run evaluates it at its deciding value and the paired
     candidate decision, on the values that run observed, is not known to agree with the original; it clears it by `clears`.
     `traces` holds the evaluations of each of `cases` by decision id; None is a run the tracer could not observe; a case
     not yet traced has no evaluations. An operand no case decides opens no line when every run was unobservable. One only
-    uncleared cases decide is a change declared after preflight, which settles nothing. `rejected` is None before the
-    pass's first final verdict; after it, the lines the lead rejected, by FILE:LINE:COLUMN of the operand, stay closed
-    and an open line names its own."""
+    uncleared cases decide settles nothing. No rejection closes a line."""
     undecided, declared = [], []
     cut = lambda text: text if len(text) <= 160 else text[:159] + "…"
     for decision in decisions:
         test, match = (ast.parse(str(decision[key]), mode="eval").body for key in ("test", "match"))
         spans = {tuple(node[:4]): (node[4], node[5]) for node in decision["nodes"]}
         for operand in decision["removed"]:
-            name = f"{decision['file']}:{operand['line']}:{operand['column']}"
-            if name in (rejected or ()):
-                continue
             node, deciders = ast.parse(str(operand["operand"]), mode="eval").body, []
             for case, trace in zip(cases, traces):
                 for evaluation in (trace or {}).get(decision["id"]) or ():
@@ -206,13 +200,11 @@ def unsettled(decisions: list[JsonObject], traces: list[JsonObject | None], case
                 deciders.append(str(case["id"]))
             else:
                 where = f"it {str(operand['value']).lower()} on the original where the candidate's `{cut(decision['match'])}` is not known to decide the same"
-                line = (f"removed condition {decision['file']}:{operand['line']} `{cut(operand['operand'])}`: the change assumes that removing it loses "
-                        "no result the request keeps. " + (f"Only {', '.join(dict.fromkeys(deciders))}, declared after the approved preflight, makes {where}, "
-                        "which settles nothing. " if deciders else "") + f"One case settles that: its input makes {where} (no other input counts) and it "
-                        "asserts the result on both versions. Passing on both, it closes this line; passing on the original and failing on the candidate, "
-                        "it shows a kept result lost: the premise is wrong and the condition goes back." + ("" if rejected is None else
-                        " This line opened during a repair: such a lost result is the reason to reject the finding that asked for the removal; where no "
-                        f"input can settle the line, --reject {name} 'COMMAND' closes it with that command's recorded output."))
+                line = (f"removed condition {decision['file']}:{operand['line']} `{cut(operand['operand'])}` of `{cut(decision['test'])}`: the change "
+                        "assumes that removing it loses no result the request keeps. " + (f"Only {', '.join(dict.fromkeys(deciders))} makes {where}, "
+                        "without passing on both versions, which settles nothing. " if deciders else "") + f"One case settles that: its input makes "
+                        f"{where} (no other input counts) and it asserts the result on both versions. Passing on both, it closes this line; without "
+                        "such a case, restore the condition.")
                 if deciders:
                     declared.append(line)
                 elif not (traces and all(trace is None for trace in traces)):

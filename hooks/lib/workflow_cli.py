@@ -394,7 +394,7 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
             emit(_receipt(state, identity, evidenceId=evidence_id, status="passed", **edits))
             return 0
         from .tdd_workflow import _run_tdd
-        # The draft's declared cases run now: one receipt, which turns away an added item whose commands did not run there.
+        # The draft's declared cases run now: one receipt, which turns away an added item's case that cannot run there.
         return _run_tdd(["--repo", str(identity.root), "--slug", slug, "--workflow-id", workflow_id],
                         added=frozenset(intake.get("added", ())), details=edits) & 2
     if args.kind == "tdd-map":
