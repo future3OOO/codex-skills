@@ -57,7 +57,7 @@ regressions and performance failures before choosing a correction.
 ### 3. Packet-scoped GitNexus
 
 The bootstrap already ran and recorded the packet's graph checks. Before editing, run
-AGENTS.md's GitNexus checks on what you will change; after editing, its change check.
+AGENTS.md's GitNexus checks on what the packet's rows leave unanswered.
 
 ### 4. Draft and advisor review
 

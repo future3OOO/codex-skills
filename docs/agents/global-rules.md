@@ -102,15 +102,13 @@ reviewer/check event and repeat the reviewer re-query below before merging.
 
 ## GitNexus
 
-Use FFF first for raw discovery; honor packet scope. Follow `$repo-context-forge` for repo selection
-and post-edit validation.
+Use FFF first for raw discovery; honor packet scope. Follow `$repo-context-forge` for repo selection.
 
-Start from the packet's rows. Before edits, run `impact` with tests on any symbol you change
-(downstream too when moving, deepening, consolidating or hiding behavior) and query its callers,
-callees, shared-state writers and their risk, and the tested owner of an internal Seam a new
-file consumes; after edits, the change check. Use the packet's exact call forms; never list,
-search or print tool definitions. One relationship: a scoped `cypher` query. Never print raw graph
-output whole.
+The packet's rows give the callers, callees and upstream impact of the symbols they list. Before editing any
+other symbol, run `impact` with tests on it. Query only what no row answers: downstream impact of a symbol you
+delete, move, deepen, consolidate or hide behavior in; shared-state writers and their risk; and the tested owner
+of an internal Seam a new file consumes. Use the packet's exact call forms; never list, search or print tool
+definitions. One relationship: a scoped `cypher` query. Never print raw graph output whole.
 
 Never use `detect_changes` to select initial targets or as primary safety proof.
 Graph output must not shrink packet scope, the PR contract, or no-change surfaces.
