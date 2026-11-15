@@ -40,7 +40,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ~/.codex/hooks/skill-discipline-rearm.py",
+            "command": "python3 \"${CODEX_HOME:-$HOME/.codex}\"/hooks/skill-discipline-rearm.py",
             "timeout": 15
           }
         ]

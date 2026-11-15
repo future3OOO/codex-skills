@@ -432,7 +432,7 @@ def _retire_sessions(root: Path, retired: dict[str, str], pinned: set[str], appl
 
 
 def _retire_associations(root: Path, apply: bool) -> list[dict[str, str]]:
-    """Session-association markers left by the retired writer follow their repository's liveness.
+    """Session-association markers follow their repository's liveness.
 
     Each sessions/<session>/<key>.json embeds the repository identity its
     writer recorded; a confirmed-absent root retires the marker, anything

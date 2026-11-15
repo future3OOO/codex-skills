@@ -25,7 +25,7 @@ def _install(decisions: list, out_path: str) -> None:
     seen: dict = {decision["id"]: Counter() for decision in decisions}
 
     def close(key) -> None:
-        names, jumps, inputs = evaluating.pop(key)
+        names, jumps, inputs, _ = evaluating.pop(key)
         seen[key[0]][tuple(sorted(names.items())), tuple(sorted(jumps.items())), inputs] += 1
 
     def branch(code, offset, destination):
@@ -47,18 +47,22 @@ def _install(decisions: list, out_path: str) -> None:
             return sys.monitoring.DISABLE
         frame = sys._getframe(1)
         sampled = {}
+        following = instructions[code].get(destination)
+        end = following and following.positions
         for decision in inside:
             key = (decision["id"], id(frame))
-            if key in evaluating and where in evaluating[key][1]:
+            if key in evaluating and offset <= evaluating[key][3]:
                 close(key)
             if key not in evaluating:
-                names = tuple(decision["names"])
+                names = (tuple(decision["names"]), tuple(decision["inputs"]))
                 if names not in sampled:
                     local, global_ = frame.f_locals, frame.f_globals
                     values = {name: local.get(name, global_.get(name)) for name in decision["names"] if name in local or name in global_}
                     inputs = []
-                    for name, value in values.items():
-                        encoded = None
+                    for name in decision["inputs"]:
+                        if name not in values:
+                            continue
+                        value, encoded = values[name], None
                         pending, visited = [value], set()
                         while pending:
                             child = pending.pop()
@@ -84,8 +88,14 @@ def _install(decisions: list, out_path: str) -> None:
                     sampled[names] = ({name: bool(value) for name, value in values.items() if id(type(value)) in SAMPLED},
                                        hashlib.sha256(marshal.dumps(inputs, 2)).hexdigest())
                 values, inputs = sampled[names]
-                evaluating[key] = (values, {}, inputs)
+                evaluating[key] = [values, {}, inputs, offset]
             evaluating[key][1][where] = (JUMPS[item.opname], destination == item.argval)
+            evaluating[key][3] = offset
+            if end and end.lineno is not None and not (
+                (decision["span"][0], decision["span"][2]) <= (end.lineno, end.col_offset)
+                and (end.end_lineno, end.end_col_offset) <= (decision["span"][1], decision["span"][3])
+            ):
+                close(key)
         return None
 
     def dump() -> None:

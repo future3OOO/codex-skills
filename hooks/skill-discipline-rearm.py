@@ -44,11 +44,12 @@ def main() -> int:
                 candidate = _active_candidate_tree(identity)
                 # Summary is deliberately truncated; the complete state and live candidate decide sameness.
                 fingerprint = hashlib.sha256(json.dumps([state, candidate], sort_keys=True).encode()).hexdigest()
-                record = state_root() / "_stops" / (hashlib.sha256(session.encode()).hexdigest() + ".json")
-                if read_json(record) == {"fingerprint": fingerprint}:
+                record = state_root() / "sessions" / hashlib.sha256(session.encode()).hexdigest() / f"{identity.key}.json"
+                marker = {"repo": identity.as_dict(), "fingerprint": fingerprint}
+                if read_json(record) == marker:
                     return 0
                 context = summary(identity, labels=False)
-                atomic_write_json(record, {"fingerprint": fingerprint})
+                atomic_write_json(record, marker)
                 print(json.dumps({"decision": "block", "reason": context + "\nCode is truth: wording about behavior the request keeps summarizes the original code, so the original's result stands."}))
                 return 0
             if identity is None:
