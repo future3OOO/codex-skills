@@ -391,7 +391,8 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
                 preflight_file=str(Path(args.input).resolve()) if args.input and args.input != "-" else None)})
             return 2
         edits = {"draftEdits": intake["draftEdits"]} if intake.get("draftEdits") else {}
-        emit(_receipt(state, identity, evidenceId=evidence_id, status="passed", **edits))
+        emit(_receipt(state, identity, evidenceId=evidence_id, status="passed",
+                      obligations=not all(item.get("cases") and not behavior_map.readings_unsettled(item) for item in document["behaviorMap"]), **edits))
         return 0
     if args.kind == "tdd-map":
         from .tdd_workflow import map_update
