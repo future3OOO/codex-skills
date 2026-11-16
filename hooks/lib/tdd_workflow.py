@@ -605,7 +605,7 @@ def _execute_tree(identity: RepoIdentity, source_tree: str, prepared,
             _restore_case(state, before)
 
 
-def _after(previous, identity, source, prepared, *arguments, derived=False, first=False, passing=None):
+def _after(previous, identity, source, prepared, *arguments, derived=False, first=False, passing=None, observe=None):
     state, frozen = prepared
     owner = state.get("owner", state)
     if previous is not None:
@@ -625,6 +625,7 @@ def _after(previous, identity, source, prepared, *arguments, derived=False, firs
             index.parent.mkdir(parents=True, exist_ok=True)
             _git(RepoIdentity(CanonicalRoot(str(origin["root"])), identity.key), "read-tree", "--index-output=" + str(index), source,
                  env={"GIT_INDEX_FILE": str(index), "GIT_ALTERNATE_OBJECT_DIRECTORIES": os.pathsep.join(original for original, _ in arguments[-1])})
+        arguments = (*arguments[:-1], (*arguments[-1], observe[1:])) if observe else arguments
         return _execute_tree(identity, source, (private, frozen), *arguments, restore=first and state["wait"], passing=passing)
 
 
@@ -1298,7 +1299,7 @@ def _comparison_input(identity: RepoIdentity, probe: JsonObject) -> tuple[list[s
                  "search": os.pathsep.join(os.path.join(identity.root, entry) for entry in os.get_exec_path(environment)),
                  "lookup": command[0] if not os.path.dirname(command[0]) else None,
                  "environment": hashlib.sha256(json.dumps(sorted(environment.items())).encode()).hexdigest()}
-    return command, execution, environment
+    return command, execution | {"observe": probe["observe"]} if "observe" in probe else execution, environment
 
 
 def _growth(execution):
@@ -1367,7 +1368,7 @@ def _memory_available() -> int:
 @_comparison_scope()
 def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes: list[JsonObject],
                   runs: list[JsonObject], *, challenge: bool = True, passing_original: bool = False) -> list[JsonObject]:
-    """One execution/cache owner. Each command has its own two exit results."""
+    """One execution/cache owner. observe probes run one source; ordinary probes compare two."""
     probes = [{**probe, "timeout": min(MAX_CASE_SECONDS, probe["timeout"])} for probe in probes]
     scope = _EXECUTION.get()
     cache = {}
@@ -1435,7 +1436,7 @@ def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes:
                 previous = scope["first"].get(root_key) if state["wait"] and size is None else None
                 _require_overlay(_executable(identity, "bwrap", environment))
                 execute = partial(_after, previous, identity, source, (state, frozen), command, timeout, environment, scope["cancel"],
-                                  derived=bool(parent), passing=passing,
+                                  derived=bool(parent), passing=passing, observe=probe.get("observe"),
                                   first=size is None and not parent and root_key not in scope["first"])
                 pending[pending_key] = scope["pool"].submit(execute, scope["memory"], tuple(scope["objects"].items()))
                 if not parent:
@@ -1456,7 +1457,7 @@ def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes:
         for size in sizes[:2] if sizes else (None,):
             value = [arg.replace("{size}", str(size)) for arg in command] if size is not None else command
             mounted_sets.append(value)
-            for source in (original, candidate):
+            for source in (probe["observe"][0],) if "observe" in probe else (original, candidate):
                 contexts[_execution_key(identity, source, tree, _comparison_files(identity, probe), value, probe["timeout"], execution)] = execution
         oid = probe.get("breakOid")
         control = None
@@ -1501,8 +1502,9 @@ def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes:
                 if sizes else [(good := schedule(first, probe, prepared)), schedule(last, probe, prepared, parent, passing=good[2] if parent else None)])
     for probe, tree, prepared, control in plans:
         execution = prepared[1]
-        selected = selections(original, candidate, probe, prepared)
-        jobs.append((probe, tree, execution, selected, original, candidate))
+        before, after = (probe["observe"][0],) * 2 if "observe" in probe else (original, candidate)
+        selected = [schedule(before, probe, prepared)] if "observe" in probe else selections(before, after, probe, prepared)
+        jobs.append((probe, tree, execution, selected, before, after))
     # A case out of time or memory beside other cases runs each incomplete arm alone with all available memory.
     # Only its own run is held to the limit. Every case has ended before the first such run starts.
     cases, again = {case for _, case in alone.values()}, {}
@@ -1550,42 +1552,43 @@ def _compare(identity: RepoIdentity, original: str, candidate: str, probe: JsonO
 
 def _condition_traces(identity: RepoIdentity, original: str, candidate: str, cases: list[JsonObject], retained: JsonObject,
                       preflight: str | None) -> JsonObject:
-    """Each recorded case's evaluations of the decisions the candidate removes operands from, by original arm. Retained
-    traces answer first; only while an operand stays uncleared do untraced cases run once more on the original under
-    the tracer, those that can clear one first and then cheapest first, in pool-sized groups, as executions of their own
-    so no recorded arm or timing changes. Once every operand is decided, only cases that can clear one still run. Cases
-    that share an execution share its trace, and it can clear when any of them can (`preflight` holds the approved items).
-    None marks a run the tracer could not observe."""
+    """Cache each source execution independently; retain originals through the pass.
+    Trace missing decisions in clearing/cheap batches. None means an unobservable run."""
     decisions = removed_conditions.removed(identity, original, candidate)
     cases = [case for case in cases if case["comparison"].get("arms") and not _growth(case["comparison"]["execution"])]
-    keys = [case["comparison"]["arms"][0]["key"] for case in cases]
-    runs = {key: case["comparison"] for key, case in zip(keys, cases)}
-    traces = {key: retained[key] for key in runs if key in retained}
+    runs = {(side, case["comparison"]["arms"][index]["key"]): case["comparison"]
+            for case in cases for side, index in enumerate((0, -1))}
+    traces = [dict(retained.get("original", {})), {key: value for key, value in retained.get("candidate", {}).items() if (1, key) in runs}]
     approved = behavior_map.recorded_map(None, evidence_document(identity, preflight)) or [] if decisions else []
-    clearing = {key for key, case in zip(keys, cases) if removed_conditions.clears(case, approved)}
-    pending = sorted((key for key in runs if traces.get(key, {}) is not None
-                      and any(decision["id"] not in traces.get(key, {}) for decision in decisions)),
-                     key=lambda key: (key not in clearing, runs[key]["arms"][0]["timing"]["executionSeconds"]))
+    clearing = {(side, case["comparison"]["arms"][index]["key"]) for case in cases if removed_conditions.clears(case, approved)
+                for side, index in enumerate((0, -1))}
+    pending = sorted((key for key in runs if traces[key[0]].get(key[1], {}) is not None
+                      and any(decision["id"] not in traces[key[0]].get(key[1], {}) for decision in decisions)),
+                     key=lambda key: (key not in clearing, runs[key]["arms"][0]["timing"]["executionSeconds"], runs[key]["command"]))
     width = min(len(os.sched_getaffinity(0)), 8)
     while pending:
-        undecided, declared = removed_conditions.unsettled(decisions, [traces.get(key, {}) for key in keys], cases, approved)
+        undecided, declared = removed_conditions.unsettled(decisions, traces, cases, approved)
         group = pending[:width] if undecided else [key for key in pending[:width] if key in clearing] if declared else []
         if not group:
             break
         pending = pending[len(group):]
         with tempfile.TemporaryDirectory(prefix="workflow-conditions-") as directory:
-            shutil.copy(Path(__file__).with_name("condition_trace.py"), Path(directory, "sitecustomize.py"))
-            Path(directory, "conditions.json").write_text(json.dumps(decisions), encoding="utf-8")
-            path = os.pathsep.join(filter(None, (directory, os.environ.get("PYTHONPATH"))))
-            probes = [{**runs[key], "command": shlex.join(["PYTHONPATH=" + path, *(
-                f"PYTHONPATH={directory}{os.pathsep}{arg[11:]}" if arg.startswith("PYTHONPATH=") else arg
-                for arg in shlex.split(runs[key]["command"]))])} for key in group]
-            for key, run in zip(group, _compare_many(identity, original, original, probes, [], challenge=False)):
+            observer = (_EXECUTION.get().get("cache_root") or _EXECUTION.get()["root"]) / "conditions"
+            observer.mkdir(parents=True, exist_ok=True)
+            for side in {side for side, _ in group}:
+                target = Path(directory, str(side)); target.mkdir()
+                shutil.copy(Path(__file__).with_name("condition_trace.py"), target / "sitecustomize.py")
+                (target / "conditions.json").write_text(json.dumps([decision["sides"][side] for decision in decisions]), encoding="utf-8")
+            probes = [{**runs[side, key], "observe": ((original, candidate)[side], f"{directory}/{side}", str(observer)), "command": shlex.join([
+                "PYTHONPATH=" + os.pathsep.join(filter(None, (str(observer), os.environ.get("PYTHONPATH")))),
+                *(f"PYTHONPATH={observer}{os.pathsep}{arg[11:]}" if arg.startswith("PYTHONPATH=") else arg
+                  for arg in shlex.split(runs[side, key]["command"]))])} for side, key in group]
+            for (side, key), run in zip(group, _compare_many(identity, original, candidate, probes, [], challenge=False)):
                 seen = run["arms"][0].get("conditions")
-                traces[key] = None if seen is None else {decision["id"]: [evaluation for line in seen for evaluation in line.get(decision["id"], [])]
-                                                         for decision in decisions}
-    return traces
-
+                traces[side][key] = traces[side].get(key) if seen is None else (
+                    {decision["id"]: [evaluation for line in seen for evaluation in line.get(decision["sides"][side]["id"], [])]
+                     for decision in decisions} | (traces[side].get(key) or {}))
+    return dict(zip(("original", "candidate"), traces))
 
 @interruptible()
 @_comparison_scope()
