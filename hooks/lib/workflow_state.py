@@ -882,7 +882,7 @@ def _register_finding_intake(
             observed = next((finding for finding in (document or {}).get("findings", []) if finding["id"] == prior.get("id")), None)
             if (not document or document.get("workflowId") != state["workflowId"]
                     or any(document.get(key) != intake.get(key) for key in ("stage", "producer"))
-                    or not observed or not ("probe" in observed or "change" in observed or observed.get("retires"))
+                    or not observed or not ("probe" in observed or "change" in observed or observed.get("retires") or observed.get("recapture"))
                     or "probe" in item or "change" in item or not str(item.get("claim") or "").strip()):
                 raise WorkflowError("withdrawal must name this author's recorded executable observation and its reason")
             intakes[str(prior["evidenceId"])] = document
@@ -939,7 +939,8 @@ def _register_finding_intake(
         if len(matches) > 1:
             raise WorkflowError("ambiguous finding identity; reference an existing finding with priorFinding")
         prior = latest[next(iter(matches))] if matches else None
-        if prior and prior.get("status") in LIVE_FINDING:
+        joining = bool(prior and (prior.get("status") in LIVE_FINDING or item.get("recapture")))
+        if joining:
             reference = str(prior["intakeEvidenceId"])
             if (prior["findingId"] != item["id"]
                     or any(prior.get(k) != intake.get(k) for k in ("producer", "stage"))
@@ -949,7 +950,7 @@ def _register_finding_intake(
             prior["material"] = prior["material"] or item["material"]
             if item["kind"] == "behavioral":
                 prior["kind"] = "behavioral"
-            pending.append((prior, item, any(all(finding.get(k) == item.get(k) for k in ("id", "claim", "kind", "material", "probe", "change", "retires"))
+            pending.append((prior, item, any(all(finding.get(k) == item.get(k) for k in ("id", "claim", "kind", "material", "probe", "change", "retires", "recapture"))
                        and all(document.get(k) == intake.get(k) for k in ("producer", "stage"))
                        for root, ref, document, finding in observed
                        if (str(root["evidenceId"]), str(root["id"])) in matches)))
@@ -966,7 +967,7 @@ def _register_finding_intake(
                 root = next(iter(matches))
                 entry["canonicalFinding"] = {"evidenceId": root[0], "id": root[1]}
             finding_states.append(entry)
-        current = prior if prior and prior.get("status") in LIVE_FINDING else entry
+        current = prior if joining else entry
         root = current.get("canonicalFinding") or {
             "evidenceId": current["intakeEvidenceId"], "id": current["findingId"],
         }
@@ -1655,7 +1656,7 @@ def _derived_readiness(identity: RepoIdentity, state: JsonObject, items: list[Js
     review = review if review is not None else evidence_document(identity, state.get("codeReviewEvidence"))
     current = bool(review and review.get("workflowId") == state["workflowId"] and review.get("candidateTree") == candidate and review.get("verdict") == "complete" and not _stage_unresolved(state, "code-review", "code-review"))
     return {"open": cases, "reviewCurrent": current, "openCount": len(cases),
-            "never": behavior_map.never_compared(items)}
+            "never": [str(entry["id"]) for entry in items if not (entry.get("comparison") or {}).get("arms")]}
 
 def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObject | None = None, *,
                    preflight_file: str | None = None, obligations: bool = True) -> JsonObject:

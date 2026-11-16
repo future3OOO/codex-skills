@@ -14,7 +14,7 @@ Reuse their existing batch and workflow review; add no approval stage.
 
 Record required outcomes, affected preserved behavior and a finite time/step
 budget. Reproduce through the real production Interface with real collaborators
-and the caller's setup. Recorded real output of the failure is a reproduction; otherwise prefer a direct, fast probe or captured replay. When only
+and the caller's setup. A source-bound capture of the real failure is a reproduction; otherwise prefer a direct, fast probe or captured replay. When only
 a human can act, specify exact steps and retain captured evidence. Missing
 observations, setup failures and harness timeouts are UNKNOWN; an observed breach
 of a specified product deadline is FAIL. Without reproduction, report unresolved.

@@ -487,7 +487,8 @@ def _dispatch(args: argparse.Namespace) -> int:
                                   expected_candidate_tree=_active_candidate_tree(identity)), identity))
     elif args.command == "checkpoint":
         if args.channel_dir:  # a consult is about to read the projection
-            refresh_context(identity)
+            for line in refresh_context(identity):
+                print(line, file=sys.stderr)
             if args.phase != "preflight-advice":
                 with redirect_stdout(sys.stderr):
                     _verify(parser().parse_args(["verify", "--repo", str(identity.root)]), identity, review=True)

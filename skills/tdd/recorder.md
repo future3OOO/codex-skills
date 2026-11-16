@@ -11,7 +11,7 @@ with it, as is a temporary path the command or that file names; `--path` or `--s
 another beside it. A `--case` call runs the cases it names and any recorded case still without accepted proof, captures any command an item still
 declares and judges the rest of the map as recorded, without running it; a bare call captures those too, replays every recorded command and,
 when all hold and nothing is open, verifies.
-A declaration that cannot be prepared stays open; follow its correction call with the corrected command; a failing case is a row, not a failed call. `record tdd-map --input`
+A declaration that cannot be prepared stays open; put the corrected command in its returned `tdd --correct` call; a failing case is a row, not a failed call. `record tdd-map --input`
 takes the map change itself, `items` (only the changed fields), `added` and `removed`, alone or together:
 `{"items":[{"id":"BM_X","expected":"..."}],"removed":["BM_Y"]}`. The receipt gives continuation, failures and evidence access.
 The runner owns source preparation and reuse; do not repeat them.

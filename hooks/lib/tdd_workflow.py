@@ -965,7 +965,7 @@ UNBROKEN = "probe did not fail under its behavior break; supply --change probe=F
 def _run_probe(identity: RepoIdentity, probe: object, candidate: str, original: str | None,
                timeout: float = MAX_CASE_SECONDS, cached: list[JsonObject] | None = None,
                frozen: JsonObject | None = None, report: bool = False) -> JsonObject:
-    """`report`: a final author's plain probe, which passing on both sources records as a report line."""
+    """`report`: permit a final author's nondeciding result."""
     try:
         witnessed = bool(frozen and frozen.get("arms")) and (
             (frozen["arms"][0]["outcome"], _probe_outcome(frozen["arms"][-1])) in {("failed", "passed"), ("passed", "failed"), ("passed", "timed-out")})
@@ -1113,12 +1113,12 @@ def _retained(identity: RepoIdentity, state: JsonObject) -> list[tuple[JsonObjec
             finding = next((item for item in intake.get("findings", []) if item["id"] == ref["id"]), None)
             if finding and finding.get("rejected") is True:
                 rejected.add(tuple(finding["priorFinding"][key] for key in ("evidenceId", "id")))
-            run = ((finding or {}).get("execution") or {}).get("comparison") or {}
-            if judged and intake.get("stage") == "final" and intake.get("candidateTree") == candidate and all(
-                    arm["outcome"] == "passed" for arm in run.get("arms") or [{"outcome": None}]):
+            run = (finding or {}).get("recapture") or ((finding or {}).get("execution") or {}).get("comparison") or {}
+            if judged and intake.get("stage") == "final" and intake.get("candidateTree") == candidate and ((finding or {}).get("recapture") or all(
+                    arm["outcome"] == "passed" for arm in run.get("arms") or [{"outcome": None}])):
                 recaptured[intake.get("producer"), run["command"]] = run
             if intake.get("stage") in {"code-review", "final"} and finding and "execution" in finding and binds(finding["execution"]):
-                retained.append((entry, {**finding, "ref": ref, "sourceTree": intake["candidateTree"]}))
+                retained.append((entry, {**finding, "ref": ref, "sourceTree": intake["candidateTree"], "stage": intake["stage"]}))
     for _, finding in retained:
         intake, held = intakes[finding["ref"]["evidenceId"]], finding["execution"]
         if held["kind"] == "probe" and intake["stage"] == "final" and (again := recaptured.get((intake.get("producer"), held["comparison"]["command"]))):
@@ -1130,8 +1130,7 @@ def _retained(identity: RepoIdentity, state: JsonObject) -> list[tuple[JsonObjec
 def execute_findings(identity: RepoIdentity, state: JsonObject, findings: list[JsonObject], *, captured: JsonObject | None = None,
                      retained: list[tuple[JsonObject, JsonObject]] | None = None, candidate: str | None = None,
                      current: JsonObject | None = None, report: bool = False) -> JsonObject:
-    """Execute only submitted observations; gates supply uncached retained observations explicitly. `report`: the
-    submitted probes are a final author's, whose plain both-passing probe records as a report line."""
+    """Execute submitted observations; gates supply retained ones. `report` identifies the final author."""
     from .workflow_state import _finding_state
     candidate = candidate or _active_candidate_tree(identity)
     rejected = [finding["priorFinding"] for finding in findings if finding.get("rejected") is True]
@@ -1199,7 +1198,7 @@ def execute_findings(identity: RepoIdentity, state: JsonObject, findings: list[J
                       if "probe" in finding and ("change" in finding) == replacement and finding["execution"].get("comparison"))
         if probes:
             _compare_many(identity, candidate if replacement else original, candidate, probes, cached, passing_original=not replacement)
-    executed, observations = [], []
+    executed, observations, recaptures = [], [], None
     for finding in findings:
         execution = run(finding, True)
         result = {**finding, "execution": execution, "material": binds(execution)}
@@ -1209,7 +1208,13 @@ def execute_findings(identity: RepoIdentity, state: JsonObject, findings: list[J
                 not arms or _probe_outcome(arms[0]) == _probe_outcome(arms[-1])
                 or all(arm["outcome"] == "incomplete" for arm in arms)):
             observations.append(result)
-            if finding.get("retires"):
+            if report and arms and all(arm["outcome"] == "passed" for arm in arms):
+                if recaptures is None:
+                    recaptures = {held["execution"]["comparison"]["command"]: held["ref"] for _, held in _retained(identity, state)
+                                  if held["stage"] == "final" and held["execution"]["kind"] == "probe"}
+                if prior := recaptures.get(comparison["command"]):
+                    result.update(priorFinding=prior, recapture={key: comparison[key] for key in ("command", "probeTree", "probeFiles")})
+            if finding.get("retires") or result.get("recapture"):
                 executed.append({key: value for key, value in result.items() if key != "probe"}
                                 | {"execution": {"kind": "claim"}})
         else:
@@ -1638,7 +1643,7 @@ def _run_tdd(values: list[str]) -> int:
     if (workflow_id := instance_id(state)) is None:
         raise WorkflowError(NO_INSTANCE_ID)
     slug = str(state["slug"])
-    if args.path and not (command or args.case) or args.timeout is not None and not 0 < args.timeout <= MAX_CASE_SECONDS:
+    if args.path and not (command or args.case or args.correct) or args.timeout is not None and not 0 < args.timeout <= MAX_CASE_SECONDS:
         raise WorkflowError("a scratch path needs its command; timeout must be positive and at most 30 seconds")
     if args.reject and not args.author:
         if command or args.case or args.change or args.retire or args.report or args.verdict or args.behavior_id or args.path:
@@ -1809,7 +1814,7 @@ def _run_tdd(values: list[str]) -> int:
         if args.behavior_id and not any(entry["id"] == args.behavior_id for entry in items):
             raise WorkflowError("unknown Behavior Map item")
     support_overrides = {}
-    if args.support and not specs:
+    if args.support and not specs and not args.correct:
         names = {os.path.relpath(os.path.normpath(Path(identity.root) / name), identity.root) for name in args.support}
         owners = {entry["id"] for entry, _ in selected}
         targets = {probe["runIndex"] for _, probe in selected} | {

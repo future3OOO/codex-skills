@@ -187,9 +187,10 @@ def open_obligations(items: list[JsonObject], evaluation: list[JsonObject] | Non
     """One command is one case. Output and framework names never determine readiness."""
     retained = evaluation or []
     lines, rerun_items, rerun_cases = [], 0, 0
+    proofs = [*(current or items), *retained]
     for group, retained_item in ((items, False), (retained, True)):
         for entry in group:
-            reasons = _case_question(entry) if retained_item else _question(entry, [*(current or items), *retained])
+            reasons = _case_question(entry) if retained_item else _question(entry, proofs)
             if not reasons:
                 continue
             if reasons == ["execution inputs changed or unrecorded"]:
@@ -197,7 +198,8 @@ def open_obligations(items: list[JsonObject], evaluation: list[JsonObject] | Non
                 rerun_cases += retained_item
                 continue
             label = ("retained " if retained_item else "") + f"{entry.get('caseKey', entry['id'])} ({entry.get('kind') or 'kind?'})"
-            args = ["tdd"] if entry.get("comparison") or entry.get("cases") else ["tdd", "--case", entry["id"], "<COMMAND>"]
+            args = (["tdd", "--correct", entry["id"], entry["cases"][0], "<COMMAND>"] if not retained_item and entry.get("cases")
+                    else ["tdd"] if entry.get("comparison") else ["tdd", "--case", entry["id"], "<COMMAND>"])
             lines.append(label + ": " + "; ".join(reasons) + "; workflow.run args " + json.dumps(args))
     if rerun_items or rerun_cases:
         lines.append(f"{rerun_items} items and {rerun_cases} cases need a rerun; workflow.run args [\"tdd\"]")
@@ -263,10 +265,6 @@ def producer_proved(entry: JsonObject) -> bool:
             and bool(comparison.get("command")) and bool(comparison.get("arms"))
             and isinstance(recorded := comparison.get("obligation", obligation(entry)), list)
             and recorded[1:4] == obligation(entry)[1:4])
-
-
-def never_compared(items: list[JsonObject]) -> list[str]:
-    return [str(entry["id"]) for entry in items if not (entry.get("comparison") or {}).get("arms")]
 
 
 def comparison_view(run: JsonObject, *, detail: bool = False) -> JsonObject:
