@@ -24,7 +24,7 @@ Commit a probe only for regression coverage no existing check has, as the
 smallest case calling that owner. Additional checks
 require distinct coverage, with defect sensitivity
 and no narrowing of the contract; they do not replace production acceptance. Apply
-[Production Code's comparison rules](../production-code/SKILL.md#minimum-implementation-decision)
+[Production Code's comparison rules](../production-code/SKILL.md#lowest-cost-implementation-decision)
 for N/N+1 proof and conditional A/B measurements.
 
 ## What the batch must prove

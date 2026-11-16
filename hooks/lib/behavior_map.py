@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import copy
-import os
+import json
 import re
 import shlex
 
@@ -43,40 +43,7 @@ def _recorded_fields(raw: JsonObject) -> JsonObject:
     return fields
 
 
-def script_operand(command: str, *, shells: bool = False) -> str | None:
-    """The file a command asks Python to run, by the argument rules of Python and of the wrappers leads put before it:
-    `[NAME=VALUE | env | timeout [OPTION]... DURATION]... pythonX [OPTION]... FILE`. None for any other
-    command, for `-c` and `-m`, and for a program read from standard input: their other arguments are data. With
-    `shells`, also the file `sh` or `bash` runs."""
-    try:
-        words = shlex.split(command)
-    except ValueError:  # an unclosed quote is refused when the case is captured
-        return None
-    at = 0
-    while at < len(words) and (re.match(r"[A-Za-z_][A-Za-z_0-9]*=", words[at]) or os.path.basename(words[at]) in ("env", "timeout")):
-        at += 1
-        if os.path.basename(words[at - 1]) == "timeout":
-            while at < len(words) and words[at].startswith("-"):
-                at += 2 if words[at] in ("-k", "-s", "--kill-after", "--signal") else 1
-            at += 1  # its duration
-    if shells and at + 1 < len(words) and os.path.basename(words[at]) in {"sh", "bash"} and not words[at + 1].startswith("-"):
-        return words[at + 1]
-    if at >= len(words) or not re.fullmatch(r"python[0-9.]*", os.path.basename(words[at])):
-        return None
-    at += 1
-    while at < len(words) and words[at].startswith("-") and words[at] != "-":
-        option = words[at]
-        for index, letter in enumerate(option[1:] if not option.startswith("--") else "", 1):
-            if letter in "cm":
-                return None
-            if letter in "WX":  # its value is the rest of the word, or the next word
-                at += index == len(option) - 1
-                break
-        at += 2 if option == "--check-hash-based-pycs" else 1
-    return words[at] if at < len(words) and words[at] != "-" else None
-
-
-def map_errors(value: object, *, allow_runtime: bool, scripts: bool = True) -> list[str]:
+def map_errors(value: object, *, allow_runtime: bool) -> list[str]:
     if not isinstance(value, list):
         return ["behaviorMap must be an array"]
     errors, seen = [], set()
@@ -96,14 +63,11 @@ def map_errors(value: object, *, allow_runtime: bool, scripts: bool = True) -> l
                 errors.append(f"probe {identifier} requires kind: conformance, contract or preservation")
             if extra := set(raw) - REQUIRED_FIELDS - JUDGEMENT_FIELDS:
                 errors.append(f"probe {identifier} has unknown fields: " + ", ".join(sorted(extra)))
-            errors.extend(f"probe {identifier} case runs {script}, which does not exist: write it before declaring its command"
-                          for script in map(script_operand, (scripts and _strings(raw.get("cases"))) or ())
-                          if script and os.path.isabs(script) and not os.path.lexists(script))
     return errors
 
 
-def validate_items(value: object, *, allow_runtime: bool, scripts: bool = True) -> list[JsonObject]:
-    if errors := map_errors(value, allow_runtime=allow_runtime, scripts=scripts):
+def validate_items(value: object, *, allow_runtime: bool) -> list[JsonObject]:
+    if errors := map_errors(value, allow_runtime=allow_runtime):
         raise ValueError("; ".join(errors))
     items = []
     for raw in value:
@@ -114,15 +78,15 @@ def validate_items(value: object, *, allow_runtime: bool, scripts: bool = True) 
     return items
 
 
-def initial_items(value: object, scripts: bool = True) -> list[JsonObject]:
-    return validate_items(value, allow_runtime=False, scripts=scripts)
+def initial_items(value: object) -> list[JsonObject]:
+    return validate_items(value, allow_runtime=False)
 
 
 def runtime_items(value: object) -> list[JsonObject]:
     return validate_items(value, allow_runtime=True)
 
 
-def merge(previous: list[JsonObject], value: JsonObject, scripts: bool = True, keep: list[str] | tuple[str, ...] = ()) -> tuple[list[JsonObject], list[JsonObject]]:
+def merge(previous: list[JsonObject], value: JsonObject, keep: list[str] | tuple[str, ...] = ()) -> tuple[list[JsonObject], list[JsonObject]]:
     """`value`'s `items` and `added` over `previous`, without its `removed` ids apart from those in `keep`: an item names
     only what changes (a given field replaces, null removes, an omitted field stays). Returns the updated items, then the map."""
     recorded = {entry["id"]: entry for entry in previous}
@@ -139,7 +103,7 @@ def merge(previous: list[JsonObject], value: JsonObject, scripts: bool = True, k
                 kept = {key: prior[key] for key in fields if prior.get(key) not in (None, [])
                         and not ("interpretations" in entry and key in ("interpretation", "authority"))}
                 merged[position] = {key: field for key, field in {**kept, **entry}.items() if field is not None}
-    updates = initial_items(merged, scripts)
+    updates = initial_items(merged)
     return updates, [entry for entry in {entry["id"]: entry for entry in [*previous, *updates]}.values() if entry["id"] not in removed or entry["id"] in keep]
 
 
@@ -185,6 +149,8 @@ def _case_question(entry: JsonObject) -> list[str]:
 def _question(entry: JsonObject, proofs: list[JsonObject]) -> list[str]:
     if readings_unsettled(entry):
         return _case_question(entry)
+    if entry.get("cases"):
+        return ["unexecuted declaration: " + command for command in entry["cases"]]
     candidates = [proof for proof in proofs if proof["id"] == entry["id"] and proof.get("comparison")
                   and obligation(proof)[1:] == obligation(entry)[1:]]
     if not candidates:
@@ -220,10 +186,23 @@ def current_cases(items: list[JsonObject], runs: list[JsonObject], retired: set[
 def open_obligations(items: list[JsonObject], evaluation: list[JsonObject] | None = None, current: list[JsonObject] | None = None) -> list[str]:
     """One command is one case. Output and framework names never determine readiness."""
     retained = evaluation or []
-    lines = [("retained " if retained_item else "") + f"{entry.get('caseKey', entry['id'])} ({entry.get('kind') or 'kind?'})"
-             + (f" `{entry['comparison']['command']}`" if retained_item else "") + ": " + "; ".join(reasons)
-             for group, retained_item in ((items, False), (retained, True)) for entry in group
-             if (reasons := _case_question(entry) if retained_item else _question(entry, [*(current or items), *retained]))]
+    lines, rerun_items, rerun_cases = [], 0, 0
+    proofs = [*(current or items), *retained]
+    for group, retained_item in ((items, False), (retained, True)):
+        for entry in group:
+            reasons = _case_question(entry) if retained_item else _question(entry, proofs)
+            if not reasons:
+                continue
+            if reasons == ["execution inputs changed or unrecorded"]:
+                rerun_items += not retained_item
+                rerun_cases += retained_item
+                continue
+            label = ("retained " if retained_item else "") + f"{entry.get('caseKey', entry['id'])} ({entry.get('kind') or 'kind?'})"
+            args = (["tdd", "--correct", entry["id"], entry["cases"][0], "<COMMAND>"] if not retained_item and entry.get("cases")
+                    else ["tdd"] if entry.get("comparison") else ["tdd", "--case", entry["id"], "<COMMAND>"])
+            lines.append(label + ": " + "; ".join(reasons) + "; workflow.run args " + json.dumps(args))
+    if rerun_items or rerun_cases:
+        lines.append(f"{rerun_items} items and {rerun_cases} cases need a rerun; workflow.run args [\"tdd\"]")
     return lines
 
 
@@ -286,15 +265,6 @@ def producer_proved(entry: JsonObject) -> bool:
             and bool(comparison.get("command")) and bool(comparison.get("arms"))
             and isinstance(recorded := comparison.get("obligation", obligation(entry)), list)
             and recorded[1:4] == obligation(entry)[1:4])
-
-
-def unresolved(items: list[JsonObject], opened: list[str] | None = None) -> list[str]:
-    ids = {str(entry["id"]) for entry in items}
-    return [head if (head := line.split(" ", 1)[0]) in ids else line for line in (open_obligations(items) if opened is None else opened)]
-
-
-def never_compared(items: list[JsonObject]) -> list[str]:
-    return [str(entry["id"]) for entry in items if not (entry.get("comparison") or {}).get("arms")]
 
 
 def comparison_view(run: JsonObject, *, detail: bool = False) -> JsonObject:

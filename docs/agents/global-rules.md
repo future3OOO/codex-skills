@@ -32,8 +32,7 @@ handoff.
 - Target ~500 net lines of human-authored code per PR. `$delivery-governance`
   owns measurement and the 1,000-net-line split threshold; shrink, split, or
   consolidate oversized scope before coding.
-- Execute against an existing governing artifact and keep its checklist current;
-  do not re-invoke `$execution-planning` for an execution-only pass.
+- Execute against the governing artifact: requirements, constraints and preserved behavior bind; proposed mechanisms remain revisable unless explicitly required. Approval does not change authority. Keep its checklist current; do not re-invoke `$execution-planning` for an execution-only pass.
 - `$production-preflight` owns Module shape, reuse-before-new, and shallow-helper
   debt; `$codebase-design` owns Module/Interface/Seam vocabulary.
 
@@ -54,17 +53,16 @@ Repo Context Forge analysis copy. For codex-skills installation, follow
   record the decision in one line, and continue; stop only before a destructive,
   irreversible or outside-the-worktree action.
 
-## Simplicity First
+## Minimal Whole-System Cost
 
-- Performance is a requirement. Ask what the change costs the person using it: they demand bare-metal performance
-  with the required behavior and no regressions. Build every demonstrated improvement that keeps required behavior; skip one only when measured to cost more than it saves.
+- Performance is a requirement: the objective is the minimal whole-system cost for the required behavior. Ask what the change costs the person using it: they demand bare-metal performance with no regressions. A measured or obvious cost in code the change touches or its operation runs through, including behavior intersecting it, is part of the change: optimize and remove it in this pass. Skip one only when measured to cost more than it saves.
 - Assume your first implementation is bloated. Find the best justified whole-system design for the objective, including production code,
   tests, scripts, documentation, maintenance and execution; keep only what it needs while preserving required behavior and proof. Retain real
   attack probes; cut redundant scaffolding and mocked unit-test bloat from this change.
 - Every change must remove unnecessary workflow ceremony. Reviewer-requested
   follow-up commits must reduce net lines of code unless a demonstrated lower whole-system cost at the same required behavior justifies necessary growth.
-- Preserve required behavior and proof. Every changed line must serve the request
-  or lower the whole-system cost of code the change touches.
+- Preserve required behavior and proof. Every changed line must serve the request; lowering the whole-system cost of code the change touches serves it.
+- Patch size and verification effort alone do not justify leaving demonstrated avoidable cost.
 
 ## Root-Cause Changes
 
@@ -104,8 +102,7 @@ reviewer/check event and repeat the reviewer re-query below before merging.
 
 Use FFF first for raw discovery; honor packet scope. Follow `$repo-context-forge` for repo selection.
 
-The packet's rows give the callers, callees and upstream impact of the symbols they list. Before editing any
-other symbol, run `impact` with tests on it. Query only what no row answers: downstream impact of a symbol you
+The packet's rows give the callers, callees and upstream impact of the symbols they list. Query only what no row answers: downstream impact of a symbol you
 delete, move, deepen, consolidate or hide behavior in; shared-state writers and their risk; and the tested owner
 of an internal Seam a new file consumes. Use the packet's exact call forms; never list, search or print tool
 definitions. One relationship: a scoped `cypher` query. Never print raw graph output whole.

@@ -61,3 +61,5 @@ reuse valid executions. Name missing request promises and unresolved evidence.
 
 Withdraw your own invalid observation with `tdd --as review --reject EVIDENCE:ID=REASON`. When your finding proves a frozen case's expectation wrong, add `--retire CASE_KEY` to its probe or replacement command, using `caseKey` from the comparison receipt or readiness.
 Give the measured failure cause; the raw observation remains recorded.
+
+Check performance rejection evidence against minimal whole-system cost for required behavior. Passing functional tests or a rejection command alone does not justify dropping an optimization.

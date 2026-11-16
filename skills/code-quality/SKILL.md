@@ -13,7 +13,7 @@ diff, contract and concrete proof. `AGENTS.md` owns the hard invariants.
 
 ## Seven principles
 
-### 1. Minimal code
+### 1. Minimal whole-system cost
 
 - Does the design minimize whole-system cost at fixed required behavior, including runtime and resources, even for a functional-only request?
 - Did it remove code it made obsolete?

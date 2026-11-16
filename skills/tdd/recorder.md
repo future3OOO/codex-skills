@@ -1,7 +1,7 @@
 # Record a case
 
 List each case's command under its map item's `cases` in the preflight draft: recording the approved
-preflight captures and runs them. Submit later cases in one workflow TDD call.
+preflight runs nothing; a bare `tdd` captures and runs them. Submit later cases in one workflow TDD call.
 The submitted command identifies the case; frozen source records its version. The probe asserts its required
 outcome and exits non-zero when the assertion fails. Output is diagnostic only;
 printing a value or `name: result` does not assert it.
@@ -11,7 +11,7 @@ with it, as is a temporary path the command or that file names; `--path` or `--s
 another beside it. A `--case` call runs the cases it names and any recorded case still without accepted proof, captures any command an item still
 declares and judges the rest of the map as recorded, without running it; a bare call captures those too, replays every recorded command and,
 when all hold and nothing is open, verifies.
-A case that cannot be captured is refused alone; a failing case is a row, not a failed call. `record tdd-map --input`
+A declaration that cannot be prepared stays open; put the corrected command in its returned `tdd --correct` call; a failing case is a row, not a failed call. `record tdd-map --input`
 takes the map change itself, `items` (only the changed fields), `added` and `removed`, alone or together:
 `{"items":[{"id":"BM_X","expected":"..."}],"removed":["BM_Y"]}`. The receipt gives continuation, failures and evidence access.
 The runner owns source preparation and reuse; do not repeat them.

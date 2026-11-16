@@ -1,6 +1,6 @@
 ---
 name: production-code
-description: Enforce production-only implementation standards for this repo. Use when implementing, refactoring, fixing bugs, reviewing code, or tightening tests where the outcome must stay minimal, direct, duplication-averse, fail closed, strictly typed, boundary-validated, cleanup-safe, and fully verified before being called complete.
+description: Enforce production-only implementation standards for this repo. Use when implementing, refactoring, fixing bugs, reviewing code, or tightening tests where the outcome must have the minimal whole-system cost for the required behavior, be direct, duplication-averse, fail closed, strictly typed, boundary-validated, cleanup-safe, and fully verified before being called complete.
 ---
 
 # Production Code
@@ -15,7 +15,7 @@ telemetry needs no action.
 
 ## Execution Checklist
 
-- Complete the Minimum Implementation Decision before writing code in any file or worktree, including scratch and generated source.
+- Complete the Lowest-Cost Implementation Decision before writing code in any file or worktree, including scratch and generated source.
 - After a coherent edit, execute TDD's [required probe loop](../tdd/SKILL.md#required-probe-loop)
   before verification or review. TDD owns constructing, extending and comparing the
   batched direct probe; these standards govern which observed changes are authorized.
@@ -31,13 +31,13 @@ telemetry needs no action.
 - Do not finish the turn while duplicate added code, reimplemented existing helpers, unnecessary growth, fake-green suppressions, broad catch/pass, temp artifacts, or cleanup failures remain in the changed production surface.
 - Treat the gate as changed-scope evidence, not as a substitute for the repo's own lint, typecheck, tests, build, and domain-specific quality gates.
 - If a tracked governing plan or review artifact exists for the current work and includes an execution checklist, update it when execution state materially changes.
-- Reconcile closure through the Minimum Implementation Decision. Compare the final diff against the preflight module shape; delete or inline shallow wrappers/helpers and verify tests cross the public interface.
+- Reconcile closure through the Lowest-Cost Implementation Decision. Compare the final diff against the preflight module shape; delete or inline shallow wrappers/helpers and verify tests cross the public interface.
 - Run applicable required checks for touched areas; the workflow owns delivery and installation order.
 - For bugs and regressions, compare the implementation to the canonical root-cause-first gate and the `/diagnose` trace.
 - Do not mark work done while blockers, follow-ups, dead-letter gaps, retry gaps, or state-regression risks remain.
 - Do not present PR remediation as complete while the fix exists only locally or while review threads were resolved ahead of the pushed fix.
 
-## Minimum Implementation Decision
+## Lowest-Cost Implementation Decision
 
 Optimization is the default. The lead owns it through diagnosis, implementation
 and repair. Derive the information and work each required result needs; remove
@@ -76,7 +76,7 @@ capabilities; they do not establish that agents use them to achieve the objectiv
 
 Simplify the responsible decision rather than adding symptom guards. Separate
 intentional contract changes from regressions and reconcile recorded obligations
-with observed outcomes; keep unrelated behavior outside the repair. The
+with observed outcomes; behavior the requested operation does not run through stays outside the repair; inside it, optimize and remove measured and obvious cost in the same repair. The
 [implementation loop](#execution-checklist) tests the responsibilities exposed by
 the actual edit before independent review.
 
@@ -94,11 +94,10 @@ Implementation mechanism never chooses placement: a library or native capability
 The decision is complete only when one outcome is recorded:
 
 - Existing behavior: name its owning Interface and real test-surface evidence; plan no production change.
-- Change required: name the responsible owner, preflight's Module-shape decision when preflight ran, Interface and test surface, existing capability to reuse or why custom Implementation is required, minimum changed surface, and every superseded surface to delete.
+- Change required: name the responsible owner, preflight's Module-shape decision when preflight ran, Interface and test surface, existing capability to reuse or why custom Implementation is required, lowest-cost changed surface, and every superseded surface to delete.
 
 ## Core Standard
 
-- Ship only required production code, regression coverage and supporting files.
 - Build the best justified whole-system design, including tests, scripts, documentation, maintenance and execution; then cut what it does not need.
 - Remove dead code instead of hiding it behind flags or wrappers.
 - Apply [codebase-design](../codebase-design/SKILL.md) when judging Module depth and consolidation; file size is not the measure.
@@ -124,7 +123,6 @@ The decision is complete only when one outcome is recorded:
 - Treat uncertainty as a stop-and-verify condition, not a reason to guess.
 - Treat review comments as evidence to verify against the code and contract, not authority to obey blindly.
 - Apply the canonical imaginary-risk ban in `~/.codex/AGENTS.md` before adding any guard, fallback, retry, configuration, abstraction, or code.
-- Stay on task: if the cumulative diff grows past roughly 3× what the task implies, stop and justify the overrun before continuing.
 - For behavior proof invoke `tdd`; the canonical mock ban governs every claimed comparison result.
 
 ## Data, Types, and Boundaries
@@ -152,7 +150,7 @@ For TypeScript or JavaScript changes, load and apply [references/typescript.md](
 
 ## Transaction-Sensitive Work
 
-Load [references/transaction-doctrine.md](references/transaction-doctrine.md) for transaction-sensitive changes. Its canonical proof requirements are part of the Minimum Implementation Decision, not a separate repair or review stage.
+Load [references/transaction-doctrine.md](references/transaction-doctrine.md) for transaction-sensitive changes. Its canonical proof requirements are part of the Lowest-Cost Implementation Decision, not a separate repair or review stage.
 
 ## Retries, Cleanup, and Dependencies
 

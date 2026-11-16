@@ -34,9 +34,8 @@ def _unique(pairs: list[tuple[str, object]]) -> JsonObject:
     return result
 
 
-def preflight_document(path: str, *, scripts: bool = True) -> JsonObject:
-    """The contract and its Behavior Map; every violation is named in one refusal. `scripts` keeps the missing-script
-    check, which a consult's recorded draft leaves to the recording of its preflight."""
+def preflight_document(path: str) -> JsonObject:
+    """Validate the contract and declarations; TDD prepares and executes their commands."""
     try:
         raw = sys.stdin.read() if path == "-" else Path(path).read_text(encoding="utf-8")
         value = json.loads(raw, object_pairs_hook=_unique)
@@ -48,11 +47,11 @@ def preflight_document(path: str, *, scripts: bool = True) -> JsonObject:
         (f"preflight document has unknown sections: {', '.join(sorted(set(value) - PREFLIGHT_SECTIONS))}",
          set(value) - PREFLIGHT_SECTIONS),
         ("preflight authoritativeContract must be non-empty text", not _text(value.get("authoritativeContract"))),
-    ) if bad] + map_errors(value.get("behaviorMap"), allow_runtime=False, scripts=scripts)
+    ) if bad] + map_errors(value.get("behaviorMap"), allow_runtime=False)
     if errors:
         raise ValueError("; ".join(errors))
     return {"authoritativeContract": str(value["authoritativeContract"]).strip(),
-            "behaviorMap": initial_items(value["behaviorMap"], scripts)}
+            "behaviorMap": initial_items(value["behaviorMap"])}
 
 
 PREFLIGHT_SECTIONS = frozenset({"authoritativeContract", "behaviorMap"})
@@ -60,13 +59,13 @@ PREFLIGHT_SECTIONS = frozenset({"authoritativeContract", "behaviorMap"})
 
 def finalised_draft(draft: JsonObject, changes: object) -> JsonObject:
     """The lead's draft with the approving consult's changes: the contract text when it changes, then `items` and
-    `removed` by tdd-map's merge rule. An added item's commands are judged when the preflight records."""
+    `removed` by tdd-map's merge rule. Commands run at TDD."""
     if not isinstance(changes, dict) or set(changes) - {"authoritativeContract", "items", "removed"}:
         raise ValueError("an answer's draft takes authoritativeContract, items and removed")
     contract = changes.get("authoritativeContract", draft["authoritativeContract"])
     if not _text(contract):
         raise ValueError("preflight authoritativeContract must be non-empty text")
-    return {"authoritativeContract": contract.strip(), "behaviorMap": merge(draft["behaviorMap"], changes, scripts=False)[1]}
+    return {"authoritativeContract": contract.strip(), "behaviorMap": merge(draft["behaviorMap"], changes)[1]}
 
 
 def advisor_envelope(

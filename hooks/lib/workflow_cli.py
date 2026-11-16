@@ -219,7 +219,8 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity, *, review: bool = 
             print(receipt.getvalue(), end="")
             return result & 2 if continuation else 2
         cases = {key: replay[key] for key in ("cases", "otherCases")}
-        refresh_context(identity)
+        if references := refresh_context(identity):
+            cases["callers"] = references
         state = bound_state(identity, slug, workflow_id)
     if state.get("tdd") == "in-progress":
         _emit_json(_receipt(state, identity, kind="verification", valid=False,
@@ -390,13 +391,9 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
                 preflight_file=str(Path(args.input).resolve()) if args.input and args.input != "-" else None)})
             return 2
         edits = {"draftEdits": intake["draftEdits"]} if intake.get("draftEdits") else {}
-        if args.check or not (intake.get("added") or any(item.get("cases") for item in document["behaviorMap"])):
-            emit(_receipt(state, identity, evidenceId=evidence_id, status="passed", **edits))
-            return 0
-        from .tdd_workflow import _run_tdd
-        # The draft's declared cases run now: one receipt, which turns away an added item's case that cannot run there.
-        return _run_tdd(["--repo", str(identity.root), "--slug", slug, "--workflow-id", workflow_id],
-                        added=frozenset(intake.get("added", ())), details=edits) & 2
+        emit(_receipt(state, identity, evidenceId=evidence_id, status="passed",
+                      obligations=not all(item.get("cases") and not behavior_map.readings_unsettled(item) for item in document["behaviorMap"]), **edits))
+        return 0
     if args.kind == "tdd-map":
         from .tdd_workflow import map_update
         emit(map_update(identity, state, _document(args, "TDD map update")))
@@ -427,8 +424,8 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
             from .tdd_workflow import binds
             if any(binds(item["execution"]) for item in execution["reexecuted"]):
                 verdict = "fix-before-commit"
-    # The lead's draft; an approving answer's `draft` changes it, and recording the preflight judges the items it added.
-    submitted = preflight_document(args.preflight_file, scripts=False) if args.preflight_file else None
+    # The lead's draft; an approving answer's `draft` changes it, whose added items stay until explicitly rejected.
+    submitted = preflight_document(args.preflight_file) if args.preflight_file else None
     changes = intake.pop("draft", None) if intake else None
     state = record_advisor_result(
         identity, slug, workflow_id, args.stage, args.source, verdict, reason=args.reason,
@@ -491,7 +488,8 @@ def _dispatch(args: argparse.Namespace) -> int:
                                   expected_candidate_tree=_active_candidate_tree(identity)), identity))
     elif args.command == "checkpoint":
         if args.channel_dir:  # a consult is about to read the projection
-            refresh_context(identity)
+            for line in refresh_context(identity):
+                print(line, file=sys.stderr)
             if args.phase != "preflight-advice":
                 with redirect_stdout(sys.stderr):
                     _verify(parser().parse_args(["verify", "--repo", str(identity.root)]), identity, review=True)
