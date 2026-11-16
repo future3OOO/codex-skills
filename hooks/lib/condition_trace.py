@@ -46,7 +46,7 @@ def _install(decisions: list, out_path: str) -> None:
         if not inside:
             return sys.monitoring.DISABLE
         frame = sys._getframe(1)
-        sampled = {}
+        sampled, known = {}, None
         following = instructions[code].get(destination)
         end = following and following.positions
         for decision in inside:
@@ -54,15 +54,17 @@ def _install(decisions: list, out_path: str) -> None:
             if key in evaluating and offset <= evaluating[key][3]:
                 close(key)
             if key not in evaluating:
-                names = (tuple(decision["names"]), tuple(decision["inputs"]))
-                if names not in sampled:
+                names = tuple(decision["names"])
+                if known is None:
                     local, global_ = frame.f_locals, frame.f_globals
-                    values = {name: local.get(name, global_.get(name)) for name in decision["names"] if name in local or name in global_}
+                    known = {name: bool(value) for name, value in dict.items(global_) if type(name) is str and name not in local and id(type(value)) in SAMPLED}
+                    known.update({name: bool(value) for name, value in local.items() if type(name) is str and id(type(value)) in SAMPLED})
+                if names not in sampled:
                     inputs = []
-                    for name in decision["inputs"]:
-                        if name not in values:
+                    for name in names:
+                        if name not in local and name not in global_:
                             continue
-                        value, encoded = values[name], None
+                        value, encoded = (local[name] if name in local else dict.__getitem__(global_, name)), None
                         pending, visited = [value], set()
                         while pending:
                             child = pending.pop()
@@ -84,11 +86,9 @@ def _install(decisions: list, out_path: str) -> None:
                             kind = type(value)
                             module = type.__dict__["__module__"].__get__(kind)
                             encoded = str.encode(module if type(module) is str else "?") + b"." + str.encode(type.__dict__["__qualname__"].__get__(kind))
-                        inputs.append((name, encoded))
-                    sampled[names] = ({name: bool(value) for name, value in values.items() if id(type(value)) in SAMPLED},
-                                       hashlib.sha256(marshal.dumps(inputs, 2)).hexdigest())
-                values, inputs = sampled[names]
-                evaluating[key] = [values, {}, inputs, offset]
+                        inputs.append((name, hashlib.sha256(encoded).hexdigest()))
+                    sampled[names] = tuple(inputs)
+                evaluating[key] = [known, {}, sampled[names], offset]
             evaluating[key][1][where] = (JUMPS[item.opname], destination == item.argval)
             evaluating[key][3] = offset
             if end and end.lineno is not None and not (
@@ -103,7 +103,7 @@ def _install(decisions: list, out_path: str) -> None:
             close(key)
         with open(out_path, "a", encoding="utf-8") as handle:
             handle.write(json.dumps({name: [[{"names": dict(names), "jumps": [[*span, *jump] for span, jump in jumps],
-                                             "input": inputs}, count]
+                                             "input": dict(inputs)}, count]
                                             for (names, jumps, inputs), count in observations.items()]
                                      for name, observations in seen.items()}) + "\n")
 

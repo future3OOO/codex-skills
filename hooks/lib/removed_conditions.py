@@ -112,10 +112,11 @@ def _removed(path: str, qualname: str, aligned: dict[int, set[int]], old: ast.AS
                           for function in (old, new)]
             found.append({"id": f"{path}:{test.lineno}:{test.col_offset}", "file": path, "qualname": qualname,
                           "test": whole, "match": candidates[match], "removed": list(removed.values()),
-                          "repeated": sorted(repeated),
+                          "repeated": sorted(repeated), "names": sorted(names[0] | names[1]),
+                          "inputs": sorted((names[0] & names[1]) | ((names[0] | names[1]) & parameters[0] & parameters[1])),
                           "sides": [{"id": f"{path}:{test.lineno}:{test.col_offset}:{side}", "file": path, "qualname": qualname,
                                      "span": [expr.lineno, expr.end_lineno, expr.col_offset, expr.end_col_offset],
-                                     "names": sorted(names[0] | names[1]), "inputs": sorted((names[0] & names[1]) | ((names[0] | names[1]) & parameters[0] & parameters[1])),
+                                     "names": sorted(names[side] | parameters[side]),
                                      "nodes": [[node.lineno, node.end_lineno, node.col_offset, node.end_col_offset, ast.unparse(node),
                                                 isinstance(node, ast.Compare) and isinstance(node.ops[0], ast.Is)]
                                                for node in ast.walk(expr) if isinstance(node, ast.expr)]}
@@ -173,14 +174,12 @@ def clears(case: JsonObject, approved: list[JsonObject]) -> bool:
         for item in approved)
 
 
-def unsettled(decisions: list[JsonObject], traces: list[JsonObject | None], cases: list[JsonObject],
+def unsettled(decisions: list[JsonObject], traces: list[JsonObject], cases: list[JsonObject],
               approved: list[JsonObject]) -> tuple[list[str], list[str]]:
-    """The open lines of the removed operands no recorded case clears: those no case decides, then those only uncleared
-    cases decide. A case decides an operand when its original run evaluates it at its deciding value and the paired
-    candidate decision observed on that input disagrees with the original; it clears it by `clears`.
-    `traces` holds the evaluations of each of `cases` by decision id; None is a run the tracer could not observe; a case
-    not yet traced has no evaluations. An operand no case decides opens no line when every run was unobservable. One only
-    uncleared cases decide settles nothing. No rejection closes a line."""
+    """Return undecided and uncleared operands from independently cached source observations.
+    A deciding input needs an observed difference; clears() governs clearance. Wholly unobservable runs open no line."""
+    unobservable = cases and all(traces[side].get(case["comparison"]["arms"][index]["key"], {}) is None
+                                for case in cases for side, index in enumerate((0, -1)))
     undecided, declared = [], []
     cut = lambda text: text if len(text) <= 160 else text[:159] + "…"
     for decision in decisions:
@@ -188,40 +187,38 @@ def unsettled(decisions: list[JsonObject], traces: list[JsonObject | None], case
         spans = [{tuple(entry[:4]): (entry[4], entry[5]) for entry in side["nodes"]} for side in decision["sides"]]
         for operand in decision["removed"]:
             node, deciders = ast.parse(str(operand["operand"]), mode="eval").body, []
-            for case, trace in zip(cases, traces):
-                observations = (trace or {}).get(decision["id"], [])
-                if len(observations) != 2:
-                    continue
+            for case in cases:
+                observations = [(traces[side].get(case["comparison"]["arms"][index]["key"]) or {}).get(decision["id"], [])
+                                for side, index in enumerate((0, -1))]
                 sides = [{}, {}]
                 for groups, rows, locations, expression in zip(sides, observations, spans, (test, match)):
                     for evaluation, count in rows:
-                        known = dict(evaluation["names"])
+                        known = {name: evaluation["names"][name] for name in decision["names"] if name in evaluation["names"]}
                         for *span, kind, jumped in evaluation["jumps"]:
                             text, is_none = locations.get(tuple(span), (None, False))
                             if text is not None:
                                 known[text] = jumped is (kind == "true") if kind in ("true", "false") else (jumped is (kind == "none")) is is_none
-                        groups.setdefault(evaluation["input"], []).append((known, _truth(expression, known), count))
+                        inputs = tuple((name, evaluation["input"][name]) for name in decision["inputs"] if name in evaluation["input"])
+                        groups.setdefault(inputs, []).append((known, _truth(expression, known), count))
                 decides = False
                 for key, originals in sides[0].items():
                     candidates = sides[1].get(key, [])
-                    outcomes = None
-                    for known, before, _ in originals:
-                        if before is None or _truth(node, known) is not operand["value"]:
-                            continue
-                        if outcomes is None:
-                            outcomes = Counter()
-                            for _, value, count in candidates:
-                                outcomes[value] += count
-                            unmatched = max(0, sum(outcomes.values()) - sum(row[2] for row in originals))
-                        after = not before
-                        observed = outcomes[after]
+                    if not any(value is not None and _truth(node, known) is operand["value"] for known, value, _ in originals):
+                        continue
+                    outcomes = Counter()
+                    for _, value, count in candidates:
+                        outcomes[value] += count
+                    total = sum(row[2] for row in originals)
+                    unmatched = max(0, sum(outcomes.values()) - total)
+                    for before in (False, True):
+                        observed = outcomes[not before]
                         if observed <= unmatched:
                             continue
-                        alternatives = sum(count for values, value, count in originals
-                                           if value is None or value is after or _truth(node, values) is not operand["value"])
-                        if observed > alternatives + unmatched and any(
-                            value is after and all(known[name] is values[name] for name in known.keys() & values.keys())
-                            for values, value, _ in candidates
+                        eligible = [(known, count) for known, value, count in originals
+                                    if value is before and _truth(node, known) is operand["value"]]
+                        if observed + sum(count for _, count in eligible) > total + unmatched and any(
+                            value is (not before) and all(known[name] is values[name] for name in known.keys() & values.keys())
+                            for known, _ in eligible for values, value, _ in candidates
                         ):
                             decides = True
                             break
@@ -241,6 +238,6 @@ def unsettled(decisions: list[JsonObject], traces: list[JsonObject | None], case
                         "such a case, restore the condition.")
                 if deciders:
                     declared.append(line)
-                elif not (traces and all(trace is None for trace in traces)):
+                elif not unobservable:
                     undecided.append(line)
     return undecided, declared
