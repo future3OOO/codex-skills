@@ -1574,7 +1574,7 @@ def _condition_traces(identity: RepoIdentity, original: str, candidate: str, cas
         pending = pending[len(group):]
         with tempfile.TemporaryDirectory(prefix="workflow-conditions-") as directory:
             observer = (_EXECUTION.get().get("cache_root") or _EXECUTION.get()["root"]) / "conditions"
-            observer.mkdir(exist_ok=True)
+            observer.mkdir(parents=True, exist_ok=True)
             for side in {side for side, _ in group}:
                 target = Path(directory, str(side)); target.mkdir()
                 shutil.copy(Path(__file__).with_name("condition_trace.py"), target / "sitecustomize.py")
