@@ -37,9 +37,9 @@ def main() -> int:
             if stopping:
                 state = read_workflow(identity) if identity else None
                 session = payload.get("session_id")
-                if not state or state.get("phase") == "complete" or not isinstance(session, str) or not session:
+                if not state or state.get("phase") == "complete" and not state.get("revalidation") or not isinstance(session, str) or not session:
                     return 0
-                if STEPS["final-review"][1](state):
+                if STEPS["final-review"][1](state) and state.get("judgedTree") == _active_candidate_tree(identity):
                     return 0
                 candidate = _active_candidate_tree(identity)
                 # Summary is deliberately truncated; the complete state and live candidate decide sameness.
