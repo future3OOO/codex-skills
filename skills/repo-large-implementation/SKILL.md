@@ -39,7 +39,7 @@ Use this skill when any of the following are true:
 
 ## Affected Surface Rule
 
-Apply [Production Code’s Minimum Implementation Decision](../production-code/SKILL.md#minimum-implementation-decision) to each slice before edits and completion. Keep the governing design and preflight map aligned with the affected guarantees; use the transaction doctrine below for stateful work.
+Apply [Production Code’s Lowest-Cost Implementation Decision](../production-code/SKILL.md#lowest-cost-implementation-decision) to each slice before edits and completion. Keep the governing design and preflight map aligned with the affected guarantees; use the transaction doctrine below for stateful work.
 
 ## Transaction-Sensitive Work
 

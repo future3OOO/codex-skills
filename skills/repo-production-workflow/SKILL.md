@@ -48,7 +48,7 @@ initial target and coverage surface.
 ### 2. Task contract and diagnosis
 
 Derive verification from the user's intended production behavior using
-[Production Code's outcome verification](../production-code/SKILL.md#minimum-implementation-decision).
+[Production Code's outcome verification](../production-code/SKILL.md#lowest-cost-implementation-decision).
 The lead owns correctness and performance for every task, through implementation
 and repair; the independent reviewer challenges it. Use the packet to trace affected paths, state skipped and
 preserved surfaces, and establish review-budget fit. Apply `diagnose` to bugs,
@@ -71,8 +71,7 @@ instructions given after `begin`, each line verbatim after `> `.
 The advisor investigates. The lead checks deletion claims against every original
 outcome controlled by the affected logic and corrects false premises. The advisor
 then finalises and approves the draft in the same session; that consult records it.
-The first implementation builds the approved design, performance improvements
-included.
+Implement binding outcomes with the lowest-cost justified design. Disprove a proposal's benefit, demonstrate its preservation failure, or improve its design; rejecting its mechanism does not waive addressing the cost.
 
 ### 5. One recorded preflight
 
@@ -89,8 +88,7 @@ Invoke `production-code` for its standards and baseline gate. Reuse the existing
 
 ### 8. Implement and compare
 
-Continue TDD's [required probe loop](../tdd/SKILL.md#required-probe-loop): implement the approved
-design against the recorded baseline, reconcile the actual diff, and compare the same
+Continue TDD's [required probe loop](../tdd/SKILL.md#required-probe-loop): implement binding outcomes with the lowest-cost justified design against the recorded baseline, reconcile the actual diff, and compare the same
 case commands on the candidate. Add commands for uncovered outcomes; reuse unchanged proof.
 
 The lead resolves named-case obligations against the original and request, then verifies and obtains the existing independent review. After final review starts, targeted repair returns to that final advisor.

@@ -138,8 +138,6 @@ When you do call out:
 
 - Name the unanswered dependency question; reuse prior applicable results on resume.
 - Retain the exact UID and file from the packet or `context` (`uid` is supported).
-  The current `impact` accepts a name as `target`; require its returned target ID
-  and repo to match the retained identity. Reject same-named helper mismatches.
 - Query only the missing caller, callee, writer or required impact direction.
   Broaden traversal only when an observed dependency requires it.
 - Retain full graph responses outside the checkout and conversation. Inspect

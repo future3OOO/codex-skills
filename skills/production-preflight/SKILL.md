@@ -12,7 +12,7 @@ alignment, phase order, advisor consultation and recording. Reuse the active pas
 and governing artifact; stay within its owner slice and verification scope.
 Use [diagnose](../diagnose/SKILL.md) for bugs before choosing a correction.
 
-Apply [Production Code's Minimum Implementation Decision](../production-code/SKILL.md#minimum-implementation-decision):
+Apply [Production Code's Lowest-Cost Implementation Decision](../production-code/SKILL.md#lowest-cost-implementation-decision):
 name the affected Interface, existing Module and reuse path, adjacent consumers,
 no-change surfaces and real test surface for the design judgment. Invoke
 [codebase-design](../codebase-design/SKILL.md) for a new Module or public Seam,
@@ -34,8 +34,7 @@ work names the full surrounding surface.
 
 ### `authoritativeContract`
 
-State the request, preserved behavior and responsible production path. Include
-source facts and proposed reuse as revisable reasoning.
+State required outcomes, preservation obligations, applicable constraints and their sources.
 The preflight advisor
 independently challenges the lead's cost model and architecture; the lead checks the source
 claims before the same advisor finalizes the draft. Keep unresolved predictions
@@ -85,8 +84,7 @@ removes. New terms use the existing owner's result; use request-grounded propert
 only when no owner exists. A round-trip must also establish the requested effect.
 The advisor's deciding work and runtime assertions supplement functional proof.
 
-Describe concrete inputs and outcomes. List a command under the item's `cases` once its executable
-probe exists (a draft whose command runs a missing script is refused); recording preflight captures and runs it. Do not create obligations from proposed test names.
+Describe concrete inputs and outcomes. Name the required cases, existing or to be written; recording preflight runs nothing.
 
 Remove every element whose deletion preserves required behavior and distinct necessary proof without increasing whole-system cost. Use real collaborators and observe results and state effects.
 

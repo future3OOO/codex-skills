@@ -659,6 +659,9 @@ def commit_evidence_phase(
                     or json.dumps(approved.get("preflightDraft"), sort_keys=True) != json.dumps(evidence_doc.get("document", evidence_doc), sort_keys=True)):
                 raise WorkflowError("preflight requires advisor approval bound to this exact draft")
         _apply_step(identity, state, phase, status)
+        if phase == "repo-context-forge":
+            state["contextReferences"] = list(dict.fromkeys([*state.get("contextReferences", []),
+                *((evidence_doc.get("advisorProjection") or {}).get("graph") or {}).get("references", [])]))
         write = evidence_write(str(state["workflowId"]), phase, evidence_doc)
         state[latest_field] = write.evidence_id
         if status == "passed":
@@ -831,28 +834,31 @@ def _graph_candidate_ready(
     return True
 
 
-def refresh_context(identity: RepoIdentity) -> None:
+def refresh_context(identity: RepoIdentity) -> list[str]:
     """Re-record Repo Context Forge evidence for the active candidate, only when the recorded
     projection no longer describes it; the consumers that need a current snapshot call this."""
     state = _require_state(read_workflow(identity))
     document = evidence_document(identity, state.get("repoContextForgeEvidence"))
     if not _own_graph(document, state.get("slug"), state.get("workflowId")):
-        return  # missing, foreign or corrupt evidence is refused by its consumer, never refreshed over
+        return []  # missing, foreign or corrupt evidence is refused by its consumer, never refreshed over
     try:
         validate_advisor_projection(document.get("advisorProjection"))
     except ValueError:
-        return
+        return []
     try:
         candidate = _active_candidate_tree(identity)
     except OSError:
-        return  # an uncapturable tree is reported by the consumer's own capture
+        return []  # an uncapturable tree is reported by the consumer's own capture
     if _graph_candidate_ready(document, candidate, identity=identity,
                               slug=state.get("slug"), workflow_id=state.get("workflowId")):
-        return
+        return []
     command = next_operation(identity, {**state, "nextAction": "repo-context-forge"})["command"]
     result = subprocess.run(shlex.split(command), cwd=identity.root, capture_output=True, text=True, check=False)
     if result.returncode:
         raise WorkflowError("Repo Context Forge refresh failed: " + (result.stderr or result.stdout).strip()[-600:])
+
+    current = read_active(identity)
+    return [line for line in current.get("contextReferences", []) if line not in state.get("contextReferences", [])]
 
 
 def _finding_kind(finding: JsonObject) -> str:
@@ -876,7 +882,7 @@ def _register_finding_intake(
             observed = next((finding for finding in (document or {}).get("findings", []) if finding["id"] == prior.get("id")), None)
             if (not document or document.get("workflowId") != state["workflowId"]
                     or any(document.get(key) != intake.get(key) for key in ("stage", "producer"))
-                    or not observed or not ("probe" in observed or "change" in observed)
+                    or not observed or not ("probe" in observed or "change" in observed or observed.get("retires"))
                     or "probe" in item or "change" in item or not str(item.get("claim") or "").strip()):
                 raise WorkflowError("withdrawal must name this author's recorded executable observation and its reason")
             intakes[str(prior["evidenceId"])] = document
@@ -1063,7 +1069,7 @@ def record_advisor_result(
                     intake["draftEdits"] = draft_edits(submitted_draft, preflight_draft)
                     submitted = {entry["id"] for entry in submitted_draft["behaviorMap"]}
                     if added := [entry["id"] for entry in preflight_draft["behaviorMap"] if entry["id"] not in submitted]:
-                        intake["added"] = added  # recording the preflight keeps each only if its commands ran
+                        intake["added"] = added  # these items leave only through explicit rejection
                 state["preflightRounds"] = int(state.get("preflightRounds", 0)) + 1
             measured_reason = str(reason or "").strip() or None
             if verdict == "unavailable" and not measured_reason:
@@ -1659,21 +1665,6 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
     bound = ["--repo", str(identity.root), "--slug", str(state["slug"]),
              "--workflow-id", str(state["workflowId"])]
     action = state.get("nextAction")
-    questions = ""
-    if obligations and ((receipt or {}).get("kind") == "tdd" or action in {"tdd", "run-mapped-tdd", "verification", "code-review"}):
-        comparison = receipt or {}
-        if "arms" not in comparison and "cases" not in comparison:
-            runs = (evidence_document(identity, state.get("tddEvidence")) or {}).get("runs", [])
-            candidate = _active_candidate_tree(identity) if runs else None
-            comparison = next((run for run in reversed(runs) if run.get("candidateTree") == candidate), {})
-        # A receipt carrying its own `open` list states the questions once, there.
-        if obligations and "open" not in (receipt or {}):
-            questions = "\n".join(_readiness_lines(identity, state).get("open", []))
-        incomplete = [str(arm.get("error") or "execution incomplete") for arm in comparison.get("arms", [])
-                      if arm["outcome"] == "incomplete"]
-        if incomplete:
-            return {"command": None, "input": "Comparison execution incomplete: " + "; ".join(dict.fromkeys(incomplete))
-                    + ("\n" + questions if questions else ""), "action": "tdd"}
     if state.get("phase") == "complete" and not state.get("revalidation"):
         return {"command": None}
     if action == "repo-context-forge":
@@ -1687,7 +1678,7 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
         command = [*cli, "verify", *bound, "--kind", "quality-gate"]
         if not state.get("baseOid"):
             command += ["--base-ref", str(state["passStartOid"])]
-        return {"command": shlex.join(command), **({"input": questions} if questions else {})}
+        return {"command": shlex.join(command)}
     elif action == "complete-workflow":
         command = [*cli, "complete", *bound]
     elif action in {"preflight", "final-review", "re-consult-final-review"}:
@@ -1721,8 +1712,8 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
         command = [*cli, "tdd", *bound]
         pending = open_findings(identity, state)
         # The --case template only when an open line asks for a case; after an edit the call that reruns and verifies is [].
-        asks = any(line.startswith("removed condition ") or line.endswith("case is bound")
-                   for line in [*((receipt or {}).get("open") or []), *questions.splitlines()])
+        asks = any(line.startswith("removed condition ") or "no case is bound" in line
+                   for line in [*((receipt or {}).get("open") or [])])
         operation: JsonObject = {"command": shlex.join(command), "args": ["--case", "<ID>", "<COMMAND>"] if asks else []}
         text = ""
         if asks:
@@ -1733,12 +1724,12 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
         if pending:
             operation["findings"] = pending
             text += " A final finding closes when its repair passes, or with args [\"--reject\", \"<FINDING_ID>\", \"<COMMAND>\"]."
-        if text := "\n".join(filter(None, (text.strip(), questions))):
+        if text := text.strip():
             operation["input"] = text
         return operation
     else:
         command = [*cli, "status", "--repo", str(identity.root)]
-    return {"command": shlex.join(command), **({"input": questions} if questions else {})}
+    return {"command": shlex.join(command)}
 
 
 def open_findings(identity: RepoIdentity, state: JsonObject, *, detail: bool = False) -> list[JsonObject]:
@@ -1784,8 +1775,11 @@ def operation_receipt(state: JsonObject, identity: RepoIdentity, *, readiness: J
     if CHECK_ONLY.get():
         return details
     current = public_status(state, fields={"schemaVersion", "workflowId", "slug", "phase", "nextAction"})
-    if obligations and details.get("kind") == "tdd":
+    if obligations and (details.get("kind") == "tdd" or state.get("nextAction") in {"tdd", "address-review-findings"}):
         details.update(readiness if readiness is not None else _readiness_lines(identity, state))
+    if "open" in details:
+        details["open"] = [line + '; workflow.run args ["tdd", "--case", "<ID>", "<COMMAND>"]'
+                           if line.startswith("removed condition ") else line for line in details["open"]]
     operation = next_step(identity, {**state, **current}, details, obligations=obligations)
     return {"nextAction": operation.pop("action", current.get("nextAction")), "next": operation,
             **{key: value for key, value in current.items() if key != "nextAction"}, **details}
