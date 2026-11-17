@@ -71,8 +71,9 @@ For a full project installation:
 ./install.sh
 ```
 
-Backs up touched paths to `~/.codex-backups/<ts>/`, rsyncs `hooks/` and
-`skills/` (excluding tests), copies the global rules, merges `hooks.json` entries,
+Backs up touched paths to `~/.codex-backups/<ts>/`, rsyncs `agents/` (the
+workflow's reviewer role), `hooks/` and `skills/` (excluding tests), copies the
+global rules, merges `hooks.json` entries,
 and appends `[mcp_servers.gitnexus]` and `[mcp_servers.workflow]` (the
 workflow's blocking tool) to `config.toml` when absent. Codex
 requires hook trust: approve the hooks once via `/hooks` in an interactive
@@ -115,15 +116,16 @@ by name.
 ### Advisor estate
 
 The advisor wrapper automatically launches a persistent home at
-`$CODEX_HOME/advisor/codex` or `$CODEX_HOME/advisor/claude`, with its own
-`AGENTS.md` or `CLAUDE.md` and full filesystem access. Native authentication
+`$CODEX_HOME/advisor/codex` or `$CODEX_HOME/advisor/claude` with full filesystem
+access. Its rules, `advisor-role.md` first, then the selected rule files, replace
+Codex's built-in prompt as `instructions.md` or form Claude's `CLAUDE.md`. Native authentication
 and session storage remain available; there is no terminal or history transfer.
 
 Edit `$CODEX_HOME/docs/agents/advisor-launch.json` to select rule files, installed
 skill names and configured MCP server names. Rule paths are relative to that
 JSON file, or absolute. Changes take effect on the next consultation; installation
-preserves the JSON. The defaults select `code-quality`, `codebase-design` and
-`gitnexus`. Other automatic skill sources and estate workflow hooks are
+preserves the JSON. The defaults select `proof-invariants.md` and the
+`code-quality` rubric as rules, `codebase-design` and `gitnexus`. Other automatic skill sources and estate workflow hooks are
 excluded. Repository instructions and unrelated user hooks remain active.
 
 Claude uses its native settings, credentials and session paths separately,

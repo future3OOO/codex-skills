@@ -10,11 +10,11 @@ EXCLUDES=(--exclude='.system/' --exclude='tests/' --exclude='test_*.py' --exclud
   --exclude='__pycache__' --exclude='*.pyc' --exclude='*:Zone.Identifier')
 
 mkdir -p "$DEST" "$BACKUP"
-for path in AGENTS.md hooks.json hooks skills; do
+for path in AGENTS.md agents/reviewer.toml hooks.json hooks skills; do
   [[ -e "$DEST/$path" ]] && cp -a "$DEST/$path" "$BACKUP/"
 done
 
-rsync -a "${EXCLUDES[@]}" "$SRC/hooks" "$SRC/skills" "$DEST/"
+rsync -a "${EXCLUDES[@]}" "$SRC/agents" "$SRC/hooks" "$SRC/skills" "$DEST/"
 cat "$SRC/docs/agents/global-rules.md" "$SRC/docs/agents/proof-invariants.md" > "$DEST/AGENTS.md"
 mkdir -p "$DEST/docs/agents"
 cp "$SRC/docs/agents/advisor-role.md" "$SRC/docs/agents/proof-invariants.md" "$DEST/docs/agents/"
