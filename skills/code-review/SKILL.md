@@ -18,13 +18,10 @@ For governed work load the complete review package:
 python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" checkpoint --repo "$PWD" --phase code-review --channel-dir "$(mktemp -d)"
 ~~~
 
-Read each listed channel and the actual diff/current files. A tool call's output is cut
-at one limit however many commands it runs: read the channels in tool calls that run
-nothing else, split by their listed bytes so none is cut. Where a channel lists `since` and you recorded that verdict,
-read `since` in its place: what changed after the tree you judged. The package
-contains the request, contract, compared outcomes, current findings and available
-context. Use its evidence command only for details it does not show. Reuse applicable
-graph evidence; trace affected callers, callees, state writers and no-change surfaces.
+Read every listed channel and the actual diff/current files. The package contains
+the request, contract, compared outcomes, current findings and available context.
+Use its evidence command only for details it does not show. Reuse applicable graph
+evidence; trace affected callers, callees, state writers and no-change surfaces.
 A changed target requires renewed inspection. Outside a governed pass, use the
 requested Git target and report without creating workflow state.
 
@@ -37,16 +34,8 @@ and unsupported claims. Verify the original failure, current outcome and affecte
 preservation separately. Challenge expectations against the request and original
 operations; selected green cases cannot authorize an omitted responsibility.
 Equal failures or unexecuted operations do not prove preservation. Equivalent
-changes need no invented distinguishing input. Reconcile each required outcome,
-preservation duty and performance criterion with what its recorded case asserts or
-measures. An assertion about another result preserves nothing. A case failing on the
-original and passing on the candidate asserts a difference, and its original output
-shows what the original did: for every such case find the request text that asks for
-exactly that difference. Wording about behavior the request keeps asks for none, even
-where the new result reads like that wording: it summarizes the original code, so the
-original result stands, whatever item or approval holds the case. A required
-measurement not taken or missing its criterion stays unresolved unless the requirement
-and behavior/cost evidence justify its disposition.
+changes need no invented distinguishing input. Judge changed requirements and
+coverage against the request; listing a change authorizes nothing.
 
 Attack whole-system cost at fixed required behavior. Treat all code on the requested
 production path as variable, including existing inefficient machinery. Find the
@@ -58,16 +47,13 @@ surviving checks. Generate replacement diffs from actual scratch edits.
 
 ## Execute and record
 
-Record direct project operations together with the package's finding command, one `--case - COMMAND` per case:
-a probe binds when it passes on the original and fails on the candidate. `--change REPLACEMENT_DIFF` submits a
-replacement and `--change probe=BREAK_DIFF` a break for the probe, each a diff kept in scratch outside the checkout.
-Expected values come from executed references or frozen requirement-grounded properties. Judge whether each operation
+Submit direct project operations together through the package's finding command, one command per case.
+Expected values come from executed
+references or frozen requirement-grounded properties. Judge whether each operation
 establishes the affected requirement. Check the failure cause and selected operation from source and raw output; the runner reads exits only. A scratch call only investigates.
 
-Use the package's verdict command after judging its source and evidence, adding
-`--report 'LINE'` for each non-executable report line. Return
-the Standards/Spec verdict, receipt references, non-executable report lines and the
-verdict receipt's `next` exactly as recorded: it is the lead's next call, so name no phase in its place.
+Use the package's matching verdict command after judging its source and evidence. Return
+the Standards/Spec verdict, receipt references and non-executable report lines.
 Group counterexamples by owning Module and invariant. On correction retain finding
 identities, inspect the changed evidence and answer specific questions supplied by
 the current package. The runner rechecks retained findings, including resolved ones;

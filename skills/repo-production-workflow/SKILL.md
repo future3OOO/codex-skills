@@ -114,7 +114,7 @@ model selection) in the lead's native task checkout. Supply the target and corre
 which loads the request, contract, comparison outcomes and diff itself.
 Wait for it in one `wait_agent` call with `timeout_ms` 1800000, without editing the candidate; on timeout, wait again rather than re-tasking. The reviewer records executable findings and
 its source-bound verdict through the existing workflow command, then returns its
-Standards/Spec report, receipt references and its verdict receipt's `next`. Call that `next`.
+Standards/Spec report and receipt references. Follow the runtime continuation.
 For genuinely trivial work, use the runtime's existing not-required operation.
 
 Retain the reviewer agent and finding identities. Resume that context for

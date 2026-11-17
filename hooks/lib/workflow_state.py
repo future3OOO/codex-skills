@@ -1288,11 +1288,10 @@ def _review_entries(items: list[JsonObject], rejected: dict[str, JsonObject]) ->
     return entries
 
 
-def _entry_lines(rows: list[JsonObject], context: JsonObject | None = None) -> str:
-    """One JSON document with an entry per line: a search returns the matching entries and a transport frames each."""
+def _entry_lines(rows: list[JsonObject], context: JsonObject) -> str:
+    """One JSON document with an entry per line: a search returns the matching entries."""
     text = lambda value: json.dumps(value, sort_keys=True, separators=(",", ":"))
-    body = "[\n" + ",\n".join(map(text, rows)) + "\n]"
-    return text(context)[:-1] + ',"items":' + body + "}" if context else body
+    return text(context)[:-1] + ',"items":[\n' + ",\n".join(map(text, rows)) + "\n]}"
 
 
 def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
@@ -1394,8 +1393,9 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
     if phase == "code-review":
         record = [*WORKFLOW, "tdd", "--repo", identity.root, "--as", "review", "--workflow-id", str(workflow_id)]
         result["findingCommand"] = shlex.join([*record, "--report", "OWNING INVARIANT", "--case", "-", "COMMAND"])
-        result["verdictCommand"] = shlex.join([*record, "--expected-candidate-tree", candidate,
-                                               "--tdd-evidence", str(state.get("tddEvidence") or "null")]) + " --verdict complete"
+        verdict = shlex.join([*record, "--expected-candidate-tree", candidate, "--tdd-evidence", str(state.get("tddEvidence") or "null")])
+        # Both verdicts ready to run: an unmet requirement is recorded as easily as completion, and keeps the review open.
+        result["verdictCommand"], result["unmetVerdictCommand"] = verdict + " --verdict complete", verdict + " --verdict incomplete"
     else:
         shape = json.loads(ADVISOR_SHAPES["preflight" if phase == "preflight-advice" else "final"])
         if reconsult:  # the second consultation completes the draft in its answer
@@ -1430,44 +1430,31 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
             map_content = {"digest": draft_id,
                            "baseDigest": evidence_write(str(workflow_id), "preflight-draft", prior).evidence_id,
                            "delta": draft_diff(prior, preflight_draft, "last-recorded-draft", "current-draft")}
-    # What changed after the tree this role's last verdict judged, beside the whole channel: a reader takes it only for a verdict it holds.
-    judged = evidence_document(identity, state.get("codeReviewEvidence"), restore_runs=False) if phase == "code-review" else None
-    since = (judged or {}).get("candidateTree") if phase == "code-review" else state.get("judgedTree") if phase == "final-review" else None
-    diff = None if "passStartOid" in missing else lambda **scope: current_pass_evidence(
-        str(identity.root), f"{state['passStartOid']}^{{tree}}", candidate, **scope)
-    alternatives: dict[str, tuple[object, str]] = {}
-    if since and diff:
-        alternatives["diff"] = (diff(since=since), f"the whole pass's changed files (numstat), then the diff since {since}, the tree your last verdict judged")
-    if judged and since:
-        before = {entry["id"]: entry for entry in _review_entries(behavior_map.recorded_map(evidence_document(identity, judged.get("tddEvidence"))) or [], {})}
-        alternatives["behavior-map"] = (_entry_lines([entry for entry in entries if before.get(entry["id"]) != entry], {
-            **context, "unchanged": [entry["id"] for entry in entries if before.get(entry["id"]) == entry],
-            "removed": [name for name in before if name not in {entry["id"] for entry in entries}]}),
-            "each map entry whose obligation, command, result or proof changed since that verdict, whole, with the unchanged and removed ids")
+    since = state.get("judgedTree") if phase == "final-review" else None
     values: dict[str, tuple[object, object]] = {
         "intent": (None, state.get("intent") or None),
         "advisor-projection": (evidence_id, projection),
         "behavior-map": (None, map_content or None),
-        "finding-ledger": (None, _entry_lines(ledger) if ledger else None),
+        "finding-ledger": (None, ledger or None),
         "quality-candidates": (state.get("qualityGateEvidence"), gate_candidates(identity, state) or None),
-        "diff": (None, diff and diff()),
+        "diff": (None, None if "passStartOid" in missing else current_pass_evidence(
+            str(identity.root), f"{state['passStartOid']}^{{tree}}", candidate, since=since)),
     }
     result["channels"] = []
     Path(channel_dir).mkdir(parents=True, exist_ok=True)
-    def write(path: str, content: object) -> int:
-        data = content if isinstance(content, bytes) else (
-            content if isinstance(content, str) else json.dumps(content, sort_keys=True, separators=(",", ":"))).encode("utf-8")
-        with open(path, "wb") as handle:
-            handle.write(data)
-        return len(data)
     for position, (name, description) in enumerate(CHANNELS):
         evidence, content = values[name]
         if not content:
             continue
+        data = content if isinstance(content, bytes) else (
+            content if isinstance(content, str) else json.dumps(content, sort_keys=True, separators=(",", ":"))).encode("utf-8")
+        if since and name == "diff":  # the pass's last recorded final verdict judged everything through `since`
+            description = f"the whole pass's changed files (numstat), then the diff since {since}, judged by the last final"
         path = os.path.join(channel_dir, f"{position}-{name}")
-        result["channels"].append({"name": name, "evidenceId": evidence, "bytes": write(path, content), "contentPath": path, "description": description,
-                                   **({"since": {"tree": since, "bytes": write(path + "-since", alternatives[name][0]), "contentPath": path + "-since",
-                                                 "description": alternatives[name][1]}} if name in alternatives else {})})
+        with open(path, "wb") as handle:
+            handle.write(data)
+        result["channels"].append({"name": name, "evidenceId": evidence, "bytes": len(data),
+                                   "contentPath": path, "description": description})
     return result
 
 
