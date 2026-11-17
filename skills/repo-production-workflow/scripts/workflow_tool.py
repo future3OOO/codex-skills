@@ -18,7 +18,6 @@ from __future__ import annotations
 import json
 import io
 import os
-import re
 import signal
 import sys
 import threading
@@ -29,16 +28,16 @@ TOOL = {"name": "run", "description": "Run the active workflow pass's next step 
         "`args`: the arguments the step's `input` names, or another workflow.py verb with its arguments (begin, summary, status, tdd, verify, consult, context).",
         "inputSchema": {"type": "object", "required": ["cwd"], "properties": {
             "cwd": {"type": "string"}, "args": {"type": "array", "items": {"type": "string"}}}}}
-LOG = re.compile(r"/sessions/.+/rollout-.+-([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})\.jsonl$")
 
 
 def session(parent: int) -> str | None:
     """The thread whose session log `parent`, the Codex process, holds open: a live thread holds its own. None unless
     exactly one is open."""
+    from hooks.lib import SESSION_LOG
     threads = set()
     for descriptor in os.listdir(f"/proc/{parent}/fd"):
         try:
-            match = LOG.search(os.readlink(f"/proc/{parent}/fd/{descriptor}"))
+            match = SESSION_LOG.search(os.readlink(f"/proc/{parent}/fd/{descriptor}"))
         except OSError:  # closed since it was listed
             continue
         if match:
@@ -80,12 +79,36 @@ def serve() -> None:
     messages = os.fdopen(os.dup(0), "rb")
     os.dup2(os.pipe()[0], 0)  # what every command inherits as stdin; the write end stays open, and only here, for as long as this process lives
     running: dict[object, threading.Event] = {}
+    asked: dict[str, list] = {}  # a question to the user by its request id: [answered, the host's result]
+    host: dict = {}  # the capabilities the host declared
     lock = threading.Lock()
 
     def send(ident: object, key: str, value: object) -> None:
         with lock:
             sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": ident, key: value}) + "\n")
             sys.stdout.flush()
+
+    def ask(message: str, cancel: threading.Event) -> str:
+        """The user's answer, as the host asks them: accept only when they answer yes, else decline or cancel; unavailable
+        when the host cannot ask. A host that may not interrupt its user declines a required answer (measured: Codex with
+        approval_policy never declines it, and accepts a form with nothing to answer)."""
+        if "elicitation" not in host:
+            return "unavailable"
+        ident = "ask-" + os.urandom(8).hex()
+        waiting = asked[ident] = [threading.Event(), None]
+        with lock:
+            sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": ident, "method": "elicitation/create", "params": {
+                "message": message, "requestedSchema": {"type": "object", "required": ["abandon"], "properties": {
+                    "abandon": {"type": "boolean", "title": "Abandon this pass"}}}}}) + "\n")
+            sys.stdout.flush()
+        while not waiting[0].wait(0.05):
+            if cancel.is_set():
+                asked.pop(ident, None)
+                return "cancel"
+        answer = waiting[1] if isinstance(waiting[1], dict) else {}
+        if answer.get("action") == "accept":
+            return "accept" if (answer.get("content") or {}).get("abandon") is True else "decline"
+        return "decline" if answer.get("action") == "decline" else "cancel"
 
     def call(ident: object, arguments: dict, cancel: threading.Event) -> None:
         try:
@@ -98,7 +121,14 @@ def serve() -> None:
             if args[0] == "begin":  # it reads the calling session's opening message by CODEX_THREAD_ID; with no single session, none
                 thread = session(os.getppid())
                 env = {key: value for key, value in environment.items() if key != "CODEX_THREAD_ID"} | ({"CODEX_THREAD_ID": thread} if thread else {})
-            raw, code, _ = run([sys.executable, __file__, *args], resolve_repo_identity(cwd), float("inf"), env, cancel)
+            identity = resolve_repo_identity(cwd)
+            if args[0] == "abandon":  # the user is asked, by the host, whether to end the open pass; the command acts only on their acceptance
+                raw, code, _ = run([sys.executable, __file__, "status", "--fields", "slug,phase"], identity, float("inf"), env, cancel)
+                state = json.loads(raw) if not code else {}
+                if state.get("phase") not in {None, "complete", "abandoned"}:
+                    env = {**environment, "WORKFLOW_ABANDON_ANSWER": ask(
+                        f"Abandon workflow pass {state['slug']} in {identity.root}? It ends without completing; its evidence stays.", cancel)}
+            raw, code, _ = run([sys.executable, __file__, *args], identity, float("inf"), env, cancel)
             text = raw.decode(errors="replace") + (f"exit status {code}" if code else "")
         except (RepoIdentityError, ValueError, OSError) as exc:
             code, text = 2, f"error: {exc}"
@@ -113,12 +143,17 @@ def serve() -> None:
             send(None, "error", {"code": -32700, "message": "parse error"})
             continue
         method, ident, params = message.get("method"), message.get("id"), message.get("params") or {}
-        if method == "tools/call":
+        if method is None and ident in asked:  # the host's answer to a question to the user
+            waiting = asked.pop(ident)
+            waiting[1] = message.get("result")
+            waiting[0].set()
+        elif method == "tools/call":
             cancel = running[ident] = threading.Event()
             threading.Thread(target=call, args=(ident, params.get("arguments") or {}, cancel), daemon=True).start()
         elif method == "notifications/cancelled":
             running.get(params.get("requestId"), threading.Event()).set()
         elif method == "initialize":
+            host.update(params.get("capabilities") or {})
             send(ident, "result", {"protocolVersion": params.get("protocolVersion"), "capabilities": {"tools": {}},
                                    "serverInfo": {"name": "workflow", "version": "1"}})
         elif method == "tools/list":

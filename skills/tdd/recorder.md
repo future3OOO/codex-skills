@@ -11,17 +11,17 @@ with it, as is a temporary path the command or that file names; `--path` or `--s
 another beside it. A `--case` call runs the cases it names and any recorded case still without accepted proof, captures any command an item still
 declares and judges the rest of the map as recorded, without running it; a bare call captures those too, replays every recorded command and,
 when all hold and nothing is open, verifies.
-A declaration that cannot be prepared stays open; put the corrected command in its returned `tdd --correct` call; a failing case is a row, not a failed call. `record tdd-map --input`
+A declaration that cannot be prepared stays open; put the corrected command in its returned `tdd --correct` call, which also replaces a declared command that already ran; a failing case is a row, not a failed call. `record tdd-map --input`
 takes the map change itself, `items` (only the changed fields), `added` and `removed`, alone or together:
-`{"items":[{"id":"BM_X","expected":"..."}],"removed":["BM_Y"]}`. The receipt gives continuation, failures and evidence access.
+`{"items":[{"id":"BM_X","expected":"..."}],"removed":["BM_Y"]}`, and reruns the changed items' cases in the same call. The receipt gives continuation, failures and evidence access.
 The runner owns source preparation and reuse; do not repeat them.
 
 Only a finding's author can withdraw it, or retire a case beside its probe or replacement; the lead closes an
 advisor-added map item or final finding it rejects with `tdd --reject ID 'COMMAND'`, whose output the workflow records. The lead
-retires a case (`--retire` with its `caseKey`) under a conformance or contract item, or whose item
-has left the map; a preservation case only while another recorded case proves the item, and only when
-the item changed and the case no longer passes, or when the case fails on the original. Reviewers
-receive each retired case with its command and exits.
+retires a case with `--retire` and its item and command, or its `caseKey`. A retired kept-behaviour case
+stays the item's retained proof, holding it open while it fails on the candidate, unless another recorded case
+proves the item and the case fails on the original or no longer passes after the item changed; an item left without a proving case reads open.
+Reviewers receive each retired case with its command and exits.
 Retirement never authorizes losing required behavior. Keep the raw evidence and
 other observations. The runtime rechecks retained findings at verification or
 completion and preserves their source identity. Once the final author's ready verdict judges a

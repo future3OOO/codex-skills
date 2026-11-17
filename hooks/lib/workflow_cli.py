@@ -35,6 +35,7 @@ from .workflow_state import (
     _require_instance,
     _require_state,
     _tree_drift,
+    abandon,
     begin,
     bound_state,
     checkpoint,
@@ -115,6 +116,7 @@ def parser() -> argparse.ArgumentParser:
     command.add_argument("--findings")
     command = _repo(commands.add_parser("pause", help="record an honest wait"), instance=True)
     command.add_argument("--reason", required=True)
+    _repo(commands.add_parser("abandon", help="end the active pass the user drops, once they confirm when the workflow tool asks"))
     command = _repo(commands.add_parser("checkpoint", help="query advisor readiness without mutation"))
     command.add_argument("--phase", required=True)
     command.add_argument("--reconsult", action="store_true", help="resume review of a revised preflight draft")
@@ -486,6 +488,9 @@ def _dispatch(args: argparse.Namespace) -> int:
     elif args.command == "pause":
         _emit_json(_receipt(pause(identity, args.slug, args.workflow_id, args.reason,
                                   expected_candidate_tree=_active_candidate_tree(identity)), identity))
+    elif args.command == "abandon":
+        state = abandon(identity, os.environ.get("WORKFLOW_ABANDON_ANSWER"))
+        _emit_json(_receipt(state, identity, abandoned=state["abandoned"]))
     elif args.command == "checkpoint":
         if args.channel_dir:  # a consult is about to read the projection
             for line in refresh_context(identity):
@@ -543,8 +548,12 @@ def main(argv: list[str] | None = None, *, replace: bool = True) -> int:
             return subprocess.run(command, check=False).returncode
         if command:  # the operation replaces this process: its output and exit status are its own
             os.execv(command[0], command)
+        commands = parser()
+        if values and not values[0].startswith("-") and values[0] not in next(
+                action.choices for action in commands._actions if isinstance(action, argparse._SubParsersAction)):
+            raise WorkflowError(f"no workflow command {values[0]!r}; args [] run the pass's next step")
         with _comparison_scope():
-            return _dispatch(parser().parse_args(values))
+            return _dispatch(commands.parse_args(values))
     except (RepoIdentityError, LedgerError, WorkflowError, ValueError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

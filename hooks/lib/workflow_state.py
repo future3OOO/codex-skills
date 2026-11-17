@@ -40,7 +40,6 @@ from .state_store import (
     _candidate_matches,
     _comparison_scope,
     _flock,
-    _git,
     _paths,
     analysis_unchanged,
     is_governance_path,
@@ -116,7 +115,7 @@ def mutation(identity: RepoIdentity, **binding: str | None):
 def _effective(identity: RepoIdentity, state: JsonObject | None,
                evidence: Callable[[str | None], JsonObject | None]) -> JsonObject | None:
     """Derive readiness from bound proof, including reusable evidence after a reverted edit."""
-    if not state or state.get("phase") == "complete" or not (state.get("tddEvidence") or state.get("tdd") in {"passed", "not-required"}):
+    if not state or state.get("phase") in {"complete", "abandoned"} or not (state.get("tddEvidence") or state.get("tdd") in {"passed", "not-required"}):
         return state
     readiness = _readiness_lines(identity, state, evidence=evidence)
     status = "in-progress" if readiness["open"] else "passed" if state.get("tddEvidence") else state["tdd"]
@@ -1145,6 +1144,8 @@ def record_advisor_result(
 
 
 def _require_open(state: JsonObject) -> None:
+    if state.get("phase") == "abandoned":
+        raise WorkflowError("workflow was abandoned; begin a new pass")
     if state.get("phase") == "complete" and not state.get("revalidation"):
         raise WorkflowError("workflow is terminal after completion; begin a new pass")
 
@@ -1192,6 +1193,20 @@ def pause(identity: RepoIdentity, slug: str, workflow_id: str | None, reason: st
         state["paused"] = {"reason": cleaned, "at": utc_timestamp()}
         state = _commit(transaction, state, "pause")
     return public_status(state, identity, candidate_tree=expected_candidate_tree, recovery=True, fields=set(state)) if expected_candidate_tree else state
+
+
+def abandon(identity: RepoIdentity, answer: str | None) -> JsonObject:
+    """End the active pass on the user's agreement: `answer`, the user's own reply when the workflow tool's host asked
+    them, must be accept. The pass keeps its evidence, never reads complete, and a new pass can begin after it."""
+    missing = {None: "only the workflow tool asks the user", "unavailable": "this host cannot ask the user",
+               "decline": "the user declined (a host whose approval policy is never declines for them)", "cancel": "the user did not answer"}
+    with mutation(identity) as transaction:
+        state = _bound_instance_state(transaction.state, None, None)
+        if answer != "accept":
+            raise WorkflowError(f"abandon needs the user's agreement: {missing.get(answer, 'the user did not answer')}; the pass is unchanged")
+        state.pop("paused", None)
+        state.update(phase="abandoned", abandoned={"agreement": "the user accepted, asked by the host", "at": utc_timestamp()})
+        return _commit(transaction, state, "abandon")
 
 
 def _finding_state_blockers(state: JsonObject) -> list[str]:
@@ -1304,7 +1319,7 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
     workflow_id = instance_id(state)
     candidate = _active_candidate_tree(identity)
     revalidation = bool(state.get("revalidation"))
-    terminal = state.get("phase") == "complete" and not revalidation
+    terminal = state.get("phase") == "complete" and not revalidation or state.get("phase") == "abandoned"
     open_for_phase = not terminal and not (phase == "preflight-advice" and revalidation)
     stage_actions = {
         "preflight-advice": {"preflight"},
@@ -1535,6 +1550,8 @@ def invalidate_after_edit(identity: RepoIdentity, path: str | None) -> tuple[Jso
         candidate = _active_candidate_tree(identity)
         if state is not None and state.get("activeCandidateTree") == candidate:
             return state, changed
+        if state is not None and state.get("phase") == "abandoned":  # an edit after abandonment starts nothing
+            return state, changed
         if state is None:
             return None, sorted(set(changed)
                 | set(_paths(identity, "ls-files", "--modified", "--others", "--exclude-standard", "-z"))
@@ -1651,12 +1668,12 @@ def _readiness_lines(identity: RepoIdentity, state: JsonObject, items: list[Json
             document = documents[0]
             items = behavior_map.recorded_map(*documents) if items is None else items
         held[key] = _derived_readiness(identity, {field: state[field] for field in READINESS_FIELDS if field in state},
-                                       items or [], document, documents[1] if documents else None, review, candidate)
+                                       items or [], document, review, candidate)
     return {name: list(value) if isinstance(value, list) else value for name, value in held[key].items()}
 
 
 def _derived_readiness(identity: RepoIdentity, state: JsonObject, items: list[JsonObject], document: JsonObject | None,
-                       preflight: JsonObject | None, review: JsonObject | None, candidate: str) -> JsonObject:
+                       review: JsonObject | None, candidate: str) -> JsonObject:
     from .tdd_workflow import _evaluation, _retired, refresh_proof, shown
     rejected = rejections(state, "item")  # the lead's measured set-asides
     items = [entry for entry in items if entry["id"] not in rejected]
@@ -1670,14 +1687,6 @@ def _derived_readiness(identity: RepoIdentity, state: JsonObject, items: list[Js
         if behavior_map._case_question(entry):
             entry["comparison"]["command"] = shown(identity, state, entry["comparison"])
     cases = behavior_map.open_obligations(items, evaluation, observations)
-    if document:
-        from . import removed_conditions
-        original = _git(identity, "rev-parse", f"{state['passStartOid']}^{{tree}}").decode().strip()
-        if decisions := removed_conditions.removed(identity, original, candidate):
-            traces, proofs = document.get("conditions") or {}, [entry for entry in [*observations, *evaluation] if entry["comparison"].get("arms")]
-            preflight = preflight or evidence_document(identity, state.get("preflightEvidence"))
-            cases += sum(removed_conditions.unsettled(
-                decisions, [traces.get(side, {}) for side in ("original", "candidate")], proofs, behavior_map.recorded_map(None, preflight) or []), [])
     review = review if review is not None else evidence_document(identity, state.get("codeReviewEvidence"))
     current = bool(review and review.get("workflowId") == state["workflowId"] and review.get("candidateTree") == candidate and review.get("verdict") == "complete" and not _stage_unresolved(state, "code-review", "code-review"))
     return {"open": cases, "reviewCurrent": current, "openCount": len(cases),
@@ -1691,7 +1700,7 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
     bound = ["--repo", str(identity.root), "--slug", str(state["slug"]),
              "--workflow-id", str(state["workflowId"])]
     action = state.get("nextAction")
-    if state.get("phase") == "complete" and not state.get("revalidation"):
+    if state.get("phase") == "complete" and not state.get("revalidation") or state.get("phase") == "abandoned":
         return {"command": None}
     if action == "repo-context-forge":
         command = [sys.executable, str(scripts / "repo-context-forge/scripts/bootstrap.py"),
@@ -1737,19 +1746,13 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
     elif action in {"tdd", "address-review-findings"}:
         command = [*cli, "tdd", *bound]
         pending = open_findings(identity, state)
-        # The --case template only when an open line asks for a case; after an edit the call that reruns and verifies is [].
-        asks = any(line.startswith("removed condition ") or "no case is bound" in line
-                   for line in [*((receipt or {}).get("open") or [])])
-        operation: JsonObject = {"command": shlex.join(command), "args": ["--case", "<ID>", "<COMMAND>"] if asks else []}
-        text = ""
-        if asks:
-            ids = [str(entry["id"]) for entry in behavior_map.recorded_map(evidence_document(
-                identity, state.get("tddEvidence") or state.get("preflightEvidence"), restore_runs=False)) or []]
-            text = (f"<ID> <COMMAND>: a map item (recorded: {', '.join(ids) or 'none'}), or - for no item, and the case's command; "
-                    "repeat the three for each case. args [] reruns every recorded case and, when all hold and nothing is open, verifies.")
+        # A map item without a case is the lead's to write; otherwise the call that reruns and verifies is [].
+        unbound = [line.split(" (", 1)[0] for line in (receipt or {}).get("open") or [] if "no case is bound" in line]
+        operation: JsonObject = {"command": None if unbound else shlex.join(command), "args": []}
+        text = f"{', '.join(unbound)} need a case: tdd takes each with --case, the item's id and the case's command." if unbound else ""
         if pending:
             operation["findings"] = pending
-            text += " A final finding closes when its repair passes, or with args [\"--reject\", \"<FINDING_ID>\", \"<COMMAND>\"]."
+            text += " A final finding closes when its repair passes, or with tdd --reject, its id and a command whose output shows it does not hold."
         if text := text.strip():
             operation["input"] = text
         return operation
@@ -1803,9 +1806,6 @@ def operation_receipt(state: JsonObject, identity: RepoIdentity, *, readiness: J
     current = public_status(state, fields={"schemaVersion", "workflowId", "slug", "phase", "nextAction"})
     if obligations and (details.get("kind") == "tdd" or state.get("nextAction") in {"tdd", "address-review-findings"}):
         details.update(readiness if readiness is not None else _readiness_lines(identity, state))
-    if "open" in details:
-        details["open"] = [line + '; workflow.run args ["tdd", "--case", "<ID>", "<COMMAND>"]'
-                           if line.startswith("removed condition ") else line for line in details["open"]]
     operation = next_step(identity, {**state, **current}, details, obligations=obligations)
     return {"nextAction": operation.pop("action", current.get("nextAction")), "next": operation,
             **{key: value for key, value in current.items() if key != "nextAction"}, **details}
