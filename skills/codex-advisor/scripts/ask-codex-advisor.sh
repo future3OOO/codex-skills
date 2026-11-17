@@ -5,7 +5,7 @@ umask 077
 
 usage() {
   printf 'Usage: %s [--slug name] [--provider codex|claude] [--phase preflight-advice|final-review] [--reconsult] [--preflight-file draft.json] [--cwd path] [--design-file file | --design-absent reason] [--budget words] [--codex-model model] [--codex-effort effort] [--fresh] [--quiet] -- "question"\n' "$0" >&2
-  printf '  In a workflow pass the slug is the pass'"'"'s, and with no question the phase is the one the pass is at.\n' >&2
+  printf '  In a workflow pass the slug defaults to the pass'"'"'s, and with no --phase or question the phase is the one the pass is at.\n' >&2
   printf '  Phased consults derive payload, candidate anchors, and create/resume mode from workflow checkpoint; phase-less consults carry only the question.\n' >&2
   printf '  Default budget: 600 words; values above 1200 are refused.\n' >&2
   printf '  Trust: all phases use the lead checkout and estate with full access; final findings are independently replayed.\n' >&2
@@ -43,7 +43,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "$slug" || -z "$phase" ]]; then  # in a pass: its slug and, with no question, the advisor phase it is at
+pass_phase=""
+if [[ -z "$slug" || -z "$phase" && -z "${question//[[:space:]]/}" ]]; then  # in a pass: its slug and, with no --phase and no question, the advisor phase it is at
   pass=$(python3 - "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)/../../.." "$cwd" <<'PY'
 import sys
 sys.path.insert(0, sys.argv[1])
@@ -57,7 +58,6 @@ PY
   )
   read -r pass_slug pass_phase <<<"$pass"
   slug=${slug:-$pass_slug}
-  [[ -n "$phase" || -n "${question//[[:space:]]/}" ]] || phase=$pass_phase
 fi
 [[ -n "$slug" ]] || { printf 'error: --slug is required outside a workflow pass (stable per task, no phase words)\n' >&2; usage; }
 if [[ ! "$budget" =~ ^[1-9][0-9]{0,3}$ ]] || (( budget > 1200 )); then
@@ -66,10 +66,16 @@ if [[ ! "$budget" =~ ^[1-9][0-9]{0,3}$ ]] || (( budget > 1200 )); then
 fi
 [[ -d "$cwd" ]] || { printf 'error: --cwd is not a directory: %s\n' "$cwd" >&2; exit 2; }
 case "$phase" in ""|preflight-advice|final-review) ;; *) printf 'error: unsupported phase: %s\n' "$phase" >&2; exit 2 ;; esac
+case "$provider" in codex|claude) ;; *) printf 'error: unsupported provider: %s\n' "$provider" >&2; exit 2 ;; esac
+# Empty argv leaves the question unread. An empty stdin question stays read.
+[[ -n "$question" ]] || unset question
+if [[ -z "$phase" && -n "$pass_phase" ]]; then
+  [[ -v question ]] || question="$(cat)"
+  [[ -n "${question//[[:space:]]/}" ]] || phase=$pass_phase
+fi
 if [[ "$phase" == final-review ]]; then
   reconsult_args=()
 fi
-case "$provider" in codex|claude) ;; *) printf 'error: unsupported provider: %s\n' "$provider" >&2; exit 2 ;; esac
 if [[ -n "$phase" && "$fresh" -eq 1 ]]; then
   printf 'error: phased consults do not accept --fresh; checkpoint stage owns create or resume mode\n' >&2
   exit 2
@@ -98,7 +104,7 @@ elif [[ -n "$design_file" || -n "$design_absent" ]]; then
   printf 'error: --design-file/--design-absent requires --phase\n' >&2
   exit 2
 fi
-[[ -n "$question" ]] || question="$(cat)"
+[[ -v question ]] || question="$(cat)"
 [[ -n "$phase" || -n "${question//[[:space:]]/}" ]] || { printf 'error: empty question\n' >&2; exit 2; }
 if [[ -n "$phase" ]] && grep -qv '^\(>\( .*\)\?\|[[:space:]]*\)$' <<<"$question"; then
   printf 'error: phased consults carry no lead text: pass only user instructions given after begin, each line quoted verbatim after "> "\n' >&2; exit 2

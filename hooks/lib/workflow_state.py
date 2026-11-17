@@ -1195,13 +1195,15 @@ def pause(identity: RepoIdentity, slug: str, workflow_id: str | None, reason: st
     return public_status(state, identity, candidate_tree=expected_candidate_tree, recovery=True, fields=set(state)) if expected_candidate_tree else state
 
 
-def abandon(identity: RepoIdentity, answer: str | None) -> JsonObject:
+def abandon(identity: RepoIdentity, answer: str | None, workflow_id: str | None = None) -> JsonObject:
     """End the active pass on the user's agreement: `answer`, the user's own reply when the workflow tool's host asked
-    them, must be accept. The pass keeps its evidence, never reads complete, and a new pass can begin after it."""
+    them about pass `workflow_id`, must be accept. The pass keeps its evidence, never reads complete, and a new pass can
+    begin after it."""
     missing = {None: "only the workflow tool asks the user", "unavailable": "this host cannot ask the user",
                "decline": "the user declined (a host whose approval policy is never declines for them)", "cancel": "the user did not answer"}
     with mutation(identity) as transaction:
-        state = _bound_instance_state(transaction.state, None, None)
+        state = _bound_instance_state(transaction.state, None, workflow_id)
+        _require_open(state)
         if answer != "accept":
             raise WorkflowError(f"abandon needs the user's agreement: {missing.get(answer, 'the user did not answer')}; the pass is unchanged")
         state.pop("paused", None)
@@ -1833,7 +1835,8 @@ def summary(identity: RepoIdentity, limit: int = 3000, *, labels: bool = True) -
     text = (
         f"Active workflow: slug={state.get('slug')} workflowId={state.get('workflowId')} "
         f"candidate={state.get('activeCandidateTree')} phase={state.get('phase')} next={action}. "
-        + "\nNext invocation: " + (f"tool {tool}" if tool else "none; see input" if operation.get("input") else "none; workflow complete") + "\n"
+        + "\nNext invocation: " + (f"tool {tool}" if tool else "none; see input" if operation.get("input")
+                                   else f"none; workflow {'abandoned' if state.get('phase') == 'abandoned' else 'complete'}") + "\n"
         + "".join(f"{key}: {json.dumps(value) if isinstance(value, list) else value}\n" for key, value in operation.items())
         + (f"Binding: {gate_drift}. " if gate_drift else "")
         + " ".join(f"{field}={state[field]}" for field in (

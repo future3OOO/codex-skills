@@ -116,7 +116,7 @@ def parser() -> argparse.ArgumentParser:
     command.add_argument("--findings")
     command = _repo(commands.add_parser("pause", help="record an honest wait"), instance=True)
     command.add_argument("--reason", required=True)
-    _repo(commands.add_parser("abandon", help="end the active pass the user drops, once they confirm when the workflow tool asks"))
+    commands.add_parser("abandon", help="end the active pass the user drops, once they confirm when the workflow tool asks; its cwd is the repo").set_defaults(repo=".")
     command = _repo(commands.add_parser("checkpoint", help="query advisor readiness without mutation"))
     command.add_argument("--phase", required=True)
     command.add_argument("--reconsult", action="store_true", help="resume review of a revised preflight draft")
@@ -488,9 +488,8 @@ def _dispatch(args: argparse.Namespace) -> int:
     elif args.command == "pause":
         _emit_json(_receipt(pause(identity, args.slug, args.workflow_id, args.reason,
                                   expected_candidate_tree=_active_candidate_tree(identity)), identity))
-    elif args.command == "abandon":
-        state = abandon(identity, os.environ.get("WORKFLOW_ABANDON_ANSWER"))
-        _emit_json(_receipt(state, identity, abandoned=state["abandoned"]))
+    elif args.command == "abandon":  # the workflow tool asks the user and abandons in its own process; a shell call is refused
+        abandon(identity, None)
     elif args.command == "checkpoint":
         if args.channel_dir:  # a consult is about to read the projection
             for line in refresh_context(identity):

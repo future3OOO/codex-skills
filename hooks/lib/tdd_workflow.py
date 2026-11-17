@@ -4,9 +4,8 @@ from __future__ import annotations
 import ast
 import argparse
 import hashlib
-import io
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import ExitStack, redirect_stdout
+from contextlib import ExitStack
 from functools import lru_cache, partial
 from collections import Counter
 import json
@@ -1628,7 +1627,7 @@ def _case_keys(items: list[JsonObject], runs: list[JsonObject], evaluation: Json
 
 @interruptible()
 @_comparison_scope()
-def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None) -> int:
+def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None) -> int | JsonObject:
     """`update`, a map change recorded with this call's comparison: one commit publishes both."""
     dash = values.index("--") if "--" in values else len(values)
     parser = argparse.ArgumentParser(prog="workflow tdd", description="Compare and record probes or replacements; authors record verdicts from their checkpoint command", epilog=binds.__doc__)
@@ -1822,7 +1821,6 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None) -> in
                 raise WorkflowError(f"{identifier} declares and recorded no case {declaration!r}")
             args.retire += ran
             args.case.append([identifier, corrected])
-            args.correct = None
     frozen_signature = json.dumps(evaluation, sort_keys=True)
     candidate = _active_candidate_tree(identity)
     before = tree_manifest(identity)
@@ -1874,9 +1872,7 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None) -> in
                                       candidate, MAX_CASE_SECONDS, args.support, inventory, original if entry and entry.get("kind") == "preservation" else None)
             _comparison_input(identity, captured)
         except (ValueError, RuntimeError, OSError) as exc:
-            refused.append({"case": value, "refused": str(exc), "next": {"tool": "mcp__workflow__run",
-                            "args": (["tdd", "--correct", identifier, value, "<COMMAND>"] if entry is not None
-                                     else ["tdd", "--case", "<ID>" if identifier else "-", "<COMMAND>"])}})
+            refused.append({"case": value, "refused": str(exc)})
             if entry is not None and value not in entry.get("cases", []):
                 entry.setdefault("cases", []).append(value)
             captured = None
@@ -2006,7 +2002,7 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None) -> in
     cases = behavior_map.current_cases(items, runs, retired)
     frozen_cases = [{**frozen, "comparison": runs[frozen["runIndex"]]} for frozen in evaluation.values()
                     if behavior_map.case_key(frozen["id"], runs[frozen["runIndex"]]) not in retired]
-    selected_only = bool(args.behavior_id)
+    selected_only = bool(args.behavior_id) and update is None  # a map update's batch judges the whole map
     reused = bool(current and len(runs) == len(current.get("runs", [])) and signature == json.dumps(items, sort_keys=True)
                   and frozen_signature == json.dumps(evaluation, sort_keys=True))
     if reused:
@@ -2059,7 +2055,9 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None) -> in
     receipt = operation_receipt(state, identity, kind="tdd", summaryId=evidence, readiness=readiness, obligations=not selected_only,
                                 cases=[*rows, *refused], otherCases=len(recorded.keys() - listed), **({"retired": [done["caseKey"] for done in gone]} if gone else {}),
                                 **({"unmatched": missing} if (missing := [key for key in dict.fromkeys(args.retire) if key not in retiring]) else {}))
-    receipt["next"] = next((row["next"] for row in refused if "next" in row), receipt["next"])
+    if update is not None:
+        del receipt["otherCases"]
+        return receipt
     _emit_json(receipt)
     # 2: a case was refused or its comparison is not bound to the candidate. 1: every case ran and one does not hold, which
     # the command line returns as a result.
@@ -2094,10 +2092,8 @@ def map_update(identity: RepoIdentity, state: JsonObject, value: JsonObject) -> 
                 **({"retired": current["retired"]} if (current or {}).get("retired") else {})}
     rerun = [entry["id"] for entry in items if entry["id"] in {update["id"] for update in updates} and (entry.get("comparison") or entry.get("cases"))]
     if rerun and not CHECK_ONLY.get():  # the changed items' cases run again in this call, one batch whose commit records the map
-        with redirect_stdout(io.StringIO()) as replay:
-            _run_tdd(["--repo", str(identity.root), *(word for identifier in rerun for word in ("--behavior-id", identifier))], update=items)
-        state = _bound_instance_state(read_active(identity), str(state["slug"]), str(state["workflowId"]))
-        return operation_receipt(state, identity, summaryId=state["tddEvidence"], kind="tdd", cases=json.loads(replay.getvalue())["cases"], **notice)
+        receipt = _run_tdd(["--repo", str(identity.root), *(word for identifier in rerun for word in ("--behavior-id", identifier))], update=items)
+        return {**receipt, **notice}
     state, evidence, readiness = commit_tdd(identity, str(state["slug"]), str(state["workflowId"]), document,
                                 expected_evidence_id=state.get("tddEvidence"))
     return operation_receipt(state, identity, summaryId=evidence, kind="tdd", readiness=readiness, **notice)

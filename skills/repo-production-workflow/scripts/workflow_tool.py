@@ -74,8 +74,10 @@ def serve() -> None:
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
     from hooks.lib.command_runner import run
     from hooks.lib.repo_identity import RepoIdentityError, resolve_repo_identity
+    from hooks.lib.workflow_state import LedgerError, abandon, operation_receipt
 
     environment = dict(entry.split("=", 1) for entry in os.fsdecode(Path(f"/proc/{os.getppid()}/environ").read_bytes()).split("\0") if "=" in entry)
+    os.environ.update(environment)  # what this process reads itself, as abandon does, comes from where every command's does
     messages = os.fdopen(os.dup(0), "rb")
     os.dup2(os.pipe()[0], 0)  # what every command inherits as stdin; the write end stays open, and only here, for as long as this process lives
     running: dict[object, threading.Event] = {}
@@ -92,7 +94,8 @@ def serve() -> None:
         """The user's answer, as the host asks them: accept only when they answer yes, else decline or cancel; unavailable
         when the host cannot ask. A host that may not interrupt its user declines a required answer (measured: Codex with
         approval_policy never declines it, and accepts a form with nothing to answer)."""
-        if "elicitation" not in host:
+        modes = host.get("elicitation")
+        if modes is None or modes and "form" not in modes:
             return "unavailable"
         ident = "ask-" + os.urandom(8).hex()
         waiting = asked[ident] = [threading.Event(), None]
@@ -122,15 +125,17 @@ def serve() -> None:
                 thread = session(os.getppid())
                 env = {key: value for key, value in environment.items() if key != "CODEX_THREAD_ID"} | ({"CODEX_THREAD_ID": thread} if thread else {})
             identity = resolve_repo_identity(cwd)
-            if args[0] == "abandon":  # the user is asked, by the host, whether to end the open pass; the command acts only on their acceptance
-                raw, code, _ = run([sys.executable, __file__, "status", "--fields", "slug,phase"], identity, float("inf"), env, cancel)
+            if args == ["abandon"]:  # the user is asked, by the host, whether to end the open pass; it ends here only on their acceptance
+                raw, code, _ = run([sys.executable, __file__, "status", "--fields", "slug,phase,workflowId"], identity, float("inf"), env, cancel)
                 state = json.loads(raw) if not code else {}
-                if state.get("phase") not in {None, "complete", "abandoned"}:
-                    env = {**environment, "WORKFLOW_ABANDON_ANSWER": ask(
-                        f"Abandon workflow pass {state['slug']} in {identity.root}? It ends without completing; its evidence stays.", cancel)}
-            raw, code, _ = run([sys.executable, __file__, *args], identity, float("inf"), env, cancel)
-            text = raw.decode(errors="replace") + (f"exit status {code}" if code else "")
-        except (RepoIdentityError, ValueError, OSError) as exc:
+                answer = ask(f"Abandon workflow pass {state['slug']} in {identity.root}? It ends without completing; its evidence stays.",
+                             cancel) if state.get("phase") not in {None, "complete", "abandoned"} else None
+                ended = abandon(identity, answer, state.get("workflowId"))
+                code, text = 0, json.dumps(operation_receipt(ended, identity, abandoned=ended["abandoned"]), sort_keys=True)
+            else:
+                raw, code, _ = run([sys.executable, __file__, *args], identity, float("inf"), env, cancel)
+                text = raw.decode(errors="replace") + (f"exit status {code}" if code else "")
+        except (RepoIdentityError, LedgerError, ValueError, OSError) as exc:
             code, text = 2, f"error: {exc}"
         running.pop(ident, None)
         if not cancel.is_set():
@@ -143,8 +148,7 @@ def serve() -> None:
             send(None, "error", {"code": -32700, "message": "parse error"})
             continue
         method, ident, params = message.get("method"), message.get("id"), message.get("params") or {}
-        if method is None and ident in asked:  # the host's answer to a question to the user
-            waiting = asked.pop(ident)
+        if method is None and (waiting := asked.pop(ident, None)):  # the host's answer to a question to the user
             waiting[1] = message.get("result")
             waiting[0].set()
         elif method == "tools/call":
