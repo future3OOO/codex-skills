@@ -16,7 +16,7 @@ def _git(root: str, *args: str | bytes) -> bytes:
 
 def current_pass_evidence(root: str, base_tree: str, candidate_tree: str, *, since: str | None = None) -> bytes:
     """The base_tree -> candidate_tree diff with every deleted file reduced to its header. Given `since`,
-    the tree the pass's last final judged, it is the whole pass's numstat, then only the diff since."""
+    the tree a role's last verdict judged, it is the whole pass's numstat, then only the diff since."""
     if since:
         delta = current_pass_evidence(root, since, candidate_tree)
         return _git(root, "diff", "--numstat", base_tree, candidate_tree) + (
