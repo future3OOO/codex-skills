@@ -1270,6 +1270,30 @@ CHANNELS = (
 )
 
 
+def _review_entries(items: list[JsonObject], rejected: dict[str, JsonObject]) -> list[JsonObject]:
+    """Each map item as a reviewer or advisor reads it: its obligation and its comparison's results, command and failure
+    output. Tree, run and probe-tree labels change with every candidate and stay in the evidence read; `proof` changes
+    when a recorded assertion, test input or execution input does: the original arms' execution keys and every arm's
+    input digest."""
+    entries = []
+    for item in items:
+        entry = {**{key: value for key, value in item.items() if key != "comparison"}, **({"rejection": rejected[item["id"]]} if item["id"] in rejected else {})}
+        if run := item.get("comparison"):
+            view, arms = behavior_map.comparison_view(run), run.get("arms") or []
+            recorded = [*(arm.get("key", "") for arm in arms[:(len(arms) + 1) // 2]), *(arm.get("inputs", "") for arm in arms)]
+            entry["comparison"] = {**{key: value for key, value in view.items() if key not in {"runIndex", "probeTree", "arms"} and value is not None},
+                                   "proof": hashlib.sha256("".join(recorded).encode()).hexdigest()[:12],
+                                   "arms": [{key: value for key, value in arm.items() if key != "tree" and value is not False} for arm in view["arms"]]}
+        entries.append(entry)
+    return entries
+
+
+def _entry_lines(rows: list[JsonObject], context: JsonObject) -> str:
+    """One JSON document with an entry per line: a search returns the matching entries."""
+    text = lambda value: json.dumps(value, sort_keys=True, separators=(",", ":"))
+    return text(context)[:-1] + ',"items":[\n' + ",\n".join(map(text, rows)) + "\n]}"
+
+
 def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
                channel_dir: str | None = None, preflight_draft: JsonObject | None = None) -> JsonObject:
     if phase not in CHECKPOINT_PHASES:
@@ -1336,11 +1360,13 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
             validate_design_declaration(evidence_document(identity, design_evidence_id))
         except ValueError as exc:
             missing.append(str(exc))
-    from .tdd_workflow import current_map
-    items = current_map(identity, state)[0] or []
+    from .tdd_workflow import PROBES, current_map
+    # The map shows each recorded result; freshness is judged once, by the readiness read_workflow derived in this scope.
+    items, document = current_map(identity, state, fresh=False)
+    items = items or []
     readiness = None
     if phase == "final-review":
-        pending = [] if state.get("nextAction") == "re-consult-final-review" else (readiness := _readiness_lines(identity, state, items))["open"]
+        pending = [] if state.get("nextAction") == "re-consult-final-review" else (readiness := _readiness_lines(identity, state))["open"]
         missing.extend(["unresolved named comparisons: " + ", ".join(pending)] if pending else [])
         if not state.get("finalStarted") and (drift := _binding_drift(identity, state, "review")):
             missing.append(drift)
@@ -1365,10 +1391,11 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
         "codeReviewStatus": review.get("status"),
     }
     if phase == "code-review":
-        cli = Path(__file__).resolve().parents[2] / "skills/repo-production-workflow/scripts/workflow.py"
-        result["verdictCommand"] = shlex.join([sys.executable, str(cli), "tdd", "--repo", identity.root,
-            "--as", "review", "--workflow-id", str(workflow_id), "--expected-candidate-tree", candidate,
-            "--tdd-evidence", str(state.get("tddEvidence") or "null")]) + " --verdict complete"
+        record = [*WORKFLOW, "tdd", "--repo", identity.root, "--as", "review", "--workflow-id", str(workflow_id)]
+        result["findingCommand"] = shlex.join([*record, "--report", "OWNING INVARIANT", "--case", "-", "COMMAND"])
+        verdict = shlex.join([*record, "--expected-candidate-tree", candidate, "--tdd-evidence", str(state.get("tddEvidence") or "null")])
+        # Both verdicts ready to run: an unmet requirement is recorded as easily as completion, and keeps the review open.
+        result["verdictCommand"], result["unmetVerdictCommand"] = verdict + " --verdict complete", verdict + " --verdict incomplete"
     else:
         shape = json.loads(ADVISOR_SHAPES["preflight" if phase == "preflight-advice" else "final"])
         if reconsult:  # the second consultation completes the draft in its answer
@@ -1376,26 +1403,24 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
                 "authoritativeContract": "text", "items": [{"id": "BM_X", "expected": "..."}], "removed": ["BM_Y"]})
         result["responseFormat"] = json.dumps(shape)
     if state.get("tddEvidence"):
-        cli = Path(__file__).resolve().parents[2] / "skills/repo-production-workflow/scripts/workflow.py"
-        result["evidenceCommand"] = shlex.join([sys.executable, str(cli), "evidence", "--repo", identity.root,
-            "--evidence-id", state["tddEvidence"]])
+        result["evidenceCommand"] = shlex.join([*WORKFLOW, "evidence", "--repo", identity.root, "--evidence-id", state["tddEvidence"]])
     if channel_dir is None:
         return result
     ledger = _finding_ledger(identity, state)
     contract = ((evidence_document(identity, state.get("preflightEvidence")) or {}).get("document") or {}).get("authoritativeContract")
-    views: dict[object, JsonObject] = {}
-    rendered = []
-    rejected = rejections(state, "item")
-    for item in items:
-        entry = {**{key: value for key, value in item.items() if key != "comparison"}, **({"rejection": rejected[item["id"]]} if item["id"] in rejected else {})}
-        if run := item.get("comparison"):
-            # Each shared comparison renders once; later owners reference it by run index.
-            entry["comparison"] = ({key: run[key] for key in ("runIndex", "valid", "fresh") if key in run}
-                                   if run["runIndex"] in views else views.setdefault(run["runIndex"], behavior_map.comparison_view(run)))
-        rendered.append(entry)
-    map_content = ({"preflightInterpretation": contract, **(readiness or _readiness_lines(identity, state, items)), "items": rendered,
-                    **({"retired": lapsed} if (lapsed := (evidence_document(identity, state.get("tddEvidence")) or {}).get("retired")) else {})}
-                   if contract or items else None)
+    entries = _review_entries(items, rejections(state, "item"))
+    owners: dict[str, str] = {}
+    # Identical displayed proof renders once; each later owner names the first.
+    shared = [{**entry, "comparison": {"sameProofAs": owner}} if (view := entry.get("comparison"))
+              and (owner := owners.setdefault(_canonical(view), entry["id"])) != entry["id"] else entry for entry in entries]
+    document = document or evidence_document(identity, state.get("tddEvidence")) or {}
+    # A case file a recorded command names under tests/.workflow-probes/ is frozen in Git and absent from the checkout: the map says how one reads.
+    frozen = next((name[len(PROBES):].partition("/") for item in items for name in (item.get("comparison") or {}).get("probeFiles", ()) if name.startswith(PROBES)), None)
+    context = ({**(readiness or _readiness_lines(identity, state)), **({"retired": document["retired"]} if document.get("retired") else {}),
+                **({"caseFiles": f"{PROBES}TREE/PATH in a command is frozen in Git, not in the checkout: `git show TREE:PATH` reads it, "
+                                 f"as `git show {shlex.quote(frozen[0] + ':' + frozen[2])}` does"} if frozen and frozen[2] else {})}
+               if contract or items else {})
+    map_content: object = _entry_lines(shared, {"preflightInterpretation": contract, **context}) if context else None
     if phase == "preflight-advice" and preflight_draft is not None:
         previous = evidence_document(identity, (state.get("advisorPreflight") or {}).get("intakeEvidence")) or {}
         prior = previous.get("preflightDraft") if reconsult else None

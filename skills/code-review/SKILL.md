@@ -47,12 +47,12 @@ surviving checks. Generate replacement diffs from actual scratch edits.
 
 ## Execute and record
 
-Submit direct project operations together through workflow tdd with author review, one command per case.
-Its help owns inputs and binding rules. Expected values come from executed
+Submit direct project operations together through the package's finding command, one command per case.
+Expected values come from executed
 references or frozen requirement-grounded properties. Judge whether each operation
 establishes the affected requirement. Check the failure cause and selected operation from source and raw output; the runner reads exits only. A scratch call only investigates.
 
-Use the package's verdict command after judging its source and evidence. Return
+Use the package's matching verdict command after judging its source and evidence. Return
 the Standards/Spec verdict, receipt references and non-executable report lines.
 Group counterexamples by owning Module and invariant. On correction retain finding
 identities, inspect the changed evidence and answer specific questions supplied by
