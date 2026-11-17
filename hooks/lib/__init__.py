@@ -1,7 +1,11 @@
 """Shared implementation for repo-production-workflow lifecycle hooks."""
 
 import os
+import re
 from pathlib import Path
+
+# A Codex session's own record: its rollout log, which a live session holds open.
+SESSION_LOG = re.compile(r"/sessions/.+/rollout-.+-([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})\.jsonl$")
 
 
 def codex_home() -> Path:

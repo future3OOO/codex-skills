@@ -36,7 +36,7 @@ tool with the checkout as `cwd` and `next.args` as its `args`, filling the `<…
 placeholders `next.input` describes: it runs the step to its end and returns the
 result, so there is nothing to wait on or poll. Without a tool, `next.input` names
 the judgment or delegation still needed. Retain the returned evidence IDs.
-Resume the same pass.
+Resume the same pass. When the user drops it, `args` `["abandon"]` asks them, through the host, to confirm; it ends the pass only when they accept, and leaves it open on a decline or when the host cannot ask.
 
 ## Mandatory order
 

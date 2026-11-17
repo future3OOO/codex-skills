@@ -4,11 +4,12 @@ set -euo pipefail
 umask 077
 
 usage() {
-  printf 'Usage: %s --slug <name> [--provider codex|claude] [--phase preflight-advice|final-review] [--reconsult] [--preflight-file draft.json] [--cwd path] [--design-file file | --design-absent reason] [--budget words] [--codex-model model] [--codex-effort effort] [--fresh] [--quiet] -- "question"\n' "$0" >&2
+  printf 'Usage: %s [--slug name] [--provider codex|claude] [--phase preflight-advice|final-review] [--reconsult] [--preflight-file draft.json] [--cwd path] [--design-file file | --design-absent reason] [--budget words] [--codex-model model] [--codex-effort effort] [--fresh] [--quiet] -- "question"\n' "$0" >&2
+  printf '  In a workflow pass the slug defaults to the pass'"'"'s, and with no --phase or question the phase is the one the pass is at.\n' >&2
   printf '  Phased consults derive payload, candidate anchors, and create/resume mode from workflow checkpoint; phase-less consults carry only the question.\n' >&2
   printf '  Default budget: 600 words; values above 1200 are refused.\n' >&2
   printf '  Trust: all phases use the lead checkout and estate with full access; final findings are independently replayed.\n' >&2
-  exit 2
+  exit "${1:-2}"
 }
 
 if [[ -n "${CODEX_ADVISOR_ACTIVE:-}${ADVISOR_ACTIVE:-}" ]]; then
@@ -37,22 +38,44 @@ while [[ $# -gt 0 ]]; do
     --reconsult) reconsult_args=(--reconsult); shift ;;
     --preflight-file) preflight_file="${2:?missing --preflight-file value}"; shift 2 ;;
     --) shift; question="$*"; break ;;
-    -h|--help) usage ;;
+    -h|--help) usage 0 ;;
     *) printf 'error: unknown argument: %s\n' "$1" >&2; usage ;;
   esac
 done
 
-[[ -n "$slug" ]] || { printf 'error: --slug is required (stable per task, no phase words)\n' >&2; usage; }
+pass_phase=""
+if [[ -z "$slug" || -z "$phase" && -z "${question//[[:space:]]/}" ]]; then  # in a pass: its slug and, with no --phase and no question, the advisor phase it is at
+  pass=$(python3 - "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)/../../.." "$cwd" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+from hooks.lib.repo_identity import try_resolve_repo_identity
+from hooks.lib.workflow_state import read_workflow
+identity = try_resolve_repo_identity(sys.argv[2])
+state = read_workflow(identity) if identity else None
+if state and state.get("phase") not in {"complete", "abandoned"}:
+    print(state["slug"], "preflight-advice" if state.get("nextAction") in {"repo-context-forge", "preflight"} else "final-review")
+PY
+  )
+  read -r pass_slug pass_phase <<<"$pass"
+  slug=${slug:-$pass_slug}
+fi
+[[ -n "$slug" ]] || { printf 'error: --slug is required outside a workflow pass (stable per task, no phase words)\n' >&2; usage; }
 if [[ ! "$budget" =~ ^[1-9][0-9]{0,3}$ ]] || (( budget > 1200 )); then
   printf 'error: --budget must be an integer from 1 through 1200\n' >&2
   exit 2
 fi
 [[ -d "$cwd" ]] || { printf 'error: --cwd is not a directory: %s\n' "$cwd" >&2; exit 2; }
 case "$phase" in ""|preflight-advice|final-review) ;; *) printf 'error: unsupported phase: %s\n' "$phase" >&2; exit 2 ;; esac
+case "$provider" in codex|claude) ;; *) printf 'error: unsupported provider: %s\n' "$provider" >&2; exit 2 ;; esac
+# Empty argv leaves the question unread. An empty stdin question stays read.
+[[ -n "$question" ]] || unset question
+if [[ -z "$phase" && -n "$pass_phase" ]]; then
+  [[ -v question ]] || question="$(cat)"
+  [[ -n "${question//[[:space:]]/}" ]] || phase=$pass_phase
+fi
 if [[ "$phase" == final-review ]]; then
   reconsult_args=()
 fi
-case "$provider" in codex|claude) ;; *) printf 'error: unsupported provider: %s\n' "$provider" >&2; exit 2 ;; esac
 if [[ -n "$phase" && "$fresh" -eq 1 ]]; then
   printf 'error: phased consults do not accept --fresh; checkpoint stage owns create or resume mode\n' >&2
   exit 2
@@ -81,7 +104,7 @@ elif [[ -n "$design_file" || -n "$design_absent" ]]; then
   printf 'error: --design-file/--design-absent requires --phase\n' >&2
   exit 2
 fi
-[[ -n "$question" ]] || question="$(cat)"
+[[ -v question ]] || question="$(cat)"
 [[ -n "$phase" || -n "${question//[[:space:]]/}" ]] || { printf 'error: empty question\n' >&2; exit 2; }
 if [[ -n "$phase" ]] && grep -qv '^\(>\( .*\)\?\|[[:space:]]*\)$' <<<"$question"; then
   printf 'error: phased consults carry no lead text: pass only user instructions given after begin, each line quoted verbatim after "> "\n' >&2; exit 2
@@ -223,7 +246,7 @@ PY
     exit 2
   fi
   if [[ "$checkpoint_ready" != yes ]]; then
-    printf 'error: %s checkpoint is not ready; missing: %s\n' "$phase" "$checkpoint_missing" >&2
+    printf 'error: %s is not reached: the pass is at %s; open: %s\n' "$phase" "$next_action" "$checkpoint_missing" >&2
     exit 2
   fi
   # Every consult of the pass shares its scratch, kept with the pass's execution state: a later consult finds an earlier one's probes.
@@ -319,7 +342,7 @@ Keep an item, case or planned line only if deletion breaks required behavior, de
   final-review)
     phase_prompt='Checkpoint Interface: final-review
 Attack the whole-system design at fixed required behavior. Find every regression the change introduced and the cheapest justified whole-system design for code the change edits or its requested operation runs through, including existing inefficient machinery. Prove the saved work and preserved outcomes with a concrete replacement through the recording below. Prefer net reduction; necessary growth needs demonstrated lower cost. Trace related failures to their shared cause before another repair. After a reduction, derive the remaining material work through the replacement and its collaborators. A known cheaper correct design rejects approval; wrapper-call counts can hide unchanged work. Check required behavior against the original decision sites, including surviving outcomes the selected green cases miss.
-The workflow command freezes and compares your probes and diffs, records findings immediately and returns the binding result. It owns execution and cache reuse; do not repeat its original/candidate operations. For new behavior, probe against the result of the existing code or engine that defines its terms. Use request-grounded properties only when no owner exists. Reuse the project'\''s runner, fixtures and supported execution matrix where present. When your finding proves a frozen case'\''s expectation wrong, add `--retire CASE_KEY` using `caseKey` from its receipt or readiness; that case stops binding whatever your probe'\''s result. Judge their relevance and remaining preservation, including other responsibilities of shared logic. Use the original source overlay for investigations the recorded comparisons do not answer.
+The workflow command freezes and compares your probes and diffs, records findings immediately and returns the binding result. It owns execution and cache reuse; do not repeat its original/candidate operations. For new behavior, probe against the result of the existing code or engine that defines its terms. Use request-grounded properties only when no owner exists. Reuse the project'\''s runner, fixtures and supported execution matrix where present. When your finding proves a frozen case'\''s expectation wrong, add `--retire` with that case'\''s item and command, or its `caseKey`; that case stops binding whatever your probe'\''s result. Judge their relevance and remaining preservation, including other responsibilities of shared logic. Use the original source overlay for investigations the recorded comparisons do not answer.
 Preserve frozen proof and required surviving regression checks when reducing maintained tests or support. A recorded regression stands unless request text changes that behaviour: wording about behaviour the request keeps summarizes the original code, so the original'\''s result stands. Record every material finding, functional and performance, through tdd before this one verdict, one per owning invariant with its accumulated cases; a re-check raises only what the repair introduced. Return only the checkpoint JSON response form with only your verdict and non-executable report lines; executable findings are already recorded. A commit-ready judgment requires the reviewed behavior and coverage; context-mismatch is reserved for a supplied source/projection identity mismatch.' ;;
 esac
 if [[ "$phase" == preflight-advice ]]; then
@@ -334,9 +357,9 @@ Return approved: you own every remaining change, so this consultation has no cha
   fi
 elif [[ "$phase" == final-review ]]; then
   if [[ "$provider" == codex ]]; then  # a tool call returns when the recording does; a codex shell call hands back to be polled
-    phase_prompt+=$'\n'"Record each finding with the workflow tool's run, cwd $repo_root and args $(python3 -c 'import json, sys; print(json.dumps(sys.argv[1:]))' tdd --slug "$producer_slug" --workflow-id "$active_wid" --as final --report 'OWNING INVARIANT' --case - COMMAND), adding \"--change\", \"REPLACEMENT_DIFF\", \"--change\", \"probe=BREAK_DIFF\" or \"--retire\", \"CASE_KEY\"; the call returns its result."
+    phase_prompt+=$'\n'"Record each finding with the workflow tool's run, cwd $repo_root and args $(python3 -c 'import json, sys; print(json.dumps(sys.argv[1:]))' tdd --slug "$producer_slug" --workflow-id "$active_wid" --as final --report 'OWNING INVARIANT' --case - COMMAND), adding \"--change\", \"REPLACEMENT_DIFF\", \"--change\", \"probe=BREAK_DIFF\" or \"--retire\", \"ITEM\", \"COMMAND\"; the call returns its result."
   else
-    phase_prompt+=$'\n'"Recording command, which returns its result: $(printf '%q ' python3 "$workflow_cli" tdd --repo "$repo_root" --slug "$producer_slug" --workflow-id "$active_wid" --as final)--report 'OWNING INVARIANT' --case - 'COMMAND' [--change REPLACEMENT_DIFF] [--change probe=BREAK_DIFF] [--retire CASE_KEY]"
+    phase_prompt+=$'\n'"Recording command, which returns its result: $(printf '%q ' python3 "$workflow_cli" tdd --repo "$repo_root" --slug "$producer_slug" --workflow-id "$active_wid" --as final)--report 'OWNING INVARIANT' --case - 'COMMAND' [--change REPLACEMENT_DIFF] [--change probe=BREAK_DIFF] [--retire ITEM 'COMMAND']"
   fi
   phase_prompt+=" COMMAND runs your probe file by its path, which freezes the file with it. The probe runs on the original and the candidate: it binds when it passes on the original and fails on the candidate; passing on both records a report line. Keep each diff in scratch outside the checkout. A replacement must apply to the candidate and keep every recorded case passing; its probe must fail on the candidate and pass with the replacement, and a replacement without such a probe must delete more lines than it adds. A break changes values or operators only, keeping identifier counts and test files unchanged, and the probe must fail under it."
 fi

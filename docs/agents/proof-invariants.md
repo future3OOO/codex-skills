@@ -13,9 +13,10 @@
   touches. Prove each changed line with a direct N/N+1
   probe that calls it. Add an existing test only when it calls the changed code
   directly. Never collect a whole test file, class, directory or suite; a focused
-  direct script is allowed. Keep each test command within 30 seconds; never raise
-  the limit. A timeout leaves verification pending; narrow the command while
-  preserving its required assertions. Reuse retained proof instead of rerunning it.
+  direct script is allowed. Keep each test command within 30 seconds; only one that
+  writes a real model session log may take 5 minutes. Never raise either limit. A timeout leaves
+  verification pending; narrow the command while preserving its required
+  assertions. Reuse retained proof instead of rerunning it.
   Do not duplicate retained probes with a parallel unit-test suite.
 - **Imaginary-risk ban.** A theoretical risk with no demonstrated failure is a
   report line, not a system. Build nothing for it.

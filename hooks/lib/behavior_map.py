@@ -135,8 +135,11 @@ def _case_question(entry: JsonObject) -> list[str]:
         return ["readings unsettled: " + " | ".join(entry["interpretations"]) + " - record interpretation and authority"]
     run = entry.get("comparison") or {}
     if not producer_proved(entry):
-        return [run.get("freshnessReason", "comparison inputs changed") if run.get("fresh") is False
-                else "no current valid command comparison"]
+        if run.get("fresh") is False:
+            return [run.get("freshnessReason", "comparison inputs changed")]
+        if run.get("valid") is False and run.get("arms") and run.get("obligation", obligation(entry))[1:4] == obligation(entry)[1:4]:
+            return ["comparison not valid (" + ", ".join(arm["outcome"] for arm in run["arms"]) + "): " + run["command"]]
+        return ["no current valid command comparison"]
     original, current = original_outcome(run), run["arms"][-1]["outcome"]
     if current != "passed":
         return ["candidate command " + current + ": " + run["command"]]
@@ -198,9 +201,10 @@ def open_obligations(items: list[JsonObject], evaluation: list[JsonObject] | Non
                 rerun_cases += retained_item
                 continue
             label = ("retained " if retained_item else "") + f"{entry.get('caseKey', entry['id'])} ({entry.get('kind') or 'kind?'})"
-            args = (["tdd", "--correct", entry["id"], entry["cases"][0], "<COMMAND>"] if not retained_item and entry.get("cases")
-                    else ["tdd"] if entry.get("comparison") else ["tdd", "--case", entry["id"], "<COMMAND>"])
-            lines.append(label + ": " + "; ".join(reasons) + "; workflow.run args " + json.dumps(args))
+            rerun = any(reason.startswith(("unexecuted declaration", "no current valid", "comparison inputs", "recorded execution inputs")) for reason in reasons)
+            lines.append(label + ": " + "; ".join(reasons) + ("; workflow.run args [\"tdd\"]" if rerun else "; its case is the lead's to write" if reasons == ["no case is bound"] else "")
+                         + (", or " + json.dumps(["tdd", "--correct", entry["id"], entry["cases"][0]]) + " and the command that replaces it"
+                            if not retained_item and entry.get("cases") else ""))
     if rerun_items or rerun_cases:
         lines.append(f"{rerun_items} items and {rerun_cases} cases need a rerun; workflow.run args [\"tdd\"]")
     return lines
