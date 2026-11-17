@@ -10,7 +10,7 @@ EXCLUDES=(--exclude='.system/' --exclude='tests/' --exclude='test_*.py' --exclud
   --exclude='__pycache__' --exclude='*.pyc' --exclude='*:Zone.Identifier')
 
 mkdir -p "$DEST" "$BACKUP"
-for path in AGENTS.md agents/reviewer.toml hooks.json hooks skills; do
+for path in AGENTS.md agents hooks.json hooks skills; do
   [[ -e "$DEST/$path" ]] && cp -a "$DEST/$path" "$BACKUP/"
 done
 
