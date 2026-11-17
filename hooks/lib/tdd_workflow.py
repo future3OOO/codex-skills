@@ -1748,7 +1748,8 @@ def _run_tdd(values: list[str]) -> int:
                                     **({"summaryId": evidence} if evidence else {}))
         if args.author == "review":
             from .workflow_state import checkpoint
-            receipt["verdictCommand"] = checkpoint(identity, "code-review")["verdictCommand"]
+            commands = checkpoint(identity, "code-review")
+            receipt.update({key: commands[key] for key in ("verdictCommand", "unmetVerdictCommand")})
         if args.verdict:
             _emit_json(receipt, sort_keys=False)
             return 0
