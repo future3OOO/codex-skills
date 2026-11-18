@@ -14,7 +14,8 @@ import sys
 import uuid
 from pathlib import Path
 from functools import cache
-from typing import Callable, Sequence
+from typing import Callable, Collection, Sequence
+from itertools import chain
 
 from . import behavior_map
 from ._workflow_db import (
@@ -117,7 +118,7 @@ def _effective(identity: RepoIdentity, state: JsonObject | None,
     """Derive readiness from bound proof, including reusable evidence after a reverted edit."""
     if not state or state.get("phase") in {"complete", "abandoned"} or not (state.get("tddEvidence") or state.get("tdd") in {"passed", "not-required"}):
         return state
-    readiness = _readiness_lines(identity, state, evidence=evidence)
+    readiness = _readiness_lines(identity, state, evidence=evidence, keys=True)  # judged, not printed: no command is rendered
     status = "in-progress" if readiness["open"] else "passed" if state.get("tddEvidence") else state["tdd"]
     restore_review = status == "passed" and readiness["reviewCurrent"] and state.get("codeReview") != {"status": "passed", "findings": "none"}
     if state.get("tdd") != status or restore_review:
@@ -435,7 +436,7 @@ def commit_tdd(identity: RepoIdentity, slug: str, workflow_id: str | None,
         if "evaluation" not in summary_doc:
             summary_doc["evaluation"] = _evaluation(identity, state, transaction.evidence(state.get("tddEvidence")))
         readiness = None if selected_only else _readiness_lines(identity, state, items,
-                    documents=(summary_doc, None), candidate=candidate)
+                    documents=(summary_doc, None), candidate=candidate, keys=True)
         behavior_map.retain_evaluation(items, {item["id"] for item in items}, summary_doc["evaluation"], summary_doc["runs"], _retired(state))
         pending = readiness is None or bool(readiness["open"])
         runs = summary_doc["runs"]
@@ -619,7 +620,7 @@ def commit_rejections(identity: RepoIdentity, slug: str, workflow_id: str, recor
                 and not _stage_unresolved(state, "final", final["source"])):
             final.update(findings="none", rejected=True)
         if len(findings) < len(records) and state.get("tdd") in {"in-progress", "passed"}:
-            state["tdd"] = "in-progress" if _readiness_lines(identity, state)["open"] else "passed"
+            state["tdd"] = "in-progress" if _readiness_lines(identity, state, keys=True)["open"] else "passed"
         state["nextAction"] = _derive_next_action(state)
         return _commit(transaction, state, "lead-rejection")
 
@@ -1408,11 +1409,7 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
         "codeReviewStatus": review.get("status"),
     }
     if phase == "code-review":
-        record = [*WORKFLOW, "tdd", "--repo", identity.root, "--as", "review", "--workflow-id", str(workflow_id)]
-        result["findingCommand"] = shlex.join([*record, "--report", "OWNING INVARIANT", "--case", "-", "COMMAND"])
-        verdict = shlex.join([*record, "--expected-candidate-tree", candidate, "--tdd-evidence", str(state.get("tddEvidence") or "null")])
-        # Both verdicts ready to run: an unmet requirement is recorded as easily as completion, and keeps the review open.
-        result["verdictCommand"], result["unmetVerdictCommand"] = verdict + " --verdict complete", verdict + " --verdict incomplete"
+        result.update(review_commands(identity, state, candidate))
     else:
         shape = json.loads(ADVISOR_SHAPES["preflight" if phase == "preflight-advice" else "final"])
         if reconsult:  # the second consultation completes the draft in its answer
@@ -1651,12 +1648,13 @@ def scratch_path(identity: RepoIdentity, state: JsonObject) -> str:
 def _readiness_lines(identity: RepoIdentity, state: JsonObject, items: list[JsonObject] | None = None, *,
                      documents: tuple[JsonObject | None, JsonObject | None] | None = None,
                      review: JsonObject | None = None, candidate: str | None = None,
-                     evidence: Callable[[str | None], JsonObject | None] | None = None) -> JsonObject:
+                     evidence: Callable[[str | None], JsonObject | None] | None = None, keys: bool = False) -> JsonObject:
     """One readiness result: immutable named cases, with retained statements for review. Given no items or documents
     it reads the state's own, through `evidence` when given. Evidence is addressed by its content and a comparison
-    scope holds one candidate and one sample of every input, so within a scope that readiness is derived once for a
-    state; each caller gets its own copy."""
-    from .tdd_workflow import current_map
+    scope holds one candidate and one sample of every input, so within a scope a state is judged once, whoever reads it;
+    each caller gets its own lines. A line that names its case gives a command that runs as printed, or with `keys`, for
+    a testing reply or a reader of the judgment alone, the key of the case, whose row carries the command."""
+    from .tdd_workflow import current_map, shown
     candidate = candidate or _active_candidate_tree(identity)
     held = scope.setdefault("readiness", {}) if items is documents is review is None and (scope := _EXECUTION.get()) else {}
     key = (identity.root, candidate, evidence is None and state.get("preflight") == "pending" and state.get("preflightLatestEvidence"),
@@ -1671,12 +1669,21 @@ def _readiness_lines(identity: RepoIdentity, state: JsonObject, items: list[Json
             items = behavior_map.recorded_map(*documents) if items is None else items
         held[key] = _derived_readiness(identity, {field: state[field] for field in READINESS_FIELDS if field in state},
                                        items or [], document, review, candidate)
-    return {name: list(value) if isinstance(value, list) else value for name, value in held[key].items()}
+    items, judged, current = held[key]
+    evaluation, observations = ([{**entry, "comparison": dict(entry["comparison"])} for entry in group] for group in judged)
+    for entry in (*observations, *evaluation):
+        if behavior_map._case_question(entry):
+            entry["comparison"]["command"] = (entry.get("caseKey") or behavior_map.case_key(entry["id"], entry["comparison"])) if keys else shown(identity, state, entry["comparison"])
+    cases = behavior_map.open_obligations(items, evaluation, observations, keys)
+    return {"open": cases, "reviewCurrent": current, "openCount": len(cases),
+            "never": [str(entry["id"]) for entry in items if not (entry.get("comparison") or {}).get("arms")]}
 
 
 def _derived_readiness(identity: RepoIdentity, state: JsonObject, items: list[JsonObject], document: JsonObject | None,
-                       review: JsonObject | None, candidate: str) -> JsonObject:
-    from .tdd_workflow import _evaluation, _retired, refresh_proof, shown
+                       review: JsonObject | None, candidate: str) -> tuple[list[JsonObject], tuple[list[JsonObject], list[JsonObject]], bool]:
+    """The judgment readiness lines are written from: the map's items, its retained and current cases judged for
+    freshness on the candidate, and whether the review is current."""
+    from .tdd_workflow import _evaluation, _retired, refresh_proof
     rejected = rejections(state, "item")  # the lead's measured set-asides
     items = [entry for entry in items if entry["id"] not in rejected]
     evaluation = [{**entry, "caseKey": behavior_map.case_key(entry["id"], document["runs"][entry["runIndex"]]),
@@ -1685,18 +1692,14 @@ def _derived_readiness(identity: RepoIdentity, state: JsonObject, items: list[Js
     retired = _retired(state)
     observations = behavior_map.current_cases(items, (document or {}).get("runs", []), retired)
     refresh_proof(identity, [*observations, *evaluation], candidate=candidate, runs=(document or {}).get("runs", []))
-    for entry in (*observations, *evaluation):  # a line that names its case gives a command that runs as printed
-        if behavior_map._case_question(entry):
-            entry["comparison"]["command"] = shown(identity, state, entry["comparison"])
-    cases = behavior_map.open_obligations(items, evaluation, observations)
     review = review if review is not None else evidence_document(identity, state.get("codeReviewEvidence"))
     current = bool(review and review.get("workflowId") == state["workflowId"] and review.get("candidateTree") == candidate and review.get("verdict") == "complete" and not _stage_unresolved(state, "code-review", "code-review"))
-    return {"open": cases, "reviewCurrent": current, "openCount": len(cases),
-            "never": [str(entry["id"]) for entry in items if not (entry.get("comparison") or {}).get("arms")]}
+    return items, (evaluation, observations), current
 
 def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObject | None = None, *,
-                   preflight_file: str | None = None, obligations: bool = True) -> JsonObject:
-    """Bind the selected operation once: `workflow.py next` and a stale context refresh run its command."""
+                   preflight_file: str | None = None, obligations: bool = True, known: JsonObject | None = None, delivered: Collection[str] = ()) -> JsonObject:
+    """Bind the selected operation once: `workflow.py next` and a stale context refresh run its command. `known`, for a
+    testing reply: its reader's memory of the findings, as `open_findings` takes it."""
     scripts = Path(__file__).resolve().parents[2] / "skills"
     cli = WORKFLOW
     bound = ["--repo", str(identity.root), "--slug", str(state["slug"]),
@@ -1747,7 +1750,7 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
         return {"command": None, "input": "Delegate code-review; its checkpoint supplies the verdict command. Reuse the reviewer for corrections; repair pending findings before return review."}
     elif action in {"tdd", "address-review-findings"}:
         command = [*cli, "tdd", *bound]
-        pending = open_findings(identity, state)
+        pending = open_findings(identity, state, known=known, delivered=delivered)
         # A map item without a case is the lead's to write; otherwise the call that reruns and verifies is [].
         unbound = [line.split(" (", 1)[0] for line in (receipt or {}).get("open") or [] if "no case is bound" in line]
         operation: JsonObject = {"command": None if unbound else shlex.join(command), "args": []}
@@ -1763,20 +1766,47 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
     return {"command": shlex.join(command)}
 
 
-def open_findings(identity: RepoIdentity, state: JsonObject, *, detail: bool = False) -> list[JsonObject]:
+def review_commands(identity: RepoIdentity, state: JsonObject, candidate: str, *, repo: bool = True) -> dict[str, str]:
+    """The reviewer's commands bound to this source and evidence; without `repo` they run from the checkout and do not name it."""
+    record = [*WORKFLOW, "tdd", *(("--repo", identity.root) if repo else ()), "--as", "review", "--workflow-id", str(instance_id(state))]
+    verdict = shlex.join([*record, "--expected-candidate-tree", candidate, "--tdd-evidence", str(state.get("tddEvidence") or "null")])
+    # Both verdicts ready to run: an unmet requirement is recorded as easily as completion, and keeps the review open.
+    return {"findingCommand": shlex.join([*record, "--report", "OWNING INVARIANT", "--case", "-", "COMMAND"]),
+            "verdictCommand": verdict + " --verdict complete", "unmetVerdictCommand": verdict + " --verdict incomplete"}
+
+
+def open_findings(identity: RepoIdentity, state: JsonObject, *, detail: bool = False, known: JsonObject | None = None, delivered: Collection[str] = ()) -> list[JsonObject]:
     """Each unresolved finding as its author recorded it where it bound (its latest binding recording, else its first):
     `diff` applies its replacement, a file kept with the pass's execution state, and `probe` runs its probe from the
-    checkout as the workflow ran it; `detail` adds its claim and the probe's result on both versions."""
-    from .tdd_workflow import shown
-    rows = []
+    checkout as the workflow ran it; `detail` adds its claim and the probe's result on both versions. `known`, a testing
+    reply reader's memory, is brought up to date: a finding held unchanged or whose selected observation is in this
+    call's delivered rows is its id alone."""
+    from .tdd_workflow import _digest, shown
+    rows, probes = [], {}
     for entry in state.get("findingStates", []):
         if not _finding_unresolved(entry):
             continue
-        recorded = [item for ref in ({"evidenceId": entry["intakeEvidenceId"], "id": entry["findingId"]}, *entry.get("observations", []))
-                    for item in (evidence_document(identity, ref["evidenceId"], restore_runs=False) or {}).get("findings", []) if item["id"] == ref["id"]]
-        if not recorded:
+        identifier = entry["findingId"]
+        refs = entry.get("observations") or ()
+        first = {"id": identifier, "evidenceId": entry["intakeEvidenceId"]}
+        last = refs[-1] if refs else first
+        # Immutable observations only append. A held projection also depends on the printed PYTHONPATH and the
+        # earlier row that carries a shared command, not on the current code tree or today's execution results.
+        held = known.get(identifier, "") if known is not None else ""
+        if known is not None:
+            revision = _digest([last["evidenceId"], last["id"], os.environ.get("PYTHONPATH"), detail])
+            if isinstance(held, list) and held[0] == revision and (not held[1] or probes.setdefault(held[1], identifier) == held[2]):
+                rows.append({"findingId": identifier})
+                continue
+        finding = None
+        for ref in chain(reversed(refs), (first,)):
+            document = evidence_document(identity, ref["evidenceId"], restore_runs=False) or {}
+            if match := next((item for item in reversed(document.get("findings", ())) if item["id"] == ref["id"]), None):
+                finding = match
+                if finding.get("material"):
+                    break
+        if finding is None:
             continue
-        finding = next((item for item in reversed(recorded) if item.get("material")), recorded[0])
         row, run = {"findingId": entry["findingId"], **({"claim": finding["claim"]} if detail else {})}, (finding.get("execution") or {}).get("comparison")
         if "change" in finding:
             path = Path(scratch_path(identity, state)).with_name("findings") / (finding["id"] + ".diff")  # the recording shown
@@ -1786,10 +1816,20 @@ def open_findings(identity: RepoIdentity, state: JsonObject, *, detail: bool = F
             row["diff"] = "git apply " + shlex.quote(str(path))
         if run:
             row["probe"] = shown(identity, state, run)
+        token = _digest(row["probe"]) if run and known is not None else None
+        owner = probes.setdefault(token, identifier) if token else None
+        if owner and owner != identifier:
+            del row["probe"]
+            row["probeOf"] = owner
         if run and detail:
             sides = ("candidate", "with the diff") if "change" in finding else ("original", "candidate")
             row["results"] = [f"{sides[arm['source'] == 'current']} {arm['outcome']} (exit {arm['exitCode']})" + (": " + arm["outputTail"].strip() if arm.get("outputTail") else "")
                               for arm in behavior_map.comparison_view(run)["arms"]]
+        if known is not None:
+            mark = _digest(row)
+            known[identifier] = [revision, token, owner, mark]
+            if finding["id"] in delivered or (held[-1] if isinstance(held, list) else held) == mark:
+                row = {"findingId": identifier}
         rows.append(row)
     return rows
 
@@ -1801,14 +1841,15 @@ def next_step(identity: RepoIdentity, state: JsonObject, receipt: JsonObject | N
     return {**({"tool": STEP_TOOL, "args": args} if operation.pop("command", None) else {}), **operation}
 
 
-def operation_receipt(state: JsonObject, identity: RepoIdentity, *, readiness: JsonObject | None = None, obligations: bool = True, **details: object) -> JsonObject:
-    """Return the committed operation's result and its current continuation."""
+def operation_receipt(state: JsonObject, identity: RepoIdentity, *, readiness: JsonObject | None = None, obligations: bool = True,
+                      known: JsonObject | None = None, delivered: Collection[str] = (), **details: object) -> JsonObject:
+    """Return the committed operation's result and its current continuation; `known` as `next_operation` takes it."""
     if CHECK_ONLY.get():
         return details
     current = public_status(state, fields={"schemaVersion", "workflowId", "slug", "phase", "nextAction"})
     if obligations and (details.get("kind") == "tdd" or state.get("nextAction") in {"tdd", "address-review-findings"}):
         details.update(readiness if readiness is not None else _readiness_lines(identity, state))
-    operation = next_step(identity, {**state, **current}, details, obligations=obligations)
+    operation = next_step(identity, {**state, **current}, details, obligations=obligations, known=known, delivered=delivered)
     return {"nextAction": operation.pop("action", current.get("nextAction")), "next": operation,
             **{key: value for key, value in current.items() if key != "nextAction"}, **details}
 

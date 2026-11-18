@@ -149,11 +149,11 @@ def _case_question(entry: JsonObject) -> list[str]:
     return []
 
 
-def _question(entry: JsonObject, proofs: list[JsonObject]) -> list[str]:
+def _question(entry: JsonObject, proofs: list[JsonObject], keys: bool = False) -> list[str]:
     if readings_unsettled(entry):
         return _case_question(entry)
     if entry.get("cases"):
-        return ["unexecuted declaration: " + command for command in entry["cases"]]
+        return [f"unexecuted declarations: {len(entry['cases'])}"] if keys else ["unexecuted declaration: " + command for command in entry["cases"]]
     candidates = [proof for proof in proofs if proof["id"] == entry["id"] and proof.get("comparison")
                   and obligation(proof)[1:] == obligation(entry)[1:]]
     if not candidates:
@@ -186,14 +186,16 @@ def current_cases(items: list[JsonObject], runs: list[JsonObject], retired: set[
     return [case for case in cases if not case.get("comparison") or case_key(case["id"], case["comparison"]) not in retired] if retired else cases
 
 
-def open_obligations(items: list[JsonObject], evaluation: list[JsonObject] | None = None, current: list[JsonObject] | None = None) -> list[str]:
-    """One command is one case. Output and framework names never determine readiness."""
+def open_obligations(items: list[JsonObject], evaluation: list[JsonObject] | None = None, current: list[JsonObject] | None = None,
+                     keys: bool = False) -> list[str]:
+    """One command is one case. Output and framework names never determine readiness. `keys`: a testing reply's lines, whose
+    case rows carry the commands: a declaration is counted, not quoted."""
     retained = evaluation or []
     lines, rerun_items, rerun_cases = [], 0, 0
     proofs = [*(current or items), *retained]
     for group, retained_item in ((items, False), (retained, True)):
         for entry in group:
-            reasons = _case_question(entry) if retained_item else _question(entry, proofs)
+            reasons = _case_question(entry) if retained_item else _question(entry, proofs, keys)
             if not reasons:
                 continue
             if reasons == ["execution inputs changed or unrecorded"]:
@@ -203,7 +205,8 @@ def open_obligations(items: list[JsonObject], evaluation: list[JsonObject] | Non
             label = ("retained " if retained_item else "") + f"{entry.get('caseKey', entry['id'])} ({entry.get('kind') or 'kind?'})"
             rerun = any(reason.startswith(("unexecuted declaration", "no current valid", "comparison inputs", "recorded execution inputs")) for reason in reasons)
             lines.append(label + ": " + "; ".join(reasons) + ("; workflow.run args [\"tdd\"]" if rerun else "; its case is the lead's to write" if reasons == ["no case is bound"] else "")
-                         + (", or " + json.dumps(["tdd", "--correct", entry["id"], entry["cases"][0]]) + " and the command that replaces it"
+                         + (", or " + json.dumps(["tdd", "--correct", entry["id"], *([] if keys else entry["cases"][:1])])
+                            + (", the declaration" if keys and len(entry["cases"]) > 1 else "") + " and the command that replaces it"
                             if not retained_item and entry.get("cases") else ""))
     if rerun_items or rerun_cases:
         lines.append(f"{rerun_items} items and {rerun_cases} cases need a rerun; workflow.run args [\"tdd\"]")

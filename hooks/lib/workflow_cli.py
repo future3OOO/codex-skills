@@ -31,6 +31,7 @@ from .workflow_documents import (
 from .workflow_state import (
     WORKFLOW,
     WorkflowError,
+    _bound_instance_state,
     _evidence_ready,
     _require_instance,
     _require_state,
@@ -209,7 +210,8 @@ def _intent(args: argparse.Namespace) -> str:
 
 def _verify(args: argparse.Namespace, identity: RepoIdentity, *, review: bool = False, continuation: bool = False) -> int:
     """`continuation`: the tdd verb without a selection, which stops at the cases with the status tdd gives them."""
-    state = bound_state(identity, args.slug, args.workflow_id)
+    # Before tdd judges the map itself only the pass's identity is read: its readiness is not derived twice.
+    state = bound_state(identity, args.slug, args.workflow_id) if review else _bound_instance_state(read_active(identity), args.slug, args.workflow_id)
     slug, workflow_id = str(state["slug"]), str(state["workflowId"])
     cases = {}
     if not review:
@@ -370,7 +372,6 @@ def _document(args: argparse.Namespace, label: str) -> dict[str, object]:
 def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
     """One ingest seam; --check runs the whole recording and rolls it back."""
     CHECK_ONLY.set(args.check)
-    from .workflow_state import _bound_instance_state
     state = (_bound_instance_state(read_active(identity), args.slug, args.workflow_id) if args.kind == "advisor-result"
              else bound_state(identity, args.slug, args.workflow_id))
     slug, workflow_id = str(state["slug"]), str(state["workflowId"])
