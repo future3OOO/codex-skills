@@ -10,7 +10,7 @@ second source of truth that drifts on its own.
 
 | Contract | Canonical owner | Other consumers |
 |---|---|---|
-| Mock ban / real-Seam proof, including project probe selection | `AGENTS.md` Hard Production Invariants | Pointers only: preflight `seam`, `tdd`, diagnose step 1, workflow step 6; the advisor receives `proof-invariants.md` through its launch rules |
+| Mock ban / real-Seam proof, including project probe selection | `AGENTS.md` Hard Production Invariants | Pointers: preflight `seam`, `tdd`, diagnose step 1, workflow step 6; the advisor's default launch rules deliver `proof-invariants.md` |
 | Workflow coordination and evidence reuse | `repo-production-workflow/SKILL.md` | `code-review`, advisor wrapper; implementation owner: `hooks/lib/tdd_workflow.py` |
 | Imaginary-risk rule | `AGENTS.md` Hard Production Invariants | Local consequences; the advisor's launch rules |
 | Root-cause-first | `AGENTS.md` Hard Production Invariants | `diagnose` owns the tracing procedure |
