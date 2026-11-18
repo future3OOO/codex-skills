@@ -1408,8 +1408,7 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
         "codeReviewStatus": review.get("status"),
     }
     if phase == "code-review":
-        tool = os.path.relpath(WORKFLOW[1], identity.root) if Path(WORKFLOW[1]).is_relative_to(identity.root) else WORKFLOW[1]  # an installed tool runs from any directory of the checkout
-        record = [WORKFLOW[0], tool, "tdd", "--as", "review", "--workflow-id", str(workflow_id)]
+        record = [*WORKFLOW, "tdd", "--repo", identity.root, "--as", "review", "--workflow-id", str(workflow_id)]
         result["findingCommand"] = shlex.join([*record, "--report", "OWNING INVARIANT", "--case", "-", "COMMAND"])
         verdict = shlex.join([*record, "--expected-candidate-tree", candidate, "--tdd-evidence", str(state.get("tddEvidence") or "null")])
         # Both verdicts ready to run: an unmet requirement is recorded as easily as completion, and keeps the review open.

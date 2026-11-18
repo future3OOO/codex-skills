@@ -29,7 +29,7 @@ from . import SESSION_LOG
 from ._workflow_db import CHECK_ONLY, cached_arms, history, read_active
 from .command_runner import emit_json as _emit_json, interruptible, run as _run, run_entry as _run_entry
 from .repo_identity import CanonicalRoot, RepoIdentity, resolve_repo_identity
-from .state_store import _EXECUTION, _comparison_scope, _active_candidate_tree, _git, is_test_path, read_blobs, blob_reader, tree_manifest, utc_timestamp, repo_state_dir, _flock, atomic_write_json, read_json
+from .state_store import _EXECUTION, _comparison_scope, _active_candidate_tree, _git, is_test_path, read_blobs, blob_reader, tree_manifest, utc_timestamp, repo_state_dir, _flock, atomic_write_bytes, atomic_write_json, read_json
 from .workflow_state import (
     NO_INSTANCE_ID, WorkflowError, _bound_instance_state,
     commit_tdd, commit_findings, evidence_document, instance_id, operation_receipt, rejections, _readiness_lines,
@@ -1712,6 +1712,13 @@ def _deliver(identity: RepoIdentity, receipt: JsonObject, role: str = "lead", em
                 history[field] = digest(receipt[field])
                 if history[field] == seen.get(field):
                     del receipt[field]
+                else:
+                    # Both verdicts share an immutable, source-bound call that runs from any directory.
+                    prefix, verdict = receipt[field].rsplit(" ", 1)
+                    script = path.with_name("verdict-" + digest(prefix) + ".sh")
+                    if not script.exists():
+                        atomic_write_bytes(script, ('exec ' + prefix + ' "$@"\n').encode())
+                    receipt[field] = shlex.join(["sh", str(script), verdict])
         emit(receipt)
         if history != seen:
             atomic_write_json(path, history)
@@ -2195,6 +2202,11 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None) -> in
     receipt = operation_receipt(state, identity, kind="tdd", summaryId=evidence, readiness=readiness, obligations=not selected_only,
                                 cases=[*rows, *refused], otherCases=len(recorded.keys() - listed), **({"retired": [done["caseKey"] for done in gone]} if gone else {}),
                                 **({"unmatched": missing} if (missing := [key for key in dict.fromkeys(args.retire) if key not in retiring]) else {}))
+    corrections = any("correct" in row for row in refused)
+    if corrections or actions:
+        receipt["next"] = {key: value for key, value in receipt["next"].items() if key not in ("args", "tool", "input")}
+    if corrections:
+        receipt["next"]["input"] = "Append the replacement command to the correct arguments last shown for that refused case."
     if actions:
         payload = {"items": [{"id": key, "cases": list(dict.fromkeys(commands))} for key, commands in actions.items()]}
         # Reuse record's file input: every reply can give the complete call without echoing its case commands.
@@ -2202,7 +2214,7 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None) -> in
         path = repo_state_dir(identity) / "execution-trees" / workflow_id / "maps" / name
         if not path.exists():
             atomic_write_json(path, payload)
-        receipt["next"] = {"tool": "mcp__workflow__run", "args": ["record", "tdd-map", "--input", os.path.relpath(path, identity.root)]}
+        receipt["next"].update(tool="mcp__workflow__run", args=["record", "tdd-map", "--input", os.path.relpath(path, identity.root)])
     if update is not None:
         del receipt["otherCases"]
         return receipt
