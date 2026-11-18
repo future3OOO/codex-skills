@@ -6,19 +6,19 @@ The submitted command identifies the case; frozen source records its version. Th
 outcome and exits non-zero when the assertion fails. Output is diagnostic only;
 printing a value or `name: result` does not assert it.
 
-`--case` takes one command per case and `-` for no item. A scratch file a command names is frozen
+`--case ITEM COMMAND` also accepts `--case ITEM:COMMAND`; use `-` for no item. A scratch file a command names is frozen
 with it, as is a temporary path the command or that file names; `--path` or `--support` freezes
 another beside it. A `--case` call runs the cases it names and any recorded case still without accepted proof, captures any command an item still
 declares and judges the rest of the map as recorded, without running it; a bare call captures those too, replays every recorded command and,
 when all hold and nothing is open, verifies.
-A declaration that cannot be prepared stays open; put the corrected command in its returned `tdd --correct` call, which also replaces a declared command that already ran; a failing case is a row, not a failed call. `record tdd-map --input`
+When a declaration cannot be prepared, append its replacement command to the refused row’s `correct` arguments and run that call. `tdd --correct ID [DECLARATION] COMMAND` replaces a declared or recorded command and runs the correction. A sole command needs only its replacement. `tdd --correct CASEKEY COMMAND` replaces the exact case named in a receipt. A failing case is a row, not a failed call. `record tdd-map --input`
 takes the map change itself, `items` (only the changed fields), `added` and `removed`, alone or together:
-`{"items":[{"id":"BM_X","expected":"..."}],"removed":["BM_Y"]}`, and reruns the changed items' cases in the same call. The receipt gives continuation, failures and evidence access.
+`{"items":[{"id":"BM_X","expected":"..."}],"removed":["BM_Y"]}`, and reruns the changed items' cases in the same call. Testing replies show each new or changed result once per reader. The evidence call named with a withheld result gives the full comparisons.
 The runner owns source preparation and reuse; do not repeat them.
 
 Only a finding's author can withdraw it, or retire a case beside its probe or replacement; the lead closes an
 advisor-added map item or final finding it rejects with `tdd --reject ID 'COMMAND'`, whose output the workflow records. The lead
-retires a case with `--retire` and its item and command, or its `caseKey`. A retired kept-behaviour case
+retires a case with `--retire` and its item and command, or one or more case keys. A retired kept-behaviour case
 stays the item's retained proof, holding it open while it fails on the candidate, unless another recorded case
 proves the item and the case fails on the original or no longer passes after the item changed; an item left without a proving case reads open.
 Reviewers receive each retired case with its command and exits.
@@ -34,7 +34,7 @@ The map holds required outcomes and concrete input context. `boundaryInputs` is
 data; it neither binds nor starts a command. Only an actual captured execution
 creates a case binding. Replays use those captured cases and retained first proof,
 not proposed commands or test names. An item without a captured case stays pending.
-Kept-behavior cases use the pass-start test files on both versions. Named support
+Kept-behavior cases use the pass-start test files on both versions. If a case fails on the original with an edited test, the runner compares again with its current test bytes. Named support
 and scratch files use candidate bytes; contract and unbound cases use candidate
 tests. Name a new in-repository kept-behavior test file with `--support`.
 Every required command must establish the item's outcome. New commands extend

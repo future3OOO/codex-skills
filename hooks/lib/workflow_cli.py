@@ -397,8 +397,8 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
                       obligations=not all(item.get("cases") and not behavior_map.readings_unsettled(item) for item in document["behaviorMap"]), **edits))
         return 0
     if args.kind == "tdd-map":
-        from .tdd_workflow import map_update
-        emit(map_update(identity, state, _document(args, "TDD map update")))
+        from .tdd_workflow import _deliver, map_update
+        _deliver(identity, map_update(identity, state, _document(args, "TDD map update")), emit=emit)
         return 0
     candidate = _active_candidate_tree(identity)
     if args.input == "-" and args.design_declaration == "-":
