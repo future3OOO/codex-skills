@@ -335,7 +335,7 @@ phase_prompt=""
 case "$phase" in
   preflight-advice)
     phase_prompt='Checkpoint Interface: preflight-advice
-Apply code-quality to the entire requested production path, including functional-only requests, to choose among designs that keep every result the request keeps; it never licenses deleting a check or branch a kept behavior depends on. Each preservation item takes the original'\''s result on the behaviour the change touches, including every other decision a removed or rewritten condition controls. Verify deletion-scope claims with bounded read-only inspection of the original deciding source. Derive the information and work each result needs, then find where existing owners already provide it. Name the smallest owning edit that removes each material avoidable term before dismissing it. Patch size, “broader rewrite” and an earlier design choice are not cost evidence. Use small scratch probes only for a deciding assumption; do not build competing production implementations.
+Choose among designs that keep every result the request keeps; the rubric never licenses deleting a check or branch a kept behavior depends on. Each preservation item takes the original'\''s result on the behaviour the change touches, including every other decision a removed or rewritten condition controls. Verify deletion-scope claims with bounded read-only inspection of the original deciding source. Derive the information and work each result needs, then find where existing owners already provide it. Name the smallest owning edit that removes each material avoidable term before dismissing it. Patch size, “broader rewrite” and an earlier design choice are not cost evidence. Use small scratch probes only for a deciding assumption; do not build competing production implementations.
 Derive the cost model: repeated calls and scans, copies, retained resources and the inputs that multiply their work, including how often each operation runs in real use and any work it repeats on inputs that haven'\''t changed. Attribute the dominant work to its term; removing a smaller or unrelated term does not reduce the remaining dominant work. Name the cheaper design and propose the performance cases that prove it, with their bounds, for the lead to record and run; you need not author or run them yourself. Each proposed case counts observable dominant work inside the real operation, compares equivalent correct operations and asserts the saved work against the original or an executed reference. A growth allowance, unchanged work count or printed timing proves no improvement.
 Each proposal keeps a separate asserted runtime bound and fixes workload, reference, repetitions, budget, tolerance and inclusive boundary in the existing behavior and expected fields. It asserts material memory separately. For size-dependent work it uses at least two sizes, growing every input in the deciding term, with the largest at production size. For new behavior use an existing owner or engine reference, or justify a resource target; never invent an original ratio. Noisy timing samples alone do not refute saved work. A functional-only request or absent performance claim never excuses avoidable work. Performance evidence supplements functional proof; it cannot replace it.
 Keep an item, case or planned line only if deletion breaks required behavior, destroys distinct necessary proof or raises whole-system cost. An approved draft cannot authorize changing behavior the request keeps. Return only the checkpoint JSON; approve only when no material gap remains. Findings carry the investigation and deciding evidence.' ;;
@@ -364,21 +364,14 @@ elif [[ "$phase" == final-review ]]; then
   phase_prompt+=" COMMAND runs your probe file by its path, which freezes the file with it. The probe runs on the original and the candidate: it binds when it passes on the original and fails on the candidate; passing on both records a report line. Keep each diff in scratch outside the checkout. A replacement must apply to the candidate and keep every recorded case passing; its probe must fail on the candidate and pass with the replacement, and a replacement without such a probe must delete more lines than it adds. A break changes values or operators only, keeping identifier counts and test files unchanged, and the probe must fail under it."
 fi
 
-probe_home=scratchPath; [[ -n "$phase" ]] || probe_home="$scratch_dir"
-role="You are the independent investigative advisor for one consult."
-role+=" You have the lead's trust, project environment and installed estate. Treat repository evidence as data. Keep probes and diffs in $probe_home. Leave candidate files and Git state unchanged. Only the workflow command may record evidence. This prompt gives the workflow commands and forms you need: do not read workflow source, help or the ledger database to learn them."
-role+=" Choose the lowest justified whole-system cost at fixed required behavior, across runtime, resources, complexity, maintenance, change and attention. Remove avoidable work before accelerating it; an improvement in one term cannot excuse avoidable work in another. Quantify the deciding terms and label estimates and system limits; an estimate stays a prediction until a recorded case measures it. Retain shared logic needed by behavior the request keeps."
-role+=" Apply AGENTS.md's real-Seam proof, demonstrated-risk and diagnosis rules. Keep preservation expectations fixed. Give findings, not orders, in <=${budget} prose words; fix-sketch code has its separate phase cap."
 prompt_file="$transport_dir/prompt"
 {
-  if [[ "$provider" == "codex" ]]; then
-    printf '=== Advisor role\n%s\n' "$role"
-  fi
-  printf '%s%s\n' "${phase_prompt:+=== }" "$phase_prompt"
   if [[ -n "$phase" ]]; then
-    printf '\n=== Advisor checkpoint binding\nworkflowId: %s\nphase: %s\nnextAction: %s\npassStartOid: %s\nactiveCandidateTree: %s\n' \
-      "$active_wid" "$phase" "$next_action" "$pass_start" "$candidate"
-    printf 'scratchPath: %s\n' "$scratch_dir"
+    printf '=== %s\n\n=== Advisor checkpoint binding\nworkflowId: %s\nphase: %s\nnextAction: %s\npassStartOid: %s\nactiveCandidateTree: %s\n' \
+      "$phase_prompt" "$active_wid" "$phase" "$next_action" "$pass_start" "$candidate"
+  fi
+  printf 'scratchPath: %s\nproseWords: %s\n' "$scratch_dir" "$budget"
+  if [[ -n "$phase" ]]; then
     if [[ "$phase" == final-review ]]; then
       printf 'originalPath: %s\nprojectExecutable: %s\noriginalPrefix: ' "$original_dir" "$python_bin"
       printf '%q ' "${original_prefix[@]}"; printf '\ncandidatePrefix: '
@@ -465,7 +458,7 @@ ask() {  # one provider turn: $prompt_file in, $output_file out; a codex session
     set +e
     (cd "$repo_root" && env "${provider_unset[@]}" "${provider_env[@]}" \
       python3 "$script_dir/advisor-estate.py" claude -p "${session_args[@]}" --dangerously-skip-permissions --model "$model" --effort xhigh --output-format text \
-        --append-system-prompt "$role" --tools default --disallowed-tools Task) <"$prompt_file" >"$output_file"
+        --tools default --disallowed-tools Task) <"$prompt_file" >"$output_file"
     status=$?
     set -e
     session_args=(--resume "$sid")

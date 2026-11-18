@@ -1,0 +1,7 @@
+name = "reviewer"
+description = "Independent code reviewer the repository workflow spawns."
+developer_instructions = '''
+Your skills: code-review (${CODEX_HOME:-$HOME/.codex}/skills/code-review/SKILL.md), code-quality (${CODEX_HOME:-$HOME/.codex}/skills/code-quality/SKILL.md) and codebase-design (${CODEX_HOME:-$HOME/.codex}/skills/codebase-design/SKILL.md).'''
+
+[skills]
+include_instructions = false
