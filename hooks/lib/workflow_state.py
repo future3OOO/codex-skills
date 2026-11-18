@@ -435,7 +435,7 @@ def commit_tdd(identity: RepoIdentity, slug: str, workflow_id: str | None,
         if "evaluation" not in summary_doc:
             summary_doc["evaluation"] = _evaluation(identity, state, transaction.evidence(state.get("tddEvidence")))
         readiness = None if selected_only else _readiness_lines(identity, state, items,
-                    documents=(summary_doc, None), candidate=candidate)
+                    documents=(summary_doc, None), candidate=candidate, case_refs=True)
         behavior_map.retain_evaluation(items, {item["id"] for item in items}, summary_doc["evaluation"], summary_doc["runs"], _retired(state))
         pending = readiness is None or bool(readiness["open"])
         runs = summary_doc["runs"]
@@ -1408,7 +1408,8 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
         "codeReviewStatus": review.get("status"),
     }
     if phase == "code-review":
-        record = [*WORKFLOW, "tdd", "--repo", identity.root, "--as", "review", "--workflow-id", str(workflow_id)]
+        tool = os.path.relpath(WORKFLOW[1], identity.root) if Path(WORKFLOW[1]).is_relative_to(identity.root) else WORKFLOW[1]  # an installed tool runs from any directory of the checkout
+        record = [WORKFLOW[0], tool, "tdd", "--as", "review", "--workflow-id", str(workflow_id)]
         result["findingCommand"] = shlex.join([*record, "--report", "OWNING INVARIANT", "--case", "-", "COMMAND"])
         verdict = shlex.join([*record, "--expected-candidate-tree", candidate, "--tdd-evidence", str(state.get("tddEvidence") or "null")])
         # Both verdicts ready to run: an unmet requirement is recorded as easily as completion, and keeps the review open.
@@ -1651,7 +1652,7 @@ def scratch_path(identity: RepoIdentity, state: JsonObject) -> str:
 def _readiness_lines(identity: RepoIdentity, state: JsonObject, items: list[JsonObject] | None = None, *,
                      documents: tuple[JsonObject | None, JsonObject | None] | None = None,
                      review: JsonObject | None = None, candidate: str | None = None,
-                     evidence: Callable[[str | None], JsonObject | None] | None = None) -> JsonObject:
+                     evidence: Callable[[str | None], JsonObject | None] | None = None, case_refs=False) -> JsonObject:
     """One readiness result: immutable named cases, with retained statements for review. Given no items or documents
     it reads the state's own, through `evidence` when given. Evidence is addressed by its content and a comparison
     scope holds one candidate and one sample of every input, so within a scope that readiness is derived once for a
@@ -1659,7 +1660,7 @@ def _readiness_lines(identity: RepoIdentity, state: JsonObject, items: list[Json
     from .tdd_workflow import current_map
     candidate = candidate or _active_candidate_tree(identity)
     held = scope.setdefault("readiness", {}) if items is documents is review is None and (scope := _EXECUTION.get()) else {}
-    key = (identity.root, candidate, evidence is None and state.get("preflight") == "pending" and state.get("preflightLatestEvidence"),
+    key = (identity.root, candidate, case_refs, evidence is None and state.get("preflight") == "pending" and state.get("preflightLatestEvidence"),
            _canonical({field: state.get(field) for field in READINESS_FIELDS}))
     if key not in held:
         if evidence is not None:
@@ -1670,12 +1671,12 @@ def _readiness_lines(identity: RepoIdentity, state: JsonObject, items: list[Json
             document = documents[0]
             items = behavior_map.recorded_map(*documents) if items is None else items
         held[key] = _derived_readiness(identity, {field: state[field] for field in READINESS_FIELDS if field in state},
-                                       items or [], document, review, candidate)
+                                       items or [], document, review, candidate, case_refs)
     return {name: list(value) if isinstance(value, list) else value for name, value in held[key].items()}
 
 
 def _derived_readiness(identity: RepoIdentity, state: JsonObject, items: list[JsonObject], document: JsonObject | None,
-                       review: JsonObject | None, candidate: str) -> JsonObject:
+                       review: JsonObject | None, candidate: str, case_refs=False) -> JsonObject:
     from .tdd_workflow import _evaluation, _retired, refresh_proof, shown
     rejected = rejections(state, "item")  # the lead's measured set-asides
     items = [entry for entry in items if entry["id"] not in rejected]
@@ -1685,10 +1686,11 @@ def _derived_readiness(identity: RepoIdentity, state: JsonObject, items: list[Js
     retired = _retired(state)
     observations = behavior_map.current_cases(items, (document or {}).get("runs", []), retired)
     refresh_proof(identity, [*observations, *evaluation], candidate=candidate, runs=(document or {}).get("runs", []))
-    for entry in (*observations, *evaluation):  # a line that names its case gives a command that runs as printed
+    for entry in (*observations, *evaluation):
+        run = entry["comparison"]
         if behavior_map._case_question(entry):
-            entry["comparison"]["command"] = shown(identity, state, entry["comparison"])
-    cases = behavior_map.open_obligations(items, evaluation, observations)
+            run["command"] = behavior_map.case_key(entry["id"], run) if case_refs else shown(identity, state, run)
+    cases = behavior_map.open_obligations(items, evaluation, observations, case_refs=case_refs)
     review = review if review is not None else evidence_document(identity, state.get("codeReviewEvidence"))
     current = bool(review and review.get("workflowId") == state["workflowId"] and review.get("candidateTree") == candidate and review.get("verdict") == "complete" and not _stage_unresolved(state, "code-review", "code-review"))
     return {"open": cases, "reviewCurrent": current, "openCount": len(cases),
