@@ -109,7 +109,7 @@ is work for the lead before initial or return review.
 Before final advisor review, obtain independent `code-review` of the original
 objective and current candidate. Lead self-cleanup and later GitHub review do not replace this
 step. For initial non-trivial review use a fresh native Codex background
-delegate (`spawn_agent`, `agent_type=default`, `fork_turns="none"`, normal native
+delegate (`spawn_agent`, `agent_type=reviewer`, `fork_turns="none"`, normal native
 model selection) in the lead's native task checkout. Supply the target and correction delta; instruct it to apply `code-review`,
 which loads the request, contract, comparison outcomes and diff itself.
 Wait for it in one `wait_agent` call with `timeout_ms` 1800000, without editing the candidate; on timeout, wait again rather than re-tasking. The reviewer records executable findings and

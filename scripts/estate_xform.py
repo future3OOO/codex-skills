@@ -106,6 +106,8 @@ def inverse_pairs(target: str) -> list:
             pairs.index(("agent_type", "subagent_type")),
             ("agent_type=default", "agent_type=general-purpose"),
         )
+        # The Codex-only reviewer role is Claude's general-purpose delegate.
+        pairs.insert(pairs.index(("agent_type", "subagent_type")), ("agent_type=reviewer", "agent_type=general-purpose"))
     return pairs
 
 

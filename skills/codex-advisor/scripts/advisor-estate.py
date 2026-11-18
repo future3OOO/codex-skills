@@ -60,10 +60,14 @@ def prepare(provider: str) -> tuple[Path, Path, dict, dict]:
             raise ValueError(f"advisor {key} must be a list of nonempty strings")
         if len(set(values)) != len(values):
             raise ValueError(f"advisor {key} repeats a selection")
-    rules = "\n\n".join((config_path.parent / Path(p).expanduser()).read_text() for p in config["rules"])
+    # The launcher's own role always leads; an older selection names an identical installed copy, delivered once.
+    rules = "\n\n".join(dict.fromkeys(p.read_text() for p in [ROOT / "docs/agents/advisor-role.md", *(
+        config_path.parent / Path(p).expanduser() for p in config["rules"])]))
     home = Path(os.environ.get("ADVISOR_ESTATE_ROOT", native / "advisor")) / provider
     home.mkdir(parents=True, exist_ok=True, mode=0o700)
-    (home / ("AGENTS.md" if provider == "codex" else "CLAUDE.md")).write_text(rules)
+    # Codex receives the rules as its model instructions; an AGENTS.md an older launch left would deliver them again.
+    (home / ("instructions.md" if provider == "codex" else "CLAUDE.md")).write_text(rules)
+    (home / "AGENTS.md").unlink(missing_ok=True)
     skills = home / "skills"
     skills.mkdir(exist_ok=True)
     sources = {}
@@ -137,7 +141,8 @@ def main() -> int:
                  "-c", "include_collaboration_mode_instructions=false",
                  # features.multi_agent does not remove the lead's multi-agent briefing or tools; these settings do.
                  "-c", 'features.multi_agent_v2={disable_native_tools=true,root_agent_usage_hint_text="",multi_agent_mode_hint_text=""}',
-                 "-c", "skills.bundled.enabled=false", "-c", "sqlite_home=" + json.dumps(str(native))]
+                 "-c", "skills.bundled.enabled=false", "-c", "sqlite_home=" + json.dumps(str(native)),
+                 "-c", "model_instructions_file=" + json.dumps(str(home / "instructions.md"))]
         flags += ["-c", "skills.config=[" + ",".join("{name=" + json.dumps(name) + ",enabled=true}"
                                                     for name in config["skills"]) + "]"]
         if trust:
