@@ -1730,7 +1730,7 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None) -> in
     """`update`, a map change recorded with this call's comparison: one commit publishes both."""
     dash = values.index("--") if "--" in values else len(values)
     parser = argparse.ArgumentParser(prog="workflow tdd", usage="%(prog)s [OPTIONS] [--case ITEM COMMAND | --case ITEM:COMMAND] "
-        "[--correct ID [DECLARATION] COMMAND] [--retire CASEKEY [CASEKEY ...] | --retire ITEM COMMAND] [-- COMMAND ...]", description="Compare and record probes or replacements; authors record verdicts from their checkpoint command", epilog=binds.__doc__)
+        "[--correct ID [DECLARATION] COMMAND | --correct CASEKEY COMMAND] [--retire CASEKEY [CASEKEY ...] | --retire ITEM COMMAND] [-- COMMAND ...]", description="Compare and record probes or replacements; authors record verdicts from their checkpoint command", epilog=binds.__doc__)
     parser.add_argument("--repo", "--cwd", dest="repo", default=".")
     parser.add_argument("--slug")
     parser.add_argument("--workflow-id")
@@ -1750,7 +1750,7 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None) -> in
     parser.add_argument("--case", action="append", nargs="+", default=[], metavar="CASE",
                         help="ITEM COMMAND or ITEM:COMMAND; '-' is unbound. Growth: WORKFLOW_GROWTH=SMALL,LARGE,MAX_POWER COMMAND {size}; counts may grow by at most (LARGE/SMALL)**MAX_POWER. Print WORKFLOW_METRICS=<JSON object> or JSON alone for numeric metrics. Growth checks scaling; assert saved work and runtime in the probe.")
     parser.add_argument("--support", action="append", help="name support, or a scratch file to freeze beside the probe; recorded replay uses its captured immutable bytes")
-    parser.add_argument("--correct", nargs="+", metavar="ARG", help="ID [DECLARATION] COMMAND: replace the named or sole command and run it")
+    parser.add_argument("--correct", nargs="+", metavar="ARG", help="ID [DECLARATION] COMMAND or CASEKEY COMMAND: replace the selected case and run its correction")
     args = parser.parse_args(values[:dash])
     for selection in args.case:
         if len(selection) == 1:
@@ -1758,7 +1758,7 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None) -> in
         if len(selection) != 2 or not all(selection):
             raise WorkflowError("--case needs ITEM COMMAND or ITEM:COMMAND (use - for an unbound case)")
     if args.correct and len(args.correct) not in (2, 3):
-        raise WorkflowError("--correct needs ID [DECLARATION] COMMAND")
+        raise WorkflowError("--correct needs ID [DECLARATION] COMMAND or CASEKEY COMMAND")
     if len(args.behavior_id) > 1 and values[dash + 1:]:
         raise WorkflowError("one Behavior Map item per case command")
     command = values[dash + 1:]
@@ -1917,7 +1917,15 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None) -> in
     runs = list((current or {}).get("runs", []))
     evaluation = _evaluation(identity, state, current)
     args.retire = _case_keys(items, runs, evaluation, args.retire)
-    if args.correct:
+    correct_key = args.correct[0] if args.correct and ":" in args.correct[0] else None
+    replacement_case = None
+    if correct_key:
+        if len(args.correct) != 2:
+            raise WorkflowError("--correct CASEKEY takes just its replacement command")
+        identifier, corrected = correct_key.partition(":")[0], args.correct[-1]
+        replacement_case = (identifier, corrected)
+        args.case.append(replacement_case)
+    elif args.correct:
         identifier, corrected = args.correct[0], args.correct[-1]
         entry = behavior_map.item(items, identifier)
         if len(args.correct) == 2:
@@ -1937,6 +1945,18 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None) -> in
                 raise WorkflowError(f"{identifier} declares and recorded no case {declaration!r}")
             args.retire += ran
             args.case.append([identifier, corrected])
+    retired = _retired(state)
+    by_key = {}
+    if correct_key or args.retire:
+        by_key = {behavior_map.case_key(entry["id"], run): run for entry in evaluation.values()
+                  for run in [runs[entry["runIndex"]]]}
+        by_key.update((behavior_map.case_key(case["id"], case["comparison"]), case["comparison"])
+                      for case in behavior_map.current_cases(items, runs))
+        if correct_key:
+            if correct_key in retired or any(row["caseKey"] == correct_key for row in (current or {}).get("retired", [])):
+                raise WorkflowError("already retired case key " + correct_key)
+            if correct_key not in by_key or not any(entry["id"] == identifier for entry in items):
+                raise WorkflowError("no bound case has case key " + correct_key)
     frozen_signature = json.dumps(evaluation, sort_keys=True)
     candidate = _active_candidate_tree(identity)
     before = tree_manifest(identity)
@@ -1949,9 +1969,8 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None) -> in
     rejected = rejections(state, "item")  # set aside: never replayed
     drafted = [] if args.behavior_id and update is None else list(dict.fromkeys((entry["id"], value) for entry in items
                                                              if entry["id"] not in rejected and (not args.behavior_id or entry["id"] in args.behavior_id)
-                                                             for value in entry.get("cases", []) if not args.correct or (entry["id"], value) == (args.correct[0], args.correct[2])))
+                                                             for value in entry.get("cases", []) if not args.correct or (entry["id"], value) == (args.correct[0], args.correct[-1])))
     selected = []
-    retired = _retired(state)
     if not specs and not args.correct:
         for entry in items:
             if args.behavior_id and entry["id"] not in args.behavior_id or entry["id"] in rejected:
@@ -1982,16 +2001,18 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None) -> in
     refused, asked = [], []
     for identifier, value in dict.fromkeys([*specs, *drafted]):
         entry = captured = None
+        key_correction = (identifier, value) == replacement_case
         try:  # a case that cannot be captured or prepared is refused alone; the rest of the call is recorded
             entry = behavior_map.item(items, identifier) if identifier else None
             captured = _probe_capture(identity, {"command": value, **({"path": args.path} if args.path else {})},
                                       candidate, MAX_CASE_SECONDS, args.support, inventory, original if entry and entry.get("kind") == "preservation" else None)
             _comparison_input(identity, captured)
         except (ValueError, RuntimeError, OSError) as exc:
-            reason = str(exc).removesuffix(": -: " + captured["command"]) if captured else str(exc)
-            refused.append({"refused": reason, **({"correct": ["tdd", "--correct", identifier, value], "missing": "replacement command"}
+            reason = str(exc).removesuffix(": -: " + captured["command"]) if captured and not key_correction else str(exc)
+            selector = [correct_key] if key_correction else [identifier, value]
+            refused.append({"refused": reason, **({"correct": ["tdd", "--correct", *selector], "missing": "replacement command"}
                            if entry is not None else {"case": value})})
-            if entry is not None and value not in entry.get("cases", []):
+            if entry is not None and not key_correction and value not in entry.get("cases", []):
                 entry.setdefault("cases", []).append(value)
             captured = None
         if (identifier, value) in drafted and captured:
@@ -2000,6 +2021,8 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None) -> in
                 del entry["cases"]
         if captured is None:
             continue
+        if key_correction:
+            args.retire.append(correct_key)
         if entry is not None:
             prior = entry.get("comparison") or {}
             references = prior.get("caseRuns")
@@ -2043,12 +2066,9 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None) -> in
                     for frozen in evaluation.values() if behavior_map.case_key(frozen["id"], runs[frozen["runIndex"]]) not in retired and (not args.behavior_id or frozen["id"] in args.behavior_id)
                     and frozen["id"] not in rejected and (index := frozen["runIndex"]) not in selected_indexes and (frozen["id"], runs[index].get("sourceCommand", runs[index]["command"])) not in again
                     and (not specs or behavior_map._case_question({**frozen, "comparison": runs[index]})))
-    def frozen_names():  # the retained first proofs by case key, as they stand: a case proved in this call is retained by it
-        return {behavior_map.case_key(frozen["id"], runs[frozen["runIndex"]]): name for name, frozen in evaluation.items()} if args.retire else {}
-    retiring, held = {}, frozen_names()
+    retiring = {}
     for key in dict.fromkeys(args.retire):  # each named case is compared in this call, whatever else it selects
-        run = next((case["comparison"] for case in behavior_map.current_cases(items, runs) if behavior_map.case_key(case["id"], case["comparison"]) == key),
-                   runs[evaluation[held[key]]["runIndex"]] if key in held else None)
+        run = by_key.get(key)
         if run is None:  # superseded by a later capture, released to another item, or its item removed: nothing is left to retire
             continue
         retiring[key] = run["runIndex"]
@@ -2105,7 +2125,7 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None) -> in
             if updated != references or indexes.get(proof["runIndex"], proof["runIndex"]) != proof["runIndex"]:
                 entry["comparison"] = {**runs[indexes.get(proof["runIndex"], proof["runIndex"])], "obligation": proof["obligation"], "caseRuns": updated}
     latest = {probe.get("runIndex"): run for (_, probe), run in zip(selected, compared)} if retiring else {}
-    held = frozen_names()
+    held = {behavior_map.case_key(frozen["id"], runs[frozen["runIndex"]]): name for name, frozen in evaluation.items()} if retiring else {}
     present = {entry["id"]: entry for entry in items}  # an item's recorded cases that hold, current and retained, beside those this call retires
     proving = {case["id"] for case in [*behavior_map.current_cases(items, runs, retired), *(
         {**present[frozen["id"]], "comparison": {**runs[frozen["runIndex"]], "obligation": behavior_map.obligation(frozen)}}

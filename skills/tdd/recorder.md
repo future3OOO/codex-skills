@@ -11,7 +11,7 @@ with it, as is a temporary path the command or that file names; `--path` or `--s
 another beside it. A `--case` call runs the cases it names and any recorded case still without accepted proof, captures any command an item still
 declares and judges the rest of the map as recorded, without running it; a bare call captures those too, replays every recorded command and,
 when all hold and nothing is open, verifies.
-When a declaration cannot be prepared, append its replacement command to the refused row’s `correct` arguments and run that call. `tdd --correct ID [DECLARATION] COMMAND` replaces a declared or recorded command and runs the correction. A sole command needs only its replacement. A failing case is a row, not a failed call. `record tdd-map --input`
+When a declaration cannot be prepared, append its replacement command to the refused row’s `correct` arguments and run that call. `tdd --correct ID [DECLARATION] COMMAND` replaces a declared or recorded command and runs the correction. A sole command needs only its replacement. `tdd --correct CASEKEY COMMAND` replaces the exact case named in a receipt. A failing case is a row, not a failed call. `record tdd-map --input`
 takes the map change itself, `items` (only the changed fields), `added` and `removed`, alone or together:
 `{"items":[{"id":"BM_X","expected":"..."}],"removed":["BM_Y"]}`, and reruns the changed items' cases in the same call. Testing replies show each new or changed result once per reader. The evidence call named with a withheld result gives the full comparisons.
 The runner owns source preparation and reuse; do not repeat them.
