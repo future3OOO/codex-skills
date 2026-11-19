@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import io
 import os
 import re
 import shlex
@@ -209,23 +208,29 @@ def _intent(args: argparse.Namespace) -> str:
 
 def _verify(args: argparse.Namespace, identity: RepoIdentity, *, review: bool = False, continuation: bool = False) -> int:
     """`continuation`: the tdd verb without a selection, which stops at the cases with the status tdd gives them."""
-    state = bound_state(identity, args.slug, args.workflow_id)
-    slug, workflow_id = str(state["slug"]), str(state["workflowId"])
+    from .tdd_workflow import _deliver, _run_tdd
     cases = {}
+    slug, workflow_id = args.slug, args.workflow_id
     if not review:
-        from .tdd_workflow import _run_tdd
-        with redirect_stdout(io.StringIO()) as receipt:
-            result = _run_tdd(["--repo", str(identity.root), "--slug", slug, "--workflow-id", workflow_id])
-        replay = json.loads(receipt.getvalue())
-        if result or replay["open"]:  # the cases stop the call: their receipt is its reply
-            print(receipt.getvalue(), end="")
+        replay = {}
+        binding = [word for flag, value in (("--slug", slug), ("--workflow-id", workflow_id)) if value for word in (flag, value)]
+        result = _run_tdd(["--repo", str(identity.root), *binding], receive=replay.update)
+        if result or replay["open"]:
+            _deliver(identity, replay)
             return result & 2 if continuation else 2
+        slug, workflow_id = replay["slug"], replay["workflowId"]
         cases = {key: replay[key] for key in ("cases", "otherCases")}
         if references := refresh_context(identity):
             cases["callers"] = references
-        state = bound_state(identity, slug, workflow_id)
+    state = bound_state(identity, slug, workflow_id)
+    slug, workflow_id = state["slug"], state["workflowId"]
+    def publish(receipt):
+        if review:
+            _emit_json(receipt)
+        else:
+            _deliver(identity, receipt)
     if state.get("tdd") == "in-progress":
-        _emit_json(_receipt(state, identity, kind="verification", valid=False,
+        publish(_receipt(state, identity, kind="verification", valid=False,
                             error="current comparison proof is incomplete; run the selected TDD cases"))
         return 2
     args.base_ref = args.base_ref or state.get("baseOid") or state.get("passStartOid")
@@ -242,7 +247,7 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity, *, review: bool = 
             from .tdd_workflow import check_retained
             state = check_retained(identity, slug, workflow_id)
         # The same typed gate is reused; retained observations have their own tree cache.
-        _emit_json(_receipt(state, identity, evidenceId=state["qualityGateEvidence"], kind="quality-gate", reused=True,
+        publish(_receipt(state, identity, evidenceId=state["qualityGateEvidence"], kind="quality-gate", reused=True,
                             verification="passed", valid=True, runIndex=last["runIndex"], workflowId=workflow_id, **cases))
         return 0  # verification holds; a finding still open is the receipt's continuation and closes only completion
 
@@ -338,7 +343,7 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity, *, review: bool = 
     with redirect_stdout(sys.stderr):  # stdout carries only the receipt
         _print_output(shown)
     state = read_workflow(identity) or state
-    _emit_json(_receipt(state, identity, **{
+    publish(_receipt(state, identity, **{
         "evidenceId": evidence_id,
         "exitCode": exit_code,
         "kind": args.kind,
@@ -370,6 +375,9 @@ def _document(args: argparse.Namespace, label: str) -> dict[str, object]:
 def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
     """One ingest seam; --check runs the whole recording and rolls it back."""
     CHECK_ONLY.set(args.check)
+    if args.kind == "tdd-map":
+        from .state_store import _EXECUTION
+        _EXECUTION.get()["case_refs"] = True
     from .workflow_state import _bound_instance_state
     state = (_bound_instance_state(read_active(identity), args.slug, args.workflow_id) if args.kind == "advisor-result"
              else bound_state(identity, args.slug, args.workflow_id))

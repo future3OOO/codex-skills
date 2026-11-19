@@ -117,7 +117,7 @@ def _effective(identity: RepoIdentity, state: JsonObject | None,
     """Derive readiness from bound proof, including reusable evidence after a reverted edit."""
     if not state or state.get("phase") in {"complete", "abandoned"} or not (state.get("tddEvidence") or state.get("tdd") in {"passed", "not-required"}):
         return state
-    readiness = _readiness_lines(identity, state, evidence=evidence)
+    readiness = _readiness_lines(identity, state, evidence=evidence, case_refs=bool((_EXECUTION.get() or {}).get("case_refs")))
     status = "in-progress" if readiness["open"] else "passed" if state.get("tddEvidence") else state["tdd"]
     restore_review = status == "passed" and readiness["reviewCurrent"] and state.get("codeReview") != {"status": "passed", "findings": "none"}
     if state.get("tdd") != status or restore_review:
@@ -1311,6 +1311,12 @@ def _entry_lines(rows: list[JsonObject], context: JsonObject) -> str:
     return text(context)[:-1] + ',"items":[\n' + ",\n".join(map(text, rows)) + "\n]}"
 
 
+def _review_commands(identity, state, candidate):
+    record = [*WORKFLOW, "tdd", "--repo", identity.root, "--as", "review", "--workflow-id", state["workflowId"]]
+    verdict = shlex.join([*record, "--expected-candidate-tree", candidate, "--tdd-evidence", str(state.get("tddEvidence") or "null")])
+    return record, {"verdictCommand": verdict + " --verdict complete", "unmetVerdictCommand": verdict + " --verdict incomplete"}
+
+
 def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
                channel_dir: str | None = None, preflight_draft: JsonObject | None = None) -> JsonObject:
     if phase not in CHECKPOINT_PHASES:
@@ -1408,11 +1414,9 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
         "codeReviewStatus": review.get("status"),
     }
     if phase == "code-review":
-        record = [*WORKFLOW, "tdd", "--repo", identity.root, "--as", "review", "--workflow-id", str(workflow_id)]
+        record, verdict = _review_commands(identity, state, candidate)
         result["findingCommand"] = shlex.join([*record, "--report", "OWNING INVARIANT", "--case", "-", "COMMAND"])
-        verdict = shlex.join([*record, "--expected-candidate-tree", candidate, "--tdd-evidence", str(state.get("tddEvidence") or "null")])
-        # Both verdicts ready to run: an unmet requirement is recorded as easily as completion, and keeps the review open.
-        result["verdictCommand"], result["unmetVerdictCommand"] = verdict + " --verdict complete", verdict + " --verdict incomplete"
+        result.update(verdict)
     else:
         shape = json.loads(ADVISOR_SHAPES["preflight" if phase == "preflight-advice" else "final"])
         if reconsult:  # the second consultation completes the draft in its answer
@@ -1748,7 +1752,7 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
         return {"command": None, "input": "Delegate code-review; its checkpoint supplies the verdict command. Reuse the reviewer for corrections; repair pending findings before return review."}
     elif action in {"tdd", "address-review-findings"}:
         command = [*cli, "tdd", *bound]
-        pending = open_findings(identity, state)
+        pending = open_findings(identity, state, deferred=(receipt or {}).get("kind") == "tdd" or "cases" in (receipt or {}))
         # A map item without a case is the lead's to write; otherwise the call that reruns and verifies is [].
         unbound = [line.split(" (", 1)[0] for line in (receipt or {}).get("open") or [] if "no case is bound" in line]
         operation: JsonObject = {"command": None if unbound else shlex.join(command), "args": []}
@@ -1764,7 +1768,7 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
     return {"command": shlex.join(command)}
 
 
-def open_findings(identity: RepoIdentity, state: JsonObject, *, detail: bool = False) -> list[JsonObject]:
+def open_findings(identity: RepoIdentity, state: JsonObject, *, detail: bool = False, deferred=False) -> list[JsonObject]:
     """Each unresolved finding as its author recorded it where it bound (its latest binding recording, else its first):
     `diff` applies its replacement, a file kept with the pass's execution state, and `probe` runs its probe from the
     checkout as the workflow ran it; `detail` adds its claim and the probe's result on both versions."""
@@ -1773,11 +1777,16 @@ def open_findings(identity: RepoIdentity, state: JsonObject, *, detail: bool = F
     for entry in state.get("findingStates", []):
         if not _finding_unresolved(entry):
             continue
-        recorded = [item for ref in ({"evidenceId": entry["intakeEvidenceId"], "id": entry["findingId"]}, *entry.get("observations", []))
-                    for item in (evidence_document(identity, ref["evidenceId"], restore_runs=False) or {}).get("findings", []) if item["id"] == ref["id"]]
-        if not recorded:
+        finding = None
+        for ref in reversed(({"evidenceId": entry["intakeEvidenceId"], "id": entry["findingId"]}, *entry.get("observations", []))):
+            document = evidence_document(identity, ref["evidenceId"], restore_runs=False) or {}
+            observation = next((item for item in document.get("findings", ()) if item["id"] == ref["id"]), None)
+            if observation:
+                finding = observation
+                if finding.get("material"):
+                    break
+        if finding is None:
             continue
-        finding = next((item for item in reversed(recorded) if item.get("material")), recorded[0])
         row, run = {"findingId": entry["findingId"], **({"claim": finding["claim"]} if detail else {})}, (finding.get("execution") or {}).get("comparison")
         if "change" in finding:
             path = Path(scratch_path(identity, state)).with_name("findings") / (finding["id"] + ".diff")  # the recording shown
@@ -1786,7 +1795,10 @@ def open_findings(identity: RepoIdentity, state: JsonObject, *, detail: bool = F
                 path.write_bytes(finding["change"].encode("utf-8", "replace"))
             row["diff"] = "git apply " + shlex.quote(str(path))
         if run:
-            row["probe"] = shown(identity, state, run)
+            if deferred:
+                row["_run"] = run
+            else:
+                row["probe"] = shown(identity, state, run)
         if run and detail:
             sides = ("candidate", "with the diff") if "change" in finding else ("original", "candidate")
             row["results"] = [f"{sides[arm['source'] == 'current']} {arm['outcome']} (exit {arm['exitCode']})" + (": " + arm["outputTail"].strip() if arm.get("outputTail") else "")

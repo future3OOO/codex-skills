@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import select
 import signal
 import subprocess
 import sys
@@ -40,7 +41,7 @@ def interruptible():
 def run(
     command: list[str], identity: RepoIdentity, timeout: float,
     env: dict[str, str] | None = None,
-    cancel: threading.Event | None = None,
+    cancel: threading.Event | None = None, *, pass_fds: tuple[int, ...] = (),
 ) -> tuple[bytes, int, bool]:
     """Run one command; a command is complete when its owned process group is.
 
@@ -55,7 +56,7 @@ def run(
             stdout=output,
             stderr=subprocess.STDOUT,
             start_new_session=os.name == "posix",
-            env=env,
+            env=env, pass_fds=pass_fds,
         )
         timed_out = True
         try:
@@ -70,18 +71,38 @@ def run(
 
 def _group_exits_by(process: subprocess.Popen[bytes], deadline: float, cancel: threading.Event | None = None) -> bool:
     """Reap the leader, then wait for its whole group, bounded by the deadline."""
-    while True:
-        if cancel is not None and cancel.is_set():
-            return False
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            return False
-        try:
-            process.wait(timeout=min(remaining, GROUP_POLL_SECONDS) if cancel is not None else remaining)
-            break
-        except subprocess.TimeoutExpired:
-            if cancel is None:
+    fd = None
+    try:
+        if hasattr(os, "pidfd_open") and process.poll() is None:
+            try:
+                fd = os.pidfd_open(process.pid)
+            except OSError:
+                # A kernel without pidfds uses Popen's time-bounded wait below.
+                fd = None
+        if fd is not None:
+            poll = select.poll()
+            poll.register(fd, select.POLLIN)
+        while True:
+            if cancel is not None and cancel.is_set():
                 return False
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            interval = min(remaining, GROUP_POLL_SECONDS) if cancel is not None else remaining
+            if fd is not None:
+                if poll.poll(interval * 1000):
+                    process.wait()
+                    break
+            else:
+                try:
+                    process.wait(timeout=interval)
+                    break
+                except subprocess.TimeoutExpired:
+                    if cancel is None:
+                        return False
+    finally:
+        if fd is not None:
+            os.close(fd)
     while os.name == "posix":
         try:
             os.killpg(process.pid, 0)
