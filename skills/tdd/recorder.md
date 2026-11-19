@@ -6,9 +6,7 @@ The submitted command identifies the case; frozen source records its version. Th
 outcome and exits non-zero when the assertion fails. Output is diagnostic only;
 printing a value or `name: result` does not assert it.
 
-`--case ITEM COMMAND` also accepts `--case ITEM:COMMAND`; use `-` for no item. A scratch file a command names is frozen
-with it, as is a temporary path the command or that file names; `--path` or `--support` freezes
-another beside it. A `--case` call runs the cases it names and any recorded case still without accepted proof, captures any command an item still
+`--case ITEM COMMAND` also accepts `--case ITEM:COMMAND`; use `-` for no item. The runner captures named scratch files and neighbours opened for reading before they are written. Filesystem listings and failed lookups do not add inputs. Programs directly in home, a temporary root, a checkout ancestor or a search-path directory contribute only their named files. A `--case` call runs the cases it names and any recorded case still without accepted proof, captures any command an item still
 declares and judges the rest of the map as recorded, without running it; a bare call captures those too, replays every recorded command and,
 when all hold and nothing is open, verifies.
 When a declaration cannot be prepared, append its replacement command to the refused row’s `correct` arguments and run that call. `tdd --correct ID [DECLARATION] COMMAND` replaces a declared or recorded command and runs the correction. A sole command needs only its replacement. `tdd --correct CASEKEY COMMAND` replaces the exact case named in a receipt. A failing case is a row, not a failed call. `record tdd-map --input`
@@ -54,8 +52,7 @@ Reuse the original defect's failure as sensitivity proof.
 
 ## Replay and continuation
 
-A case with accepted proof replays its immutable recorded inputs; one without is
-captured again when its probe files change. Reuse valid results instead of repeating execution for handoff. Installed
+An edit or deletion of a captured input in its source folder makes the case stale. Once the source folder is gone, the case replays its recorded bytes. A later file appearing beside the program does not invalidate a recording. Reuse valid results instead of repeating execution for handoff. Installed
 library edits without package metadata changes remain unbound.
 Current and retained commands use the same readiness
 check, including after map narrowing and finding resolution.
