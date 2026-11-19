@@ -54,7 +54,7 @@ Reuse the original defect's failure as sensitivity proof.
 ## Replay and continuation
 
 A case replays its recorded inputs. It is captured again when its scratch program's folder gains,
-loses or changes a file, a folder that is gone keeping the frozen copy; one without accepted proof also when
+loses or changes a readable regular file, a folder that is gone keeping the frozen copy; one without accepted proof also when
 its probe files change. Reuse valid results instead of repeating execution for handoff. Installed
 library edits without package metadata changes remain unbound.
 Current and retained commands use the same readiness

@@ -1051,8 +1051,8 @@ def shown(identity: RepoIdentity, state: JsonObject, run: JsonObject) -> str:
     with their modes, to a directory per capture kept with the pass's execution state; a path into one of its frozen
     directories, in the command or in those files, names that copy."""
     command, frozen = run["command"], [name for name in run.get("probeFiles", ()) if name.startswith(PROBES)]
-    if frozen and not run.get("temporary") and _apart(identity, run) and all(os.path.isfile(origin) for origin, *_ in (run.get("origins") or {}).values()):
-        command, frozen = run["sourceCommand"], []  # the lead runs its own: it names no temporary path a run of it could change
+    if frozen and not (run.get("temporary") or run.get("origins")) and _apart(identity, run):
+        command, frozen = run["sourceCommand"], []  # the lead runs its own: it names no file outside its folders that a run of it could change
     if frozen:
         kept = repo_state_dir(identity) / "execution-trees" / str(state["workflowId"])
         directories = {name[len(PROBES):].partition("/")[0] for name in frozen}
