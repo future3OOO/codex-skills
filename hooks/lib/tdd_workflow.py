@@ -5,8 +5,9 @@ import ast
 import argparse
 import hashlib
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import ExitStack
+from contextlib import ExitStack, nullcontext
 from functools import lru_cache, partial
+from itertools import chain
 from collections import Counter
 import json
 import math
@@ -25,7 +26,7 @@ from types import SimpleNamespace
 from typing import Callable, TypeVar
 
 from . import behavior_map
-from . import SESSION_LOG
+from . import SESSION_LOG, state_root
 from ._workflow_db import CHECK_ONLY, cached_arms, history, read_active
 from .command_runner import emit_json as _emit_json, interruptible, run as _run, run_entry as _run_entry
 from .repo_identity import CanonicalRoot, RepoIdentity, resolve_repo_identity
@@ -77,7 +78,7 @@ def refresh_proof(identity: RepoIdentity, items: list[JsonObject], *, candidate:
                 sources = (proof["originalTree"], proof["originalTree"], target, target) if sizes else (proof["originalTree"], target)
                 checked = [_input_identity(identity, execution, arm, recorded=True) for arm in arms]
                 contexts = [_execution_key(identity, source, proof.get("probeTree", proof["candidateTree"]), _comparison_files(identity, proof), value, proof["timeout"], execution) for source, value in zip(sources, commands)]
-                freshness[key] = {"fresh": len(arms) == len(contexts) and all(inputs and arm.get("contextKey") == context and arm.get("inputs") == inputs
+                freshness[key] = {"fresh": len(arms) == len(contexts) and not _stale(identity, proof) and all(inputs and arm.get("contextKey") == context and arm.get("inputs") == inputs
                                                and arm.get("key") == hashlib.sha256((context + inputs).encode()).hexdigest()
                                                for arm, inputs, context in zip(arms, checked, contexts)),
                                   "freshnessReason": "execution inputs changed or unrecorded"}
@@ -132,7 +133,7 @@ def _comparison_files(identity: RepoIdentity, probe: JsonObject) -> list[str]:
     def derive():
         declared = _command_files(identity, probe) | {os.path.relpath(os.path.normpath(Path(identity.root) / name), identity.root)
                     for name in probe.get("support") or []}
-        return [path for path in probe["probeFiles"] if is_test_path(path) or path in declared]
+        return [path for path in probe["probeFiles"] if path.startswith(PROBES) or is_test_path(path) or path in declared]  # a frozen scratch file lies below the tests
     return _sample_input(("files", probe["command"], *probe["probeFiles"], "", *(probe.get("support") or [])), derive)
 
 
@@ -176,7 +177,16 @@ def _reader(identity: RepoIdentity):
 
 
 @lru_cache(maxsize=128)
-def _source_input(identity: RepoIdentity, source: str, probe: str, files: tuple[str, ...]):
+def _source_base(identity: RepoIdentity, source: str) -> bytes:
+    """A source's non-test entries, classified once for every case that runs on it."""
+    return hashlib.sha256(json.dumps({path: value for path, value in _tree_entries(identity, source).items()
+                                      if not is_test_path(path)}, sort_keys=True).encode()).hexdigest().encode()
+
+
+def _entry(identity: RepoIdentity, tree: str, name: str) -> tuple[str, str] | None:
+    """The mode and object `tree` holds at `name`, read a directory at a time: a case's few frozen files list no whole tree."""
+    if _EXECUTION.get() is None:  # no comparison scope holds an object reader
+        return _tree_entries(identity, tree).get(name)
     def children(oid):
         def load():
             data, result, offset = _reader(identity)(oid, kind=b"tree"), {}, 0
@@ -190,16 +200,17 @@ def _source_input(identity: RepoIdentity, source: str, probe: str, files: tuple[
                 offset = end + 1 + width
             return result
         return _sample_input(("tree", identity.root, oid), load)
-    def native(tree, name):
-        value = ("040000", tree)
-        for part in (() if name == "." else name.split("/")):
-            value = children(value[1]).get(part) if value and value[0] == "040000" else None
-        return value
-    entries = {path: value for path, value in _tree_entries(identity, source).items() if not is_test_path(path)}
+    value = ("040000", tree)
+    for part in (() if name == "." else name.split("/")):
+        value = children(value[1]).get(part) if value and value[0] == "040000" else None
+    return value
+
+
+@lru_cache(maxsize=128)
+def _source_input(identity: RepoIdentity, source: str, probe: str, files: tuple[str, ...]):
     frozen = _sample_input(("frozen", identity.root, probe, files), lambda: {name: value for name in files
-                           if (value := (_tree_entries(identity, probe).get(name) if probe == source else native(probe, name))) is not None})
-    entries.update(frozen)
-    return json.dumps(entries, sort_keys=True).encode()
+                           if (value := (_tree_entries(identity, probe).get(name) if probe == source else _entry(identity, probe, name))) is not None})
+    return _source_base(identity, source) + json.dumps(frozen, sort_keys=True).encode()
 
 
 def _sample_input(key: tuple[object, ...], read: Callable[[], _Input]) -> _Input:
@@ -304,7 +315,9 @@ def _trace_records(raw):
 
 def _observed_inputs(identity: RepoIdentity, root: Path, temporary: Path, trace: Path,
                      offset: int, actual: list[str], environment: dict[str, str],
-                     binding: list[str], timeout: float, runtimes: list[Path], *, lower=None, work_root=None) -> JsonObject:
+                     binding: list[str], timeout: float, runtimes: list[Path], *, lower=None, work_root=None, frozen: tuple[str, ...] = ()) -> JsonObject:
+    """`frozen`: the scratch folders and temporary files the case ran with where they are, each ending in a separator.
+    What it executes of them is its frozen input, no tool."""
     end = trace.stat().st_size
     with trace.open("rb") as stream:
         stream.seek(offset)
@@ -369,7 +382,7 @@ def _observed_inputs(identity: RepoIdentity, root: Path, temporary: Path, trace:
         physical = root / target.relative_to(identity.root) if owned else target
         if owned and lower and not physical.is_file():
             physical = lower / target.relative_to(identity.root)
-        if result.startswith("0") and (not owned or physical.is_file()):
+        if result.startswith("0") and physical.is_file():
             with physical.open("rb") as handle:
                 if handle.read(2) == b"#!":
                     tools.add(shlex.split(handle.readline().decode())[0])
@@ -377,14 +390,15 @@ def _observed_inputs(identity: RepoIdentity, root: Path, temporary: Path, trace:
             tools.add(str(path))
         if not owned:
             tools.add(str(target))
-    return {"tools": sorted(tools), "lookups": lookups, "work": work}
+    return {"tools": sorted(tool for tool in tools if not (tool + os.sep).startswith(frozen)), "lookups": lookups, "work": work}
 
 
-def _stamp(path: Path):
+def _stamp(path: Path | str, follow: bool = False):
     try:
-        info = path.lstat()
+        info = os.lstat(path)
+        info = os.stat(path) if follow and stat.S_ISLNK(info.st_mode) and os.path.exists(path) else info  # a dangling or looping link is itself
         return (info.st_mode, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
-    except (FileNotFoundError, NotADirectoryError):
+    except (FileNotFoundError, NotADirectoryError):  # a link to nothing is as gone as its target
         return None
 
 
@@ -470,8 +484,7 @@ def _prepared_tree(identity: RepoIdentity, scope, source: str, probe: str, files
                                      "directories": [str(path.relative_to(root)) for path in (root / ".git").rglob("*") if path.is_dir()],
                                      "ignore": None, "read": _reader(identity), "resources": scope["resources"],
                                      "cache": cache, "source": source, "wait": wait, "measure": measure, "times": [], "temporary": scope["root"]}
-    frozen = _tree_entries(identity, probe)
-    return scope["sources"][key], {path: frozen[path] for path in files}
+    return scope["sources"][key], {path: _entry(identity, probe, path) for path in files}
 
 
 def _finish_kept_trees():
@@ -588,14 +601,14 @@ def _restore_case(state, before):
 
 
 def _execute_tree(identity: RepoIdentity, source_tree: str, prepared,
-                  command: list[str], timeout: float, environment: dict[str, str], cancel, memory: int, objects, *, restore=True, passing=None) -> JsonObject:
+                  command: list[str], timeout: float, environment: dict[str, str], cancel, memory: int, objects, *, restore=True, passing=None, apart=()) -> JsonObject:
     state, frozen = prepared
     if cancel.is_set():
         raise WorkflowError("comparison interrupted")
     before = _overlay_probe(state, frozen, restore)
     try:
         result = _execute_case(identity, source_tree, state["root"], command, timeout, environment, cancel, memory, objects,
-                               overlay=state if state.get("lower") else None, passing=passing)
+                               overlay=state if state.get("lower") else None, passing=passing, apart=apart)
         if restore:
             state["result"] = result
         if state.get("measure") and not result["timedOut"]:
@@ -606,7 +619,7 @@ def _execute_tree(identity: RepoIdentity, source_tree: str, prepared,
             _restore_case(state, before)
 
 
-def _after(previous, identity, source, prepared, *arguments, derived=False, first=False, passing=None):
+def _after(previous, identity, source, prepared, *arguments, derived=False, first=False, passing=None, apart=()):
     state, frozen = prepared
     owner = state.get("owner", state)
     if previous is not None:
@@ -626,7 +639,7 @@ def _after(previous, identity, source, prepared, *arguments, derived=False, firs
             index.parent.mkdir(parents=True, exist_ok=True)
             _git(RepoIdentity(CanonicalRoot(str(origin["root"])), identity.key), "read-tree", "--index-output=" + str(index), source,
                  env={"GIT_INDEX_FILE": str(index), "GIT_ALTERNATE_OBJECT_DIRECTORIES": os.pathsep.join(original for original, _ in arguments[-1])})
-        return _execute_tree(identity, source, (private, frozen), *arguments, restore=first and state["wait"], passing=passing)
+        return _execute_tree(identity, source, (private, frozen), *arguments, restore=first and state["wait"], passing=passing, apart=apart)
 
 
 def _outlived(passing, started: float) -> bool:
@@ -732,7 +745,8 @@ sys.exit(status)
 
 
 def _execute_case(identity: RepoIdentity, source_tree: str, root: Path,
-                  command: list[str], timeout: float, environment: dict[str, str], cancel, memory: int, objects, *, overlay=None, passing=None) -> JsonObject:
+                  command: list[str], timeout: float, environment: dict[str, str], cancel, memory: int, objects, *, overlay=None, passing=None, apart=()) -> JsonObject:
+    """`apart` (`_apart`): the folders the case's writes are kept apart from, and the scratch folders it runs in where they are."""
     started = time.perf_counter()
     with tempfile.TemporaryDirectory(prefix="workflow-proof-") as temporary:
         snapshot = RepoIdentity(CanonicalRoot(str(root)), identity.key)
@@ -751,6 +765,8 @@ def _execute_case(identity: RepoIdentity, source_tree: str, root: Path,
             binding.extend(("--overlay-src", str(overlay["lower"]), "--overlay", str(root), str(overlay["work"]), identity.root))
         else:
             binding.extend(("--bind", str(root), identity.root))
+        layers, own = apart or ((), ())
+        binding.extend(arg for origin in layers for arg in ("--overlay-src", origin, "--tmp-overlay", origin))
         binding.extend(arg for key, value in env.items() if runner_env.get(key) != value for arg in ("--setenv", key, value))
         dependencies = Path(identity.root) / "node_modules"
         runtimes = [dependencies] if dependencies.is_dir() else []
@@ -774,7 +790,8 @@ def _execute_case(identity: RepoIdentity, source_tree: str, root: Path,
         raw, code, timed_out = _run([*binding, "--chdir", identity.root, "--", *observer, sys.executable, "-I", "-S", "-c", _CPU_SUPERVISOR, str(cpu_path), str(memory), *actual],
                                     snapshot, max(timeout, SESSION_SECONDS), env=runner_env, cancel=stop)
         cpu = json.loads(cpu_path.read_bytes()) if cpu_path.exists() else [None, None, 0]
-        inputs = _observed_inputs(identity, root, Path(temporary), trace, offset, actual, env, binding, timeout, runtimes, lower=overlay["lower"] if overlay else None, work_root=cpu[0])
+        inputs = _observed_inputs(identity, root, Path(temporary), trace, offset, actual, env, binding, timeout, runtimes, lower=overlay["lower"] if overlay else None, work_root=cpu[0],
+                                  frozen=own)
         inputs["work"]["cpuSeconds"] = cpu[1]
         from .command_runner import _tail
         output = _tail(raw)
@@ -812,50 +829,60 @@ def _kept_tests(identity: RepoIdentity, candidate: str, original: str, overrides
     return tree, files
 
 
+def _empty_tree(tree: str) -> str:
+    """The empty tree's name under the object format that names `tree`."""
+    return hashlib.new("sha1" if len(tree) == 40 else "sha256", b"tree 0\0").hexdigest()
+
+
 TEMPORARY = re.compile(rb"(?<![\w.+@%~/-])/(?:[\w.+@%~-]+/)*[\w.+@%~-]+")
 PROBES = "tests/.workflow-probes/"
 
 
-def _freeze_temporary(identity: RepoIdentity, tree: str, files: list[str], command: list[str]) -> tuple[str, list[str], list[str]]:
-    """Freeze each existing path below the temporary directory that a command word or a frozen scratch file names, a
-    directory with every regular file under it, and name its frozen place instead: the case no longer reads what its
-    owner will remove. A probe directory whose file changes is renamed to its new content. Returns tree, files and command."""
+def _freeze_temporary(identity: RepoIdentity, tree: str, files: list[str], command: list[str], scan: list[str] | None = None) -> tuple[str, list[str], list[str], dict[str, set[str]], JsonObject]:
+    """Freeze each existing path below the temporary directory that a command word or a frozen scratch file in `scan`
+    (all of `files` unless given) names, a directory with every regular file under it, and name its frozen place instead:
+    the case no longer reads what its owner will remove. The executable's own file is never rewritten, as #170 never
+    froze it. A probe directory whose file changes is renamed to its new content. Returns the tree, files, command, temporary roots named per scanned file, and the newly captured temporary records."""
+    bound = len(files)
     roots = tuple(root + os.sep for root in {"/tmp", tempfile.gettempdir()})
+    scan = tuple(sorted(files if scan is None else scan))
     def existing(texts):
         return {path for text in texts for token in TEMPORARY.findall(text)
-                if (path := os.path.normpath(os.fsdecode(token))).startswith(roots) and os.path.lexists(path)}
+                if (path := os.path.normpath(os.fsdecode(token))).startswith(roots) and os.path.exists(path)}  # a link to nothing holds nothing to freeze
     command_paths = tuple(sorted(existing(map(os.fsencode, command[1:]))))
     def capture(tree=tree):
         # Capture roots a probe directory at its files' common parent, so one whose files all lie below a single subdirectory is
         # a temporary tree an earlier call froze: its files are not read again, as they were not when it was frozen.
         spread: dict[str, set[str]] = {}
-        for name in files:
+        nested = any("/" in name.split("/", 3)[3] for name in scan if name.startswith(PROBES))
+        for name in files if nested else ():
             if name.startswith(PROBES):
                 directory, _, place = name[len(PROBES):].partition("/")
                 spread.setdefault(directory, set()).add(place.rpartition("/")[0].partition("/")[0])
-        entries = {name: _tree_entries(identity, tree)[name] for name in files if name.startswith(PROBES)
-                   and (len(first := spread[name[len(PROBES):].partition("/")[0]]) > 1 or "" in first)}
-        stored = read_blobs(Path(identity.root), [oid for _, oid in entries.values()])  # one reader for every frozen scratch file
-        texts = {name: stored[oid].encode("utf-8", "surrogateescape") for name, (_, oid) in entries.items()}
-        named = sorted(existing(texts.values()) | set(command_paths), key=len, reverse=True)
+        entries = {name: _entry(identity, tree, name) for name in scan if name.startswith(PROBES)
+                   and (not nested or len(first := spread[name[len(PROBES):].partition("/")[0]]) > 1 or "" in first)}
+        with blob_reader(Path(identity.root)) if entries else nullcontext() as read:  # one reader for those files, each held only while it names such a path
+            texts, roots_by_file = {}, {}
+            for name, (_, oid) in entries.items():
+                if roots_found := existing([text := read(oid) or b""]):
+                    texts[name], roots_by_file[name] = text, roots_found
+        named = sorted(set(command_paths).union(*roots_by_file.values()), key=len, reverse=True)
         if not named:
-            return tree, files, lambda match, root=b"": match.group(), lambda word: word
+            return tree, files, lambda match, root=b"": match.group(), lambda word: word, {}
         def refuse(error):
-            raise ValueError(f"probe names a temporary path that cannot be frozen ({error}): read pass-start source with "
-                             "`git show <passStartOid>:FILE`, or name readable scratch files with --support")
+            raise ValueError(f"probe names a temporary path that cannot be frozen ({error}): read pass-start source with `git show <passStartOid>:FILE`")
         members = list(dict.fromkeys(member for path in named for member in (
             [path] if not os.path.isdir(path) else (os.path.join(folder, name) for folder, _, names in os.walk(path, onerror=refuse) for name in names))))
         if irregular := next((member for member in members if not os.path.isfile(member)), None):
             refuse(irregular + " is not a regular file")
         named = [name for name in named if any(member == name or member.startswith(name + os.sep) for member in members)]
         if not named:  # an empty directory holds nothing to freeze: the case keeps writing where it wrote
-            return tree, files, lambda match, root=b"": match.group(), lambda word: word
+            return tree, files, lambda match, root=b"": match.group(), lambda word: word, {}
         try:
             blobs = _git(identity, "hash-object", "-w", "--stdin-paths", stdin=os.fsencode("\n".join(members))).decode().split()
         except RuntimeError as exc:
             refuse(exc)
-        empty = _git(identity, "hash-object", "-t", "tree", "--stdin", stdin=b"").decode().strip()
-        kept = _indexed(identity, empty, (("update-index", "--index-info"), "".join(
+        kept = _indexed(identity, _empty_tree(tree), (("update-index", "--index-info"), "".join(
             f"{'100755' if os.access(member, os.X_OK) else '100644'} {blob}\t{member.lstrip('/')}\n" for member, blob in zip(members, blobs)).encode()))
         stored = set(_git(identity, "ls-tree", "-r", "--name-only", "-z", kept).split(b"\0"))  # git leaves out what a tree cannot hold, a `.git` entry say
         if dropped := next((member for member in members if os.fsencode(member.lstrip("/")) not in stored), None):
@@ -865,48 +892,185 @@ def _freeze_temporary(identity: RepoIdentity, tree: str, files: list[str], comma
             return root + os.fsencode(f"{PROBES}{kept}/" + path.lstrip("/")) if any(path == name or path.startswith(name + os.sep) for name in named) else match.group()
         steps, changed = [(("read-tree", f"--prefix={PROBES}{kept}/", kept), None)], set()
         for name, text in texts.items():
-            if (rewritten := TEMPORARY.sub(placed, text)) != text:
+            if name != command[0] and (rewritten := TEMPORARY.sub(placed, text)) != text:
                 changed.add(name[len(PROBES):].split("/", 1)[0])
                 steps.append((("update-index", "--add", "--cacheinfo", f"{entries[name][0]},"
                                f"{_git(identity, 'hash-object', '-w', '--stdin', stdin=rewritten).decode().strip()},{name}"), None))
         tree = _indexed(identity, tree, *steps)
         renamed = {old: _git(identity, "rev-parse", f"{tree}:{PROBES}{old}").decode().strip() for old in changed}
         tree = _indexed(identity, tree, *(step for old, new in renamed.items() for step in (
-            (("update-index", "--index-info"), "".join(f"0 {'0' * len(kept)}\t{name}\n" for name in files if name.startswith(PROBES + old + "/")).encode()),
+            (("update-index", "-z", "--index-info"), os.fsencode("".join(f"0 {'0' * len(kept)}\t{name}\0" for name in files if name.startswith(PROBES + old + "/")))),
             (("read-tree", f"--prefix={PROBES}{new}/", new), None))))
         moved = lambda text: re.sub(PROBES + "([0-9a-f]{40,64})/", lambda match: PROBES + renamed.get(match[1], match[1]) + "/", text)
-        return tree, [*map(moved, files), *(f"{PROBES}{kept}/" + member.lstrip("/") for member in members)], placed, moved
-    tree, files, placed, moved = _sample_input(("temporary", tree, *files, "", *command_paths), capture)
-    return tree, files, [command[0], *(moved(os.fsdecode(TEMPORARY.sub(lambda match: placed(match, b""), os.fsencode(word)))) for word in command[1:])]
+        return tree, [*map(moved, files), *(f"{PROBES}{kept}/" + member.lstrip("/") for member in members)], placed, moved, roots_by_file
+    tree, files, placed, moved, roots_by_file = _sample_input(("temporary", tree, *files, "", *command_paths, "", *scan, "", command[0] if command[0] in scan else None), capture)
+    temporary = {name: [origin, *(_input_stamp(origin) or ())] for name in files[bound:] for origin in ["/" + name.split("/", 3)[3]]}
+    return tree, files, [moved(command[0]), *(moved(os.fsdecode(TEMPORARY.sub(lambda match: placed(match, b""), os.fsencode(word)))) for word in command[1:])], roots_by_file, temporary
 
 
 
-def _places(identity: RepoIdentity, command: list[str], named: list[str]) -> dict[Path, str]:
-    """Each regular file outside the checkout that `named` or a command argument names (a program binary aside), with
-    its place below those files' common directory: where a capture freezes it."""
-    paths = dict.fromkeys(path for name in named if (path := _scratch(identity, name)))
-    paths.update(dict.fromkeys(path for arg in command[1:] if (path := _scratch(identity, arg.split("::", 1)[0]))
-                               and not (os.access(path, os.X_OK) and path.open("rb").read(4) == b"\x7fELF")))
+def _folder(folder: str) -> tuple[list[str], str]:
+    """Every regular file below a scratch program's folder that a tree can hold, and a digest of their lstat identities:
+    one walk a call. A `.git` entry, the workflow's state, a link, a special file and whatever cannot be read are left out."""
+    def walk():
+        state = str(state_root())
+        files, pending = [], [folder] * (folder != state)
+        while pending:
+            try:
+                entries = [(entry, entry.stat(follow_symlinks=False)) for entry in os.scandir(pending.pop()) if entry.name != ".git"]
+            except OSError:  # a directory that cannot be read, or one removed under the walk, holds nothing to freeze
+                continue
+            for entry, info in entries:
+                if stat.S_ISDIR(info.st_mode):
+                    pending += [entry.path] * (entry.path != state)
+                elif stat.S_ISREG(info.st_mode) and os.access(entry.path, os.R_OK):
+                    files.append((entry.path, info.st_mode, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns))
+        files.sort()
+        return [name for name, *_ in files], hashlib.sha256(json.dumps(files).encode()).hexdigest()
+    return _sample_input(("folder", folder), walk)
+
+
+def _shared(identity: RepoIdentity, folder: str) -> bool:
+    """Whether `folder` holds the checkout, the temporary directory or the home directory: it is no program's own, and writes there cannot be kept apart."""
+    return any((holds + os.sep).startswith(folder.rstrip(os.sep) + os.sep) for holds in (identity.root, "/tmp", tempfile.gettempdir(), os.path.expanduser("~")))
+
+
+def _places(identity: RepoIdentity, command: list[str], supplied: tuple[str, ...] | list[str] = ()) -> tuple[dict[Path, str], set[str]]:
+    """Each regular file outside the checkout that a command word names (a program binary aside) and every file of
+    its folder (`_folder`), with its place below those files' common directory: where a capture freezes it. Also
+    those folders: one that holds the checkout, the temporary directory or the home directory, or that the case's
+    executable search path names, as the runner sets it, is no program's own. There an argument is frozen alone and the executable runs
+    in place, as on #170."""
+    path, env = None, None
+    end = next((i for i in reversed(range(len(command))) if command[i].startswith("PATH=")), -1)
+    for word in command[:end + 1]:
+        if re.match(r"[A-Za-z_][A-Za-z_0-9]*=", word):
+            path = word[5:] if word.startswith("PATH=") else path
+        else:
+            try:
+                env = env or os.path.realpath(_executable(identity, "env"))
+                tool = _executable(identity, word, {"PATH": path} if path is not None else None)
+            except WorkflowError:
+                break
+            if os.path.realpath(tool) != env:
+                break
+    search = {os.path.normpath(os.path.join(identity.root, entry)) for entry in (os.get_exec_path() if path is None else path.split(os.pathsep)) if entry}
+    def own(path, word):  # as resolved and as written: the search path may name /bin where a program resolves to /usr/bin
+        folder = str(path.parent)
+        return not {folder, os.path.dirname(os.path.normpath(os.path.join(identity.root, word)))} & search and not _shared(identity, folder)
+    found = {path: own(path, word) for index, word in enumerate(arg.split("::", 1)[0] for arg in command) if (path := _scratch(identity, word))
+             and not (os.access(path, os.X_OK) and path.open("rb").read(4) == b"\x7fELF") and (index or own(path, word))}
+    folders = {str(path.parent) for path, alone in found.items() if alone}
+    paths = dict.fromkeys(Path(name) for folder in sorted(folders) for name in _folder(folder)[0])
+    paths.update(dict.fromkeys(sorted(found)))
+    paths.update(dict.fromkeys(map(Path, supplied)))  # declared files keep their place, not their neighbours
     base = os.path.commonpath([path.parent for path in paths]) if paths else ""
-    return {path: os.path.relpath(path, base) for path in paths}
+    return {path: os.path.relpath(path, base) for path in paths}, folders
+
+
+def _input_stamp(origin: str):
+    return _sample_input(("stat", origin), lambda: _stamp(origin, True))
+
+
+def _apart(identity: RepoIdentity, run: JsonObject) -> tuple[tuple[str, ...], tuple[str, ...]] | tuple[()]:
+    """While each scratch folder the case froze is as it was frozen, the case runs where its programs are, as a direct
+    run does: the folders its writes are kept apart from, those and the folder of each temporary file it froze that
+    is still there, and what it froze there, those folders and files, each ending in a separator. Nothing, so that the
+    frozen copy runs, once a scratch folder is gone or changed, where such a temporary file's folder is shared
+    (`_shared`), or when a program there names a temporary path now gone: it reads the frozen one, as on #170."""
+    folders = [origin for origin, _ in (run.get("folders") or {}).values()]
+    if not folders or not all(map(os.path.isdir, folders)) or _stale(identity, run):
+        return ()
+    origins = [origin for origin, *_ in (run.get("temporary") or {}).values()]
+    files = [origin for origin in origins if (now := _input_stamp(origin)) and stat.S_ISREG(now[0])]
+    around = {os.path.dirname(origin) for origin in files}
+    if any(_shared(identity, folder) for folder in around):
+        return ()
+    if len(files) < len(origins):
+        required = set(run.get("fileTemporaryRoots", ()))
+        if "fileTemporaryRoots" not in run or required and any(
+                origin in required or any(str(parent) in required for parent in Path(origin).parents)
+                for origin in set(origins).difference(files)):
+            return ()  # a live program needs the absent path; an argument already names its frozen copy
+    layers: list[str] = []  # a folder below one already kept apart needs no layer of its own
+    for prefix in sorted({folder + os.sep for folder in (*folders, *around)}):
+        if not layers or not prefix.startswith(layers[-1]):
+            layers.append(prefix)
+    return tuple(prefix[:-1] for prefix in layers), tuple(path + os.sep for path in (*folders, *files))
+
+
+def _stale(identity: RepoIdentity, run: JsonObject) -> bool:
+    """Whether a folder the case froze holds other files than it did, a scratch or temporary file frozen alone holds
+    other bytes, or a case that froze none names a scratch file that is there now: one walk a folder and one lstat a
+    file a call, bytes read only when a file's identity differs. What is gone changes nothing: the frozen copy stays.
+    A record from before origins were kept is checked by the scratch files its command or its `scratch` names, each at its frozen place."""
+    def changed():
+        if any(list(_input_stamp(origin) or ()) != stamp and os.path.isdir(os.path.dirname(origin))
+               for origin, stamp in (run.get("absentInputs") or {}).items()):
+            return True
+        temporary = run.get("temporary") or {}
+        files = {**(run.get("origins") or {}), **temporary}
+        if not (files or run.get("folders")):
+            words = shlex.split(run.get("sourceCommand", run["command"]))
+            if not any(name.startswith(PROBES) for name in run["probeFiles"]):
+                return bool(_places(identity, [word for index, word in enumerate(words) if not index or word.startswith(("/", ".."))])[0])
+            recorded, supplied = shlex.split(run["command"]), run.get("scratch", ())
+            if not supplied and words == recorded:  # a pasted bundle without live source names
+                return False
+            named = {now.split("::", 1)[0]: os.path.realpath(os.path.join(identity.root, was.split("::", 1)[0]))
+                     for was, now in zip(words, recorded) if now.startswith(PROBES) and was != now}
+            suffixes = {origin[pos + 1:]: origin for origin in supplied for pos, ch in enumerate(origin) if ch == "/"}
+            files = {name: [named.get(name) or suffixes.get(place, "/" + place)] for name in run["probeFiles"] if name.startswith(PROBES) for place in [name.split("/", 3)[3]]}
+        if any(os.path.isdir(origin) and _folder(origin)[1] != digest for origin, digest in (run.get("folders") or {}).values()):
+            return True
+        if run.keys() & {"origins", "folders", "temporary"}:  # a scratch file the command names that its capture lacked, written back since; #170 never froze its executable
+            own = tuple(origin + os.sep for origin, _ in (run.get("folders") or {}).values())
+            frozen = {origin for origin, *_ in files.values()}
+            words = shlex.split(run.get("sourceCommand", run["command"]))
+            lacked = lambda paths: any(str(path) not in frozen and not str(path).startswith(own) for path in paths)
+            # Each word first, and the capture's own selection only for a word naming a file outside them (an installed program, say).
+            if lacked(path for word in words if (path := _scratch(identity, word.split("::", 1)[0]))) and lacked(_places(identity, words)[0]):
+                return True
+        placed = re.compile(re.escape(os.fsencode(identity.root + os.sep + PROBES)) + rb"[0-9a-f]{40,64}/")  # a frozen file names a frozen temporary path at its frozen place
+        for name, (origin, *stamp) in files.items():
+            now = _input_stamp(origin)
+            if now is None or name in temporary and not stat.S_ISREG(now[0]):  # a temporary link that no longer resolves is gone
+                if name in temporary and os.path.isdir(os.path.dirname(origin)):
+                    return True
+            elif stat.S_ISREG(now[0]) and list(now) != stamp:
+                mode, oid = _entry(identity, run["probeTree"], name)
+                if (mode == "100755") != os.access(origin, os.X_OK) or Path(origin).read_bytes() != placed.sub(b"/", _reader(identity)(oid) or b""):
+                    return True
+        return False
+    return _sample_input(("stale", run["probeTree"], run["command"]), changed)
 
 
 def shown(identity: RepoIdentity, state: JsonObject, run: JsonObject) -> str:
-    """The case's command as a lead runs it from the checkout, with the assignments and PYTHONPATH the runner gives it. The
-    files it froze are written once, with their modes, to a directory per capture kept with the pass's execution state;
-    a path into one of its frozen directories, in the command or in those files, names that copy."""
+    """The case's command as a lead runs it from the checkout, with the assignments and PYTHONPATH the runner gives it:
+    its own while every scratch file it froze is where it was, unchanged. Otherwise the files it froze are written once,
+    with their modes, to a directory per capture kept with the pass's execution state; a path into one of its frozen
+    directories, in the command or in those files, names that copy."""
     command, frozen = run["command"], [name for name in run.get("probeFiles", ()) if name.startswith(PROBES)]
+    if frozen and not run.get("temporary") and _apart(identity, run) and all(os.path.isfile(origin) for origin, *_ in (run.get("origins") or {}).values()):
+        command, frozen = run["sourceCommand"], []  # the lead runs its own: it names no temporary path a run of it could change
     if frozen:
-        kept, entries = repo_state_dir(identity) / "execution-trees" / str(state["workflowId"]), _tree_entries(identity, run["probeTree"])
+        kept = repo_state_dir(identity) / "execution-trees" / str(state["workflowId"])
         directories = {name[len(PROBES):].partition("/")[0] for name in frozen}
         relocate = lambda prefix, data: re.sub(re.escape(prefix) + rb"([0-9a-f]{40,64})/", lambda match: os.fsencode(f"{kept}/probes/") + match[1] + b"/"
                                                if os.fsdecode(match[1]) in directories else match[0], data)
-        copies = [name for name in frozen if not (kept / "probes" / name[len(PROBES):]).exists()]
-        blobs = read_blobs(Path(identity.root), [entries[name][1] for name in copies])
-        for name in copies:
-            kept.mkdir(parents=True, exist_ok=True)
-            _write_entry(kept, "probes/" + name[len(PROBES):], entries[name][0],
-                         relocate(os.fsencode(identity.root + os.sep + PROBES), blobs[entries[name][1]].encode("utf-8", "surrogateescape")))
+        copies = [name for name in frozen if not os.path.lexists(kept / "probes" / name[len(PROBES):])]
+        if copies:
+            entries = _tree_entries(identity, run["probeTree"])
+            with blob_reader(Path(identity.root)) as read:
+                for name in copies:  # a file or link where none is, each read and written alone
+                    (mode, oid), path = entries[name], kept / "probes" / name[len(PROBES):]
+                    data = relocate(os.fsencode(identity.root + os.sep + PROBES), read(oid))
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    if mode == "120000":
+                        path.symlink_to(os.fsdecode(data))
+                    else:
+                        path.write_bytes(data)
+                        path.chmod(0o755 if mode == "100755" else 0o644)
         command = os.fsdecode(relocate(os.fsencode(PROBES), os.fsencode(command)))
     words, assignments, environment = _case_environment(identity, command)
     def quote(value: str) -> str:
@@ -917,48 +1081,87 @@ def shown(identity: RepoIdentity, state: JsonObject, run: JsonObject) -> str:
 
 
 def _probe_capture(identity: RepoIdentity, probe: object, candidate: str, timeout: float,
-                   support: list[str] | None = None, inventory: list[str] | None = None, preserved: str | None = None) -> JsonObject:
-    """Freeze the command's sources. Every regular file outside the checkout that `path`, support or a command
-    argument names (a program binary aside) lands in one probe directory, each keeping its place relative to the others."""
-    if not (isinstance(probe, dict) and set(probe) <= {"path", "command"}
-            and isinstance(probe.get("command"), str) and probe["command"].strip()
-            and ("path" not in probe or isinstance(probe["path"], str) and (Path(identity.root) / probe["path"]).is_file())):
-        raise ValueError("probe needs command and, for a scratch file no command names, a readable path; source content is not an input")
+                   support: list[str] | None = None, inventory: list[str] | None = None, preserved: str | None = None, recorded=()) -> JsonObject:
+    """Freeze the command's sources. Every regular file outside the checkout that a command argument names (a program
+    binary aside) lands in one probe directory with the files of its folder, each keeping its place relative to the
+    others. `support`: the test files a kept-behaviour capture reads at their candidate bytes, and scratch files the
+    command does not name, frozen and read for temporary paths as a named one is."""
+    if not (isinstance(probe, dict) and set(probe) == {"command"} and isinstance(probe["command"], str) and probe["command"].strip()):
+        raise ValueError("probe needs a command; source content is not an input")
     command = shlex.split(probe["command"])
     source_command = shlex.join(command)
-    named = [*([probe["path"]] if "path" in probe else []), *(support or [])]
-    places = _places(identity, command, named)
-    scratch = [str(path) for path in _places(identity, [], named)]  # kept with the case: a later capture of its command freezes these again
-    support = [name for name in support or [] if not _scratch(identity, name)]
+    scratch, tests = [], []
+    for name in support or ():
+        if path := _scratch(identity, name):
+            scratch.append(str(path))
+        else:
+            tests.append(name)
+    support = tests
+    places, folders = _places(identity, command, scratch)
     overrides = {os.path.relpath(os.path.normpath(Path(identity.root) / name), identity.root) for name in support or []}
     tree, original_files = _kept_tests(identity, candidate, preserved, tuple(sorted(overrides))) if preserved else (candidate, set())
-    virtual: list[str] = []
+    virtual, known = [], None
     if places:
-        def freeze(tree=tree):  # cases that share their scratch files freeze them once a call
-            frozen = _indexed(identity, _git(identity, "hash-object", "-t", "tree", "--stdin", stdin=b"").decode().strip(), *(
-                (("update-index", "--add", "--cacheinfo", f"{'100755' if os.access(path, os.X_OK) else '100644'},"
-                  f"{_git(identity, 'hash-object', '-w', '--', str(path)).decode().strip()},{place}"), None) for path, place in places.items()))
+        def freeze(tree=tree):  # cases that share their scratch files freeze them once a call, in one Git call for them all
+            plain = [str(path) for path in places if "\n" not in str(path)]  # a name holding a newline is hashed alone
+            blobs = dict(zip(plain, _git(identity, "hash-object", "-w", "--stdin-paths", stdin=os.fsencode("\n".join(plain))).decode().split()))
+            entries = os.fsencode("".join(f"{'100755' if os.access(path, os.X_OK) else '100644'} blob "
+                                          f"{blobs.get(str(path)) or _git(identity, 'hash-object', '-w', '--', str(path)).decode().strip()}\t{place}\0" for path, place in places.items()))
+            frozen = (_indexed(identity, _empty_tree(tree), (("update-index", "-z", "--index-info"), entries)) if any("/" in place for place in places.values())
+                      else _git(identity, "mktree", "-z", stdin=entries).decode().strip())  # files of one directory make one tree
             return frozen, _indexed(identity, tree, (("read-tree", f"--prefix={PROBES}{frozen}/", frozen), None))
         frozen, tree = _sample_input(("bundle", tree, *places.items()), freeze)
         prefix = f"tests/.workflow-probes/{frozen}/"
         virtual = [prefix + place for place in places.values()]
         command = [prefix + places[path] + arg[len(arg.split("::", 1)[0]):] if (path := _scratch(identity, arg.split("::", 1)[0])) in places else arg
                    for arg in command]
-    elif frozen := next((match for arg in command[1:] if (match := re.fullmatch(r"(tests/\.workflow-probes/([0-9a-f]{40,64})/).+", arg.split("::", 1)[0]))), None):
-        if _git(identity, "cat-file", "-t", frozen[2]).decode().strip() == "tree":  # a captured command rebinds the directory its path names
+    elif frozen := next((match for arg in command if (match := re.fullmatch(r"(tests/\.workflow-probes/([0-9a-f]{40,64})/).+", arg.split("::", 1)[0]))), None):
+        known = next((run for run in reversed(recorded) if run["command"] == source_command), None)
+        if known and (directories := (known.get("scratchScope") or {}).get("dirs")):
+            prefixes = tuple(directory + "/" for directory in directories)
+            virtual = [name for name in known["probeFiles"] if name.startswith(prefixes)]
+            tree = _indexed(identity, tree, (("restore", "--staged", "--source=" + known["probeTree"], "--", *directories), None))
+        elif _git(identity, "cat-file", "-t", frozen[2]).decode().strip() == "tree":  # a new command over a bundle discovers its inputs
             directories = [frozen[2]]
             for name in directories:  # and each frozen directory that directory's files or the command name
                 tree = _indexed(identity, tree, (("read-tree", "--prefix=" + PROBES + name + "/", name), None))
-                found = [PROBES + name + "/" + os.fsdecode(entry) for entry in _git(identity, "ls-tree", "-r", "--name-only", "-z", name).split(b"\0") if entry]
-                virtual += found
-                if name == frozen[2]:
-                    text = b" ".join([os.fsencode(probe["command"]), *(_git(identity, "cat-file", "blob", f"{tree}:{entry}") for entry in found)])
-                    directories += [other for other in dict.fromkeys(re.findall(r"tests/\.workflow-probes/([0-9a-f]{40,64})/", os.fsdecode(text)))
-                                    if other != name and _git(identity, "cat-file", "-t", other).decode().strip() == "tree"]
+                held = dict(reversed(entry.split(b"\t", 1)) for entry in _git(identity, "ls-tree", "-r", "-z", name).split(b"\0") if entry)
+                virtual += [PROBES + name + "/" + os.fsdecode(entry) for entry in held]
+                if name == frozen[2]:  # one reader for the directory's files, each held alone
+                    with blob_reader(Path(identity.root)) as read:
+                        named = dict.fromkeys(os.fsdecode(found) for text in chain((os.fsencode(probe["command"]),), (read(os.fsdecode(value.split()[2])) or b"" for value in held.values()))
+                                              for found in re.findall(rb"tests/\.workflow-probes/([0-9a-f]{40,64})/", text))
+                    directories += [other for other in named if other != name and _git(identity, "cat-file", "-t", other).decode().strip() == "tree"]
         else:  # or, from a capture before probe directories, the one blob
             virtual = [frozen[0]]
             tree = _indexed(identity, tree, (("update-index", "--add", "--cacheinfo", f"100644,{frozen[2]},{frozen[0]}"), None))
-    tree, virtual, command = _freeze_temporary(identity, tree, virtual, command)
+    own = tuple(folder + os.sep for folder in folders)
+    # Keep a known capture's scratch selection; a new command over a frozen bundle discovers its inputs as on #170.
+    original_names, executable = virtual, command[0]  # the executable's own file is never rewritten: what it names moves nothing
+    prior_scope = (known or {}).get("scratchScope", {})
+    extra = {f"{prefix}{places[Path(path)]}" for path in scratch} | set(prior_scope.get("extra", ()))
+    narrow = bool(places or known and (not prior_scope or "extra" in prior_scope))
+    named = {word.split("::", 1)[0] for word in command} | extra
+    tree, virtual, command, roots_by_file, temporary = _freeze_temporary(identity, tree, virtual, command, named.intersection(virtual) if narrow else None)
+    # The fresh scratch tree and its optional temporary tree each contribute one directory.
+    members = (virtual[0], virtual[-1]) if places else virtual
+    scope = {"dirs": sorted({PROBES + name[len(PROBES):].partition("/")[0] for name in members})}
+    if narrow:
+        scope["extra"] = [new for old, new in zip(original_names, virtual) if old in extra] if extra else []
+    # A renamed probe directory keeps its files' order. A folder is recorded with its digest, a file frozen alone with its identity.
+    held = {os.path.dirname(name): [str(path.parent), _folder(str(path.parent))[1]] for name, path in zip(virtual, places) if str(path.parent) in folders}
+    supplied = set(scratch)
+    origins = {}
+    source_roots = {root for name, path in zip(original_names, places) if name in roots_by_file and name != executable and
+                    (str(path.parent) in folders or str(path) in supplied) for root in roots_by_file[name]} if roots_by_file else set()
+    for name, path in zip(virtual, places):
+        origin = str(path)
+        if not origin.startswith(own):
+            if origin in supplied:
+                temporary[name] = [origin, *(_input_stamp(origin) or ())]
+                source_roots.add(origin)
+            else:
+                origins[name] = [origin, *_stamp(path)]
     selected = list(command)
     if selected and Path(selected[0]).name == "env":
         selected.pop(0)
@@ -973,35 +1176,38 @@ def _probe_capture(identity: RepoIdentity, probe: object, candidate: str, timeou
         support = sorted(overrides & _tree_entries(identity, preserved).keys())  # a file added since pass start has no pass-start bytes to protect
     return {"command": shlex.join(command), "candidateTree": candidate, "probeTree": tree,
             "probeFiles": files, "support": support or [], "timeout": timeout, "captureKey": os.urandom(16).hex(),
-            "sourceCommand": source_command, **({"scratch": scratch} if scratch else {})}
+            "sourceCommand": source_command, **({"scratchScope": scope} if virtual else {}), **({"scratch": scratch} if scratch else {}), **({"origins": origins} if origins else {}), **({"folders": held} if held else {}),
+            **({"temporary": temporary, "fileTemporaryRoots": sorted(source_roots)} if temporary else {})}
 
 
 def _probe_outcome(arm: JsonObject) -> str:
     return "timed-out" if arm["timedOut"] else str(arm["outcome"])
 
 
-def _revised(identity: RepoIdentity, run: JsonObject, candidate: str, preserved: str | None) -> JsonObject | None:
-    """The recorded case captured again as naming it would, from its command, support and scratch files, when a file it
-    froze holds other bytes on disk or in the candidate and the capture then freezes bytes the recorded one lacks.
-    A file gone from disk changes nothing, so the frozen copy stays; nothing is captured to find either out."""
-    command = run.get("sourceCommand", run["command"])
-    support = [*run["support"], *filter(os.path.isfile, run.get("scratch", ()))]
-    origins = {place: path for path, place in _places(identity, shlex.split(command), support).items()}
-    placed = re.compile(re.escape(os.fsencode(identity.root + os.sep + PROBES)) + rb"[0-9a-f]{40,64}/")
-    files, read = _comparison_files(identity, run), _reader(identity)
-    def edited(name):  # a frozen temporary file keeps its whole path, and a frozen file names it at that frozen place
-        place = name.split("/", 3)[3]
-        origin = origins.get(place) or next((path for path in origins.values() if str(path).endswith("/" + place)), Path("/" + place))  # a file gone moves the common directory
-        return _sample_input(("edited", origin, run["probeTree"], name), lambda: origin.is_file() and origin.read_bytes() != placed.sub(b"/", read(_tree_entries(identity, run["probeTree"])[name][1]) or b""))
-    moved = _sample_input(("moved", run["candidateTree"]), lambda: _changed_entries(identity, run["candidateTree"], candidate)) if run["candidateTree"] != candidate else ()
-    if not (any(name in moved for name in (run["support"] if preserved else files)) or any(edited(name) for name in files if name.startswith(PROBES))):
+def _revised(identity: RepoIdentity, run: JsonObject, candidate: str, preserved: str | None, accepted: bool = False) -> JsonObject | None:
+    """The recorded case captured again from its command: when a scratch file or folder it froze changed where it is
+    (`_stale`), or, without `accepted` proof, when the candidate changed a test file it froze and the capture then
+    freezes bytes the recorded one lacks."""
+    live, source = _stale(identity, run), run.get("sourceCommand", run["command"])
+    moved = () if live or accepted or run["candidateTree"] == candidate else _sample_input(("moved", run["candidateTree"]), lambda: _changed_entries(identity, run["candidateTree"], candidate))
+    if not live and not any(name in moved for name in (run["support"] if preserved else _comparison_files(identity, run))):
         return None
-    captured = _probe_capture(identity, {"command": command}, candidate, run["timeout"], support,
-                              _sample_input(("inventory", *run["support"]), lambda: _probe_files([], identity, run["support"])), preserved)
-    def frozen(probe):  # by place: a probe directory is named by its content, and git may store other bytes than a file holds
+    # A program gone with its folder is captured from its frozen command: the frozen copy stays.
+    kept = (run.get("origins") or run.get("folders")) and not any(os.path.isdir(origin) for origin, _ in (run.get("folders") or {}).values()) and not _places(identity, shlex.split(source))[0]
+    support = [*run["support"], *filter(os.path.isfile, run.get("scratch", ()))]
+    captured = _probe_capture(identity, {"command": run["command"] if kept else source}, candidate, run["timeout"], support,
+                              _sample_input(("inventory", *run["support"]), lambda: _probe_files([], identity, run["support"])), preserved, (run,))
+    if run.get("scratch"):
+        captured["scratch"] = run["scratch"]  # a declaration survives a recapture while its input is absent
+    watched = chain(run.get("absentInputs", ()), (row[0] for row in (run.get("temporary") or {}).values()))
+    absent = {origin: list(now or ()) for origin in watched
+              if not ((now := _input_stamp(origin)) and stat.S_ISREG(now[0])) and os.path.isdir(os.path.dirname(origin))}
+    if absent:
+        captured["absentInputs"] = absent
+    def frozen(probe):
         entries = _tree_entries(identity, probe["probeTree"])
-        return {(re.sub(PROBES + "[0-9a-f]{40,64}/", PROBES, name), entries[name][1]) for name in _comparison_files(identity, probe)}
-    return captured if frozen(captured) - frozen(run) else None
+        return {(name, entries[name][1]) for name in _comparison_files(identity, probe)}
+    return captured if live or frozen(captured) - frozen(run) else None
 
 
 UNBROKEN = "probe did not fail under its behavior break; supply --change probe=FILE"
@@ -1042,7 +1248,7 @@ def _command_files(identity: RepoIdentity, run: JsonObject) -> set[str]:
             matches &= {os.path.relpath(os.path.normpath(Path(identity.root) / name), identity.root)
                         for name in run.get("support") or []}
             if not matches:
-                raise WorkflowError("ambiguous file argument: " + argument + "; replay with --support naming the captured input")
+                raise WorkflowError("ambiguous file argument: " + argument)
         selected.update(matches)
     return selected
 
@@ -1215,10 +1421,29 @@ def execute_findings(identity: RepoIdentity, state: JsonObject, findings: list[J
         prior = finding["execution"].get("comparison")
         if prior and "replay" not in finding:
             try:
-                tree, files, words = _freeze_temporary(identity, prior["probeTree"], prior["probeFiles"], shlex.split(prior["command"]))
+                words = shlex.split(prior["command"])
+                scope = prior.get("scratchScope", {})
+                if "extra" in scope:
+                    scan = ({word.split("::", 1)[0] for word in words} | set(scope["extra"])).intersection(prior["probeFiles"])
+                elif scope:
+                    prefixes = tuple(directory + "/" for directory in scope["dirs"])
+                    scan = {name for name in prior["probeFiles"] if name.startswith(prefixes)}
+                else:
+                    scan = None  # #170 retained captures used the full frozen files
+                program = words[0]
+                tree, files, words, found, temporary = _freeze_temporary(identity, prior["probeTree"], prior["probeFiles"], words, scan)
             except ValueError:  # it exists again and cannot be frozen: the probe replays as captured and reads it where it is
                 tree = prior["probeTree"]
-            finding["replay"] = prior if tree == prior["probeTree"] else {**prior, "probeTree": tree, "probeFiles": sorted(files), "command": shlex.join(words)}
+            if tree == prior["probeTree"]:
+                finding["replay"] = prior
+            else:
+                own = tuple(place + "/" for place in prior.get("folders", ()))
+                supplied = set(prior.get("scratch", ()))
+                standalone = {name for name, row in (prior.get("temporary") or {}).items() if row[0] in supplied} if supplied else set()
+                roots = set(prior.get("fileTemporaryRoots", ())).union(*(paths for name, paths in found.items()
+                                                                         if name != program and (name.startswith(own) or name in standalone)))
+                finding["replay"] = {**prior, "probeTree": tree, "probeFiles": sorted(files), "command": shlex.join(words),
+                                     "temporary": {**prior.get("temporary", {}), **temporary}, "fileTemporaryRoots": sorted(roots)}
         return finding.get("replay", prior)
     def run(finding: JsonObject, first: bool) -> JsonObject:
         timeout = next((batch["timeout"] for batch in reversed(current.get("runs") or [])
@@ -1367,7 +1592,8 @@ def _comparison_input(identity: RepoIdentity, probe: JsonObject) -> tuple[list[s
                  "assignments": assignments,
                  "search": os.pathsep.join(os.path.join(identity.root, entry) for entry in os.get_exec_path(environment)),
                  "lookup": command[0] if not os.path.dirname(command[0]) else None,
-                 "environment": hashlib.sha256(json.dumps(sorted(environment.items())).encode()).hexdigest()}
+                 "environment": hashlib.sha256(json.dumps(sorted(environment.items())).encode()).hexdigest(),
+                 **({"source": probe["sourceCommand"]} if probe.get("folders") else {})}  # the command a folder's program runs as where it is
     return command, execution, environment
 
 
@@ -1458,7 +1684,7 @@ def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes:
             arms.append({**found, "requestedTree": source})
         keys = [arm["key"] for arm in arms]
         metadata = {"command": probe["command"], "support": probe.get("support") or [], "timeout": probe["timeout"],
-                    **{key: probe[key] for key in ("sourceCommand", "scratch") if key in probe},
+                    **{key: probe[key] for key in ("sourceCommand", "scratch", "origins", "folders", "temporary", "fileTemporaryRoots", "scratchScope", "absentInputs") if key in probe},
                     "behaviorId": probe.get("behaviorId"), "probeFiles": probe["probeFiles"],
                     "candidateTree": after, "probeTree": tree, "originalTree": before,
                     "captureKey": probe.get("captureKey", probe.get("candidateKey", keys[-1]))}
@@ -1491,6 +1717,13 @@ def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes:
             pending_key = context
             if pending_key not in pending:
                 state, frozen = _prepared_tree(identity, scope, parent or source, tree, files, isolated=size is not None)
+                # While a scratch program's folder is as it was frozen, each word naming a file of it stays as the lead wrote it: the
+                # program runs where it is, beside what a tree cannot hold with it. Its frozen copy is written once it changed or is gone.
+                apart = _apart(identity, probe)
+                if apart:
+                    command = [now if not os.path.realpath(os.path.join(identity.root, was.split("::", 1)[0])).startswith(apart[1]) else was if size is None else was.replace("{size}", str(size))
+                               for was, now in zip(_case_environment(identity, probe["sourceCommand"])[0], command)]
+                    frozen = {name: value for name, value in frozen.items() if not name.startswith(tuple(place + "/" for place in probe["folders"]))}
                 if parent:  # a break is its parent's warm tree plus the break's changed files
                     entries = _tree_entries(identity, source)
                     changes = _changed_entries(identity, parent, source)
@@ -1505,7 +1738,7 @@ def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes:
                 previous = scope["first"].get(root_key) if state["wait"] and size is None else None
                 _require_overlay(_executable(identity, "bwrap", environment))
                 execute = partial(_after, previous, identity, source, (state, frozen), command, timeout, environment, scope["cancel"],
-                                  derived=bool(parent), passing=passing,
+                                  derived=bool(parent), passing=passing, apart=apart,
                                   first=size is None and not parent and root_key not in scope["first"])
                 pending[pending_key] = scope["pool"].submit(execute, scope["memory"], tuple(scope["objects"].items()))
                 if not parent:
@@ -1745,12 +1978,11 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None) -> in
                         help="one or more case keys, or one item and command; with --as and a finding probe, also an unproved map item id")
     parser.add_argument("--change", action="append", default=[], help="with --as: probe=FILE supplies a behavior-breaking diff for the authored probe; a bare FILE submits an authored replacement")
     parser.add_argument("--as", dest="author", choices=("review", "final"), help="execute and record this author's finding in the same call")
-    parser.add_argument("--path", help="scratch file to freeze beside the probe; files a case command names are frozen without it")
     parser.add_argument("--behavior-id", action="append", default=[], help="map item for a single trailing command, or items whose recorded cases replay")
     parser.add_argument("--case", action="append", nargs="+", default=[], metavar="CASE",
                         help="ITEM COMMAND or ITEM:COMMAND; '-' is unbound. Growth: WORKFLOW_GROWTH=SMALL,LARGE,MAX_POWER COMMAND {size}; counts may grow by at most (LARGE/SMALL)**MAX_POWER. Print WORKFLOW_METRICS=<JSON object> or JSON alone for numeric metrics. Growth checks scaling; assert saved work and runtime in the probe.")
-    parser.add_argument("--support", action="append", help="name support, or a scratch file to freeze beside the probe; recorded replay uses its captured immutable bytes")
     parser.add_argument("--correct", nargs="+", metavar="ARG", help="ID [DECLARATION] COMMAND or CASEKEY COMMAND: replace the selected case and run its correction")
+    parser.add_argument("--support", action="append", default=[], help="a file outside the checkout the cases of this call read that no command word names: frozen with them")
     args = parser.parse_args(values[:dash])
     for selection in args.case:
         if len(selection) == 1:
@@ -1769,17 +2001,15 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None) -> in
     if (workflow_id := instance_id(state)) is None:
         raise WorkflowError(NO_INSTANCE_ID)
     slug = str(state["slug"])
-    if args.path and not (command or args.case or args.correct):
-        raise WorkflowError("a scratch path needs its command")
     if args.reject and not args.author:
-        if command or args.case or args.change or args.retire or args.report or args.verdict or args.behavior_id or args.path:
+        if command or args.case or args.change or args.retire or args.report or args.verdict or args.behavior_id:
             raise WorkflowError("a rejection call carries only --reject ID 'COMMAND'")
         _deliver(identity, _reject(identity, state, args.reject))
         return 0
     if args.author and args.retire and not (command or args.case or args.change):
         raise WorkflowError("only the finding author can withdraw an observation, or retire a case beside its probe or replacement")
     if args.verdict and (args.author != "review" or args.verdict not in {"complete", "incomplete"}
-                         or command or args.case or args.change or args.path or args.behavior_id):
+                         or command or args.case or args.change or args.behavior_id):
         raise WorkflowError("select the review verdict without a probe, change or Behavior Map edit")
     breaks, paths, replacement = {}, {}, None
     for value in args.change:
@@ -1797,7 +2027,7 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None) -> in
         breaks[identifier] = paths[path]
     if args.author:
         candidate = _active_candidate_tree(identity)
-        captured = {}
+        captured, past = {}, None
         if args.verdict:
             if not args.workflow_id or not args.expected_candidate_tree or not hasattr(args, "tdd_evidence"):
                 raise WorkflowError("use the source-bound verdict command from checkpoint")
@@ -1820,11 +2050,12 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None) -> in
                 if path.is_relative_to(identity.root):
                     raise WorkflowError("keep the replacement diff in scratch outside the checkout")
                 change = path.read_text()
-            inventory = _probe_files([], identity, args.support or []) if specs else None
+            inventory = _probe_files([], identity, args.support) if specs else None
             probes = []
+            if any(PROBES in value for _, value in specs):
+                past = evidence_document(identity, state.get("tddEvidence")) or {}
             for _, value in specs:
-                probe = _probe_capture(identity, {"command": value, **({"path": args.path} if args.path else {})},
-                                       candidate, MAX_CASE_SECONDS, args.support, inventory)
+                probe = _probe_capture(identity, {"command": value}, candidate, MAX_CASE_SECONDS, args.support, inventory, recorded=(past or {}).get("runs", ()))
                 if "probe" in breaks:
                     probe["breakOid"] = breaks["probe"]
                 captured[probe["command"]] = probe
@@ -1859,7 +2090,7 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None) -> in
                              "priorFinding": {"evidenceId": evidence, "id": identifier}})
         if not args.verdict and any("probe" in finding or "change" in finding for finding in findings):
             _execution_cache(identity, state)
-        execution = execute_findings(identity, state, findings, captured=captured, candidate=candidate, report=args.author == "final")
+        execution = execute_findings(identity, state, findings, captured=captured, candidate=candidate, current=past, report=args.author == "final")
         document = {"schemaVersion": 1, "kind": "intake", "workflowId": workflow_id, "slug": slug,
                     "stage": "code-review" if args.author == "review" else "final",
                     "producer": "code-review" if args.author == "review" else "codex-advisor",
@@ -1979,33 +2210,14 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None) -> in
                 selected.append((entry, case["comparison"]))
         if set(args.behavior_id) - {entry["id"] for entry in items}:
             raise WorkflowError("unknown Behavior Map item")
-    support_overrides = {}
-    if args.support and not specs and not args.correct:
-        names = {os.path.relpath(os.path.normpath(Path(identity.root) / name), identity.root) for name in args.support}
-        owners = {entry["id"] for entry, _ in selected}
-        targets = {probe["runIndex"] for _, probe in selected} | {
-            entry["runIndex"] for entry in evaluation.values() if entry["id"] in owners}
-        eligible = set()
-        for index in targets:
-            probe = runs[index]
-            support = probe.get("support") or []
-            inputs = {name for name in probe["probeFiles"] if is_test_path(name)} | _command_files(
-                identity, {**probe, "support": [*support, *names]})
-            eligible.update(inputs)
-            declared = {os.path.relpath(os.path.normpath(Path(identity.root) / name), identity.root) for name in support}
-            support_overrides[index] = {**probe, "support": [*support, *sorted((names & inputs) - declared)]}
-        if names - eligible:
-            raise WorkflowError("recorded replay support must name a captured test or command input; supply a command to capture new support")
-        selected = [(entry, support_overrides[probe["runIndex"]]) for entry, probe in selected]
-    inventory = _probe_files([], identity, args.support or []) if specs or drafted else None
+    inventory = _probe_files([], identity, args.support) if specs or drafted else None
     refused, asked = [], []
     for identifier, value in dict.fromkeys([*specs, *drafted]):
         entry = captured = None
         key_correction = (identifier, value) == replacement_case
         try:  # a case that cannot be captured or prepared is refused alone; the rest of the call is recorded
             entry = behavior_map.item(items, identifier) if identifier else None
-            captured = _probe_capture(identity, {"command": value, **({"path": args.path} if args.path else {})},
-                                      candidate, MAX_CASE_SECONDS, args.support, inventory, original if entry and entry.get("kind") == "preservation" else None)
+            captured = _probe_capture(identity, {"command": value}, candidate, MAX_CASE_SECONDS, args.support, inventory, original if entry and entry.get("kind") == "preservation" else None, runs)
             _comparison_input(identity, captured)
         except (ValueError, RuntimeError, OSError) as exc:
             reason = str(exc).removesuffix(": -: " + captured["command"]) if captured and not key_correction else str(exc)
@@ -2030,25 +2242,26 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None) -> in
                 references = {case["comparison"]["command"]: case["comparison"]["runIndex"]
                               for case in behavior_map.current_cases([entry], runs)}
             if captured["sourceCommand"] in references:
-                known = runs[references[captured["sourceCommand"]]]
+                known = runs[references[captured["sourceCommand"]]]  # a recorded case's frozen command is that case: its command and the scratch files it froze
                 captured["sourceCommand"] = known.get("sourceCommand", captured["sourceCommand"])
+                captured.update({key: known[key] for key in ("scratch", "origins", "folders", "temporary", "fileTemporaryRoots", "absentInputs") if key in known})
             captured["behaviorId"] = entry["id"]
         selected.append((entry, captured))
         asked += [captured] if (identifier, value) in specs else []
-    # On every call a recorded case without accepted proof is run again where it failed, and one whose probe files changed
-    # on disk is first captured again from them, as naming it would; a case a finding retired is reopened and is captured
-    # again once its files change. A case holding accepted proof keeps its frozen copy.
+    # On every call a recorded case whose scratch program or its folder changed is first captured again, as naming it
+    # would; one without accepted proof is also run again where it failed and captured again once the candidate changes
+    # a test file it froze, as is a case a finding retired. Accepted proof otherwise keeps its frozen copy.
     named = {(probe.get("behaviorId"), probe["sourceCommand"]) for _, probe in selected if "runIndex" not in probe}
     replayed = {probe["runIndex"]: position for position, (_, probe) in enumerate(selected) if "runIndex" in probe}
     again = set()
     for case in behavior_map.current_cases([entry for entry in items if not args.behavior_id or entry["id"] in args.behavior_id], runs):
         run, key = case["comparison"], behavior_map.case_key(case["id"], case["comparison"])
         source = (case["id"], run.get("sourceCommand", run["command"]))
-        if source in named or key in args.retire or case["id"] in rejected or not (key in retired or behavior_map._case_question(case)):
+        if source in named or key in args.retire or case["id"] in rejected:
             continue
-        entry, captured = behavior_map.item(items, case["id"]), None
+        entry, captured, accepted = behavior_map.item(items, case["id"]), None, not (key in retired or behavior_map._case_question(case))
         try:
-            captured = _revised(identity, run, candidate, original if case.get("kind") == "preservation" else None)
+            captured = _revised(identity, run, candidate, original if case.get("kind") == "preservation" else None, accepted)
         except (ValueError, RuntimeError, OSError) as exc:  # refused alone: the case stays pending on its recorded copy, its command kept
             refused.append({"case": source[1], "refused": str(exc)})
         if captured:
@@ -2057,12 +2270,12 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None) -> in
         position = replayed.get(run["runIndex"])
         if captured and position is not None:
             selected[position] = (entry, captured)
-        elif captured or position is None and key not in retired:
+        elif captured or position is None and key not in retired and not accepted:
             selected.append((entry, captured or dict(run)))
     # Retained first proofs: all of them without named cases, beside named cases those without accepted proof; none beside
     # the capture this call makes of its command.
     selected_indexes = {probe.get("runIndex") for _, probe in selected}
-    selected.extend((None, dict(support_overrides.get(index, runs[index])))
+    selected.extend((None, dict(runs[index]))
                     for frozen in evaluation.values() if behavior_map.case_key(frozen["id"], runs[frozen["runIndex"]]) not in retired and (not args.behavior_id or frozen["id"] in args.behavior_id)
                     and frozen["id"] not in rejected and (index := frozen["runIndex"]) not in selected_indexes and (frozen["id"], runs[index].get("sourceCommand", runs[index]["command"])) not in again
                     and (not specs or behavior_map._case_question({**frozen, "comparison": runs[index]})))
@@ -2085,10 +2298,17 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None) -> in
             continue
         # Select current test bytes only after observing the original failure. Other frozen inputs keep their bytes.
         files = edited.intersection(run["probeFiles"])
-        if added := edited - files:
-            files.update(_command_files(identity, {**run, "probeFiles": added}))
+        if added := edited - files:  # a command naming a test file the candidate edited or added, by path, directory or module, is that test's case: it reads the added test files a direct run has
+            words = [word.split("::", 1)[0].rstrip("/") for word in shlex.split(run["command"])]
+            paths = {os.path.relpath(os.path.normpath(os.path.join(identity.root, word)), identity.root) for word in words if word}
+            def named(name):
+                module = name.rsplit(".", 1)[0].replace("/", ".")
+                forms = (module, module.rpartition(".")[2])
+                return (any(name == path or name.startswith(path + "/") for path in paths)
+                        or any(word in forms or word.startswith(tuple(form + "." for form in forms)) for word in words))
+            files.update(added if any(map(named, edited)) else ())
         entries = _tree_entries(identity, run["probeTree"])
-        current_files = sorted(name for name in files if entries.get(name) != _tree_entries(identity, candidate).get(name))
+        current_files = sorted(name for name in files if name not in run["probeFiles"] or entries.get(name) != _tree_entries(identity, candidate).get(name))
         if current_files:
             tree = _indexed(identity, run["probeTree"], (("restore", "--staged", "--source=" + candidate, "--", *current_files), None))
             recapture[pos] = {**probe, "probeTree": tree, "support": sorted(set(probe.get("support", ())) | set(current_files)),

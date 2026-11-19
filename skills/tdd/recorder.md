@@ -7,8 +7,8 @@ outcome and exits non-zero when the assertion fails. Output is diagnostic only;
 printing a value or `name: result` does not assert it.
 
 `--case ITEM COMMAND` also accepts `--case ITEM:COMMAND`; use `-` for no item. A scratch file a command names is frozen
-with it, as is a temporary path the command or that file names; `--path` or `--support` freezes
-another beside it. A `--case` call runs the cases it names and any recorded case still without accepted proof, captures any command an item still
+with its folder, as is a temporary path the command or that file names; a folder holding the checkout, the
+temporary directory or the home directory, or on the case's executable search path, is frozen with no program; a file beside the program is frozen as it is, not read for paths. When such a file names a temporary path elsewhere, `--support FILE` freezes that path with it. A `--case` call runs the cases it names and any recorded case still without accepted proof, captures any command an item still
 declares and judges the rest of the map as recorded, without running it; a bare call captures those too, replays every recorded command and,
 when all hold and nothing is open, verifies.
 When a declaration cannot be prepared, append its replacement command to the refused row’s `correct` arguments and run that call. `tdd --correct ID [DECLARATION] COMMAND` replaces a declared or recorded command and runs the correction. A sole command needs only its replacement. `tdd --correct CASEKEY COMMAND` replaces the exact case named in a receipt. A failing case is a row, not a failed call. `record tdd-map --input`
@@ -34,9 +34,8 @@ The map holds required outcomes and concrete input context. `boundaryInputs` is
 data; it neither binds nor starts a command. Only an actual captured execution
 creates a case binding. Replays use those captured cases and retained first proof,
 not proposed commands or test names. An item without a captured case stays pending.
-Kept-behavior cases use the pass-start test files on both versions. If a case fails on the original with an edited test, the runner compares again with its current test bytes. Named support
-and scratch files use candidate bytes; contract and unbound cases use candidate
-tests. Name a new in-repository kept-behavior test file with `--support`.
+Kept-behavior cases use the pass-start test files on both versions. If a case fails on the original with an edited test, the runner compares again with its current test bytes
+and, when its command names a test file the candidate edited or added, every added test file, as a direct run has them. Contract and unbound cases use candidate tests.
 Every required command must establish the item's outcome. New commands extend
 coverage without deleting the first proved command and its frozen source.
 Removing a current map item leaves its proved comparisons in the retained evaluation.
@@ -54,14 +53,15 @@ Reuse the original defect's failure as sensitivity proof.
 
 ## Replay and continuation
 
-A case with accepted proof replays its immutable recorded inputs; one without is
-captured again when its probe files change. Reuse valid results instead of repeating execution for handoff. Installed
+A case replays its recorded inputs. It is captured again when its scratch program's folder gains,
+loses or changes a file, a folder that is gone keeping the frozen copy; one without accepted proof also when
+its probe files change. Reuse valid results instead of repeating execution for handoff. Installed
 library edits without package metadata changes remain unbound.
 Current and retained commands use the same readiness
 check, including after map narrowing and finding resolution.
 
 The first proved evaluation stays frozen until a proved recapture of its command
 replaces it, along with captures held by map items no longer bound to the command; a
-kept-behavior recapture that names a pass-start test file with `--support` replaces nothing, and an attempted
+kept-behavior recapture that reads a pass-start test file at its candidate bytes replaces nothing, and an attempted
 comparison freezes nothing. User scope requiring a new contract starts a
 new pass. Keep scratch resources outside production and workflow state.
