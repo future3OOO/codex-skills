@@ -1411,6 +1411,11 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
     }
     if phase == "code-review":
         result.update(review_commands(identity, state, candidate))
+        if reader := os.environ.get("CODEX_THREAD_ID"):  # a reviewer that names its context is given the rule once a pass
+            try:
+                os.makedirs(Path(result["scratchPath"]).parent / ("given-rule-" + hashlib.sha256(reader.encode()).hexdigest()))
+            except FileExistsError:
+                del result["caseRule"]
     else:
         shape = json.loads(ADVISOR_SHAPES["preflight" if phase == "preflight-advice" else "final"])
         if reconsult:  # the second consultation completes the draft in its answer

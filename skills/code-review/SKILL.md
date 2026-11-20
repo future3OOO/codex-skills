@@ -5,56 +5,27 @@ description: Review a diff since a fixed point along independent Standards and S
 
 # Code review
 
-Use a fresh native context for initial review; reuse it for corrections when still
-applicable. Work in the lead's checkout. Keep scratch files outside it; isolate and clean up mutating scratch operations. The workflow
-command records your evidence and verdict; do not edit candidate source, contract,
-Git state or ledger files, merge, install, begin a pass or run context bootstrap.
+Start in a fresh native context; reuse it for applicable corrections. Work in the lead's checkout, isolating and cleaning up mutating scratch operations outside it. Only the workflow records evidence and verdict. Never edit candidate, contract, Git or ledger, merge, install, begin a pass or bootstrap context.
 
-## Target and evidence
-
-For governed work load the complete review package:
+For governed work load the full review package:
 
 ~~~bash
 python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" checkpoint --repo "$PWD" --phase code-review --channel-dir "$(mktemp -d)"
 ~~~
 
-Read every listed channel and the actual diff/current files. The package contains
-the request, contract, compared outcomes, current findings and available context.
-Use its evidence command only for details it does not show. Reuse applicable graph
-evidence; trace affected callers, callees, state writers and no-change surfaces.
-A changed target requires renewed inspection. Outside a governed pass, use the
-requested Git target and report without creating workflow state.
+Read every channel, diff and current file. Use the evidence command for missing details only. Reuse relevant graph evidence to trace callers, callees, state writers and unchanged surfaces. Reinspect changed targets. Outside a pass review the requested Git target without creating state.
 
 ## Independent judgment
 
-Apply code-quality, codebase-design and AGENTS.md's real-proof and diagnosis rules.
-Assess Standards and Spec independently: Standards covers demonstrated quality,
-invariant and bloat defects; Spec covers missing requirements, unauthorized effects
-and unsupported claims. Verify the original failure, current outcome and affected
-preservation separately. Challenge expectations against the request and original
-operations; selected green cases cannot authorize an omitted responsibility.
-Equal failures or unexecuted operations do not prove preservation. Equivalent
-changes need no invented distinguishing input. Judge changed requirements and
-coverage against the request; listing a change authorizes nothing.
+Apply code-quality, codebase-design and AGENTS.md's real-proof and diagnosis rules. Judge Standards (demonstrated quality, invariant and bloat defects) separately from Spec (missing requirements, unauthorized effects, unsupported claims). Verify original failure, current result and preservation separately. Check expectations against the request and original operations, including omitted responsibilities. Equal failures or unexecuted operations prove nothing. Do not invent distinguishing inputs for equivalent changes. A change list does not authorize changes or prove coverage.
 
-Attack whole-system cost at fixed required behavior. Treat all code on the requested
-production path as variable, including existing inefficient machinery. Find the
-cheapest justified design. An improved term cannot excuse remaining avoidable work;
-a known cheaper correct design rejects approval. Prove saved work and preserved
-outcomes with a concrete replacement. Prefer net reduction; necessary growth needs
-demonstrated lower cost. Maintained-test cleanup must keep frozen proof and required
-surviving checks. Generate replacement diffs from actual scratch edits.
+Find the cheapest design at fixed required behavior across the entire requested path, existing machinery included. A known cheaper correct design blocks approval even if another cost improved. Prove savings and preservation with a replacement diff from actual scratch edits. Prefer net reduction; justify growth by demonstrated lower cost. Preserve frozen proof and required surviving checks when reducing tests.
 
 ## Execute and record
 
-Submit direct project operations through the package's finding command, under its `caseRule`. Judge whether each operation
-establishes the affected requirement. Check the failure cause and selected operation from source and raw output; the runner reads exits only. A scratch call only investigates.
+Submit direct operations via the finding command under the package's `caseRule`. Check source and raw output for cause and whether the operation proves the requirement; the runner sees exits only. Scratch calls only investigate.
 
-Use the package's matching verdict command after judging its source and evidence. Return
-the Standards/Spec verdict, receipt references and non-executable report lines. On correction retain finding
-identities, inspect the changed evidence and answer specific questions supplied by
-the current package. The runner rechecks retained findings, including resolved ones;
-reuse valid executions. Name missing request promises and unresolved evidence.
+Judge source and evidence before using the matching verdict command. Return Standards/Spec verdict, receipts and non-executable report lines. On correction retain finding identities, inspect changed evidence and answer the package's questions. Reuse valid executions: the runner rechecks even resolved findings. Name missing promises and unresolved evidence.
 
 Withdraw your own invalid observation with `tdd --as review --reject EVIDENCE:ID=REASON`. When your finding proves a frozen case's expectation wrong, add `--retire` with the case's item and command, or its `caseKey` from the comparison receipt, to its probe or replacement command.
 Give the measured failure cause; the raw observation remains recorded.
