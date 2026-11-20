@@ -430,12 +430,16 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
     # The lead's draft; an approving answer's `draft` changes it, whose added items stay until explicitly rejected.
     submitted = preflight_document(args.preflight_file) if args.preflight_file else None
     changes = intake.pop("draft", None) if intake else None
+    draft = finalised_draft(submitted, changes) if submitted and changes is not None else submitted
+    if draft:  # the submitted file itself can first be declared with this answer
+        from .tdd_workflow import unstartable
+        if errors := unstartable(identity, draft["behaviorMap"]):
+            raise ValueError("; ".join(errors))
     state = record_advisor_result(
         identity, slug, workflow_id, args.stage, args.source, verdict, reason=args.reason,
         design=design_declaration(args.design_declaration) if args.design_declaration else None,
         intake=intake, expected_candidate_tree=expected or candidate, execution=execution,
-        preflight_draft=finalised_draft(submitted, changes) if submitted and changes is not None else submitted,
-        submitted_draft=submitted if changes is not None else None)
+        preflight_draft=draft, submitted_draft=submitted if changes is not None else None)
     emit(_receipt(state, identity, obligations=False))
     return 0
 
@@ -492,14 +496,18 @@ def _dispatch(args: argparse.Namespace) -> int:
     elif args.command == "abandon":  # the workflow tool asks the user and abandons in its own process; a shell call is refused
         abandon(identity, None)
     elif args.command == "checkpoint":
+        draft = preflight_document(args.preflight_file) if args.preflight_file else None
+        if draft:  # the lead's declarations are judged where it submits them
+            from .tdd_workflow import unstartable
+            if errors := unstartable(identity, draft["behaviorMap"]):
+                raise ValueError("; ".join(errors))
         if args.channel_dir:  # a consult is about to read the projection
             for line in refresh_context(identity):
                 print(line, file=sys.stderr)
             if args.phase != "preflight-advice":
                 with redirect_stdout(sys.stderr):
                     _verify(parser().parse_args(["verify", "--repo", str(identity.root)]), identity, review=True)
-        _emit_json(checkpoint(identity, args.phase, reconsult=args.reconsult, channel_dir=args.channel_dir,
-                              preflight_draft=preflight_document(args.preflight_file) if args.preflight_file else None))
+        _emit_json(checkpoint(identity, args.phase, reconsult=args.reconsult, channel_dir=args.channel_dir, preflight_draft=draft))
     elif args.command == "complete":
         state = complete(identity, slug=args.slug, workflow_id=args.workflow_id, expected_candidate_tree=_active_candidate_tree(identity))
         rejections = {"finalReportBeginsWith": state["rejections"]} if state.get("rejections") else {}

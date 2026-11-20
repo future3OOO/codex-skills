@@ -34,7 +34,7 @@ from ._workflow_db import (
 )
 from .advisor_diff import current_pass_evidence
 from .repo_identity import RepoIdentity
-from .workflow_documents import ADVISOR_SHAPES, RECORD_SHAPES, validate_advisor_projection, validate_design_declaration, quality_candidates
+from .workflow_documents import ADVISOR_SHAPES, CASE_RULE, ITEM_SHAPE, RECORD_SHAPES, validate_advisor_projection, validate_design_declaration, quality_candidates
 from .state_store import (
     _EXECUTION,
     _active_candidate_tree,
@@ -1407,6 +1407,7 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
         "tddEvidence": state.get("tddEvidence"),
         "tdd": state.get("tdd"),
         "codeReviewStatus": review.get("status"),
+        "caseRule": CASE_RULE,  # outside the answer form and the verdict commands: a role is given it with its first checkpoint
     }
     if phase == "code-review":
         result.update(review_commands(identity, state, candidate))
@@ -1414,7 +1415,7 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
         shape = json.loads(ADVISOR_SHAPES["preflight" if phase == "preflight-advice" else "final"])
         if reconsult:  # the second consultation completes the draft in its answer
             shape.update(findings=[{"id": "SPEC-1", "claim": "..."}], verdict="approved", draft={
-                "authoritativeContract": "text", "items": [{"id": "BM_X", "expected": "..."}], "removed": ["BM_Y"]})
+                "authoritativeContract": "text", "items": [json.loads(ITEM_SHAPE)], "removed": ["BM_Y"]})
         result["responseFormat"] = json.dumps(shape)
     if state.get("tddEvidence"):
         result["evidenceCommand"] = shlex.join([*WORKFLOW, "evidence", "--repo", identity.root, "--evidence-id", state["tddEvidence"]])
@@ -1743,7 +1744,7 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
                     command += ["--reconsult"]
                 return {"command": shlex.join(command), "args": ["--preflight-file", preflight_file or "<current-draft.json>"],
                         **({} if preflight_file else {"input": "<current-draft.json>: the corrected draft" if isinstance(draft, dict)
-                                                      else "<current-draft.json>: the draft, shaped " + RECORD_SHAPES["preflight"]})}
+                                                      else "<current-draft.json>: the draft, shaped " + RECORD_SHAPES["preflight"] + ". " + CASE_RULE})}
             return {"command": shlex.join(command)}
         command = [*cli, "paths", "--repo", str(identity.root), "--workflow-id", str(state["workflowId"])]
     elif action == "code-review":

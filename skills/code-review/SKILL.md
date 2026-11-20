@@ -47,14 +47,11 @@ surviving checks. Generate replacement diffs from actual scratch edits.
 
 ## Execute and record
 
-Submit direct project operations together through the package's finding command, one command per case.
-Expected values come from executed
-references or frozen requirement-grounded properties. Judge whether each operation
+Submit direct project operations through the package's finding command, under its `caseRule`. Judge whether each operation
 establishes the affected requirement. Check the failure cause and selected operation from source and raw output; the runner reads exits only. A scratch call only investigates.
 
 Use the package's matching verdict command after judging its source and evidence. Return
-the Standards/Spec verdict, receipt references and non-executable report lines.
-Group counterexamples by owning Module and invariant. On correction retain finding
+the Standards/Spec verdict, receipt references and non-executable report lines. On correction retain finding
 identities, inspect the changed evidence and answer specific questions supplied by
 the current package. The runner rechecks retained findings, including resolved ones;
 reuse valid executions. Name missing request promises and unresolved evidence.

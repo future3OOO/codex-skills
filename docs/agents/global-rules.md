@@ -83,7 +83,7 @@ Repo Context Forge analysis copy. For codex-skills installation, follow
 - Invoke `$tdd` before every code change. Drive real Seams through the recorded
   original/candidate comparison: a requested change must show its difference on
   attributable inputs, an invariant must hold on both sources, and the edit's
-  decisive contexts and boundary cases execute as named map items. If the change
+  decisive contexts and boundary cases execute under named map items. If the change
   creates the Seam, create it and return to drive it; absence alone does not prove
   behavior.
 - Never mark work complete while required behavior or proof is missing.

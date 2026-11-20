@@ -141,10 +141,10 @@ if [[ -n "$phase" ]]; then
     design_bytes=$(wc -c <"$design_snapshot")
     design_sha=$(sha256sum "$design_snapshot" | cut -d' ' -f1)
   fi
-  item_shape=$(python3 - "$script_dir/../../.." "$design_snapshot" "$design_absent" "$design_declaration_file" "$cwd" <<'PY'
+  python3 - "$script_dir/../../.." "$design_snapshot" "$design_absent" "$design_declaration_file" "$cwd" <<'PY'
 import json, sys
 sys.path.insert(0, sys.argv[1])
-from hooks.lib.workflow_documents import ITEM_SHAPE, design_absence, design_file_declaration
+from hooks.lib.workflow_documents import design_absence, design_file_declaration
 if sys.argv[2] or sys.argv[3]:
     declaration = design_file_declaration(sys.argv[2]) if sys.argv[2] else design_absence(sys.argv[3])
 else:
@@ -157,9 +157,7 @@ else:
         raise SystemExit("error: the workflow has no recorded governing-design declaration")
 with open(sys.argv[4], "w", encoding="utf-8") as handle:
     json.dump(declaration, handle, sort_keys=True)
-print(ITEM_SHAPE)  # the finalising consult is told the map item's fields
 PY
-)
 fi
 
 if [[ "$phase" == preflight-advice ]]; then
@@ -214,7 +212,7 @@ checkpoint_path, prompt_path, phase = sys.argv[1:]
 with open(checkpoint_path, encoding="utf-8") as handle:
     state = json.load(handle)
 with open(prompt_path, "wb") as prompt:
-    prompt.write(("\n--- Runtime response form ---\n" + state["responseFormat"] + "\n").encode())
+    prompt.write(("\n--- Runtime response form ---\n" + state["responseFormat"] + "\n\n--- Case rule ---\n" + state["caseRule"] + "\n").encode())
     for channel in state.get("channels") or []:
         data = open(channel["contentPath"], "rb").read()
         name = channel["name"]
@@ -343,7 +341,7 @@ Keep an item, case or planned line only if deletion breaks required behavior, de
     phase_prompt='Checkpoint Interface: final-review
 Attack the whole-system design at fixed required behavior. Find every regression the change introduced and the cheapest justified whole-system design for code the change edits or its requested operation runs through, including existing inefficient machinery. Prove the saved work and preserved outcomes with a concrete replacement through the recording below. Prefer net reduction; necessary growth needs demonstrated lower cost. Trace related failures to their shared cause before another repair. After a reduction, derive the remaining material work through the replacement and its collaborators. A known cheaper correct design rejects approval; wrapper-call counts can hide unchanged work. Check required behavior against the original decision sites, including surviving outcomes the selected green cases miss.
 The workflow command freezes and compares your probes and diffs, records findings immediately and returns the binding result. It owns execution and cache reuse; do not repeat its original/candidate operations. For new behavior, probe against the result of the existing code or engine that defines its terms. Use request-grounded properties only when no owner exists. Reuse the project'\''s runner, fixtures and supported execution matrix where present. When your finding proves a frozen case'\''s expectation wrong, add `--retire` with that case'\''s item and command, or its `caseKey`; that case stops binding whatever your probe'\''s result. Judge their relevance and remaining preservation, including other responsibilities of shared logic. Use the original source overlay for investigations the recorded comparisons do not answer.
-Preserve frozen proof and required surviving regression checks when reducing maintained tests or support. A recorded regression stands unless request text changes that behaviour: wording about behaviour the request keeps summarizes the original code, so the original'\''s result stands. Record every material finding, functional and performance, through tdd before this one verdict, one per owning invariant with its accumulated cases; a re-check raises only what the repair introduced. Return only the checkpoint JSON response form with only your verdict and non-executable report lines; executable findings are already recorded. A commit-ready judgment requires the reviewed behavior and coverage; context-mismatch is reserved for a supplied source/projection identity mismatch.' ;;
+Preserve frozen proof and required surviving regression checks when reducing maintained tests or support. A recorded regression stands unless request text changes that behaviour: wording about behaviour the request keeps summarizes the original code, so the original'\''s result stands. Record every material finding, functional and performance, through tdd before this one verdict, one per owning invariant; a re-check raises only what the repair introduced. Return only the checkpoint JSON response form with only your verdict and non-executable report lines; executable findings are already recorded. A commit-ready judgment requires the reviewed behavior and coverage; context-mismatch is reserved for a supplied source/projection identity mismatch.' ;;
 esac
 if [[ "$phase" == preflight-advice ]]; then
   if (( ${#reconsult_args[@]} == 0 )); then
@@ -352,7 +350,7 @@ if [[ "$phase" == preflight-advice ]]; then
     # The session holds the first consult's block; this one carries only the second consult's instructions.
     phase_prompt="Checkpoint Interface: preflight-advice
 Use your investigation and the lead's checked corrections; raise only what the lead's corrections introduced. Ground expectations in the request, an executed original operation, or the existing owner or engine on the same input. Use request-grounded properties only when no owner exists; establish the requested effect, not just a round-trip. Required outcomes are authoritative.
-Finalise the draft with required outcomes in your answer's draft: the contract text when it changes, each item you add or change by id with only the changed fields (null removes an optional one), and the ids you remove. Add any proposed case the lead left out as you proposed it, without new probes; add each designed removal of a measured cost as an item, and state your model, chosen design and deciding evidence in your findings: the lead builds that design, performance improvements included, in its first implementation. A map item is $item_shape.
+Finalise the draft with required outcomes in your answer's draft: the contract text when it changes, each item you add or change by id with only the changed fields (null removes an optional one), and the ids you remove. Add any proposed case the lead left out as you proposed it, without new probes; add each designed removal of a measured cost as an item, and state your model, chosen design and deciding evidence in your findings: the lead builds that design, performance improvements included, in its first implementation.
 Return approved: you own every remaining change, so this consultation has no changes-required verdict."
   fi
 elif [[ "$phase" == final-review ]]; then
