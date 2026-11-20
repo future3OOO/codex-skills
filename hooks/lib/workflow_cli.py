@@ -118,7 +118,7 @@ def parser() -> argparse.ArgumentParser:
     command = _repo(commands.add_parser("pause", help="record an honest wait"), instance=True)
     command.add_argument("--reason", required=True)
     commands.add_parser("abandon", help="end the active pass the user drops, once they confirm when the workflow tool asks; its cwd is the repo").set_defaults(repo=".")
-    command = _repo(commands.add_parser("checkpoint", help="query advisor readiness; changes no workflow state"))
+    command = _repo(commands.add_parser("checkpoint", help="query advisor readiness"))
     command.add_argument("--phase", required=True)
     command.add_argument("--reconsult", action="store_true", help="resume review of a revised preflight draft")
     command.add_argument("--channel-dir", help="write the advisor evidence channels here and list them in order")
