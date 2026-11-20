@@ -5,7 +5,7 @@ description: Review a diff since a fixed point along independent Standards and S
 
 # Code review
 
-Start in a fresh native context; reuse it for applicable corrections. Work in the lead's checkout, isolating and cleaning up mutating scratch operations outside it. Only the workflow records evidence and verdict. Never edit candidate, contract, Git or ledger, merge, install, begin a pass or bootstrap context.
+Start in a fresh native context; reuse it for applicable corrections. Work in the lead's checkout; keep scratch files outside it and isolate and clean up mutating scratch operations. Only the workflow records evidence and verdict. Never edit candidate, contract, Git or ledger, merge, install, begin a pass or bootstrap context.
 
 For governed work load the full review package:
 
@@ -17,7 +17,7 @@ Read every channel, diff and current file. Use the evidence command for missing 
 
 ## Independent judgment
 
-Apply code-quality, codebase-design and AGENTS.md's real-proof and diagnosis rules. Judge Standards (demonstrated quality, invariant and bloat defects) separately from Spec (missing requirements, unauthorized effects, unsupported claims). Verify original failure, current result and preservation separately. Check expectations against the request and original operations, including omitted responsibilities. Equal failures or unexecuted operations prove nothing. Do not invent distinguishing inputs for equivalent changes. A change list does not authorize changes or prove coverage.
+Apply code-quality, codebase-design and AGENTS.md's real-proof and diagnosis rules. Judge Standards (demonstrated quality, invariant and bloat defects) separately from Spec (missing requirements, unauthorized effects, unsupported claims). Verify original failure, current result and preservation separately. Check expectations against the request and original operations; green cases cannot authorize an omitted responsibility. Equal failures or unexecuted operations prove nothing. Do not invent distinguishing inputs for equivalent changes. A change list does not authorize changes or prove coverage.
 
 Find the cheapest design at fixed required behavior across the entire requested path, existing machinery included. A known cheaper correct design blocks approval even if another cost improved. Prove savings and preservation with a replacement diff from actual scratch edits. Prefer net reduction; justify growth by demonstrated lower cost. Preserve frozen proof and required surviving checks when reducing tests.
 
