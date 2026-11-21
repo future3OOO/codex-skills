@@ -5,7 +5,7 @@ description: Review a diff since a fixed point along independent Standards and S
 
 # Code review
 
-Start in a fresh native context; reuse it for corrections. Work in the lead's checkout; keep scratch outside it, isolated and cleaned up. Only the workflow records evidence and verdict. Never edit candidate, contract, Git or ledger, merge, install, begin a pass or bootstrap.
+Start in a fresh native context. Work in the lead's checkout; keep scratch outside it, isolated and cleaned up. Only the workflow records evidence and verdict. Never edit candidate, contract, Git or ledger, merge, install, begin a pass or bootstrap.
 
 For governed work load the full review package:
 

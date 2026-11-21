@@ -117,15 +117,12 @@ its source-bound verdict through the existing workflow command, then returns its
 Standards/Spec report and receipt references. Follow the runtime continuation.
 For genuinely trivial work, use the runtime's existing not-required operation.
 
-Retain the reviewer agent and finding identities. Resume that context for
-corrections with the changed evidence. Do not reload unchanged skills or repeat
+Retain the reviewer agent and finding identities. Do not reload unchanged skills or repeat
 valid execution solely for handoff. The lead owns repairs, TDD and verification;
 the reviewer owns its evidence and verdict. Start a fresh reviewer only when its
 context is unavailable or scope/architecture makes it unusable, naming the reason.
 
-Required behavior stays fixed. A replacement must preserve
-frozen proof and required surviving checks; necessary growth must buy demonstrated
-cost reduction. The runtime owns acceptance and rechecks retained findings after
+Required behavior stays fixed. The runtime owns acceptance and rechecks retained findings after
 repair, including reopening when waste returns. For a missing request promise,
 reconcile the requirement and extend affected coverage before implementing it.
 Every map item is closed before review. Verification and return review can run
