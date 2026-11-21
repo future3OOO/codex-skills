@@ -585,14 +585,14 @@ def _restore_case(state, before):
 
 
 def _execute_tree(identity: RepoIdentity, source_tree: str, prepared,
-                  command: list[str], timeout: float, environment: dict[str, str], cancel, memory: int, objects, *, restore=True, passing=None) -> JsonObject:
+                  command: list[str], timeout: float, environment: dict[str, str], cancel, memory: int, objects, *, restore=True) -> JsonObject:
     state, frozen = prepared
     if cancel.is_set():
         raise WorkflowError("comparison interrupted")
     before = _overlay_probe(state, frozen, restore)
     try:
         result = _execute_case(identity, source_tree, state["root"], command, timeout, environment, cancel, memory, objects,
-                               overlay=state if state.get("lower") else None, passing=passing)
+                               overlay=state if state.get("lower") else None)
         if restore:
             state["result"] = result
         if state.get("measure") and not result["timedOut"]:
@@ -603,12 +603,11 @@ def _execute_tree(identity: RepoIdentity, source_tree: str, prepared,
             _restore_case(state, before)
 
 
-def _after(previous, identity, source, prepared, *arguments, derived=False, first=False, passing=None):
+def _after(previous, identity, source, prepared, *arguments, first=False):
     state, frozen = prepared
-    owner = state.get("owner", state)
     if previous is not None:
         previous.result()
-    origin = owner["primer"] if previous is not None else owner
+    origin = state["primer"] if previous is not None else state
     with ExitStack() as resources:
         private = {**state, "root": origin["root"], "ignore": None, "metadata": origin["metadata"], "managed": dict(origin["managed"])}
         if not first or not state["wait"]:
@@ -617,19 +616,8 @@ def _after(previous, identity, source, prepared, *arguments, derived=False, firs
                 (directory / name).mkdir()
             private.update(root=directory / "upper", lower=origin["root"], work=directory / "work")
         if first and state["wait"]:
-            owner["primer"] = private
-        if derived:
-            index = private["root"] / ".git/index"
-            index.parent.mkdir(parents=True, exist_ok=True)
-            _git(RepoIdentity(CanonicalRoot(str(origin["root"])), identity.key), "read-tree", "--index-output=" + str(index), source,
-                 env={"GIT_INDEX_FILE": str(index), "GIT_ALTERNATE_OBJECT_DIRECTORIES": os.pathsep.join(original for original, _ in arguments[-1])})
-        return _execute_tree(identity, source, (private, frozen), *arguments, restore=first and state["wait"], passing=passing)
-
-
-def _outlived(passing, started: float) -> bool:
-    """A break started at `started` has run past max(20 s, 10x) the passing arm it is compared with."""
-    arm = passing if isinstance(passing, dict) else passing.result() if passing.done() else None
-    return bool(arm) and arm["outcome"] == "passed" and time.monotonic() - started > max(20.0, 10 * arm["timing"]["executionSeconds"])
+            state["primer"] = private
+        return _execute_tree(identity, source, (private, frozen), *arguments, restore=first and state["wait"])
 
 
 class _SessionWatch:
@@ -729,7 +717,7 @@ sys.exit(status)
 
 
 def _execute_case(identity: RepoIdentity, source_tree: str, root: Path,
-                  command: list[str], timeout: float, environment: dict[str, str], cancel, memory: int, objects, *, overlay=None, passing=None) -> JsonObject:
+                  command: list[str], timeout: float, environment: dict[str, str], cancel, memory: int, objects, *, overlay=None) -> JsonObject:
     started = time.perf_counter()
     with tempfile.TemporaryDirectory(prefix="workflow-proof-") as temporary:
         snapshot = RepoIdentity(CanonicalRoot(str(root)), identity.key)
@@ -764,10 +752,9 @@ def _execute_case(identity: RepoIdentity, source_tree: str, root: Path,
         observer = [] if inherited else ["strace", "-f", "--seccomp-bpf", "-qq", "-ttt", "-e", "trace=execve,chdir,fchdir,clone,clone3,fork,vfork",
                     "-e", "status=successful,failed", "-y", "-s", "0", "-o", str(trace)]
         cpu_path = Path(temporary) / "cpu"
-        launched = time.monotonic()  # a break also stops once it outlives its passing arm; the runner polls this every 50 ms
+        launched = time.monotonic()  # the runner polls this every 50 ms
         session = _SessionWatch(trace, offset)
-        stop = SimpleNamespace(is_set=lambda: cancel.is_set() or passing is not None and _outlived(passing, launched)
-                               or time.monotonic() - launched >= (SESSION_SECONDS if session.seen() else timeout))
+        stop = SimpleNamespace(is_set=lambda: cancel.is_set() or time.monotonic() - launched >= (SESSION_SECONDS if session.seen() else timeout))
         raw, code, timed_out = _run([*binding, "--chdir", identity.root, "--", *observer, sys.executable, "-I", "-S", "-c", _CPU_SUPERVISOR, str(cpu_path), str(memory), *actual],
                                     snapshot, max(timeout, SESSION_SECONDS), env=runner_env, cancel=stop)
         cpu = json.loads(cpu_path.read_bytes()) if cpu_path.exists() else [None, None, 0]
@@ -1113,9 +1100,8 @@ def _command_files(identity: RepoIdentity, run: JsonObject) -> set[str]:
     return selected
 
 
-def _maintained_tests(identity: RepoIdentity, batches: list[JsonObject], maintained: list[JsonObject] | None,
-                      before: str, after: str, cached: list[JsonObject], validation: JsonObject | None) -> tuple[list[tuple[JsonObject, JsonObject]], str | None]:
-    """One batch of every recorded case and the replacement's own probe that read a test file it changes: each bound case
+def _maintained_tests(identity: RepoIdentity, batches: list[JsonObject], before: str, after: str, cached: list[JsonObject], validation: JsonObject) -> tuple[list[tuple[JsonObject, JsonObject]], str | None]:
+    """One batch of every recorded case and the cause's own test that read a test file the repair changes: each bound case
     that fails on them with its failing arm, and the refusal when the probe fails or a case does not complete."""
     changed = set(_changed_entries(identity, before, after))
     if not any(is_test_path(path) for path in changed):
@@ -1130,7 +1116,7 @@ def _maintained_tests(identity: RepoIdentity, batches: list[JsonObject], maintai
         return {**run, "probeTree": live_tree, "probeFiles": [path for path in run["probeFiles"] if path in available]}
     refusal = lambda run, delivery: "required surviving named case fails: " + run["command"] + "\n" + str(delivery.get("output") or "")[-800:]
     present = set(_tree_entries(identity, after))
-    probes = [(run, probe) for run in [*batches, *([validation] if validation else [])] if (probe := live(run, after, present))]
+    probes = [(run, probe) for run in [*batches, validation] if (probe := live(run, after, present))]
     failed = []
     for (run, _), compared in zip(probes, _compare_many(identity, after, after, [probe for _, probe in probes], cached) if probes else ()):
         delivery = compared["arms"][-1]
@@ -1140,7 +1126,7 @@ def _maintained_tests(identity: RepoIdentity, batches: list[JsonObject], maintai
             if failed:
                 break
             return [], refusal(run, delivery)
-    # A case the candidate's own test files already fail is not the replacement's break: first in order, it refuses as before.
+    # A case the candidate's own test files already fail is not the repair's break: first in order, it refuses as before.
     present, broken = set(_tree_entries(identity, before)) if failed else set(), []
     for (run, delivery), control in zip(failed, _compare_many(identity, before, before, [live(run, before, present) or dict(run) for run, _ in failed], cached) if failed else ()):
         if control["arms"][-1]["outcome"] == "passed":
@@ -1150,19 +1136,17 @@ def _maintained_tests(identity: RepoIdentity, batches: list[JsonObject], maintai
     return broken, None
 
 
-def _run_change(identity: RepoIdentity, batches: list[JsonObject], change: object, candidate: str,
-                probe: object = None, timeout: float = MAX_CASE_SECONDS, cached: list[JsonObject] | None = None, maintained: list[JsonObject] | None = None,
-                frozen: JsonObject | None = None, cost_recheck: bool = False) -> JsonObject:
-    """Compare a concrete replacement and retain its correctness and cost counterexamples."""
+def _run_change(identity: RepoIdentity, batches: list[JsonObject], change: object, candidate: str, probe: object,
+                timeout: float, cached: list[JsonObject], frozen: JsonObject | None, cost_recheck: bool) -> JsonObject:
+    """A repair with its cause's test: the test fails on the candidate and passes with the repair, and the recorded cases hold."""
     if not isinstance(change, str) or not change.strip():
         return {"kind": "change", "error": "change must be a unified diff"}
     if not batches:
         return {"kind": "change", "error": "no recorded comparison batch to rerun"}
-    cached = list(batches) if cached is None else cached
-    measured = _run_probe(identity, probe, candidate, None, timeout, cached, frozen) if probe is not None else None
-    if cost_recheck and measured is not None:
+    measured = _run_probe(identity, probe, candidate, None, timeout, cached, frozen)
+    if cost_recheck:
         return measured
-    if measured and ("error" in measured or measured["candidate"] == "passed"):
+    if "error" in measured or measured["candidate"] == "passed":
         return {"kind": "change", "error": measured.get("error") or "a cause's test must fail on the reviewed tree and pass with the repair"}
     patch = change.encode("utf-8", "replace") + (b"" if change.endswith("\n") else b"\n")  # unencodable text cannot apply
     try:
@@ -1170,16 +1154,13 @@ def _run_change(identity: RepoIdentity, batches: list[JsonObject], change: objec
         before, after = candidate, changed
     except RuntimeError:
         return {"kind": "change", "error": "change does not apply to the candidate"}
-    cost = None
     maintenance = any(is_test_path(path) for path in _changed_entries(identity, before, after))
-    if probe is not None:
-        if not maintenance and (measured is None or measured.get("candidate") not in {"passed", "failed"}):
-            return {"kind": "change", "error": "replacement probe did not establish a candidate outcome"}
-        if measured and "comparison" in measured:
-            cost = _compare(identity, candidate, after, measured["comparison"], cached)
-        if cost and (not cost["valid"] or not cost.get("sensitive")) and not maintenance:
-            return {"kind": "change", "error": "a cause's test does not pass with the repair", "comparison": cost}
-    broken, error = _maintained_tests(identity, batches, maintained, before, after, cached, measured.get("comparison") if measured else None)
+    if not maintenance and measured["candidate"] != "failed":
+        return {"kind": "change", "error": "a cause's test did not finish on the candidate"}
+    cost = _compare(identity, candidate, after, measured["comparison"], cached)
+    if (not cost["valid"] or not cost.get("sensitive")) and not maintenance:
+        return {"kind": "change", "error": "a cause's test does not pass with the repair", "comparison": cost}
+    broken, error = _maintained_tests(identity, batches, before, after, cached, measured["comparison"])
     if error:
         return {"kind": "change", "error": error}
     if broken:  # recorded like a recorded batch the change fails: not applied, not binding, and naming each bound case it breaks
@@ -1189,7 +1170,7 @@ def _run_change(identity: RepoIdentity, batches: list[JsonObject], change: objec
         return {"kind": "change", "applied": after == candidate, "candidate": "failed",
                 "failure": "the change breaks bound cases: " + "; ".join(", ".join(keys) + " " + command for command, keys in names.items())
                            + "\n" + str(broken[0][1].get("output") or "")[-800:]}
-    failed = []  # one batch; of each replay only the replacement's arm is read, and every recorded batch the change fails is named
+    failed = []  # one batch; of each replay only the repaired arm is read, and every recorded batch the repair fails is named
     for run, replay in zip(batches, _compare_many(identity, after, after, [dict(run) for run in batches], cached)):
         arm = replay["arms"][-1]
         if arm["outcome"] == "failed" and not arm["timedOut"]:
@@ -1209,8 +1190,8 @@ def _run_change(identity: RepoIdentity, batches: list[JsonObject], change: objec
     if broken:
         return {"kind": "change", "applied": after == candidate, "candidate": "failed",
                 "failure": "; ".join(f"recorded batch `{run['command']}` failed with the change applied" for run in broken)}
-    return {"kind": "change", "applied": after == candidate, "candidate": "passed", "tree": after, **({"comparison": cost} if cost else {}),
-                                     **({"selection": "proposer-selected command; exit result checked, source-line reachability and relevance not traced"} if probe is not None else {})}
+    return {"kind": "change", "applied": after == candidate, "candidate": "passed", "tree": after, "comparison": cost,
+                                     "selection": "proposer-selected command; exit result checked, source-line reachability and relevance not traced"}
 
 
 def binds(execution: JsonObject) -> bool:
@@ -1260,7 +1241,7 @@ def execute_findings(identity: RepoIdentity, state: JsonObject, findings: list[J
                      if finding["ref"] not in rejected]
         withdrawn = [{**ref, "execution": {"kind": "claim"}} for ref, target in zip(rejected, targets)
                      if target is not None and all(target is not entry for entry in remaining)]
-    if retained is None and not any("probe" in finding or "change" in finding for finding in findings):
+    if retained is None and not any("probe" in finding for finding in findings):
         return {"measuredTree": candidate, "measuredEvidence": state.get("tddEvidence"),
                 "findings": [{**finding, "execution": {"kind": "claim"}, "material": False} for finding in findings],
                 "reexecuted": withdrawn, "runs": []}
@@ -1288,24 +1269,23 @@ def execute_findings(identity: RepoIdentity, state: JsonObject, findings: list[J
     def run(finding: JsonObject, first: bool) -> JsonObject:
         timeout = next((batch["timeout"] for batch in reversed(current.get("runs") or [])
                         if batch["command"] == (finding.get("probe") or {}).get("command")),
-                       max((batch["timeout"] for batch in batches), default=MAX_CASE_SECONDS) if "change" in finding and "probe" in finding else MAX_CASE_SECONDS)
+                       max((batch["timeout"] for batch in batches), default=MAX_CASE_SECONDS) if "change" in finding else MAX_CASE_SECONDS)
         if finding.get("execution", {}).get("kind") == "cost":
             prior = finding["execution"]["comparison"]
             compared = _compare_many(identity, original, candidate, [prior], cached)[0]
             return {"kind": "cost", "candidate": "failed" if not compared["valid"] or _work_errors(compared) else "passed"}
         frozen = (captured or {}).get((finding.get("probe") or {}).get("command")) if first else None
-        if not first and "probe" in finding:
+        if not first:
             frozen = frozen or recorded(finding) or _probe_capture(identity, finding["probe"], finding["sourceTree"], timeout)
         prior = (finding.get("execution") or {}).get("comparison") or {}
         cost_recheck = not first and bool(prior.get("arms")) and prior["arms"][0]["outcome"] == "failed"
-        return (_run_change(identity, batches, finding["change"], candidate, finding.get("probe"), timeout, cached, maintained, frozen, cost_recheck) if "change" in finding
-                else _run_probe(identity, finding["probe"], candidate, original, timeout, cached, frozen) if "probe" in finding
-                else {"kind": "claim"})
+        return (_run_change(identity, batches, finding["change"], candidate, finding["probe"], timeout, cached, frozen, cost_recheck) if "change" in finding
+                else _run_probe(identity, finding["probe"], candidate, original, timeout, cached, frozen))
     for replacement in (False, True):
         probes = [captured[finding["probe"]["command"]] for finding in findings
-                  if captured and "probe" in finding and ("change" in finding) == replacement]
+                  if captured and ("change" in finding) == replacement]
         probes.extend(recorded(finding) for _, finding in retained
-                      if "probe" in finding and ("change" in finding) == replacement and finding["execution"].get("comparison"))
+                      if ("change" in finding) == replacement and finding["execution"].get("comparison"))
         if probes:
             _compare_many(identity, candidate if replacement else original, candidate, probes, cached, passing_original=not replacement)
     executed = []
@@ -1612,7 +1592,7 @@ def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes:
         runs.append(run)
         return run
     pending, alone = {}, {}
-    def schedule(source, probe, prepared, parent=None, size=None, passing=None):
+    def schedule(source, probe, prepared, size=None):
         files, timeout = _comparison_files(identity, probe), probe["timeout"]
         command, execution, environment = prepared
         if size is not None:
@@ -1626,28 +1606,20 @@ def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes:
         if found is None:
             pending_key = context
             if pending_key not in pending:
-                state, frozen = _prepared_tree(identity, scope, parent or source, tree, files, isolated=size is not None)
-                if parent:  # a break is its parent's warm tree plus the break's changed files
-                    entries = _tree_entries(identity, source)
-                    changes = _changed_entries(identity, parent, source)
-                    state = {**state, "owner": state, "base": {path: value for path, value in state["base"].items() if path not in changes}
-                             | {path: entries[path] for path in changes if path in entries}}
+                state, frozen = _prepared_tree(identity, scope, source, tree, files, isolated=size is not None)
                 if scope["pool"] is None:  # each concurrent case owns one CPU, offset per runner: tools sizing pools to the machine start one worker
                     cpus = sorted(os.sched_getaffinity(0))
                     starts = iter(range(os.getpid(), os.getpid() + 8))  # advanced in C: concurrent initializers cannot collide
                     scope["pool"] = ThreadPoolExecutor(min(len(cpus), 8), initializer=lambda: os.sched_setaffinity(0, [cpus[next(starts) % len(cpus)]]))
                     scope["memory"] = _memory_available() // min(len(cpus), 8)  # and an equal share of the memory available when the pool starts
-                root_key = parent or source
-                previous = scope["first"].get(root_key) if state["wait"] and size is None else None
+                previous = scope["first"].get(source) if state["wait"] and size is None else None
                 _require_overlay(_executable(identity, "bwrap", environment))
                 execute = partial(_after, previous, identity, source, (state, frozen), command, timeout, environment, scope["cancel"],
-                                  derived=bool(parent), passing=passing,
-                                  first=size is None and not parent and root_key not in scope["first"])
+                                  first=size is None and source not in scope["first"])
                 pending[pending_key] = scope["pool"].submit(execute, scope["memory"], tuple(scope["objects"].items()))
-                if not parent:
-                    alone[pending_key] = execute, id(probe)
-                if not parent and size is None:
-                    scope["first"].setdefault(root_key, pending[pending_key])
+                alone[pending_key] = execute, id(probe)
+                if size is None:
+                    scope["first"].setdefault(source, pending[pending_key])
             found = pending[pending_key]
         return (source, context, found)
     plans, contexts = [], {}
@@ -1670,11 +1642,11 @@ def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes:
     for arm in cached_arms(identity, workflows[identity.key], contexts, keys):
         cache.setdefault(arm["contextKey"], {}).setdefault(arm["key"], arm)  # a result the caller recorded later stands
     jobs = []
-    def selections(first, last, probe, prepared, parent=None):
+    def selections(first, last, probe, prepared):
         sizes = _growth(prepared[1])
         return ([schedule(source, probe, prepared, size=size)
                  for source, size in ((first, sizes[1]), (first, sizes[0]), (last, sizes[0]), (last, sizes[1]))]
-                if sizes else [(good := schedule(first, probe, prepared)), schedule(last, probe, prepared, parent, passing=good[2] if parent else None)])
+                if sizes else [schedule(first, probe, prepared), schedule(last, probe, prepared)])
     for probe, tree, prepared in plans:
         execution = prepared[1]
         jobs.append((probe, tree, execution, selections(original, candidate, probe, prepared), original, candidate))
@@ -1736,7 +1708,7 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None, emit=
     class Forms(argparse.HelpFormatter):  # an option whose metavar is one string shows it as the form it takes
         def _format_args(self, action, default_metavar):
             return action.metavar if isinstance(action.metavar, str) and action.nargs == "+" else super()._format_args(action, default_metavar)
-    parser = argparse.ArgumentParser(prog="workflow tdd", description="Compare and record probes or replacements; authors record verdicts from their checkpoint command",
+    parser = argparse.ArgumentParser(prog="workflow tdd", description="Compare and record probes; the reviewer records its verdict from its checkpoint command",
                                      epilog=binds.__doc__, formatter_class=Forms)
     parser.add_argument("--repo", "--cwd", dest="repo", default=".")
     parser.add_argument("--slug")

@@ -65,7 +65,6 @@ The wrapper supplies and cleans an original snapshot at passStartOid and scratch
 This is trusted access;
 preflight skips the candidate-staleness check, which neither restores nor confines writes.
 
-Findings follow the workflow's [executable evidence and acceptance order](../repo-production-workflow/SKILL.md#10-delegate-code-review).
 The wrapper records the answer as one verdict: the workflow runs its causes' tests and the recorded cases, and a failing verdict goes back to the same session. `context-mismatch` is reserved for candidate/projection identity mismatch;
 it advances nothing. State never authorizes Git.
 
