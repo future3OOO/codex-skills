@@ -108,7 +108,7 @@ def advisor_envelope(
                                   or not all(_text(v) for v in prior.values())):
             raise ValueError("priorFinding requires evidenceId and id")
         # a verdict's finding binds through its cause, or stays open with the user's decision; a preflight finding says itself
-        finding = {"id": identifier, "claim": item["claim"], "material": bool(item.get("decision")) if stage != "preflight" else item.get("material") is True,
+        finding = {"id": identifier, "claim": item["claim"], "material": _text(item.get("decision")) if stage != "preflight" else item.get("material") is True,
                    "kind": kind, **({"priorFinding": prior} if prior is not None else {}),
                    **{key: item[key] for key in ("decides", "quote", "decision") if stage != "preflight" and _text(item.get(key))}}
         typed.append(finding)
@@ -117,7 +117,8 @@ def advisor_envelope(
     causes, repair = value.get("causes", []), value.get("repair")
     if not isinstance(causes, list) or not all(isinstance(cause, dict) and _text(cause.get("id")) and _text(cause.get("test"))
                                                and isinstance(cause.get("findings"), list) and all(_text(name) for name in cause["findings"])
-                                               and isinstance(cause.get("retires", []), list) for cause in causes) \
+                                               and isinstance(cause.get("retires", []), list) and all(_text(value) or isinstance(value, list) and all(map(_text, value))
+                                                                                                      for value in cause.get("retires", [])) for cause in causes) \
             or len(identifiers | {cause["id"] for cause in causes}) != len(identifiers) + len(causes):
         raise ValueError("each cause needs its own id, its findings' ids, its test command and retires as a list")
     if repair is not None and not _text(repair):
