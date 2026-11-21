@@ -2,9 +2,7 @@
 """PostToolUse: invalidate review readiness, then return cheap local feedback.
 
 Per-edit work is deliberately limited to the freshness/invalidation transition
-and genuinely local signals (changed-file ruff lint and, in an active pass, the
-issue #212 map-ownership advisory), each emitted only when it changed for the
-session. Full quality-gate analysis and its warnings surface at typed
+and changed-file ruff lint, emitted only when it changed for the session. Full quality-gate analysis and its warnings surface at typed
 quality-gate verify (issue #182 — per-edit gate runs were measured as ~90%
 redundant context with zero acted-on repetitions).
 """
