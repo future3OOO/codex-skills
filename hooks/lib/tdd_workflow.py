@@ -1967,9 +1967,10 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None, emit=
     # Retained first proofs: all of them without named cases, beside named cases those without accepted proof; none beside
     # the capture this call makes of its command.
     selected_indexes = {probe.get("runIndex") for _, probe in selected}
+    replacing = {(probe.get("behaviorId"), probe["sourceCommand"]) for _, probe in selected if "runIndex" not in probe and not probe["support"]}  # a capture naming support replaces nothing
     selected.extend((None, dict(support_overrides.get(index, runs[index])))
                     for frozen in evaluation.values() if behavior_map.case_key(frozen["id"], runs[frozen["runIndex"]]) not in retired and (not args.behavior_id or frozen["id"] in args.behavior_id)
-                    and frozen["id"] not in rejected and (index := frozen["runIndex"]) not in selected_indexes and (frozen["id"], runs[index].get("sourceCommand", runs[index]["command"])) not in again
+                    and frozen["id"] not in rejected and (index := frozen["runIndex"]) not in selected_indexes and (frozen["id"], runs[index].get("sourceCommand", runs[index]["command"])) not in again | replacing
                     and (not specs or behavior_map._case_question({**frozen, "comparison": runs[index]})))
     def frozen_names():  # the retained first proofs by case key, as they stand: a case proved in this call is retained by it
         return {behavior_map.case_key(frozen["id"], runs[frozen["runIndex"]]): name for name, frozen in evaluation.items()} if args.retire else {}
@@ -2016,7 +2017,9 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None, emit=
     for (entry, _), run in zip(selected, compared):
         if entry is not None:
             prior = entry.get("comparison") or {}
-            references = {**(prior.get("caseRuns") or {case["comparison"]["command"]: case["comparison"]["runIndex"] for case in behavior_map.current_cases([entry], runs)}), run["command"]: run["runIndex"]}
+            written = run.get("sourceCommand", run["command"])  # a recapture replaces the binding of the command as written, whatever its frozen copy
+            references = {**{command: index for command, index in (prior.get("caseRuns") or {case["comparison"]["command"]: case["comparison"]["runIndex"] for case in behavior_map.current_cases([entry], runs)}).items()
+                             if runs[index].get("sourceCommand", runs[index]["command"]) != written}, run["command"]: run["runIndex"]}
             if prior.get("caseRuns") != references or any(prior.get(key) != run.get(key) for key in ("runIndex", "candidateKey", "sensitive")) or prior.get("obligation") != behavior_map.obligation(entry):
                 entry["comparison"] = {**run, "obligation": behavior_map.obligation(entry), "caseRuns": references}
             if (specs or drafted) and not behavior_map._case_question(entry):  # a recording that has not proved its own item takes nothing
@@ -2052,11 +2055,13 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None, emit=
         entry, first = next((entry for entry in items if entry["id"] == identifier), None), evaluation.get(held.get(key))
         withdrawn = (first and entry and behavior_map.obligation(first)[1:] != behavior_map.obligation(entry)[1:]
                      and run["arms"][-1]["outcome"] != "passed")
+        others = [case for case in behavior_map.current_cases([entry] if entry else [], runs) if behavior_map.case_key(identifier, case["comparison"]) != key]
         kept_proof = (entry is not None and entry.get("kind") == "preservation"
-                      and not (identifier in proving and (behavior_map.original_outcome(run) != "passed" or withdrawn)))
+                      and not (identifier in proving and (behavior_map.original_outcome(run) != "passed" or withdrawn))
+                      and not any(case["comparison"].get("sourceCommand", case["comparison"]["command"]) == run.get("sourceCommand", run["command"]) and not behavior_map._case_question(case)
+                                  for case in others if not case["comparison"].get("support")))  # a proved recapture of its command has replaced it; one naming support replaces nothing
         if entry is not None and (proof := entry.get("comparison")):
-            kept = {case["comparison"]["command"]: case["comparison"]["runIndex"] for case in behavior_map.current_cases([entry], runs)
-                    if behavior_map.case_key(identifier, case["comparison"]) != key}
+            kept = {case["comparison"]["command"]: case["comparison"]["runIndex"] for case in others}
             entry.pop("comparison")  # left empty, current_cases would rebuild the binding from run history
             if kept:
                 entry["comparison"] = {**runs[max(kept.values())], "obligation": proof["obligation"], "caseRuns": kept}
