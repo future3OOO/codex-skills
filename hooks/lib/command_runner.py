@@ -158,8 +158,8 @@ def record(path: str, before: str, after: str) -> None:
     """Write `after`, what a delivered reply gave its reader. A reply recorded since `before` was read keeps all this one did not change."""
     if before != (Path(path).read_text(encoding="utf-8", errors="replace") if os.path.exists(path) else ""):
         kept, old = read_json(Path(path)) or {}, json.loads(before or "{}")
-        after = json.dumps({key: kept.get(key, value) if old.get(key, type(value)()) == value else {**kept.get(key, {}), **{name: entry for name, entry in value.items() if old.get(key, {}).get(name) != entry}}
-                            if isinstance(value, dict) else value for key, value in json.loads(after).items()}, sort_keys=True)
+        after = json.dumps({key: kept.get(key, value) if old.get(key, type(value)()) == value else value if not isinstance(value, dict) else {**{name: entry for name, entry in kept.get(key, {}).items() if name in value or name not in old.get(key, {})},
+                            **{name: entry for name, entry in value.items() if old.get(key, {}).get(name) != entry}} for key, value in json.loads(after).items()}, sort_keys=True)
     Path(path).write_text(after, encoding="utf-8")
 
 
