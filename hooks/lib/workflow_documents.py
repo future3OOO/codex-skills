@@ -103,6 +103,8 @@ def advisor_envelope(
         if not isinstance(kind, str) or kind not in {"behavioral", "nonbehavioral"}:
             kind = "behavioral"
         identifiers.add(str(identifier))
+        if stage != "preflight" and any(key in item and not _text(item[key]) for key in ("decides", "quote", "decision")):
+            raise ValueError(f"advisor finding {identifier}: decides, quote and decision are text when given")
         prior = item.get("priorFinding")
         if prior is not None and (not isinstance(prior, dict) or set(prior) != {"evidenceId", "id"}
                                   or not all(_text(v) for v in prior.values())):
@@ -110,7 +112,7 @@ def advisor_envelope(
         # a verdict's finding binds through its cause, or stays open with the user's decision; a preflight finding says itself
         finding = {"id": identifier, "claim": item["claim"], "material": _text(item.get("decision")) if stage != "preflight" else item.get("material") is True,
                    "kind": kind, **({"priorFinding": prior} if prior is not None else {}),
-                   **{key: item[key] for key in ("decides", "quote", "decision") if stage != "preflight" and _text(item.get(key))}}
+                   **{key: item[key] for key in ("decides", "quote", "decision") if stage != "preflight" and key in item}}
         typed.append(finding)
     if verdict in {"approved", "changes-required"} and ((verdict == "approved") == any(item["material"] for item in typed)):
         raise ValueError("advisor envelope verdict is incompatible with finding materiality")
