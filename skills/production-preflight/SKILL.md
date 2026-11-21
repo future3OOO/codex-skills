@@ -63,8 +63,7 @@ predicate that decides an outcome:
    dependent code.
 
 State the reachable values and decision rules concisely in this contract and the
-existing `behaviorMap`: competing readings go in the owning item's `interpretations`,
-and concrete discriminating inputs in its `boundaryInputs`. Investigation is complete when each
+existing `behaviorMap`. Investigation is complete when each
 decision's meaning is established over its reachable values or its uncertainty
 is explicit. Unambiguous predicates need no additional fields or inventory.
 
@@ -84,7 +83,7 @@ removes. New terms use the existing owner's result; use request-grounded propert
 only when no owner exists. A round-trip must also establish the requested effect.
 The advisor's deciding work and runtime assertions supplement functional proof.
 
-Describe concrete inputs and outcomes. Name the required cases, existing or to be written; recording preflight runs nothing.
+Describe concrete inputs and outcomes. Name each item's test, existing or to be written; recording preflight runs nothing.
 
 Remove every element whose deletion preserves required behavior and distinct necessary proof without increasing whole-system cost. Use real collaborators and observe results and state effects.
 

@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
-import io
 import os
 import re
 import shlex
@@ -18,7 +18,7 @@ from ._workflow_db import CHECK_ONLY, LedgerError, _canonical, history, read_act
 from .command_runner import emit_json as _emit_json, print_output as _print_output, run as _run, run_entry as _run_entry
 from .repo_identity import RepoIdentity, RepoIdentityError, resolve_repo_identity
 from .state_prune import prune
-from .state_store import _comparison_scope, _active_candidate_tree, analysis_unchanged, codex_home, repo_state_dir, state_root, tree_manifest, utc_timestamp
+from .state_store import _comparison_scope, _active_candidate_tree, analysis_unchanged, codex_home, repo_state_dir, secure_dir, state_root, tree_manifest, utc_timestamp
 from .workflow_documents import (
     RECORD_SHAPES,
     advisor_envelope,
@@ -118,7 +118,7 @@ def parser() -> argparse.ArgumentParser:
     command = _repo(commands.add_parser("pause", help="record an honest wait"), instance=True)
     command.add_argument("--reason", required=True)
     commands.add_parser("abandon", help="end the active pass the user drops, once they confirm when the workflow tool asks; its cwd is the repo").set_defaults(repo=".")
-    command = _repo(commands.add_parser("checkpoint", help="query advisor readiness without mutation"))
+    command = _repo(commands.add_parser("checkpoint", help="query advisor readiness"))
     command.add_argument("--phase", required=True)
     command.add_argument("--reconsult", action="store_true", help="resume review of a revised preflight draft")
     command.add_argument("--channel-dir", help="write the advisor evidence channels here and list them in order")
@@ -216,13 +216,11 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity, *, review: bool = 
     cases = {}
     if not review:
         from .tdd_workflow import _run_tdd
-        with redirect_stdout(io.StringIO()) as receipt:
-            result = _run_tdd(["--repo", str(identity.root), "--slug", slug, "--workflow-id", workflow_id])
-        replay = json.loads(receipt.getvalue())
-        if result or replay["open"]:  # the cases stop the call: their receipt is its reply
-            print(receipt.getvalue(), end="")
+        result = _run_tdd(["--repo", str(identity.root), "--slug", slug, "--workflow-id", workflow_id], emit=lambda *reply, kept=(replies := []): kept.extend(reply))
+        if result or replies[0]["open"]:  # the cases stop the call: their receipt is its reply
+            _emit_json(*replies)
             return result & 2 if continuation else 2
-        cases = {key: replay[key] for key in ("cases", "otherCases")}
+        cases = {key: replies[0][key] for key in ("cases", "otherCases")}
         if references := refresh_context(identity):
             cases["callers"] = references
         state = bound_state(identity, slug, workflow_id)
@@ -375,9 +373,9 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
     state = (_bound_instance_state(read_active(identity), args.slug, args.workflow_id) if args.kind == "advisor-result"
              else bound_state(identity, args.slug, args.workflow_id))
     slug, workflow_id = str(state["slug"]), str(state["workflowId"])
-    def emit(receipt: dict[str, object]) -> None:  # a rolled-back --check names none of its rows
+    def emit(receipt: dict[str, object], given: tuple[str, str, str] | None = None) -> None:  # a rolled-back --check names none of its rows
         _emit_json({key: value for key, value in receipt.items() if key not in {"evidenceId", "summaryId"}}
-                   | {"checked": True} if args.check else receipt)
+                   | {"checked": True} if args.check else receipt, given)
     if args.kind == "preflight":
         intake = evidence_document(identity, (state.get("advisorPreflight") or {}).get("intakeEvidence")) or {}
         document = preflight_document(args.input) if args.input is not None else intake.get("preflightDraft")
@@ -399,7 +397,7 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
         return 0
     if args.kind == "tdd-map":
         from .tdd_workflow import map_update
-        emit(map_update(identity, state, _document(args, "TDD map update")))
+        emit(*map_update(identity, state, _document(args, "TDD map update")))
         return 0
     candidate = _active_candidate_tree(identity)
     if args.input == "-" and args.design_declaration == "-":
@@ -430,12 +428,15 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
     # The lead's draft; an approving answer's `draft` changes it, whose added items stay until explicitly rejected.
     submitted = preflight_document(args.preflight_file) if args.preflight_file else None
     changes = intake.pop("draft", None) if intake else None
+    draft = finalised_draft(submitted, changes) if submitted and changes is not None else submitted
+    if draft:  # the submitted file itself can first be declared with this answer
+        from .tdd_workflow import unstartable
+        unstartable(identity, draft["behaviorMap"])
     state = record_advisor_result(
         identity, slug, workflow_id, args.stage, args.source, verdict, reason=args.reason,
         design=design_declaration(args.design_declaration) if args.design_declaration else None,
         intake=intake, expected_candidate_tree=expected or candidate, execution=execution,
-        preflight_draft=finalised_draft(submitted, changes) if submitted and changes is not None else submitted,
-        submitted_draft=submitted if changes is not None else None)
+        preflight_draft=draft, submitted_draft=submitted if changes is not None else None)
     emit(_receipt(state, identity, obligations=False))
     return 0
 
@@ -492,14 +493,18 @@ def _dispatch(args: argparse.Namespace) -> int:
     elif args.command == "abandon":  # the workflow tool asks the user and abandons in its own process; a shell call is refused
         abandon(identity, None)
     elif args.command == "checkpoint":
+        if draft := preflight_document(args.preflight_file) if args.preflight_file else None:  # the lead's declarations are judged where it submits them
+            from .tdd_workflow import unstartable
+            unstartable(identity, draft["behaviorMap"])
         if args.channel_dir:  # a consult is about to read the projection
             for line in refresh_context(identity):
                 print(line, file=sys.stderr)
             if args.phase != "preflight-advice":
                 with redirect_stdout(sys.stderr):
                     _verify(parser().parse_args(["verify", "--repo", str(identity.root)]), identity, review=True)
-        _emit_json(checkpoint(identity, args.phase, reconsult=args.reconsult, channel_dir=args.channel_dir,
-                              preflight_draft=preflight_document(args.preflight_file) if args.preflight_file else None))
+        result = checkpoint(identity, args.phase, reconsult=args.reconsult, channel_dir=args.channel_dir, preflight_draft=draft)
+        marker = args.phase == "code-review" and (reader := os.environ.get("CODEX_THREAD_ID")) and secure_dir(Path(result["scratchPath"]).parent) / ("given-rule-" + hashlib.sha256(reader.encode()).hexdigest())
+        _emit_json(result, (str(marker), "", "") if marker else None)
     elif args.command == "complete":
         state = complete(identity, slug=args.slug, workflow_id=args.workflow_id, expected_candidate_tree=_active_candidate_tree(identity))
         rejections = {"finalReportBeginsWith": state["rejections"]} if state.get("rejections") else {}

@@ -135,9 +135,17 @@ DESIGN_FILE_SHAPE = (
     '{"schemaVersion":1,"status":"present","sha256":"<64 hex>"} or '
     '{"schemaVersion":1,"status":"absent","reason":"..."}'
 )
-ITEM_SHAPE = ('{"id":"BM_X","kind":"conformance|contract|preservation","basis":"original request or preservation",'
-              '"behavior":"...","seam":"...","expected":"...","boundaryInputs":["concrete input"],"cases":["COMMAND"],'
+ITEM_SHAPE = ('{"id":"BM_X","kind":"conformance|contract|preservation","basis":"request words or preservation, deciding each input",'
+              '"behavior":"the property","seam":"...","expected":"...",'
+              '"boundaryInputs":["the bounds, and what a cut leaves out"],"cases":["COMMAND"],'
               '"interpretations":["reading a","reading b"],"interpretation":"...","authority":"..."}')
+# The one rule for a check, given to each role that adds one where it first meets it: the lead with the draft's shape, an
+# advisor in its consult prompt, the reviewer in its checkpoint.
+CASE_RULE = ("Before coding, state the property, bounds and what decides each input: the request's words, the original's result on the pass-start tree, "
+             "a fresh direct run or a relation between two runs; never the changed code's output. Per kind, one COMMAND: a plain loop in one script, "
+             "no testing library, through the narrowest production interface owning the property. Run all inputs smallest first; only if too many to list, "
+             "run required inputs plus a seeded random sample. Print how many ran and the smallest failing input found. A reported input in the family "
+             "joins its item's loop, extending bounds if needed. One property failure, one change at its source, never code per input. One input keeps one case.")
 ADVISOR_SHAPES = {
     "preflight": '{"schemaVersion":1,"findings":[{"id":"SPEC-1","claim":"...","material":true}],"verdict":"approved|changes-required"}',
     "final": '{"schemaVersion":1,"findings":[{"id":"SPEC-1","claim":"report line"}],"verdict":"commit-ready|fix-before-commit|context-mismatch"}',

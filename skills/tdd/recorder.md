@@ -1,7 +1,7 @@
 # Record a case
 
-List each case's command under its map item's `cases` in the preflight draft: recording the approved
-preflight runs nothing; a bare `tdd` captures and runs them. Submit later cases in one workflow TDD call.
+A map item's `cases` in the preflight draft holds its test's command: recording the approved
+preflight runs nothing; a bare `tdd` captures and runs it. Submit later cases in one workflow TDD call.
 The submitted command identifies the case; frozen source records its version. The probe asserts its required
 outcome and exits non-zero when the assertion fails. Output is diagnostic only;
 printing a value or `name: result` does not assert it.
@@ -39,7 +39,7 @@ that capture's files; the finding settles at `verify` or `complete` when all its
 
 ## Behavior Map
 
-The map holds required outcomes and concrete input context. `boundaryInputs` is
+The map holds required outcomes and the bounds of their inputs. `boundaryInputs` is
 data; it neither binds nor starts a command. Only an actual captured execution
 creates a case binding. Replays use those captured cases and retained first proof,
 not proposed commands or test names. An item without a captured case stays pending.
@@ -60,7 +60,6 @@ requirement and affected coverage still come from the request and original code;
 no exit code can authorize an omitted responsibility or a weaker assertion.
 The existing reviewer judges whether a failure came from the claimed operation,
 whether the case actually ran, and whether its assertions establish the promise.
-Reuse the original defect's failure as sensitivity proof.
 
 ## Replay and continuation
 
