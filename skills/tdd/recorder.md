@@ -70,6 +70,6 @@ check, including after map narrowing and finding resolution.
 The first proved evaluation stays frozen until a proved recapture of its command, as written,
 replaces it, along with captures held by map items no longer bound to the command and a retired
 kept-behaviour copy of that command; a
-kept-behavior recapture that names a pass-start test file with `--support` replaces nothing, and an attempted
+recapture that names a pass-start test file with `--support` replaces nothing, and an attempted
 comparison freezes nothing. User scope requiring a new contract starts a
 new pass. Keep scratch resources outside production and workflow state.
