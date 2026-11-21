@@ -9,12 +9,14 @@ import sys
 import tempfile
 import threading
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
+from pathlib import Path
 
 from .repo_identity import RepoIdentity
-from .state_store import utc_timestamp
+from .state_store import _flock, read_json, utc_timestamp
 
 MAX_CAPTURE = 16000
+HELD = os.environ.pop("CODEX_WORKFLOW_HELD", None)  # where the tool relaying this call takes what its reply gives; nothing this call starts inherits it
 TERM_GRACE_SECONDS = 0.2
 KILL_GRACE_SECONDS = 0.2
 GROUP_POLL_SECONDS = 0.05
@@ -138,25 +140,35 @@ def run_entry(raw: bytes, exit_code: int, timed_out: bool, **fields: object) -> 
     }
 
 
-def emit_json(value: object, *, sort_keys: bool = True) -> None:
+def emit_json(value: object, given: tuple[str, str, str] | None = None, *, sort_keys: bool = True, send=None) -> None:
+    """Choose and record at the final write. Only a relay's pending first package needs that choice handed along."""
+    marker = given and not given[2] and Path(given[0])
+    with _flock(Path(f"{marker}.lock")) if marker and not HELD and not marker.exists() else nullcontext():
+        if marker and marker.exists():
+            value.pop("caseRule")
+            given = None
+        if marker and given and HELD:
+            Path(HELD).write_text(json.dumps((value, given)), encoding="utf-8")
+            return
+        remember = given and (lambda: Path(HELD).write_text(json.dumps((None, given)), encoding="utf-8") if HELD else marker.touch() if marker else record(*given))
+        (send or print_output)("" if send and value is None else json.dumps(value, sort_keys=sort_keys) + "\n", remember)
+
+
+def record(path: str, before: str, after: str) -> None:
+    """Write `after`, what a delivered reply gave its reader. A reply recorded since `before` was read keeps all this one did not change."""
+    if before != (Path(path).read_text(encoding="utf-8", errors="replace") if os.path.exists(path) else ""):
+        kept, old = read_json(Path(path)) or {}, json.loads(before or "{}")
+        after = json.dumps({key: kept.get(key, value) if old.get(key, type(value)()) == value else {**kept.get(key, {}), **{name: entry for name, entry in value.items() if old.get(key, {}).get(name) != entry}}
+                            if isinstance(value, dict) else value for key, value in json.loads(after).items()}, sort_keys=True)
+    Path(path).write_text(after, encoding="utf-8")
+
+
+def print_output(raw: str | bytes, commit=None) -> None:
+    if not (text := raw if isinstance(raw, str) else _tail(raw)): return
     try:
-        print(json.dumps(value, sort_keys=sort_keys), flush=True)
+        print(text, end="" if text.endswith("\n") else "\n", flush=isinstance(raw, str))
     except OSError:
-        mute_stdout()
-
-
-def mute_stdout() -> None:
-    descriptor = os.open(os.devnull, os.O_WRONLY)
-    try:
-        os.dup2(descriptor, sys.stdout.fileno())
-    finally:
-        os.close(descriptor)
-
-
-def print_output(raw: bytes) -> None:
-    output = _tail(raw)
-    if output:
-        try:
-            print(output, end="" if output.endswith("\n") else "\n")
-        except OSError:
-            mute_stdout()
+        with open(os.devnull, "wb") as sink:
+            os.dup2(sink.fileno(), sys.stdout.fileno())
+    else:
+        if commit: commit()

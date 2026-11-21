@@ -1378,10 +1378,6 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
             validate_design_declaration(evidence_document(identity, design_evidence_id))
         except ValueError as exc:
             missing.append(str(exc))
-    from .tdd_workflow import PROBES, current_map
-    # The map shows each recorded result; freshness is judged once, by the readiness read_workflow derived in this scope.
-    items, document = current_map(identity, state, fresh=False)
-    items = items or []
     readiness = None
     if phase == "final-review":
         pending = [] if state.get("nextAction") == "re-consult-final-review" else (readiness := _readiness_lines(identity, state))["open"]
@@ -1411,11 +1407,6 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
     }
     if phase == "code-review":
         result.update(review_commands(identity, state, candidate))
-        if reader := os.environ.get("CODEX_THREAD_ID"):  # a reviewer that names its context is given the rule once a pass
-            try:
-                os.makedirs(Path(result["scratchPath"]).parent / ("given-rule-" + hashlib.sha256(reader.encode()).hexdigest()))
-            except FileExistsError:
-                del result["caseRule"]
     else:
         shape = json.loads(ADVISOR_SHAPES["preflight" if phase == "preflight-advice" else "final"])
         if reconsult:  # the second consultation completes the draft in its answer
@@ -1426,6 +1417,10 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
         result["evidenceCommand"] = shlex.join([*WORKFLOW, "evidence", "--repo", identity.root, "--evidence-id", state["tddEvidence"]])
     if channel_dir is None:
         return result
+    from .tdd_workflow import PROBES, current_map
+    # The map shows each recorded result; freshness is judged once, by the readiness read_workflow derived in this scope.
+    items, document = current_map(identity, state, fresh=False)
+    items = items or []
     ledger = _finding_ledger(identity, state)
     contract = ((evidence_document(identity, state.get("preflightEvidence")) or {}).get("document") or {}).get("authoritativeContract")
     entries = _review_entries(items, rejections(state, "item"))
@@ -1678,7 +1673,7 @@ def _readiness_lines(identity: RepoIdentity, state: JsonObject, items: list[Json
     items, judged, current = held[key]
     evaluation, observations = ([{**entry, "comparison": dict(entry["comparison"])} for entry in group] for group in judged)
     for entry in (*observations, *evaluation):
-        if behavior_map._case_question(entry):
+        if any(reason.endswith(entry["comparison"].get("command") or "\0") for reason in behavior_map._case_question(entry)):  # a reason that shows it
             entry["comparison"]["command"] = (entry.get("caseKey") or behavior_map.case_key(entry["id"], entry["comparison"])) if keys else shown(identity, state, entry["comparison"])
     cases = behavior_map.open_obligations(items, evaluation, observations, keys)
     return {"open": cases, "reviewCurrent": current, "openCount": len(cases),
