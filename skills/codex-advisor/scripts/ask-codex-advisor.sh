@@ -206,6 +206,7 @@ if [[ -n "$phase" ]]; then
     IFS= read -r -d '' candidate
     IFS= read -r -d '' reviewed_evidence
     IFS= read -r -d '' scratch_root
+    IFS= read -r -d '' judged_tree
   } < <(python3 - "$checkpoint_file" "$channels_prompt" "$phase" <<'PY'
 import hashlib, json, sys
 checkpoint_path, prompt_path, phase = sys.argv[1:]
@@ -234,6 +235,7 @@ values = (
     "yes" if state.get("ready") else "no", ",".join(state.get("missing") or []),
     state.get("nextAction") or "", state.get("sessionMode") or "",
     state.get("passStartOid") or "", state.get("activeCandidateTree") or "", state.get("tddEvidence") or "", state.get("scratchPath") or "",
+    state.get("judgedTree") or "",
 )
 for value in values:
     sys.stdout.write(str(value) + "\0")
@@ -290,7 +292,7 @@ else
 fi
 
 provider_unset=()
-provider_env=(CODEX_ADVISOR_ACTIVE=1 ADVISOR_ACTIVE=1 ADVISOR_PHASE="$phase")
+provider_env=(CODEX_ADVISOR_ACTIVE=1 ADVISOR_ACTIVE=1)
 model="$codex_model"
 if [[ "$provider" == "claude" ]]; then
   block=$(sed -n '/^alias claudex=/,/^claude --model/p' "$HOME/.bashrc" 2>/dev/null || :)
@@ -337,11 +339,16 @@ Compare designs at fixed required behaviour. For preservation use the original r
 Model calls, scans, copies, retained resources, their multipliers, real frequency and unchanged-input repetition. Attribute dominant work; reducing another term does not save it. Propose the cheaper design and bounded cases for the lead to record. Each case counts the material work inside the real operation, compares equivalent correct operations and asserts the saving against the original or an executed reference. Printed timings, growth allowances and unchanged counts prove no saving.
 In behavior and expected fields fix workload, reference, repetitions, runtime budget, tolerance and inclusive boundary; assert runtime and material memory separately. Grow all deciding inputs across at least two sizes up to production size. For new behavior use an existing owner or engine or justify a resource target, never invent an original ratio. Timing noise cannot refute work saved. Functional-only changes still require efficiency; cost evidence never replaces functional proof.
 Keep an item, case or planned line only if deletion breaks required behavior, destroys distinct necessary proof or raises whole-system cost. An approved draft cannot authorize changing behavior the request keeps. Return only the checkpoint JSON; approve only when no material gap remains. Findings carry the investigation and deciding evidence.' ;;
-  final-review)
+  final-review)  # a resumed session is not sent a section it holds unchanged: only this consult's own section differs
     phase_prompt='Checkpoint Interface: final-review
-At fixed required behavior find every introduced regression and the cheapest correct design across edited code and the whole requested path, existing machinery included. Prove savings and preservation with a concrete replacement. Prefer net reduction; justify growth by measured lower cost. Trace related failures to their shared cause before another repair. Derive remaining material work inside the replacement and collaborators, not wrapper counts. A cheaper correct design blocks approval. Check surviving outcomes at original decision sites beyond the green cases.
-The recorder freezes and compares probes and diffs, records immediately and returns binding results; it alone runs and reuses comparisons. For new behavior the existing owner or engine decides; use request-grounded properties only without an owner. Reuse project runners, fixtures and supported matrix. Retire a disproved frozen expectation with --retire ITEM COMMAND or caseKey even if your probe passes; judge remaining obligations of shared logic. Use the original overlay for unanswered questions.
-Keep frozen proof and required surviving checks when reducing tests or support. A recorded regression stands unless the request changes the behavior: the original decides what a preservation sentence keeps. Record every material functional and cost finding through tdd before one verdict, one per owning invariant; on recheck raise only repair-introduced issues. Return only checkpoint JSON: verdict and non-executable report lines. Commit-ready requires reviewed behavior and coverage; context-mismatch only for mismatched supplied source/projection identities.' ;;
+At fixed required behaviour find every regression and the cheapest correct design across the edited code and the whole requested path, existing machinery included, deriving remaining material work inside the repair and collaborators, not wrapper counts; prefer net reduction. Check surviving outcomes at original decision sites beyond the green cases and judge remaining obligations of shared logic; reuse project runners, fixtures and supported matrix. A demonstrated cheaper design that preserves required behaviour on the affected path blocks commit-ready even if the candidate beats the original. The original decides what a preservation sentence keeps; for new behaviour the existing owner or engine decides, the request only where none exists. Probe in scratch; use the original overlay.
+Before proposing code, establish which failures share a cause, where it starts and what else it breaks. Repair each cause in the design that produces it: deepen the code that already owns the behaviour (codebase-design), never rebuild beside it what it already decides, never add code per finding; growth needs a cause test it makes pass or measured less work.
+A finding names what decides its input under the case rule; one nothing independent decides is a report line, unless it needs the user'"'"'s decision: then give the evidence and the exact decision. Every other finding sits under one cause, whose test, one command under the case rule, reports each finding by id on its own input and one no finding named, failing on the reviewed tree and passing with the repair. One diff outside the checkout repairs every cause; retire a frozen case a cause disproves. The workflow runs each test and recorded case and returns a failing verdict to you. All tests together run within a minute; say what a cut bound leaves out. commit-ready only once every material obligation is settled; context-mismatch only for mismatched supplied identities.'
+    if [[ -n "$judged_tree" ]]; then
+      phase_prompt+=$'\n\n=== This consult: a return review\nJudge the open findings, the repair as applied and its effects across callers, from the diff since your tested tree and the lead\'s evidence in the ledger. Reuse current proof.'
+    else
+      phase_prompt+=$'\n\n=== This consult: the first final review\nJudge the whole change.'
+    fi ;;
 esac
 if [[ "$phase" == preflight-advice ]]; then
   if (( ${#reconsult_args[@]} == 0 )); then
@@ -353,13 +360,6 @@ Use your investigation and the lead's checked corrections; raise only what the l
 Finalise the draft with required outcomes in your answer's draft: the contract text when it changes, each item you add or change by id with only the changed fields (null removes an optional one), and the ids you remove. Add any proposed case the lead left out as you proposed it, without new probes; add each designed removal of a measured cost as an item, and state your model, chosen design and deciding evidence in your findings: the lead builds that design, performance improvements included, in its first implementation.
 Return approved: you own every remaining change, so this consultation has no changes-required verdict."
   fi
-elif [[ "$phase" == final-review ]]; then
-  if [[ "$provider" == codex ]]; then  # a tool call returns when the recording does; a codex shell call hands back to be polled
-    phase_prompt+=$'\n'"Record each finding with the workflow tool's run, cwd $repo_root and args $(python3 -c 'import json, sys; print(json.dumps(sys.argv[1:]))' tdd --slug "$producer_slug" --workflow-id "$active_wid" --as final --report 'OWNING INVARIANT' --case - COMMAND), adding \"--change\", \"REPLACEMENT_DIFF\", \"--change\", \"probe=BREAK_DIFF\" or \"--retire\", \"ITEM\", \"COMMAND\"; the call returns its result."
-  else
-    phase_prompt+=$'\n'"Recording command, which returns its result: $(printf '%q ' python3 "$workflow_cli" tdd --repo "$repo_root" --slug "$producer_slug" --workflow-id "$active_wid" --as final)--report 'OWNING INVARIANT' --case - 'COMMAND' [--change REPLACEMENT_DIFF] [--change probe=BREAK_DIFF] [--retire ITEM 'COMMAND']"
-  fi
-  phase_prompt+=" COMMAND runs your probe file by its path, which freezes the file with it. The probe runs on the original and the candidate: it binds when it passes on the original and fails on the candidate; passing on both records a report line. Keep each diff in scratch outside the checkout. A replacement must apply to the candidate and keep every recorded case passing; its probe must fail on the candidate and pass with the replacement, and a replacement without such a probe must delete more lines than it adds. A break changes values or operators only, keeping identifier counts and test files unchanged, and the probe must fail under it."
 fi
 
 prompt_file="$transport_dir/prompt"
@@ -485,15 +485,16 @@ else
       --input "$output_file" --design-declaration "$design_declaration_file" \
       --expected-candidate-tree "$candidate" --tdd-evidence "$reviewed_evidence" "${draft_args[@]}" >"$transport_dir/receipt.json" 2>"$transport_dir/refusal"
   }
-  if ! record; then  # an answer gets one correction: the session is resumed with the refusal
-    printf 'The workflow refused to record your answer:\n%s\nReturn the corrected answer in the same response form.\n' "$(cat "$transport_dir/refusal")" >"$prompt_file"
-    ask
-    if ! record; then
+  until record; do  # a refused answer goes back to the session that wrote it, until it records or is refused as before
+    if [[ "$(<"$transport_dir/refusal")" == "${refused-}" ]]; then
       cat "$transport_dir/refusal" >&2
       cat "$output_file"
       exit 2
     fi
-  fi
+    refused=$(<"$transport_dir/refusal")
+    printf 'The workflow refused to record your answer:\n%s\nReturn the corrected answer in the same response form.\n' "$refused" >"$prompt_file"
+    ask
+  done
   python3 "$workflow_cli" status --repo "$repo_root" --fields advisorPreflight,finalReview,finalReviewContextMismatchEvidence,findingStates,workflowId \
     >"$transport_dir/recorded.json"
   python3 - "$script_dir/../../.." "$record_stage" "$transport_dir/recorded.json" "$repo_root" "$transport_dir/receipt.json" "$scratch_dir" "${reconsult_args[@]}" <<'PY'

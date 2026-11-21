@@ -7,7 +7,6 @@ import hashlib
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack, suppress
 from functools import lru_cache, partial
-from collections import Counter
 import json
 import math
 import os
@@ -29,17 +28,17 @@ from . import SESSION_LOG, secure_dir
 from ._workflow_db import CHECK_ONLY, cached_arms, history, read_active
 from .command_runner import emit_json as _emit_json, interruptible, run as _run, run_entry as _run_entry
 from .repo_identity import CanonicalRoot, RepoIdentity, resolve_repo_identity
+from .workflow_documents import CASE_RULE
 from .state_store import _EXECUTION, _comparison_scope, _active_candidate_tree, _git, is_test_path, read_blobs, blob_reader, tree_manifest, utc_timestamp, repo_state_dir, _flock
 from .workflow_state import (
     NO_INSTANCE_ID, WorkflowError, _bound_instance_state,
-    commit_tdd, commit_findings, evidence_document, instance_id, operation_receipt, rejections, review_commands, _readiness_lines,
+    commit_tdd, commit_findings, evidence_document, instance_id, operation_receipt, rejections, review_commands, _finding_unresolved, _readiness_lines,
 )
 
 JsonObject = dict[str, object]
 _Input = TypeVar("_Input")
 MAX_CASE_SECONDS = 30.0
 SESSION_SECONDS = 300.0  # the limit of a case that runs a real model session
-NAME = re.compile(r"(?:[^\W\d]|\$)[\w$]*")
 
 
 class Unstartable(WorkflowError):
@@ -69,7 +68,7 @@ def current_map(identity: RepoIdentity, state: JsonObject, *, fresh: bool = True
 @_comparison_scope()
 def refresh_proof(identity: RepoIdentity, items: list[JsonObject], *, candidate: str | None = None, runs: list[JsonObject] = ()) -> None:
     """Judge current inputs with the recorded frozen probe files."""
-    freshness, controls = {}, {run.get("candidateKey"): run for run in runs}
+    freshness = {}
     def fresh(proof, target):
         key = (proof["candidateKey"], target)
         if key not in freshness:
@@ -94,14 +93,7 @@ def refresh_proof(identity: RepoIdentity, items: list[JsonObject], *, candidate:
         if proof := item.get("comparison"):
             candidate = candidate or _active_candidate_tree(identity)
             proof.update(fresh(proof, candidate))
-            control = controls.get(proof.get("controlKey"))
-            good = proof["arms"][-1] if proof["arms"][-1]["outcome"] == "passed" else proof["arms"][0]
-            proof["sensitive"] = (proof["arms"][0]["outcome"] == "failed" and proof["arms"][-1]["outcome"] == "passed") or bool(_growth(proof.get("execution") or {})) or bool(control and proof.get("breakOid") and fresh(control, control["candidateTree"])["fresh"]
-                                      and control["arms"][0]["key"] == good["key"]
-                                      and control["arms"][-1]["outcome"] == "failed" and not control["timedOut"]
-                                      and (candidate == control["originalTree"] or
-                                           _source_input(identity, candidate, control["probeTree"], tuple(_comparison_files(identity, control))) ==
-                                           _source_input(identity, control["originalTree"], control["probeTree"], tuple(_comparison_files(identity, control)))))
+            proof["sensitive"] = (proof["arms"][0]["outcome"] == "failed" and proof["arms"][-1]["outcome"] == "passed") or bool(_growth(proof.get("execution") or {}))
 
 
 def _scratch(identity: RepoIdentity, name: str) -> Path | None:
@@ -1087,24 +1079,15 @@ def _revised(identity: RepoIdentity, run: JsonObject, candidate: str, preserved:
     return captured if frozen(captured) - frozen(run) else None
 
 
-UNBROKEN = "probe did not fail under its behavior break; supply --change probe=FILE"
-
-
 def _run_probe(identity: RepoIdentity, probe: object, candidate: str, original: str | None,
-               timeout: float = MAX_CASE_SECONDS, cached: list[JsonObject] | None = None,
-               frozen: JsonObject | None = None, report: bool = False) -> JsonObject:
-    """`report`: permit a final author's nondeciding result."""
+               timeout: float = MAX_CASE_SECONDS, cached: list[JsonObject] | None = None, frozen: JsonObject | None = None) -> JsonObject:
     try:
-        witnessed = bool(frozen and frozen.get("arms")) and (
-            (frozen["arms"][0]["outcome"], _probe_outcome(frozen["arms"][-1])) in {("failed", "passed"), ("passed", "failed"), ("passed", "timed-out")})
         frozen = frozen or _probe_capture(identity, probe, candidate, timeout)
         compared = _compare(identity, original or candidate, candidate, frozen, cached if cached is not None else [], passing_original=original is not None)
         result: JsonObject = {"kind": "probe", "comparison": compared,
                               "candidate": _probe_outcome(compared["arms"][-1])}
         if original is not None:
             result["original"] = _probe_outcome(compared["arms"][0])
-        if all(arm["outcome"] == "passed" for arm in compared["arms"]) and not compared.get("sensitive") and not witnessed and not report:
-            result["error"] = compared.get("breakError") or UNBROKEN
         if any(_probe_outcome(arm) == "incomplete" for arm in compared["arms"]):
             result["error"] = "; ".join(dict.fromkeys(str(arm.get("error") or "unproved execution") for arm in compared["arms"] if _probe_outcome(arm) == "incomplete"))
         return result
@@ -1159,21 +1142,12 @@ def _maintained_tests(identity: RepoIdentity, batches: list[JsonObject], maintai
             return [], refusal(run, delivery)
     # A case the candidate's own test files already fail is not the replacement's break: first in order, it refuses as before.
     present, broken = set(_tree_entries(identity, before)) if failed else set(), []
-    for (run, delivery), control in zip(failed, _compare_many(identity, before, before, [live(run, before, present) or dict(run) for run, _ in failed], cached, challenge=False) if failed else ()):
+    for (run, delivery), control in zip(failed, _compare_many(identity, before, before, [live(run, before, present) or dict(run) for run, _ in failed], cached) if failed else ()):
         if control["arms"][-1]["outcome"] == "passed":
             broken.append((run, delivery))
         elif not broken:
             return [], refusal(run, delivery)
     return broken, None
-
-
-def _shape_refusal(identity: RepoIdentity, before: str, after: str, cost_proved: bool = False) -> str | None:
-    """Keep net reduction unless measured cost justifies growth; immutable probes remain the oracle."""
-    counts = _git(identity, "diff", "--numstat", "--no-renames", "-z", before, after).decode("utf-8", "replace").split("\0")
-    rows = [row.split("\t", 2) for row in counts if row.count("\t") == 2]
-    if not cost_proved and sum(int(added) for added, _, _ in rows if added != "-") >= sum(int(deleted) for _, deleted, _ in rows if deleted != "-"):
-        return "a change must delete more lines than it adds"
-    return None
 
 
 def _run_change(identity: RepoIdentity, batches: list[JsonObject], change: object, candidate: str,
@@ -1186,11 +1160,10 @@ def _run_change(identity: RepoIdentity, batches: list[JsonObject], change: objec
         return {"kind": "change", "error": "no recorded comparison batch to rerun"}
     cached = list(batches) if cached is None else cached
     measured = _run_probe(identity, probe, candidate, None, timeout, cached, frozen) if probe is not None else None
-    if measured and measured.get("candidate") == "passed" and "error" in measured:
-        return {"kind": "change", "error": "a replacement's probe must fail on the candidate and pass with the replacement"
-                if measured["error"] == UNBROKEN else measured["error"]}
     if cost_recheck and measured is not None:
         return measured
+    if measured and ("error" in measured or measured["candidate"] == "passed"):
+        return {"kind": "change", "error": measured.get("error") or "a cause's test must fail on the reviewed tree and pass with the repair"}
     patch = change.encode("utf-8", "replace") + (b"" if change.endswith("\n") else b"\n")  # unencodable text cannot apply
     try:
         changed = _indexed(identity, candidate, (("apply", "--cached", "-"), patch))
@@ -1205,9 +1178,7 @@ def _run_change(identity: RepoIdentity, batches: list[JsonObject], change: objec
         if measured and "comparison" in measured:
             cost = _compare(identity, candidate, after, measured["comparison"], cached)
         if cost and (not cost["valid"] or not cost.get("sensitive")) and not maintenance:
-            return {"kind": "change", "error": "replacement did not pass the same cost probe", "comparison": cost}
-    if refusal := _shape_refusal(identity, before, after, cost is not None and cost["valid"] and measured["candidate"] == "failed"):
-        return {"kind": "change", "error": refusal}
+            return {"kind": "change", "error": "a cause's test does not pass with the repair", "comparison": cost}
     broken, error = _maintained_tests(identity, batches, maintained, before, after, cached, measured.get("comparison") if measured else None)
     if error:
         return {"kind": "change", "error": error}
@@ -1219,7 +1190,7 @@ def _run_change(identity: RepoIdentity, batches: list[JsonObject], change: objec
                 "failure": "the change breaks bound cases: " + "; ".join(", ".join(keys) + " " + command for command, keys in names.items())
                            + "\n" + str(broken[0][1].get("output") or "")[-800:]}
     failed = []  # one batch; of each replay only the replacement's arm is read, and every recorded batch the change fails is named
-    for run, replay in zip(batches, _compare_many(identity, after, after, [dict(run) for run in batches], cached, challenge=False)):
+    for run, replay in zip(batches, _compare_many(identity, after, after, [dict(run) for run in batches], cached)):
         arm = replay["arms"][-1]
         if arm["outcome"] == "failed" and not arm["timedOut"]:
             failed.append(run)
@@ -1238,7 +1209,7 @@ def _run_change(identity: RepoIdentity, batches: list[JsonObject], change: objec
     if broken:
         return {"kind": "change", "applied": after == candidate, "candidate": "failed",
                 "failure": "; ".join(f"recorded batch `{run['command']}` failed with the change applied" for run in broken)}
-    return {"kind": "change", "applied": after == candidate, "candidate": "passed", **({"comparison": cost} if cost else {}),
+    return {"kind": "change", "applied": after == candidate, "candidate": "passed", "tree": after, **({"comparison": cost} if cost else {}),
                                      **({"selection": "proposer-selected command; exit result checked, source-line reachability and relevance not traced"} if probe is not None else {})}
 
 
@@ -1257,11 +1228,8 @@ def binds(execution: JsonObject) -> bool:
 
 def _retained(identity: RepoIdentity, state: JsonObject) -> list[tuple[JsonObject, JsonObject]]:
     """Each observation of every review or final finding that binds by the current rule: a finding settles only with
-    all of them; one recorded under an earlier rule that no longer binds is re-executed as a report line. Once the final
-    author's ready verdict judges the candidate, a probe of its finding that it captured again there, passing on both
-    sources, replays with that capture's probe files: its verdict confirms the repair of a file the probe had frozen."""
-    retained, rejected, intakes, recaptured, candidate = [], set(), {}, {}, _active_candidate_tree(identity)
-    judged = (state.get("finalReview") or {}).get("status") == "commit-ready" and state.get("judgedTree") == candidate
+    all of them; one recorded under an earlier rule that no longer binds is re-executed as a report line."""
+    retained, rejected, intakes = [], set(), {}
     for entry in (entry for entry in state.get("findingStates") or [] if entry.get("status") != "rejected"):  # the lead's rejection stands without a rerun
         for ref in [{"evidenceId": entry["intakeEvidenceId"], "id": entry["findingId"]}, *entry.get("observations", [])]:
             ref = {"evidenceId": ref["evidenceId"], "id": ref["id"]}
@@ -1271,24 +1239,16 @@ def _retained(identity: RepoIdentity, state: JsonObject) -> list[tuple[JsonObjec
             finding = next((item for item in intake.get("findings", []) if item["id"] == ref["id"]), None)
             if finding and finding.get("rejected") is True:
                 rejected.add(tuple(finding["priorFinding"][key] for key in ("evidenceId", "id")))
-            run = (finding or {}).get("recapture") or ((finding or {}).get("execution") or {}).get("comparison") or {}
-            if judged and intake.get("stage") == "final" and intake.get("candidateTree") == candidate and ((finding or {}).get("recapture") or all(
-                    arm["outcome"] == "passed" for arm in run.get("arms") or [{"outcome": None}])):
-                recaptured[intake.get("producer"), run["command"]] = run
             if intake.get("stage") in {"code-review", "final"} and finding and "execution" in finding and binds(finding["execution"]):
                 retained.append((entry, {**finding, "ref": ref, "sourceTree": intake["candidateTree"], "stage": intake["stage"]}))
-    for _, finding in retained:
-        intake, held = intakes[finding["ref"]["evidenceId"]], finding["execution"]
-        if held["kind"] == "probe" and intake["stage"] == "final" and (again := recaptured.get((intake.get("producer"), held["comparison"]["command"]))):
-            finding["execution"] = {**held, "comparison": {**held["comparison"], "probeTree": again["probeTree"], "probeFiles": again["probeFiles"]}}
     return [(entry, finding) for entry, finding in retained
             if tuple(finding["ref"][key] for key in ("evidenceId", "id")) not in rejected]
 
 
 def execute_findings(identity: RepoIdentity, state: JsonObject, findings: list[JsonObject], *, captured: JsonObject | None = None,
                      retained: list[tuple[JsonObject, JsonObject]] | None = None, candidate: str | None = None,
-                     current: JsonObject | None = None, report: bool = False) -> JsonObject:
-    """Execute submitted observations; gates supply retained ones. `report` identifies the final author."""
+                     current: JsonObject | None = None) -> JsonObject:
+    """Execute submitted observations; gates supply retained ones."""
     from .workflow_state import _finding_state
     candidate = candidate or _active_candidate_tree(identity)
     rejected = [finding["priorFinding"] for finding in findings if finding.get("rejected") is True]
@@ -1331,23 +1291,15 @@ def execute_findings(identity: RepoIdentity, state: JsonObject, findings: list[J
                        max((batch["timeout"] for batch in batches), default=MAX_CASE_SECONDS) if "change" in finding and "probe" in finding else MAX_CASE_SECONDS)
         if finding.get("execution", {}).get("kind") == "cost":
             prior = finding["execution"]["comparison"]
-            compared = _compare_many(identity, original, candidate, [prior], cached, challenge=False)[0]
+            compared = _compare_many(identity, original, candidate, [prior], cached)[0]
             return {"kind": "cost", "candidate": "failed" if not compared["valid"] or _work_errors(compared) else "passed"}
         frozen = (captured or {}).get((finding.get("probe") or {}).get("command")) if first else None
-        if not first and "change" in finding and "probe" not in finding:
-            supplement = next((other for other in [*executed, *(f for _, f in retained)]
-                               if other.get("change") == finding["change"] and other.get("claim") == finding["claim"]
-                               and "probe" in other and (other.get("execution") or {}).get("comparison")), None)
-            if supplement:
-                finding = {**finding, "probe": supplement["probe"]}
-                frozen = supplement["execution"]["comparison"]
         if not first and "probe" in finding:
             frozen = frozen or recorded(finding) or _probe_capture(identity, finding["probe"], finding["sourceTree"], timeout)
         prior = (finding.get("execution") or {}).get("comparison") or {}
         cost_recheck = not first and bool(prior.get("arms")) and prior["arms"][0]["outcome"] == "failed"
         return (_run_change(identity, batches, finding["change"], candidate, finding.get("probe"), timeout, cached, maintained, frozen, cost_recheck) if "change" in finding
-                else _run_probe(identity, finding["probe"], candidate, original, timeout, cached, frozen,
-                                report and first and not (frozen or {}).get("breakOid")) if "probe" in finding
+                else _run_probe(identity, finding["probe"], candidate, original, timeout, cached, frozen) if "probe" in finding
                 else {"kind": "claim"})
     for replacement in (False, True):
         probes = [captured[finding["probe"]["command"]] for finding in findings
@@ -1356,36 +1308,85 @@ def execute_findings(identity: RepoIdentity, state: JsonObject, findings: list[J
                       if "probe" in finding and ("change" in finding) == replacement and finding["execution"].get("comparison"))
         if probes:
             _compare_many(identity, candidate if replacement else original, candidate, probes, cached, passing_original=not replacement)
-    executed, observations, recaptures = [], [], None
+    executed = []
     for finding in findings:
         execution = run(finding, True)
-        result = {**finding, "execution": execution, "material": binds(execution)}
-        comparison = execution.get("comparison") or {}
-        arms = comparison.get("arms", [])
-        if "probe" in finding and "change" not in finding and (
-                not arms or _probe_outcome(arms[0]) == _probe_outcome(arms[-1])
-                or all(arm["outcome"] == "incomplete" for arm in arms)):
-            observations.append(result)
-            if report and arms and all(arm["outcome"] == "passed" for arm in arms):
-                if recaptures is None:
-                    recaptures = {held["execution"]["comparison"]["command"]: held["ref"] for _, held in _retained(identity, state)
-                                  if held["stage"] == "final" and held["execution"]["kind"] == "probe"}
-                if prior := recaptures.get(comparison["command"]):
-                    result.update(priorFinding=prior, recapture={key: comparison[key] for key in ("command", "probeTree", "probeFiles")})
-            if finding.get("retires") or result.get("recapture"):
-                executed.append({key: value for key, value in result.items() if key != "probe"}
-                                | {"execution": {"kind": "claim"}})
-        else:
-            executed.append(result)
+        executed.append({**finding, "execution": execution, "material": binds(execution)})
     again = list(withdrawn)
     for entry, finding in retained:
         execution = run(finding, False)
         again.append({**finding["ref"], "execution": {**execution, **{key: finding["execution"][key]
                                                                      for key in ("original",) if key in finding["execution"]}}})
-    return {"measuredTree": candidate, "measuredEvidence": state.get("tddEvidence"), "findings": executed, "reexecuted": again, "observations": observations,
+    return {"measuredTree": candidate, "measuredEvidence": state.get("tddEvidence"), "findings": executed, "reexecuted": again,
             "runs": list({tuple(arm.get("key") for arm in run["arms"]): run for run in cached
-                          if tuple(arm.get("key") for arm in run["arms"]) not in loaded_keys
-                          and not any(run is item["execution"].get("comparison") for item in observations)}.values())}
+                          if tuple(arm.get("key") for arm in run["arms"]) not in loaded_keys}.values())}
+
+
+def execute_verdict(identity: RepoIdentity, state: JsonObject, verdict: JsonObject, candidate: str) -> JsonObject:
+    """An author's verdict executed at once: its one repair applies to the reviewed tree, each cause's test is compared
+    there and with the repair beside one replay of the recorded cases on that combined tree, and each cause records as
+    one finding naming the findings it decides. A finding under no cause records as a report line, open while it holds
+    the user's decision. `failures` names each check the verdict fails: the final advisor's verdict is refused with them,
+    a reviewer's failing cause or finding records as a report line."""
+    findings, causes, failures, lines = {item["id"]: item for item in verdict["findings"]}, verdict.get("causes", []), [], []
+    def refuse(item: JsonObject, reason: str) -> None:
+        failures.append(f"{item['id']}: {reason}")
+        lines.append({"id": item["id"], "claim": f"{item.get('claim') or item.get('cause') or item['id']} (report line: {reason})",
+                      "kind": "behavioral", "execution": {"kind": "claim"}, "material": False})
+    request, covered = " ".join(f"{state.get('intent') or ''} {CASE_RULE}".split()), {name for cause in causes for name in cause["findings"]}
+    for item in verdict["findings"]:
+        if item.get("quote") and " ".join(item["quote"].split()) not in request:
+            refuse(item, "its quote is in neither the request nor the case rule")
+        elif item["id"] not in covered and item.get("decides") and not item.get("decision"):
+            refuse(item, "a finding its input decides needs a cause and the repair, or the user's decision")
+        elif item["id"] not in covered:
+            lines.append({**item, "execution": {"kind": "claim"}})
+    repair = verdict.get("repair")
+    if repair is not None:
+        path = Path(repair).resolve()
+        if path.is_relative_to(identity.root) or not path.is_file():
+            raise WorkflowError("keep the repair diff in scratch outside the checkout")
+        repair = path.read_text(encoding="utf-8", errors="replace")
+    elif causes and verdict["stage"] == "final":
+        failures.append("the causes carry no repair: one diff repairs them all")
+        causes = []
+    items, current = current_map(identity, state, fresh=False) if any(cause.get("retires") for cause in causes) else (None, None)
+    current = current or {}
+    retained, available = _evaluation(identity, state, current) if items is not None else {}, {entry["id"]: {"id": entry["id"], "key": None} for entry in items or []}
+    for alias, entry in [*retained.items(), *((None, entry) for entry in behavior_map.current_cases(items or [], current.get("runs", [])))]:
+        if "runIndex" in entry.get("comparison", entry):
+            key = behavior_map.case_key(entry["id"], current["runs"][(entry.get("comparison") or entry)["runIndex"]])
+            available[key] = {"id": entry["id"], "key": key}
+            if alias is not None:
+                available[alias] = available[key]
+    opened = {entry["findingId"]: {"evidenceId": entry["intakeEvidenceId"], "id": entry["findingId"]}
+              for entry in state.get("findingStates", []) if _finding_unresolved(entry)}
+    executable, captured, retiring, inventory = [], {}, [], _probe_files([], identity, []) if causes else None
+    for cause in causes:
+        named = cause["findings"]
+        wanted = _case_keys(items or [], current.get("runs", []), retained, [[value] if isinstance(value, str) else list(value) for value in cause.get("retires", [])])
+        if not named or any(not findings.get(name, {}).get("decides") for name in named):
+            refuse(cause, "a cause names the findings of this verdict it decides, each recording what decides its input")
+            continue
+        if missing := [key for key in wanted if key not in available]:
+            refuse(cause, "it retires no recorded case: " + ", ".join(missing))
+            continue
+        retires = [available[key] for key in dict.fromkeys(wanted)]
+        retiring += [case["key"] for case in retires if case["key"]]
+        probe = _probe_capture(identity, {"command": cause["test"]}, candidate, MAX_CASE_SECONDS, None, inventory)
+        captured[probe["command"]] = probe
+        prior = next((opened[name] for name in named if name in opened), None)  # a held decision it now decides settles by its test
+        executable.append({"id": cause["id"], "claim": "\n".join([str(cause.get("cause") or cause["id"]), *(f"{name}: {findings[name]['claim']} (decided by {findings[name]['decides']})" for name in named)]),
+                           "findings": named, **{key: cause[key] for key in ("rule", "lines", "functions") if key in cause}, "probe": {"command": probe["command"]}, **({"change": repair} if repair is not None else {}),
+                           **({"retires": retires} if retires else {}), **({"priorFinding": prior} if prior else {})})
+    execution = execute_findings(identity, {**state, "retiring": retiring}, executable, captured=captured, candidate=candidate)
+    for finding in execution["findings"]:
+        if "change" in finding and not finding["material"]:
+            result = finding["execution"]
+            failures.append(f"{finding['id']}: {result.get('error') or result.get('failure') or 'its test does not fail on the reviewed tree and pass with the repair'}")
+    if repair is not None and not failures and execution["findings"]:
+        execution["repairTree"] = execution["findings"][0]["execution"]["tree"]
+    return {**execution, "findings": [*execution["findings"], *lines], "failures": failures}
 
 
 def _execution_cache(identity, state):
@@ -1401,7 +1402,7 @@ def _execution_cache(identity, state):
 
 @_comparison_scope()
 def check_retained(identity: RepoIdentity, slug: str | None, workflow_id: str | None) -> JsonObject:
-    from .workflow_state import commit_retained_checks, finding_references, _finding_unresolved
+    from .workflow_state import commit_retained_checks, finding_references
     state = _bound_instance_state(read_active(identity), slug, workflow_id)
     _execution_cache(identity, state)
     state = _bound_instance_state(read_active(identity), slug, workflow_id)
@@ -1421,7 +1422,7 @@ def check_retained(identity: RepoIdentity, slug: str | None, workflow_id: str | 
         if reusable:
             return state
     reports = [{"evidenceId": entry["intakeEvidenceId"], "id": entry["findingId"], "execution": {"kind": "claim"}}
-               for entry in state.get("findingStates", []) if _finding_unresolved(entry)
+               for entry in state.get("findingStates", []) if _finding_unresolved(entry) and not entry.get("decision")  # a user's decision stays open
                and all(entry is not other for other, _ in retained)]
     current = evidence_document(identity, state.get("tddEvidence")) or {}
     execution = execute_findings(identity, state, [], retained=retained, current=current)
@@ -1432,8 +1433,8 @@ def check_retained(identity: RepoIdentity, slug: str | None, workflow_id: str | 
 
 
 def _retired(state: JsonObject) -> set[str]:
-    """Frozen expectations an indexed author observation retired (`tdd --as ... --retire`); withdrawal removes its records."""
-    return {case["key"] for entry in state.get("findingStates", []) for case in entry.get("retires", []) if case["key"] is not None}
+    """Frozen expectations an indexed author observation retired, and those the verdict being executed retires; withdrawal removes its records."""
+    return {case["key"] for entry in state.get("findingStates", []) for case in entry.get("retires", []) if case["key"] is not None} | set(state.get("retiring", ()))
 
 
 def _evaluation(identity: RepoIdentity, state: JsonObject, current: JsonObject | None, binding: bool = False) -> JsonObject:
@@ -1562,20 +1563,6 @@ def _work_errors(run):
     return errors
 
 
-@lru_cache(maxsize=128)
-def _identifiers(path: str, text: str) -> Counter[str]:
-    if Path(path).suffix != ".py":
-        return Counter(NAME.findall(text))
-    import io
-    import keyword
-    import tokenize
-    try:
-        return Counter(token.string for token in tokenize.generate_tokens(io.StringIO(text).readline)
-                       if token.type == tokenize.NAME and not keyword.iskeyword(token.string))
-    except (tokenize.TokenError, IndentationError) as exc:
-        raise ValueError("break refused: invalid Python tokens: " + str(exc)) from exc
-
-
 def _memory_available() -> int:
     with open("/proc/meminfo") as meminfo:
         return next(int(line.split()[1]) for line in meminfo if line.startswith("MemAvailable:")) * 1024
@@ -1583,7 +1570,7 @@ def _memory_available() -> int:
 
 @_comparison_scope()
 def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes: list[JsonObject],
-                  runs: list[JsonObject], *, challenge: bool = True, passing_original: bool = False,
+                  runs: list[JsonObject], *, passing_original: bool = False,
                   recapture: dict[int, Callable[[list[JsonObject]], JsonObject | None]] | None = None) -> list[JsonObject]:
     """One execution/cache owner: each probe compares the two sources. `recapture`, by probe position: given that probe's
     arms as they end, it may return one more probe, compared beside the cases still running and returned after the rest."""
@@ -1669,39 +1656,11 @@ def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes:
         command, execution, _ = prepared
         tree = probe.get("probeTree", probe["candidateTree"])
         sizes = _growth(execution, command)
-        mounted_sets = []
         for size in sizes[:2] if sizes else (None,):
             value = [arg.replace("{size}", str(size)) for arg in command] if size is not None else command
-            mounted_sets.append(value)
             for source in (original, candidate):
                 contexts[_execution_key(identity, source, tree, _comparison_files(identity, probe), value, probe["timeout"], execution)] = execution
-        oid = probe.get("breakOid")
-        control = None
-        if challenge and oid and not sizes:  # a growth case's two-size comparison is its own check
-            try:
-                source = original if passing_original else candidate
-                key = (source, oid)
-                if key not in scope["breaks"]:
-                    prior = next((run for run in runs if run.get("breakOid") == oid and run.get("brokenSource") == source), None)
-                    if (prior and _git(identity, "diff", "--no-ext-diff", "--full-index", source, prior["candidateTree"])
-                            == _git(identity, "cat-file", "blob", oid)):
-                        scope["breaks"][key] = (oid, prior["candidateTree"])
-                    else:
-                        broken = _indexed(identity, source, (("apply", "--cached", "-C1", "--unidiff-zero", "-"), _git(identity, "cat-file", "blob", oid)))
-                        pairs = _changed_entries(identity, source, broken)
-                        blobs = read_blobs(Path(identity.root), [oid for pair in pairs.values() for oid in pair if oid.strip("0")])
-                        if not pairs or any(is_test_path(path) or _identifiers(path, blobs.get(a) or "") != _identifiers(path, blobs.get(b) or "") for path, (a, b) in pairs.items()):
-                            raise ValueError("break refused: change values or operators only; keep identifier counts and test support unchanged")
-                        canonical = _git(identity, "diff", "--no-ext-diff", "--full-index", source, broken)
-                        normalized = _git(identity, "hash-object", "-w", "--stdin", stdin=canonical).decode().strip()
-                        scope["breaks"][key] = scope["breaks"][(source, normalized)] = (normalized, broken)
-                probe["breakOid"], broken = scope["breaks"][key]
-                for value in mounted_sets:
-                    contexts[_execution_key(identity, broken, tree, _comparison_files(identity, probe), value, probe["timeout"], execution)] = execution
-                control = (source, broken)
-            except (RuntimeError, ValueError) as exc:
-                control = str(exc)
-        plans.append((probe, tree, prepared, control))
+        plans.append((probe, tree, prepared))
     def keys(arm):
         context = arm["contextKey"]
         return [hashlib.sha256((context + _input_identity(identity, contexts[context], arm)).encode()).hexdigest()]
@@ -1710,19 +1669,19 @@ def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes:
         workflows[identity.key] = instance_id(read_active(identity) or {})
     for arm in cached_arms(identity, workflows[identity.key], contexts, keys):
         cache.setdefault(arm["contextKey"], {}).setdefault(arm["key"], arm)  # a result the caller recorded later stands
-    jobs, controls = [], []
+    jobs = []
     def selections(first, last, probe, prepared, parent=None):
         sizes = _growth(prepared[1])
         return ([schedule(source, probe, prepared, size=size)
                  for source, size in ((first, sizes[1]), (first, sizes[0]), (last, sizes[0]), (last, sizes[1]))]
                 if sizes else [(good := schedule(first, probe, prepared)), schedule(last, probe, prepared, parent, passing=good[2] if parent else None)])
-    for probe, tree, prepared, control in plans:
+    for probe, tree, prepared in plans:
         execution = prepared[1]
         jobs.append((probe, tree, execution, selections(original, candidate, probe, prepared), original, candidate))
     for position, capture in (recapture or {}).items():
         if extra := capture([found if isinstance(found, dict) else pending[context].result() for _, context, found in jobs[position][3]]):
             prepared = _comparison_input(identity, extra)
-            plans.append((extra, extra["probeTree"], prepared, None))
+            plans.append((extra, extra["probeTree"], prepared))
             jobs.append((extra, extra["probeTree"], prepared[1], selections(original, candidate, extra, prepared), original, candidate))
     # A case out of time or memory beside other cases runs each incomplete arm alone with all available memory; one
     # that ran a model session, its own clock, does not. Only its own run is held to the limit. Every case has ended
@@ -1736,34 +1695,9 @@ def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes:
             pending[key] = scope["pool"].submit(alone[key][0], _memory_available(), tuple(scope["objects"].items()))
             pending[key].result()
     compared = [finish(*job) for job in jobs]
-    for (probe, tree, prepared, control), result in zip(plans, compared):
+    for result in compared:
         result["sensitive"] = bool(_growth(result["execution"])) or (not passing_original
             and result["arms"][0]["outcome"] == "failed" and result["arms"][-1]["outcome"] == "passed")
-        if isinstance(control, tuple) and not result["sensitive"]:
-            source, broken = control
-            target = result["arms"][0 if passing_original else -1]
-            control = ((probe, tree, prepared[1], selections(source, broken, probe, prepared, source), source, broken)
-                       if target["outcome"] == "passed" else None)
-        controls.append(control)
-    if challenge:
-        for probe, result, control in zip(probes, compared, controls):
-            result.pop("controlKey", None)
-            result.pop("breakExit", None)
-            if not probe.get("breakOid") or result["sensitive"]:
-                continue
-            result["breakOid"] = probe["breakOid"]
-            if control is None:
-                continue
-            if isinstance(control, str):
-                result["breakError"] = control
-                continue
-            checked = finish(*control)
-            checked.update(breakOid=probe["breakOid"], brokenSource=checked["originalTree"])
-            good = result["arms"][0] if passing_original else result["arms"][-1]
-            result["controlKey"] = checked["candidateKey"]
-            result["sensitive"] = good["outcome"] == "passed" and checked["arms"][0]["key"] == good["key"] and checked["arms"][-1]["outcome"] == "failed" and not checked["timedOut"]
-            result["breakExit"] = checked["arms"][-1]["exitCode"]
-            result.pop("breakError", None)
     return compared
 
 def _compare(identity: RepoIdentity, original: str, candidate: str, probe: JsonObject, runs: list[JsonObject], *, passing_original: bool = False) -> JsonObject:
@@ -1809,15 +1743,15 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None, emit=
     parser.add_argument("--workflow-id")
     parser.add_argument("--expected-candidate-tree")
     parser.add_argument("--tdd-evidence", default=argparse.SUPPRESS)
-    parser.add_argument("--verdict", help="record review completion without running cases; use the source-bound checkpoint command")
-    parser.add_argument("--report", action="append", default=[], help="finding's owning invariant, or non-executable report lines with a verdict")
+    parser.add_argument("--verdict", help="the reviewer's verdict, complete or incomplete: use the source-bound checkpoint command")
+    parser.add_argument("--report", action="append", default=[], help="the reason the lead gives with --retire")
     parser.add_argument("--reject", action="append", nargs="+", default=[], metavar="ID 'COMMAND'",
                         help="the lead closes a map item or final finding it rejects: the workflow runs the command once and, when it "
                              "exits 0, keeps its output with the rejection; with --as, EVIDENCE:ID=REASON withdraws this author's invalid observation")
     parser.add_argument("--retire", action="append", nargs="+", default=[], metavar="CASE [CASE ...] | ITEM COMMAND",
-                        help="recorded cases by caseKey, or one by its item and command; with --as and a finding probe, also unproved map item ids")
-    parser.add_argument("--change", action="append", default=[], help="with --as: probe=FILE supplies a behavior-breaking diff for the authored probe; a bare FILE submits an authored replacement")
-    parser.add_argument("--as", dest="author", choices=("review", "final"), help="execute and record this author's finding in the same call")
+                        help="recorded cases by caseKey, or one by its item and command")
+    parser.add_argument("--as", dest="author", choices=("review",), help="the reviewer's verdict, or the withdrawal of its own observation")
+    parser.add_argument("--input", help="with --as review --verdict: the verdict file, in the checkpoint's responseFormat; the workflow executes it")
     parser.add_argument("--path", help="scratch file to freeze beside the probe; files a case command names are frozen without it")
     parser.add_argument("--behavior-id", action="append", default=[], help="map item for a single trailing command, or items whose recorded cases replay")
     parser.add_argument("--case", action="append", nargs="+", default=[], metavar="ITEM COMMAND | ITEM:COMMAND",
@@ -1850,83 +1784,23 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None, emit=
     if args.path and not (command or args.case or args.correct):
         raise WorkflowError("a scratch path needs its command")
     if args.reject and not args.author:
-        if command or args.case or args.change or args.retire or args.report or args.verdict or args.behavior_id or args.path:
+        if command or args.case or args.retire or args.report or args.verdict or args.behavior_id or args.path:
             raise WorkflowError("a rejection call carries only --reject ID 'COMMAND'")
         _emit_json(*_reject(identity, state, args.reject))
         return 0
-    if args.author and args.retire and not (command or args.case or args.change):
-        raise WorkflowError("only the finding author can withdraw an observation, or retire a case beside its probe or replacement")
-    if args.verdict and (args.author != "review" or args.verdict not in {"complete", "incomplete"}
-                         or command or args.case or args.change or args.path or args.behavior_id):
-        raise WorkflowError("select the review verdict without a probe, change or Behavior Map edit")
-    breaks, paths, replacement = {}, {}, None
-    for value in args.change:
-        identifier, equal, name = value.partition("=")
-        if not equal:
-            if replacement is not None:
-                raise WorkflowError("one replacement per call")
-            replacement = value
-            continue
-        path = Path(name).resolve()
-        if path.is_relative_to(identity.root) or not path.is_file():
-            raise WorkflowError("keep the break diff in scratch outside the checkout")
-        if path not in paths:
-            paths[path] = _git(identity, "hash-object", "-w", "--", str(path)).decode().strip()
-        breaks[identifier] = paths[path]
     if args.author:
+        if (command or args.case or args.retire or args.report or args.behavior_id or args.path or args.correct or bool(args.verdict) == bool(args.reject)
+                or args.verdict not in {None, "complete", "incomplete"} or args.input and not args.verdict):
+            raise WorkflowError("the reviewer records its findings with its verdict, the checkpoint's verdict command with --input VERDICT.json, "
+                                "or withdraws its own observation with --reject EVIDENCE:ID=REASON")
         candidate = _active_candidate_tree(identity)
-        captured = {}
         if args.verdict:
             if not args.workflow_id or not args.expected_candidate_tree or not hasattr(args, "tdd_evidence"):
                 raise WorkflowError("use the source-bound verdict command from checkpoint")
             reviewed_evidence = None if args.tdd_evidence == "null" else args.tdd_evidence
             if args.expected_candidate_tree != candidate or reviewed_evidence != state.get("tddEvidence"):
                 raise WorkflowError("reviewed source or comparison evidence changed; inspect the current checkpoint")
-            findings = [{"id": "REPORT-" + hashlib.sha256(report.encode()).hexdigest()[:16], "claim": report}
-                        for report in dict.fromkeys(args.report) if report.strip()]
-        else:
-            if args.case and (command or args.behavior_id) or args.behavior_id:
-                raise WorkflowError("authored findings do not edit the Behavior Map")
-            specs = args.case or ([("-", shlex.join(command))] if command else [])
-            if any(identifier != "-" for identifier, _ in specs):
-                raise WorkflowError("authored probes are unbound cases; use - as their item")
-            if not (specs or replacement or args.reject):
-                raise WorkflowError("an authored finding needs a case or change")
-            change = None
-            if replacement:
-                path = Path(replacement).resolve()
-                if path.is_relative_to(identity.root):
-                    raise WorkflowError("keep the replacement diff in scratch outside the checkout")
-                change = path.read_text()
-            inventory = _probe_files([], identity, args.support or []) if specs else None
-            probes = []
-            for _, value in specs:
-                probe = _probe_capture(identity, {"command": value, **({"path": args.path} if args.path else {})},
-                                       candidate, MAX_CASE_SECONDS, args.support, inventory)
-                if "probe" in breaks:
-                    probe["breakOid"] = breaks["probe"]
-                captured[probe["command"]] = probe
-                probes.append({"command": probe["command"]})
-            claim = "\n".join(dict.fromkeys(report.strip() for report in args.report if report.strip()))
-            items, current = current_map(identity, state, fresh=False) if args.retire else (None, None)
-            current = current or {}
-            available = {entry["id"]: {**entry, "key": None} for entry in items or []}
-            retained = _evaluation(identity, state, current)
-            args.retire = _case_keys(items or [], current.get("runs", []), retained, args.retire)
-            for alias, entry in [*retained.items(), *((None, entry) for entry in behavior_map.current_cases(items or [], current.get("runs", [])))]:
-                if "runIndex" in entry.get("comparison", entry):
-                    key = behavior_map.case_key(entry["id"], current["runs"][(entry.get("comparison") or entry)["runIndex"]])
-                    available[key] = {**entry, "key": key}
-                    if alias is not None:
-                        available[alias] = available[key]
-            retires = [{"id": available[key]["id"], "key": available[key].get("key")} for key in dict.fromkeys(args.retire) if key in available]
-            findings = []
-            for probe in list({probe["command"]: probe for probe in probes}.values()) or ([None] if replacement else []):
-                finding = {**({"probe": probe} if probe else {}), **({"change": change} if change is not None else {})}
-                identifier = "FINDING-" + hashlib.sha256((claim + json.dumps(finding, sort_keys=True)).encode()).hexdigest()[:16]
-                findings.append({"id": identifier, "claim": claim or "Recorded " + ("replacement" if change is not None else "probe")
-                                 + ": " + (replacement or probe["command"]), **finding,
-                                 **({"retires": retires} if retires else {})})
+        findings = []
         for value in map(" ".join, args.reject):
             reference, equal, reason = value.partition("=")
             evidence, colon, identifier = reference.partition(":")
@@ -1935,55 +1809,35 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None, emit=
             findings.append({"id": "REPORT-" + hashlib.sha256(value.encode()).hexdigest()[:16],
                              "claim": reason.strip(), "kind": "nonbehavioral", "rejected": True,
                              "priorFinding": {"evidenceId": evidence, "id": identifier}})
-        if not args.verdict and any("probe" in finding or "change" in finding for finding in findings):
+        if args.input:
+            from .workflow_documents import advisor_envelope
             _execution_cache(identity, state)
-        execution = execute_findings(identity, state, findings, captured=captured, candidate=candidate, report=args.author == "final")
-        document = {"schemaVersion": 1, "kind": "intake", "workflowId": workflow_id, "slug": slug,
-                    "stage": "code-review" if args.author == "review" else "final",
-                    "producer": "code-review" if args.author == "review" else "codex-advisor",
+            verdict = advisor_envelope(args.input, slug=slug, workflow_id=workflow_id, stage="review", producer="code-review")[0]
+            execution = execute_verdict(identity, state, verdict, candidate)
+        else:
+            execution = execute_findings(identity, state, findings, candidate=candidate)
+        document = {"schemaVersion": 1, "kind": "intake", "workflowId": workflow_id, "slug": slug, "stage": "code-review", "producer": "code-review",
                     "candidateTree": args.expected_candidate_tree if args.verdict else execution["measuredTree"],
                     "tddEvidence": reviewed_evidence if args.verdict else execution["measuredEvidence"],
                     "findings": execution["findings"], **({"verdict": args.verdict} if args.verdict else {})}
-        observations = execution.pop("observations", [])
-        if document["findings"] or args.verdict:
-            state, evidence = commit_findings(identity, slug, workflow_id, document, execution)
-        else:
-            evidence = None
+        state, evidence = commit_findings(identity, slug, workflow_id, document, execution) if document["findings"] or args.verdict else (state, None)
         memory = _given(identity, state, args.author)
         receipt = operation_receipt(state, identity, kind="tdd", obligations=False, known=memory[1]["findings"],
                                     delivered={finding["id"] for finding in execution["findings"]}, **({"summaryId": evidence} if evidence else {}))
-        if args.author == "review":  # the verdict commands bound to this source, when the reviewer does not hold them
-            commands = review_commands(identity, state, candidate, repo=False)
-            del commands["findingCommand"]
-            if memory[1].get("verdict") != _digest(commands):
-                receipt.update(commands)
-                memory[1]["verdict"] = _digest(commands)
-        if args.verdict:
-            _emit_json(*_deliver(identity, state, memory, receipt, None), sort_keys=False)
-            return 0
-        rows, refusal = [], False
-        for finding in {item["id"]: item for item in [*execution["findings"], *observations]}.values():
-            result = finding["execution"]
-            refused = "error" in result
-            row = {"findingId": finding["id"],
-                   "result": "withdrawn" if finding.get("rejected") else "refused" if refused else "binds" if finding["material"] else "doesn't bind"}
-            if finding.get("retires"):  # recorded whatever the probe's own result
-                row["retired"] = sorted({case["id"] for case in finding["retires"]})
-            compared = result.get("comparison") or {}
-            if result.get("failure"):
-                row["failure"] = result["failure"]
-            if compared:
-                row["arms"] = behavior_map.comparison_view(compared, detail=True)["arms"]
-            if refused:
-                row["unexpected"] = str(result["error"])
-            refusal = refusal or refused and "retired" not in row
-            rows.append((finding["id"], row, (finding.get("probe") or {}).get("command", replacement), True))
-        if missing := [key for key in dict.fromkeys(args.retire) if key not in available]:
-            receipt["unmatched"] = missing  # a retained case key or unproved map item id that names nothing
-        _emit_json(*_deliver(identity, state, memory, receipt, rows))
-        return 2 if refusal else 0
-    if replacement or breaks or args.report and not args.retire:
-        raise WorkflowError("changes and reports require --as review or --as final")
+        commands = review_commands(identity, state, candidate, repo=False)  # the verdict commands bound to this source, when the reviewer does not hold them
+        if memory[1].get("verdict") != _digest(commands):
+            receipt.update(commands)
+            memory[1]["verdict"] = _digest(commands)
+        rows = []
+        for finding in execution["findings"]:
+            result, compared = finding["execution"], finding["execution"].get("comparison") or {}
+            row = {"findingId": finding["id"], "result": "withdrawn" if finding.get("rejected") else "binds" if finding["material"] else "report line",
+                   **({"retired": sorted({case["id"] for case in finding["retires"]})} if finding.get("retires") else {}),
+                   **{key: result[key] for key in ("failure", "error") if key in result},
+                   **({"arms": behavior_map.comparison_view(compared, detail=True)["arms"]} if compared else {})}
+            rows.append((finding["id"], row, (finding.get("probe") or {}).get("command"), True))
+        _emit_json(*_deliver(identity, state, memory, receipt, rows if args.input or args.reject else None))
+        return 0
     if args.case and (command or args.behavior_id):
         raise WorkflowError("use repeated --case entries or one trailing command")
     _execution_cache(identity, state)
@@ -2151,7 +2005,7 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None, emit=
         if entry is not None and entry.get("kind") == "preservation" and probe.get("runIndex", -1) not in leaving and (
                 read := sorted(name for name in edited.intersection(probe["probeFiles"]).difference(probe.get("support") or []) if os.path.isfile(os.path.join(identity.root, name)))):
             retakes[position] = partial(retake, position, probe, read)
-    compared = _compare_many(identity, original, candidate, [probe for _, probe in selected], runs, challenge=False, recapture=retakes)
+    compared = _compare_many(identity, original, candidate, [probe for _, probe in selected], runs, recapture=retakes)
     moved = {id(selected[position][1]): probe for position, probe in recaptured.items()}
     asked = [moved.get(id(probe), probe) for probe in asked]
     for position, run in zip(recaptured, compared[len(selected):]):
@@ -2163,7 +2017,7 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None, emit=
         if entry is not None:
             prior = entry.get("comparison") or {}
             references = {**(prior.get("caseRuns") or {case["comparison"]["command"]: case["comparison"]["runIndex"] for case in behavior_map.current_cases([entry], runs)}), run["command"]: run["runIndex"]}
-            if prior.get("caseRuns") != references or any(prior.get(key) != run.get(key) for key in ("runIndex", "candidateKey", "breakOid", "controlKey", "sensitive", "breakExit")) or prior.get("obligation") != behavior_map.obligation(entry):
+            if prior.get("caseRuns") != references or any(prior.get(key) != run.get(key) for key in ("runIndex", "candidateKey", "sensitive")) or prior.get("obligation") != behavior_map.obligation(entry):
                 entry["comparison"] = {**run, "obligation": behavior_map.obligation(entry), "caseRuns": references}
             if (specs or drafted) and not behavior_map._case_question(entry):  # a recording that has not proved its own item takes nothing
                 behavior_map.release(items, entry, run, runs)
@@ -2244,7 +2098,7 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None, emit=
     listed, failing, taken, proving = set(), False, {entry["id"] for entry in items}, None
     for index, (entry, run) in {**{index: pair for index, pair in recorded.items() if pair[1]["candidateTree"] == candidate}, **reported}.items():
         key, source = behavior_map.case_key(run.get("behaviorId") or "-", run), run.get("sourceCommand", run["command"])
-        row = {"caseKey": key, "exits": [arm["exitCode"] for arm in run["arms"]], "breakExit": run.get("breakExit")}
+        row = {"caseKey": key, "exits": [arm["exitCode"] for arm in run["arms"]]}
         if _growth(run["execution"]):
             row["work"] = [arm.get("work") for arm in run["arms"]]
         original = behavior_map.original_outcome(run)
@@ -2366,7 +2220,7 @@ def _reject(identity: RepoIdentity, state: JsonObject, requests: list[list[str]]
     from .workflow_state import commit_rejections
     added = _advisor_added(identity, state)
     items = {entry["id"]: entry for entry in current_map(identity, state, fresh=False)[0] or [] if entry["id"] in added}
-    findings = {ref["id"]: entry for entry in state.get("findingStates", []) if entry["stage"] == "final"
+    findings = {ref["id"]: entry for entry in state.get("findingStates", []) if entry["stage"] == "final" or entry.get("decision")
                 for ref in ({"id": entry["findingId"]}, *entry.get("observations", []))}
     records, rows = [], []
     for target, *words in requests:

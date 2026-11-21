@@ -78,20 +78,20 @@ def advisor_envelope(
         value = json.loads(text, object_pairs_hook=_unique)
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise ValueError(f"cannot read advisor envelope JSON: {exc}") from exc
-    fields = {"schemaVersion", "findings", "verdict"}  # the recorder binds workflow, tree and evidence; an echoed id is ignored
-    if not isinstance(value, dict) or not fields <= set(value) <= fields | ({"workflowId", "candidateTree", "tddEvidence"} if stage == "final" else {"draft"}):
+    # a reviewer's verdict file carries no verdict, its command does; the recorder binds workflow, tree and evidence, an echoed id is ignored
+    fields = {"schemaVersion", "findings", *(("verdict",) if stage != "review" else ())}
+    extra = {"draft"} if stage == "preflight" else {"causes", "repair", *(("workflowId", "candidateTree", "tddEvidence") if stage == "final" else ())}
+    if not isinstance(value, dict) or not fields <= set(value) <= fields | extra:
         raise ValueError("advisor envelope fields do not match its stage: " + ", ".join(sorted(fields)))
     findings, verdict = value.get("findings"), value.get("verdict")
     if type(value.get("schemaVersion")) is not int or value.get("schemaVersion") != 1 or not isinstance(findings, list):
         raise ValueError("advisor envelope requires schemaVersion 1 and a findings array")
-    allowed = {"approved", "changes-required"} if stage == "preflight" else FINAL_ENVELOPE_VERDICTS if stage == "final" else set()
+    allowed = {"approved", "changes-required"} if stage == "preflight" else FINAL_ENVELOPE_VERDICTS if stage == "final" else {None}
     if verdict not in allowed:
         raise ValueError(f"advisor envelope verdict {verdict!r} is incompatible with stage {stage}")
     typed: list[JsonObject] = []
     identifiers: set[str] = set()
     for position, item in enumerate(findings, 1):
-        if stage == "final" and isinstance(item, dict) and set(item) & {"probe", "change"}:
-            raise ValueError("execute findings with workflow tdd --as final; this envelope carries report lines only")
         if not isinstance(item, dict) or not {"id", "claim"} <= set(item):
             raise ValueError(f"advisor finding {position} requires id and claim")
         item = {"material": False, **item}
@@ -107,11 +107,21 @@ def advisor_envelope(
         if prior is not None and (not isinstance(prior, dict) or set(prior) != {"evidenceId", "id"}
                                   or not all(_text(v) for v in prior.values())):
             raise ValueError("priorFinding requires evidenceId and id")
-        finding = {"id": identifier, "claim": item["claim"], "material": item.get("material") is True, "kind": kind,
-                   **({"priorFinding": prior} if prior is not None else {})}
+        # a verdict's finding binds through its cause, or stays open with the user's decision; a preflight finding says itself
+        finding = {"id": identifier, "claim": item["claim"], "material": bool(item.get("decision")) if stage != "preflight" else item.get("material") is True,
+                   "kind": kind, **({"priorFinding": prior} if prior is not None else {}),
+                   **{key: item[key] for key in ("decides", "quote", "decision") if stage != "preflight" and _text(item.get(key))}}
         typed.append(finding)
     if verdict in {"approved", "changes-required"} and ((verdict == "approved") == any(item["material"] for item in typed)):
         raise ValueError("advisor envelope verdict is incompatible with finding materiality")
+    causes, repair = value.get("causes", []), value.get("repair")
+    if not isinstance(causes, list) or not all(isinstance(cause, dict) and _text(cause.get("id")) and _text(cause.get("test"))
+                                               and isinstance(cause.get("findings"), list) and all(_text(name) for name in cause["findings"])
+                                               and isinstance(cause.get("retires", []), list) for cause in causes) \
+            or len(identifiers | {cause["id"] for cause in causes}) != len(identifiers) + len(causes):
+        raise ValueError("each cause needs its own id, its findings' ids, its test command and retires as a list")
+    if repair is not None and not _text(repair):
+        raise ValueError("repair is the path of the one diff that repairs every cause")
     return {
         "schemaVersion": 1,
         "slug": slug,
@@ -120,6 +130,7 @@ def advisor_envelope(
         "stage": stage,
         "verdict": verdict,
         "findings": typed,
+        **({"causes": causes} if causes else {}), **({"repair": repair} if repair is not None else {}),
         **({"draft": value["draft"]} if "draft" in value else {}),  # the approving consult's changes to the lead's draft
         "sha256": hashlib.sha256(raw).hexdigest(),
         "recordedAt": utc_timestamp(),
@@ -148,7 +159,11 @@ CASE_RULE = ("Before coding, state the property, bounds and what decides each in
              "joins its item's loop, extending bounds if needed. One property failure, one change at its source, never code per input. One input keeps one case.")
 ADVISOR_SHAPES = {
     "preflight": '{"schemaVersion":1,"findings":[{"id":"SPEC-1","claim":"...","material":true}],"verdict":"approved|changes-required"}',
-    "final": '{"schemaVersion":1,"findings":[{"id":"SPEC-1","claim":"report line"}],"verdict":"commit-ready|fix-before-commit|context-mismatch"}',
+    "final": ('{"schemaVersion":1,"verdict":"commit-ready|fix-before-commit|context-mismatch","findings":[{"id":"F1","claim":"...",'
+              '"decides":"what decides its input","quote":"request words it relies on","decision":"evidence and the exact user decision needed"}],'
+              '"causes":[{"id":"C1","findings":["F1"],"cause":"where it starts, what else it breaks","rule":"what the case rule asks of its test",'
+              '"test":"COMMAND","lines":{"added":0,"removed":0},"functions":{"name":"why the owner could not hold it"},"retires":[["ITEM","COMMAND"]]}],'
+              '"repair":"/scratch/repair.diff"}'),
 }
 RECORD_SHAPES = {
     "preflight": f'{{"authoritativeContract":"text","behaviorMap":[{ITEM_SHAPE}]}}',

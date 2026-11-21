@@ -33,9 +33,7 @@ Reviewers receive each retired case with its command and exits.
 A replacement that breaks bound cases is recorded as not binding, naming them; it does not pass while they are bound.
 Retirement never authorizes losing required behavior. Keep the raw evidence and
 other observations. The runtime rechecks retained findings at verification or
-completion and preserves their source identity. Once the final author's ready verdict judges a
-tree, a probe of its finding that it captured again there, passing on both sources, replays with
-that capture's files; the finding settles at `verify` or `complete` when all its probes then pass.
+completion and preserves their source identity.
 
 ## Behavior Map
 

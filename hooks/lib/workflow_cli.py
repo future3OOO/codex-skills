@@ -41,6 +41,7 @@ from .workflow_state import (
     bound_state,
     checkpoint,
     commit_evidence_phase,
+    commit_runs,
     commit_verification,
     complete,
     evidence_document,
@@ -415,16 +416,15 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
         raise WorkflowError("active candidate changed after the advisor checkpoint")
     execution = None
     if args.stage == "final" and intake is not None:
-        from .tdd_workflow import execute_findings
+        from .tdd_workflow import _execution_cache, execute_verdict
         intake["tddEvidence"] = args.tdd_evidence or None
-        if any("probe" in finding or "change" in finding for finding in intake["findings"]):
-            raise WorkflowError("execute findings through tdd --as final before recording their verdict")
-        execution = execute_findings(identity, state, intake["findings"], candidate=candidate)
+        _execution_cache(identity, state)
+        execution = execute_verdict(identity, state, intake, candidate)
+        if execution["failures"]:  # back to the advisor that wrote it; its runs stay, so the corrected verdict reuses them
+            commit_runs(identity, slug, workflow_id, execution)
+            raise WorkflowError("the verdict fails the workflow's checks:\n" + "\n".join(execution["failures"]))
         intake["findings"] = execution["findings"]
-        if verdict != "context-mismatch":
-            from .tdd_workflow import binds
-            if any(binds(item["execution"]) for item in execution["reexecuted"]):
-                verdict = "fix-before-commit"
+        intake.pop("causes", None), intake.pop("repair", None)  # each cause is now its recorded finding
     # The lead's draft; an approving answer's `draft` changes it, whose added items stay until explicitly rejected.
     submitted = preflight_document(args.preflight_file) if args.preflight_file else None
     changes = intake.pop("draft", None) if intake else None
@@ -496,6 +496,9 @@ def _dispatch(args: argparse.Namespace) -> int:
         if draft := preflight_document(args.preflight_file) if args.preflight_file else None:  # the lead's declarations are judged where it submits them
             from .tdd_workflow import unstartable
             unstartable(identity, draft["behaviorMap"])
+        if args.phase == "code-review" and (current := read_active(identity) or {}).get("finalStarted"):
+            raise WorkflowError(f"this pass's final-review has started, so it gives out no independent review: the final advisor judges every repair "
+                                f"(nextAction {current.get('nextAction')}; workflow.run args [] continues to it)")
         if args.channel_dir:  # a consult is about to read the projection
             for line in refresh_context(identity):
                 print(line, file=sys.stderr)

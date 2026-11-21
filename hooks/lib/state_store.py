@@ -37,7 +37,7 @@ def _comparison_scope():
         yield _EXECUTION.get()
         return
     with tempfile.TemporaryDirectory(prefix="workflow-comparison-") as temporary, contextlib.ExitStack() as resources:
-        scope = {"root": Path(temporary), "sources": {}, "breaks": {}, "inputs": {}, "objects": {}, "cancel": threading.Event(),
+        scope = {"root": Path(temporary), "sources": {}, "inputs": {}, "objects": {}, "cancel": threading.Event(),
                  "pool": None, "first": {}, "resources": resources, "reader": None, "samples": {}}
         token = _EXECUTION.set(scope)
         try:
