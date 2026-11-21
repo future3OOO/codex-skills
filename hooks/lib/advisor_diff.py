@@ -20,7 +20,7 @@ def current_pass_evidence(root: str, base_tree: str, candidate_tree: str, *, sin
     if since:
         delta = current_pass_evidence(root, since, candidate_tree)
         return _git(root, "diff", "--numstat", base_tree, candidate_tree) + (
-            delta or b"no change since the judged tree\n")
+            delta or b"no change since the tree your last verdict tested\n")
     deleted = [record.split(b"\t", 2) for record in _git(  # git quotes unusual paths, so none spans lines
         root, "diff", "--numstat", "--diff-filter=D", base_tree, candidate_tree).splitlines()]
     diff = _git(root, "diff", "--no-ext-diff", "--binary", "--diff-filter=d", base_tree, candidate_tree)

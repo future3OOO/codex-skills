@@ -4,7 +4,6 @@ from __future__ import annotations
 import copy
 import json
 import re
-import shlex
 
 
 JsonObject = dict[str, object]
@@ -281,8 +280,7 @@ def comparison_view(run: JsonObject, *, detail: bool = False) -> JsonObject:
             "runIndex": run.get("runIndex"), "command": run.get("command"),
             **({"behaviorId": run["behaviorId"]} if detail and run.get("behaviorId") else {}),
             "probeTree": run.get("probeTree"),
-            "sensitive": run.get("sensitive", False), "breakExit": run.get("breakExit"),
-            **({"breakCommand": shlex.join(["git", "cat-file", "blob", run["breakOid"]])} if run.get("breakOid") else {}),
+            "sensitive": run.get("sensitive", False),
             "arms": [{"source": "original" if index < (len(arms) + 1) // 2 else "current", "tree": arm.get("requestedTree", arm.get("sourceTree")),
                       "outcome": arm.get("outcome"), "exitCode": arm.get("exitCode"), "timedOut": arm.get("timedOut", False),
                       **({"outputTail": str(arm.get("output") or arm.get("error") or arm.get("bindingError") or "")[-1200:]}

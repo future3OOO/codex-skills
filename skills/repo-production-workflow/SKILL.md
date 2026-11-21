@@ -137,9 +137,8 @@ Before the consult, reconcile known material obligations using step 2's verifica
 and the delegate's findings. Reference the applicable observations and unresolved
 acceptance gaps; load only missing evidence, not the verification history.
 
-The final Codex Advisor investigates in the lead checkout using the recorded project executable and original source. The
-advisor records probes through the shared TDD command; the wrapper records its
-semantic verdict. After the first final verdict, a correction
+The final Codex Advisor investigates in the lead checkout using the recorded project executable and original source; its
+answer is one verdict with one repair for all its causes, which the wrapper records and the workflow executes. After the first final verdict, a correction
 needs the affected `tdd` rerun, verification for the new tree, and the final advisor's re-check. Reuse independent review and applicable evidence. Retained findings run only at `verify` or `complete`; intermediate review calls skip them. Once every
 final finding is settled (`nextAction` `complete-workflow`), a requested
 reassessment of the unchanged candidate runs the same `final-review` phase and records
@@ -158,7 +157,7 @@ affected steps.
 
 Complete after the current-head reviewer gate closes, or on the no-PR route below.
 
-`complete` first checks uncached retained findings for its candidate tree. Verdict and withdrawal records only write state; they never run probes or acquire execution locks. A replacement that produces the candidate tree runs only its own probe; current candidate proof covers maintained cases. Other replacements replay every maintained case on the candidate plus the diff, once per candidate tree and resulting tree.
+`complete` first checks uncached retained findings for its candidate tree. A repair the candidate already holds runs only its cause's test; current candidate proof covers maintained cases.
 
 `complete` refuses, from inside its transaction, unless every current probe has fresh successful comparison evidence and no proof gap remains, required phases are ready, and no binding code-review or final finding is open. The immutable raw verdict remains evidence; `context-mismatch` still blocks. The reviewable working tree must match the manifest recorded by the lead review, and every evidence phase must carry its producer's evidence reference — a passed phase without one is a bare claim and reads pending, including legacy in-flight state at upgrade time. It changes workflow state only. It does not inspect, intercept, authorize, or execute Git.
 
