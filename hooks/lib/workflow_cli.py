@@ -423,10 +423,7 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
     # The lead's draft; an approving answer's `draft` changes it, whose added items stay until explicitly rejected.
     submitted = preflight_document(args.preflight_file) if args.preflight_file else None
     changes = intake.pop("draft", None) if intake else None
-    draft = submitted
-    if submitted and changes is not None:  # the approving consult: the costs either consult measured are settled against its draft
-        earlier = (evidence_document(identity, (state.get("advisorPreflight") or {}).get("intakeEvidence")) or {}).get("findings", [])
-        draft = finalised_draft(submitted, changes, tuple({finding["id"]: finding for finding in (*earlier, *intake["findings"])}.values()))
+    draft = finalised_draft(submitted, changes) if submitted and changes is not None else submitted
     if draft:  # the submitted file itself can first be declared with this answer
         from .tdd_workflow import unstartable
         unstartable(identity, draft["behaviorMap"])

@@ -96,16 +96,21 @@ def refresh_proof(identity: RepoIdentity, items: list[JsonObject], *, candidate:
             proof["sensitive"] = (proof["arms"][0]["outcome"] == "failed" and proof["arms"][-1]["outcome"] == "passed") or bool(_growth(proof.get("execution") or {}))
 
 
-def _outside(identity: RepoIdentity, command: list[str]) -> list[str]:
-    """Each file outside the checkout that a command word names (a program binary aside), there or gone: a case runs it
-    where it was written, and it and what the case reads below its folder are the arm's inputs."""
-    paths = []
-    for word in command[1:]:
-        path = os.path.normpath(os.path.join(identity.root, word))
-        if os.path.isabs(word) and not Path(path).is_relative_to(identity.root) and not os.path.isdir(path) and not (
-                os.access(path, os.X_OK) and Path(path).open("rb").read(4) == b"\x7fELF"):
-            paths.append(path)
-    return paths
+def _case_launch(identity: RepoIdentity, command: list[str]) -> tuple[list[str], int | None]:
+    """External input files and the position, if any, where this command inserts the Python launcher."""
+    def resolve():
+        paths, script = [], None
+        for position, word in enumerate(command[1:], 1):
+            if not os.path.isabs(word):
+                continue
+            path = os.path.normpath(word)
+            if not Path(path).is_relative_to(identity.root) and not os.path.isdir(path) and not (
+                    os.access(path, os.X_OK) and Path(path).open("rb").read(4) == b"\x7fELF"):
+                paths.append(path)
+                if script is None and re.fullmatch(r"python[\d.]*", os.path.basename(command[position - 1])):
+                    script = position
+        return paths, script
+    return _sample_input(("launch", identity.root, *command), resolve)
 
 
 def _probe_files(command: list[str], identity: RepoIdentity, support: list[str]) -> list[str]:
@@ -274,9 +279,16 @@ def _input_identity(identity: RepoIdentity, execution: JsonObject, arm: JsonObje
     return digest
 
 
+# How a Python script outside the checkout starts: the mounted tree heads its import path, its own folder next. Part of
+# the key when executed.
+LAUNCH = ("__file__=__import__('sys').argv.pop(1);__import__('sys').argv[0]=__file__;__import__('sys').path[0:1]=[__import__('os').getcwd(),__import__('os').path.dirname(__file__)];"
+          "exec(compile(open(__file__,'rb').read(),__file__,'exec'))")
+
+
 def _execution_key(identity: RepoIdentity, source: str, probe: str, files: list[str], command: list[str], timeout: float, execution: JsonObject) -> str:
-    config = json.dumps([command, timeout, {key: value for key, value in execution.items()
-                                           if key not in {"search", "lookup", "assignments"}}], sort_keys=True).encode()
+    launcher = (LAUNCH,) if _case_launch(identity, command)[1] is not None else ()
+    config = json.dumps([command, timeout, *launcher, {key: value for key, value in execution.items()
+                                                      if key not in {"search", "lookup", "assignments"}}], sort_keys=True).encode()
     return hashlib.sha256(config + _source_input(identity, source, probe, tuple(files))).hexdigest()
 
 
@@ -742,12 +754,8 @@ def _execute_case(identity: RepoIdentity, source_tree: str, root: Path,
         env.update(PYTHONPATH=os.pathsep.join(dict.fromkeys(filter(None, (str(identity.root), *env.get("PYTHONPATH", "").split(os.pathsep))))), PWD=identity.root,
                    TMPDIR=temporary, CODEX_WORKFLOW_STATE_ROOT=str(Path(temporary) / "state"))
         actual = [_executable(identity, command[0], env), *command[1:]]
-        named, launch = _outside(identity, actual), list(actual)
-        for position in range(1, len(actual)):  # a Python script outside the checkout: the mounted tree, not the script's folder, heads its import path
-            if os.path.normpath(actual[position]) in named and re.fullmatch(r"python[\d.]*", os.path.basename(actual[position - 1])):
-                launch[position:position] = ["-c", "__file__=__import__('sys').argv.pop(1);__import__('sys').argv[0]=__file__;__import__('sys').path[0]=__import__('os').getcwd();"
-                                             "exec(compile(open(__file__,'rb').read(),__file__,'exec'))"]
-                break
+        named, script = _case_launch(identity, command)
+        launch = [*actual[:script], "-c", LAUNCH, *actual[script:]] if script is not None else actual
         binding = ["bwrap", "--die-with-parent", "--dev-bind", "/", "/",
                    *(arg for original, mount in objects for arg in ("--ro-bind", original, str(mount)))]
         if overlay:

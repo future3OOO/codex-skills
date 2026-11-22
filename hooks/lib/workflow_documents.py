@@ -57,27 +57,15 @@ def preflight_document(path: str) -> JsonObject:
 PREFLIGHT_SECTIONS = frozenset({"authoritativeContract", "behaviorMap"})
 
 
-def finalised_draft(draft: JsonObject, changes: object, findings: tuple[JsonObject, ...] = ()) -> JsonObject:
+def finalised_draft(draft: JsonObject, changes: object) -> JsonObject:
     """The lead's draft with the approving consult's changes: the contract text when it changes, then `items` and
-    `removed` by tdd-map's merge rule. Commands run at TDD. Each cost a finding of either consult measured joins as a
-    contract item without a case, which holds tdd open until a cost case binds, unless a surviving item removes it
-    (`removedBy`) or its figures (`keptThenRemoved`, per measure) show the removal worse on some measure."""
+    `removed` by tdd-map's merge rule. Commands run at TDD."""
     if not isinstance(changes, dict) or set(changes) - {"authoritativeContract", "items", "removed"}:
         raise ValueError("an answer's draft takes authoritativeContract, items and removed")
     contract = changes.get("authoritativeContract", draft["authoritativeContract"])
     if not _text(contract):
         raise ValueError("preflight authoritativeContract must be non-empty text")
-    items = merge(draft["behaviorMap"], changes)[1]
-    held = [entry["id"] for entry in items]  # a list: a removedBy of any JSON shape is looked up, never hashed
-    def kept(cost: JsonObject) -> bool:
-        figures = cost.get("keptThenRemoved")
-        return isinstance(figures, dict) and any(isinstance(pair, list) and len(pair) == 2 and all(type(number) in (int, float) for number in pair)
-                                                 and pair[1] > pair[0] for pair in figures.values())
-    owed = [{"id": "COST-" + re.sub(r"[^A-Z0-9_-]", "-", str(finding["id"]).upper())[:58], "kind": "contract", "behavior": "Remove this cost: " + finding["claim"],
-             "basis": "a cost the preflight advisor measured: no draft item removes it and no measured comparison shows its removal costs more",
-             "seam": "the operation the advisor measured", "expected": "a cost case shows the measured work gone against the original"}
-            for finding in findings if "cost" in finding and finding["cost"].get("removedBy") not in held and not kept(finding["cost"])]
-    return {"authoritativeContract": contract.strip(), "behaviorMap": merge(items, {"items": owed})[1] if owed else items}
+    return {"authoritativeContract": contract.strip(), "behaviorMap": merge(draft["behaviorMap"], changes)[1]}
 
 
 def advisor_envelope(
@@ -124,8 +112,7 @@ def advisor_envelope(
         # a verdict's finding binds through its cause, or stays open with the user's decision; a preflight finding says itself
         finding = {"id": identifier, "claim": item["claim"], "material": _text(item.get("decision")) if stage != "preflight" else item.get("material") is True,
                    "kind": kind, **({"priorFinding": prior} if prior is not None else {}),
-                   **{key: item[key] for key in ("decides", "quote", "decision") if stage != "preflight" and key in item},
-                   **({"cost": item["cost"]} if stage == "preflight" and isinstance(item.get("cost"), dict) else {})}
+                   **{key: item[key] for key in ("decides", "quote", "decision") if stage != "preflight" and key in item}}
         typed.append(finding)
     if verdict in {"approved", "changes-required"} and ((verdict == "approved") == any(item["material"] for item in typed)):
         raise ValueError("advisor envelope verdict is incompatible with finding materiality")
@@ -174,8 +161,7 @@ CASE_RULE = ("Before coding, state the property, bounds and what decides each in
              "run required inputs plus a seeded random sample. Print how many ran and the smallest failing input found. A reported input in the family "
              "joins its item's loop, extending bounds if needed. One property failure, one change at its source, never code per input. One input keeps one case.")
 ADVISOR_SHAPES = {
-    "preflight": ('{"schemaVersion":1,"findings":[{"id":"SPEC-1","claim":"...","material":true,"cost":{"removedBy":"BM_X",'
-                  '"keptThenRemoved":{"lines":[0,0],"work per operation":[0,0],"stored bytes":[0,0]}}}],"verdict":"approved|changes-required"}'),
+    "preflight": '{"schemaVersion":1,"findings":[{"id":"SPEC-1","claim":"...","material":true}],"verdict":"approved|changes-required"}',
     "final": ('{"schemaVersion":1,"verdict":"commit-ready|fix-before-commit|context-mismatch","findings":[{"id":"F1","claim":"...",'
               '"decides":"what decides its input","quote":"request words it relies on","decision":"evidence and the exact user decision needed"}],'
               '"causes":[{"id":"C1","findings":["F1"],"cause":"where it starts, what else it breaks","rule":"what the case rule asks of its test",'
