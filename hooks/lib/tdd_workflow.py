@@ -97,8 +97,8 @@ def refresh_proof(identity: RepoIdentity, items: list[JsonObject], *, candidate:
 
 
 def measured_operation(identity: RepoIdentity, state: JsonObject, items: list[JsonObject], runs: list[JsonObject]) -> str | None:
-    """Each operation case of `items` as the workflow measured it, whole: on the pass-start tree and the candidate from
-    its recorded comparison, or run now on the pass-start tree while none is recorded. None: the map names no operation."""
+    """Each operation case of `items` as the workflow counted it: on the pass-start tree and the candidate from its recorded
+    comparison, or run now on the pass-start tree, where it must succeed, while none is recorded. None: no operation."""
     from .workflow_documents import OPERATION
     recorded = {case["id"]: case["comparison"] for case in behavior_map.current_cases(items, runs) if OPERATION in case["comparison"]["command"]}
     parts = []
@@ -109,6 +109,8 @@ def measured_operation(identity: RepoIdentity, state: JsonObject, items: list[Js
                 _execution_cache(identity, state)
                 original = _git(identity, "rev-parse", f"{state['passStartOid']}^{{tree}}").decode().strip()
                 arms = _compare(identity, original, original, _probe_capture(identity, {"command": command}, original, MAX_CASE_SECONDS), [])["arms"][:1]
+                if arms[0]["outcome"] != "passed":  # no consult is spent on an operation that does not run
+                    raise WorkflowError(f"the operation of {entry['id']} does not run on the pass-start tree; correct its case, then consult:\n{arms[0]['output'][-1500:]}")
             parts.append(f"{entry['id']}: {command}\n" + "".join(f"on the {name}:\n{arm['output'].rstrip()}\n" for name, arm in zip(("pass-start tree", "candidate"), (arms[0], *arms[1:][-1:]))))
     return "\n".join(parts) or None
 

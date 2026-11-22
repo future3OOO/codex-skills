@@ -1299,7 +1299,7 @@ CHANNELS = (
     ("finding-ledger", "finding ledger: each finding's immutable claim, status and evidence pointer"),
     ("quality-candidates", "non-blocking gate candidates: locations and matching rules; investigate their actual cost and necessity"),
     ("diff", "current-pass diff: passStartOid^{tree} -> activeCandidateTree; a deleted file is its header and line count"),
-    ("operation", "the whole operation the map names, run and measured by the workflow: what it costs and where the work goes; the candidate runs as the pass-start commit with its changes uncommitted"),
+    ("operation", "the operation the design touches, run and counted by the workflow: the calls of the whole and of the code to be edited; the candidate runs as the pass-start commit with its changes uncommitted"),
 )
 
 
@@ -1434,9 +1434,12 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
     result["responseFormat"] = json.dumps(shape)
     if state.get("tddEvidence"):
         result["evidenceCommand"] = shlex.join([*WORKFLOW, "evidence", "--repo", identity.root, "--evidence-id", state["tddEvidence"]])
+    from .tdd_workflow import current_map, measured_operation
     if channel_dir is None:
+        if phase == "code-review":  # the reviewer checks the operation result the final advisor is given
+            reviewed, recorded = current_map(identity, state, fresh=False)
+            result["operation"] = measured_operation(identity, state, reviewed or [], (recorded or {}).get("runs") or [])
         return result
-    from .tdd_workflow import current_map
     # The map shows each recorded result; freshness is judged once, by the readiness read_workflow derived in this scope.
     items, document = current_map(identity, state, fresh=False)
     items = items or []
@@ -1461,7 +1464,6 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
                            "baseDigest": evidence_write(str(workflow_id), "preflight-draft", prior).evidence_id,
                            "delta": draft_diff(prior, preflight_draft, "last-recorded-draft", "current-draft")}
     since = (state.get("repairTree") or state.get("judgedTree")) if phase == "final-review" else None
-    from .tdd_workflow import measured_operation
     drafted = phase == "preflight-advice" and preflight_draft is not None  # before approval the draft's operation is run on the pass-start tree
     values: dict[str, tuple[object, object]] = {
         "operation": (None, measured_operation(identity, state, preflight_draft["behaviorMap"] if drafted else items, [] if drafted else document.get("runs") or [])),

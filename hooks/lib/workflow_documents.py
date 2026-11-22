@@ -161,8 +161,9 @@ CASE_RULE = ("Before coding, state the property, bounds and what decides each in
              "no testing library, through the narrowest production interface owning the property. Run all inputs smallest first; only if too many to list, "
              "run required inputs plus a seeded random sample. Print how many ran and the smallest failing input found. A reported input in the family "
              "joins its item's loop, extending bounds if needed. One property failure, one change at its source, never code per input. One input keeps one case. "
-             f"One preservation item is the operation: its case is python3 {OPERATION} 'COMMAND' ['COMMAND' ...], the commands a person really runs to get the result, "
-             "from the entry point they start with an input they really give, in the order and number they run them; the workflow measures it whole on both trees.")
+             f"One preservation item is the operation the design touches: the code the change edits, with what feeds it and what uses its result, run as real use runs it "
+             f"(a real input, a cold start, each part as often as real use runs it). Its case is python3 {OPERATION} --edits FILE[,FILE] 'COMMAND' ['COMMAND' ...]: "
+             "the workflow counts the calls of the whole and of the edited files on both trees.")
 ADVISOR_SHAPES = {
     "preflight": '{"schemaVersion":1,"findings":[{"id":"SPEC-1","claim":"...","material":true}],"verdict":"approved|changes-required"}',
     "final": ('{"schemaVersion":1,"verdict":"commit-ready|fix-before-commit|context-mismatch","findings":[{"id":"F1","claim":"...",'

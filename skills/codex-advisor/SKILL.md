@@ -5,74 +5,29 @@ description: Consult the Codex advisor at the workflow preflight and final-revie
 
 # Codex advisor
 
-## Checkpoints
+A governed pass's next step runs every consult and supplies its arguments, sessions and evidence. The lead decides only
+what follows.
 
-### `preflight-advice`
+## `preflight-advice`
 
-Investigate the request and original source before production preflight is recorded.
-Supply `--preflight-file <draft.json>`; the wrapper snapshots it before consultation.
-The advisor designs against [Production Preflight's frozen evaluation and architecture rules](../production-preflight/SKILL.md#behaviormap),
-checking preservation against executed original results and challenging change expectations and costs.
+- Write the draft, with its operation item, and run the next step. An operation that does not run on the pass-start tree
+  comes back as its error before any consult: correct the case and run the step again.
+- After the first consult, check the advisor's source claims against the code and correct the draft; a removal it
+  designed leaves the draft only with a measurement showing it costs more than it saves.
+- The second consult finalises and records the draft: preflight is exactly these two consults.
+- A planned stack's governing design is a falsifiable hypothesis: deepen it append-only and correct the draft from the
+  smallest real-Seam measurement that resolves an unverified prediction, whoever made it.
 
-The advisor derives required work and outcomes using the proposed owners and reuse
-paths as inputs, and proposes the performance cases with their bounds. The lead checks
-its source claims and updates the draft, listing those cases' commands in it. Resume
-with `--reconsult` for the advisor to
-finalise and approve it. Preflight is exactly these two consultations in one advisor session:
-the second completes and records the draft, so `approved` is its only verdict and a third is refused.
-The first consult receives the whole draft. Reconsults send its delta with both
-content identities; failed results keep that base. A resumed consult, preflight or
-final, carries only the sections whose content changed, ignoring tree, run and evidence ids,
-since its session last received them.
+## `final-review`
 
-Preflight records the governing-design declaration: `--design-file` with the
-durable design artifact of a planned stack, or `--design-absent` with a reason; a
-single-PR pass passes neither and records absence.
-Final review reuses that declaration in its own advisor session, which later final
-consults resume; do not repeat it or supply `--reconsult`. Declare absence rather than
-manufacture a trivial design document. The declaration travels verbatim; reasons over 2000 bytes are refused.
-An architecture choice is settled by evidence, not by the consult.
+- The advisor records each cause through the workflow, which runs its test and repair; recording its verdict applies the
+  tested repair while the checkout still is the reviewed tree.
+- A finding closes when its repair passes or, having none, at the advisor's return review once the proof has changed;
+  reject one only with `tdd --reject ID 'COMMAND'`, a command whose output shows it does not hold.
+- `context-mismatch` is reserved for a candidate or projection identity mismatch and advances nothing.
 
-A design artifact carries: the chosen architecture and rationale; every
-architecture family exploration or planning produced, with the technical
-rejection reason for each rejected family; the verified exploration findings
-that constrain the design and how each was measured; and every unverified
-falsifiable prediction explicitly marked unresolved. The design is a falsifiable
-hypothesis, not an immutable authority: deepen it append-only in the same
-unpushed workflow and carry the current file to each consult — a changed
-declaration records as new workflow evidence while the ledger keeps every prior
-version. The wrapper sends the declaration and the complete design body as
-framed evidence, and the advisor never owns dispositions.
+## Failure
 
-The canonical imaginary-risk ban and the premise/occurrence checks in the
-repo's `AGENTS.md` govern architecture-family decisions; this checkpoint adds
-procedure, not new doctrine. A family selection or rejection resting on a
-falsifiable prediction about existing behavior, tests, compatibility, or
-runtime semantics stays unresolved — whoever made the prediction: planning,
-advisor, or lead — until the smallest practical real-Seam measurement
-resolves it. Correct the draft using that measurement before resubmission.
-
-### `final-review`
-
-Request approval after implementation, verification and native delegate code review. This
-independent checkpoint verifies the candidate by running code rather than trusting the lead
-or delegate verdict. The wrapper sends the recorded original request once, the checkpoint's
-retained advisor projection, the current governing-design declaration (a deepened design
-records as new evidence), the finding ledger, and one direct `passStartOid^{tree} ->
-activeCandidateTree` diff, each deleted file as its header and line count.
-The consult runs in the lead checkout with full execution access and its installed estate.
-The wrapper supplies and cleans an original snapshot at passStartOid and scratch for probes.
-This is trusted access;
-preflight skips the candidate-staleness check, which neither restores nor confines writes.
-
-The final advisor records each cause through the workflow while it consults: the workflow runs the cause's test on the reviewed tree and with its repair, and the recorded cases, and returns the results. The wrapper records the answer, a verdict with report lines. `context-mismatch` is reserved for candidate/projection identity mismatch;
-it advances nothing. State never authorizes Git.
-
-## Failure and disposition
-
-If transport is genuinely unavailable, record the preflight result as
-`unavailable` with the measured reason; it cannot approve recording. There is no unavailable exception for the final
-review. No nonce, skip file, stamp, attestation, or audited exception authorizes
-completion.
-
-Rechecks settle behavior and measured cost failures; shared failures stay pending.
+If transport is genuinely unavailable, record the preflight result as `unavailable` with the measured reason; it cannot
+approve recording. Final review has no unavailable exception, and no nonce, skip file, stamp or attestation authorizes
+completion. State never authorizes Git.
