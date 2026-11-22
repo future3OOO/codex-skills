@@ -20,7 +20,7 @@ fi
 slug=""; phase=""; cwd="$PWD"; design_file=""; design_absent=""; budget=600; fresh=0; quiet=0; question=""
 reconsult_args=(); preflight_file=""; draft_args=()
 provider="${CODEX_ADVISOR_PROVIDER:-${ADVISOR_PROVIDER:-codex}}"
-codex_model="${CODEX_ADVISOR_MODEL:-gpt-6-astra}"
+codex_model="${CODEX_ADVISOR_MODEL:-gpt-6.2-astra}"
 codex_effort="${CODEX_ADVISOR_EFFORT:-xhigh}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
