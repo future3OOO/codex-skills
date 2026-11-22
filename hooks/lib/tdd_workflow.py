@@ -1705,7 +1705,7 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None, emit=
         if args.input or recording:
             from .workflow_documents import advisor_envelope
             _execution_cache(identity, state)
-            # the final advisor's call is one cause per test under its one diff, named by its statement and test: recorded again, it replaces itself
+            # the final advisor's call is one cause per test under its one diff; the diff it records last is the consult's repair
             verdict = advisor_envelope(args.input, slug=slug, workflow_id=workflow_id, stage="review", producer="code-review")[0] if args.input else {
                 "stage": "final", "findings": [], "repair": args.change, "causes": [
                     {"id": "FINDING-" + _digest([args.report, test]), "cause": "\n".join(args.report), "findings": [], "test": test, "retires": args.retire} for _, test in args.case]}

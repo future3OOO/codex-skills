@@ -418,10 +418,10 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
         if expected in (None, candidate) and intake["tddEvidence"] == state.get("tddEvidence"):
             execution = execute_verdict(identity, state, intake, candidate)
             intake["findings"] = execution["findings"]
-            # the causes this consult recorded on the reviewed tree, one recorded again as last recorded: their tested repair is applied with the verdict
-            repairs = list({finding["id"]: finding for _, finding in _retained(identity, state)
-                            if finding["stage"] == "final" and finding["sourceTree"] == candidate and "change" in finding}.values())
-            execution["repairTree"] = repairs[-1]["execution"]["tree"] if repairs else None
+            # the repair this consult last recorded on the reviewed tree, with the causes it was tested under: the one tree the workflow ran is applied with the verdict
+            repairs = [finding for _, finding in _retained(identity, state) if finding["stage"] == "final" and finding["sourceTree"] == candidate and "change" in finding]
+            repairs = [finding for finding in repairs if finding["change"] == repairs[-1]["change"]]
+            execution["repairTree"] = repairs[-1]["execution"].get("tree") if repairs else None
     # The lead's draft; an approving answer's `draft` changes it, whose added items stay until explicitly rejected.
     submitted = preflight_document(args.preflight_file) if args.preflight_file else None
     changes = intake.pop("draft", None) if intake else None
