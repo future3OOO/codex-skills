@@ -462,8 +462,11 @@ def commit_tdd(identity: RepoIdentity, slug: str, workflow_id: str | None,
         state["tdd"] = "in-progress" if pending else "passed"
         state["phase"] = "tdd"
         state.pop("paused", None)
+        held = [entry for entry in state.get("findingStates") or [] if entry["stage"] == "final" and _finding_unresolved(entry)]
         if pending and (not selected_only or transaction.manifest(state.get("reviewManifestId")) != tree_before):
             _reset_reviews(state)
+        elif (state.get("finalReview") or {}).get("status") == "fix-before-commit" and held and all(entry.get("decision") for entry in held):
+            _reset_reviews(state)  # this comparison differs from the one its advisor judged, and the open findings hold no test: its return review decides them
         elif readiness and readiness["reviewCurrent"]:
             state["codeReview"] = {"status": "passed", "findings": "none"}
         state["nextAction"] = _derive_next_action(state, summary_doc)
@@ -1130,6 +1133,9 @@ def record_advisor_result(
                     transaction, state, intake_write.evidence_id, intake, intakes,
                 )
                 _settle_executed(state, execution, intake_reference)
+                for entry in state.get("findingStates") or [] if verdict == "commit-ready" else ():  # a finding with no test settles by its author's ready verdict
+                    if entry.get("decision") and entry["stage"] == stage and entry["producer"] == source and _finding_unresolved(entry):
+                        entry.update(status="resolved", dispositionEvidenceId=intake_reference)
                 state["finalStarted"] = True
                 reviewed = manifest_write(str(state["workflowId"]), "final-review-tree", current_manifest())
                 state["reviewManifestId"] = reviewed.manifest_id
@@ -1766,7 +1772,7 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
         text = f"{', '.join(unbound)} need a case: tdd takes each with --case, the item's id and the case's command." if unbound else ""
         if pending:
             operation["findings"] = pending
-            text += " A final finding closes when its repair passes, or with tdd --reject, its id and a command whose output shows it does not hold."
+            text += " A final finding closes when its repair passes or, having none, at its advisor's return review once the proof has changed; or with tdd --reject, its id and a command whose output shows it does not hold."
         if text := text.strip():
             operation["input"] = text
         return operation

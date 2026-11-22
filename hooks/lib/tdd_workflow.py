@@ -101,9 +101,7 @@ def _case_launch(identity: RepoIdentity, command: list[str]) -> tuple[list[str],
     def resolve():
         paths, script = [], None
         for position, word in enumerate(command[1:], 1):
-            if not os.path.isabs(word):
-                continue
-            path = os.path.normpath(word)
+            path = os.path.normpath(os.path.join(identity.root, word))  # however the word spells it: a case starts in the checkout
             if not Path(path).is_relative_to(identity.root) and not os.path.isdir(path) and not (
                     os.access(path, os.X_OK) and Path(path).open("rb").read(4) == b"\x7fELF"):
                 paths.append(path)

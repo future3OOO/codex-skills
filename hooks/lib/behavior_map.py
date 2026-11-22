@@ -95,7 +95,11 @@ def merge(previous: list[JsonObject], value: JsonObject, keep: list[str] | tuple
     parts = [value[key] for key in ("items", "added") if key in value]
     merged = next((part for part in parts if not isinstance(part, list)), [entry for part in parts if isinstance(part, list) for entry in part])
     if isinstance(merged, list):
-        fields = REQUIRED_FIELDS | JUDGEMENT_FIELDS
+        fields, folded = REQUIRED_FIELDS | JUDGEMENT_FIELDS, {}
+        for entry in merged:  # an update that names one item twice changes it once, its entries in order
+            key = str(entry.get("id")).strip() if isinstance(entry, dict) else id(entry)
+            folded[key] = {**folded[key], **entry} if key in folded else entry
+        merged = list(folded.values())
         for position, entry in enumerate(merged):
             if isinstance(entry, dict):
                 prior = recorded.get(str(entry.get("id")).strip(), {})
