@@ -1280,9 +1280,9 @@ def apply_repair(identity: RepoIdentity, execution: JsonObject, reviewed: str) -
         return None
     if not _candidate_matches(identity, reviewed):
         return "not applied: the checkout no longer is the reviewed tree"
-    change = "".join(dict.fromkeys(finding["change"] + ("" if finding["change"].endswith("\n") else "\n") for finding in execution["findings"] if "change" in finding))
+    change = next(finding["change"] for finding in execution["findings"] if "change" in finding)
     try:
-        _git(identity, "apply", "-", stdin=change.encode("utf-8", "replace"))
+        _git(identity, "apply", "-", stdin=(change if change.endswith("\n") else change + "\n").encode("utf-8", "replace"))
     except RuntimeError as exc:
         return f"not applied: {exc}"
     _EXECUTION.get()["candidates"].pop(identity.root, None)

@@ -561,6 +561,7 @@ def commit_findings(
                 state["codeReviewIntakeEvidence"] = write.evidence_id
             else:
                 state.setdefault("finalReview", {})["intakeEvidence"] = write.evidence_id
+                state["repairTree"] = execution["repairTree"]  # this is the most recent successful recording, including a repeated finding
             state["nextAction"] = _derive_next_action(state)
             return _commit(transaction, state, "tdd-finding", evidence=[write]), write.evidence_id
         unresolved = _stage_unresolved(state, "code-review", "code-review")
