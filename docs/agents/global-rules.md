@@ -55,14 +55,14 @@ Repo Context Forge analysis copy. For codex-skills installation, follow
 
 ## Minimal Whole-System Cost
 
-- Performance is a requirement: the objective is the minimal whole-system cost for the required behavior. Ask what the change costs the person using it: they demand bare-metal performance with no regressions. A measured or obvious cost in code the change touches or its operation runs through, including behavior intersecting it, is part of the change: optimize and remove it in this pass. Skip one only when measured to cost more than it saves.
+- Performance is a requirement: the objective is the minimal whole-system cost for the required behavior. Ask what the change costs the person using it: they demand bare-metal performance with no regressions. A measured or obvious cost in code the change touches or its operation runs through, including behavior intersecting it, is part of the change. Include every optimization whose measured cost is less than what it saves, in lines, in work on every operation it touches and in stored data. A cost stays only with a measurement showing its cheapest removal costs more.
 - Assume your first implementation is bloated. Find the best justified whole-system design for the objective, including production code,
   tests, scripts, documentation, maintenance and execution; keep only what it needs while preserving required behavior and proof. Retain real
   attack probes; cut redundant scaffolding and mocked unit-test bloat from this change.
 - Every change must remove unnecessary workflow ceremony. Reviewer-requested
   follow-up commits must reduce net lines of code unless a demonstrated lower whole-system cost at the same required behavior justifies necessary growth.
 - Preserve required behavior and proof. Every changed line must serve the request; lowering the whole-system cost of code the change touches serves it.
-- Patch size and verification effort alone do not justify leaving demonstrated avoidable cost.
+- Patch size, verification effort and the kind of change (a cache, a stored field, a schema version, a wider edit) are not measurements.
 
 ## Root-Cause Changes
 

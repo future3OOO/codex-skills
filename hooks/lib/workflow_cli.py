@@ -41,7 +41,6 @@ from .workflow_state import (
     bound_state,
     checkpoint,
     commit_evidence_phase,
-    commit_runs,
     commit_verification,
     complete,
     evidence_document,
@@ -412,23 +411,22 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
     elif verdict is None:
         raise ValueError("record advisor-result requires --input or --verdict unavailable --reason")
     expected = args.expected_candidate_tree
-    if args.stage != "preflight" and expected not in (None, candidate):  # a preflight verdict judges its draft
-        raise WorkflowError("active candidate changed after the advisor checkpoint")
     execution = None
     if args.stage == "final" and intake is not None:
-        from .tdd_workflow import _execution_cache, execute_verdict
+        from .tdd_workflow import _execution_cache, apply_repair, execute_verdict
         intake["tddEvidence"] = args.tdd_evidence or None
-        _execution_cache(identity, state)
-        execution = execute_verdict(identity, state, intake, candidate)
-        if execution["failures"]:  # back to the advisor that wrote it; its runs stay, so the corrected verdict reuses them
-            commit_runs(identity, slug, workflow_id, execution)
-            raise WorkflowError("the verdict fails the workflow's checks:\n" + "\n".join(execution["failures"]))
-        intake["findings"] = execution["findings"]
-        intake.pop("causes", None), intake.pop("repair", None)  # each cause is now its recorded finding
+        if expected in (None, candidate) and intake["tddEvidence"] == state.get("tddEvidence"):
+            _execution_cache(identity, state)
+            execution = execute_verdict(identity, state, intake, candidate)
+            intake["findings"] = execution["findings"]
+            intake.pop("causes", None), intake.pop("repair", None)  # each cause is now its recorded finding
     # The lead's draft; an approving answer's `draft` changes it, whose added items stay until explicitly rejected.
     submitted = preflight_document(args.preflight_file) if args.preflight_file else None
     changes = intake.pop("draft", None) if intake else None
-    draft = finalised_draft(submitted, changes) if submitted and changes is not None else submitted
+    draft = submitted
+    if submitted and changes is not None:  # the approving consult: the costs either consult measured are settled against its draft
+        earlier = (evidence_document(identity, (state.get("advisorPreflight") or {}).get("intakeEvidence")) or {}).get("findings", [])
+        draft = finalised_draft(submitted, changes, tuple({finding["id"]: finding for finding in (*earlier, *intake["findings"])}.values()))
     if draft:  # the submitted file itself can first be declared with this answer
         from .tdd_workflow import unstartable
         unstartable(identity, draft["behaviorMap"])
@@ -437,8 +435,19 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
         design=design_declaration(args.design_declaration) if args.design_declaration else None,
         intake=intake, expected_candidate_tree=expected or candidate, execution=execution,
         preflight_draft=draft, submitted_draft=submitted if changes is not None else None)
-    emit(_receipt(state, identity, obligations=False))
-    return 0
+    recorded = state.get("finalReviewContextMismatchEvidence") or (state.get("advisorPreflight" if args.stage == "preflight" else "finalReview") or {}).get("intakeEvidence")
+    details = {"intake": recorded} if recorded else {}  # the answer as recorded: the wrapper's digest reads it from here
+    if args.stage == "final" and not state.get("finalReviewContextMismatchEvidence") and (reason := (state.get("finalReview") or {}).get("reason")):
+        details["repair"] = "not applied: " + reason
+    if not execution or args.check or "repair" in details:
+        emit(_receipt(state, identity, obligations=False, **details))
+        return 0
+    if applied := apply_repair(identity, execution, candidate):
+        state, details["repair"] = read_active(identity), applied
+    emit(_receipt(state, identity, obligations=False, **details))
+    if execution["failures"]:  # recorded as report lines, the pass pending; the reasons go back to the advisor that wrote it, once
+        print("the repair is unusable:\n" + "\n".join(execution["failures"]), file=sys.stderr)
+    return int(bool(execution["failures"]))
 
 
 def _dispatch(args: argparse.Namespace) -> int:
