@@ -23,7 +23,7 @@ for number, step in enumerate(sys.argv[1:], 1):
         sys.exit(f"step {number} exited {done.returncode}: {step}\n{done.stderr[-1500:]}")
     rows = list(pstats.Stats(profile).stats.items()) if profile else []
     calls = sum(row[1][1] for row in rows)
-    print(f"step {number}: {step[:110]}\n  {seconds:.3f} s, {cpu:.3f} CPU s" + (f", {calls} calls; the most called and the slowest by their own seconds (calls, own seconds, function):" if profile else ""))
+    print(f"step {number}: {step}\n  {seconds:.3f} s, {cpu:.3f} CPU s" + (f", {calls} calls; the most called and the slowest by their own seconds (calls, own seconds, function):" if profile else ""))
     for (file, line, name), (_, count, own, _, _) in dict(row for order in (1, 2) for row in sorted(rows, key=lambda row: -row[1][order])[:6]).items():
         print(f"  {count} {own:.3f} {os.path.relpath(file) if file.startswith(os.getcwd()) else os.path.basename(file)}:{line} {name}")
     for key, value in (("calls", calls), ("cpuSeconds", cpu), ("seconds", seconds)):
