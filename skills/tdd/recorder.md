@@ -7,7 +7,7 @@ outcome and exits non-zero when the assertion fails. Output is diagnostic only;
 printing a value or `name: result` does not assert it.
 
 `--case` takes one command per case after its item, or `-` for no item, as two values or as `ITEM:COMMAND`. A file outside the checkout that a command names is never copied: edit it in place. Its result
-stands only for the bytes of that file and of each file the case read below its folder, and reads pending while the file is gone. A `--case` call runs the cases it names and any recorded case still without accepted proof, captures any command an item still
+stands only for the bytes of that file and of each file the case read below its folder (a run nested under a trace that records no file opens observes none of those reads), and reads pending while the file is gone. A `--case` call runs the cases it names and any recorded case still without accepted proof, captures any command an item still
 declares and judges the rest of the map as recorded, without running it; a bare call captures those too, replays every recorded command and,
 when all hold and nothing is open, verifies.
 A declaration that cannot be prepared stays open; put the corrected command in its returned `tdd --correct` call, which also replaces a declared command that already ran (name that command before the new one when the item has several); a failing case is a row, not a failed call. `record tdd-map --input`
