@@ -153,13 +153,16 @@ ITEM_SHAPE = ('{"id":"BM_X","kind":"conformance|contract|preservation","basis":"
               '"behavior":"the property","seam":"...","expected":"...",'
               '"boundaryInputs":["the bounds, and what a cut leaves out"],"cases":["COMMAND"],'
               '"interpretations":["reading a","reading b"],"interpretation":"...","authority":"..."}')
+OPERATION = str(Path(__file__).with_name("operation.py"))  # runs and measures the commands it is given: an operation case
 # The one rule for a check, given to each role that adds one where it first meets it: the lead with the draft's shape, an
 # advisor in its consult prompt, the reviewer in its checkpoint.
 CASE_RULE = ("Before coding, state the property, bounds and what decides each input: the request's words, the original's result on the pass-start tree, "
              "a fresh direct run or a relation between two runs; never the changed code's output. Per kind, one COMMAND: a plain loop in one script, "
              "no testing library, through the narrowest production interface owning the property. Run all inputs smallest first; only if too many to list, "
              "run required inputs plus a seeded random sample. Print how many ran and the smallest failing input found. A reported input in the family "
-             "joins its item's loop, extending bounds if needed. One property failure, one change at its source, never code per input. One input keeps one case.")
+             "joins its item's loop, extending bounds if needed. One property failure, one change at its source, never code per input. One input keeps one case. "
+             f"One preservation item is the operation: its case is python3 {OPERATION} 'COMMAND' ['COMMAND' ...], the commands a person really runs to get the result, "
+             "from the entry point they start with an input they really give, in the order and number they run them; the workflow measures it whole on both trees.")
 ADVISOR_SHAPES = {
     "preflight": '{"schemaVersion":1,"findings":[{"id":"SPEC-1","claim":"...","material":true}],"verdict":"approved|changes-required"}',
     "final": ('{"schemaVersion":1,"verdict":"commit-ready|fix-before-commit|context-mismatch","findings":[{"id":"F1","claim":"...",'

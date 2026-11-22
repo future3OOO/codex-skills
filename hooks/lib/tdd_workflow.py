@@ -96,6 +96,23 @@ def refresh_proof(identity: RepoIdentity, items: list[JsonObject], *, candidate:
             proof["sensitive"] = (proof["arms"][0]["outcome"] == "failed" and proof["arms"][-1]["outcome"] == "passed") or bool(_growth(proof.get("execution") or {}))
 
 
+def measured_operation(identity: RepoIdentity, state: JsonObject, items: list[JsonObject], runs: list[JsonObject]) -> str | None:
+    """Each operation case of `items` as the workflow measured it, whole: on the pass-start tree and the candidate from
+    its recorded comparison, or run now on the pass-start tree while none is recorded. None: the map names no operation."""
+    from .workflow_documents import OPERATION
+    recorded = {case["id"]: case["comparison"] for case in behavior_map.current_cases(items, runs) if OPERATION in case["comparison"]["command"]}
+    parts = []
+    for entry in items:
+        for command in [recorded[entry["id"]]["command"]] if entry["id"] in recorded else [text for text in entry.get("cases") or [] if isinstance(text, str) and OPERATION in text]:
+            arms = (recorded.get(entry["id"]) or {}).get("arms")
+            if arms is None:
+                _execution_cache(identity, state)
+                original = _git(identity, "rev-parse", f"{state['passStartOid']}^{{tree}}").decode().strip()
+                arms = _compare(identity, original, original, _probe_capture(identity, {"command": command}, original, MAX_CASE_SECONDS), [])["arms"][:1]
+            parts.append(f"{entry['id']}: {command}\n" + "".join(f"on the {name}:\n{arm['output'].rstrip()}\n" for name, arm in zip(("pass-start tree", "candidate"), (arms[0], *arms[1:][-1:]))))
+    return "\n".join(parts) or None
+
+
 def _case_launch(identity: RepoIdentity, command: list[str]) -> tuple[list[str], int | None]:
     """External input files and the position, if any, where this command inserts the Python launcher."""
     def resolve():

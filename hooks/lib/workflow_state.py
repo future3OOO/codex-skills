@@ -1299,6 +1299,7 @@ CHANNELS = (
     ("finding-ledger", "finding ledger: each finding's immutable claim, status and evidence pointer"),
     ("quality-candidates", "non-blocking gate candidates: locations and matching rules; investigate their actual cost and necessity"),
     ("diff", "current-pass diff: passStartOid^{tree} -> activeCandidateTree; a deleted file is its header and line count"),
+    ("operation", "the whole operation the map names, run and measured by the workflow: what it costs and where the work goes"),
 )
 
 
@@ -1460,7 +1461,10 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
                            "baseDigest": evidence_write(str(workflow_id), "preflight-draft", prior).evidence_id,
                            "delta": draft_diff(prior, preflight_draft, "last-recorded-draft", "current-draft")}
     since = (state.get("repairTree") or state.get("judgedTree")) if phase == "final-review" else None
+    from .tdd_workflow import measured_operation
+    drafted = phase == "preflight-advice" and preflight_draft is not None  # before approval the draft's operation is run on the pass-start tree
     values: dict[str, tuple[object, object]] = {
+        "operation": (None, measured_operation(identity, state, preflight_draft["behaviorMap"] if drafted else items, [] if drafted else document.get("runs") or [])),
         "intent": (None, state.get("intent") or None),
         "advisor-projection": (evidence_id, projection),
         "behavior-map": (None, map_content or None),
