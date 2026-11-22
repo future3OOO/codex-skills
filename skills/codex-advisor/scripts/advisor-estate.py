@@ -131,7 +131,8 @@ def main() -> int:
         if not isinstance(servers, list) or any(not isinstance(s, dict) or not isinstance(s.get("name"), str) for s in servers):
             raise ValueError("native Codex returned an invalid MCP catalog")
         names = {s["name"] for s in servers}
-        selected = set(config["mcp"])
+        # A final advisor records through the workflow tool, whose call returns the result; no other consult is given it.
+        selected = {*config["mcp"], *["workflow"] * (os.environ.get("ADVISOR_PHASE") == "final-review")}
         if missing := selected - names:
             raise ValueError(f"advisor MCPs are not configured: {sorted(missing)}")
         flags = ["-c", "features.plugins=false", "-c", "features.apps=false", "-c", "features.memories=false",

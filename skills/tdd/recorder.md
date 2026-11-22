@@ -23,13 +23,13 @@ Open lines name cases by `caseKey`; a command names the checkout as `"${PWD}"` a
 A finding given before and unchanged is its id alone, and `probeOf` names the finding that carries a shared probe.
 `evidence --evidence-id` with the reply's `summaryId` gives every recorded result whole.
 
-Only a finding's author can withdraw it, or retire a case through its verdict's causes; the lead closes an
+Only a finding's author can withdraw it, or retire a case with the cause that disproves it; the lead closes an
 advisor-added map item or final finding it rejects with `tdd --reject ID 'COMMAND'`, whose output the workflow records. The lead
 retires cases with `--retire` and their `caseKey`s, or one with its item and command. A retired kept-behaviour case
 stays the item's retained proof, holding it open while it fails on the candidate, unless another recorded case
 proves the item and the case fails on the original or no longer passes after the item changed; an item left without a proving case reads open.
 Reviewers receive each retired case with its command and exits.
-A repair that breaks bound cases, named, is unusable: no cause of its verdict binds, and the final advisor is asked once more.
+A repair that breaks bound cases, named, is unusable: no cause under it binds, and the final advisor's recording call returns it unrecorded.
 Retirement never authorizes losing required behavior. Keep the raw evidence and
 other observations. The runtime rechecks retained findings at verification or
 completion and preserves their source identity.

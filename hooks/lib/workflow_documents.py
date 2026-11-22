@@ -80,7 +80,7 @@ def advisor_envelope(
         raise ValueError(f"cannot read advisor envelope JSON: {exc}") from exc
     # a reviewer's verdict file carries no verdict, its command does; the recorder binds workflow, tree and evidence, an echoed id is ignored
     fields = {"schemaVersion", "findings", *(("verdict",) if stage != "review" else ())}
-    extra = {"draft"} if stage == "preflight" else {"causes", "repair", *(("workflowId", "candidateTree", "tddEvidence") if stage == "final" else ())}
+    extra = {"draft"} if stage == "preflight" else {"workflowId", "candidateTree", "tddEvidence"} if stage == "final" else {"causes", "repair"}  # the final advisor records its causes while it consults
     if not isinstance(value, dict) or not fields <= set(value) <= fields | extra:
         raise ValueError("advisor envelope fields do not match its stage: " + ", ".join(sorted(fields)))
     findings, verdict = value.get("findings"), value.get("verdict")
@@ -163,14 +163,17 @@ CASE_RULE = ("Before coding, state the property, bounds and what decides each in
 ADVISOR_SHAPES = {
     "preflight": '{"schemaVersion":1,"findings":[{"id":"SPEC-1","claim":"...","material":true}],"verdict":"approved|changes-required"}',
     "final": ('{"schemaVersion":1,"verdict":"commit-ready|fix-before-commit|context-mismatch","findings":[{"id":"F1","claim":"...",'
-              '"decides":"what decides its input","quote":"request words it relies on","decision":"evidence and the exact user decision needed"}],'
-              '"causes":[{"id":"C1","findings":["F1"],"cause":"where it starts, what else it breaks","rule":"what the case rule asks of its test",'
-              '"test":"COMMAND","lines":{"added":0,"removed":0},"functions":{"name":"why the owner could not hold it"},"retires":[["ITEM","COMMAND"]]}],'
-              '"repair":"/scratch/repair.diff"}'),
+              '"decision":"only when it blocks with no cause to record: the evidence and exactly what settles it"}]}'),
+    # the reviewer's verdict file: its command carries the verdict
+    "review": ('{"schemaVersion":1,"findings":[{"id":"F1","claim":"...",'
+               '"decides":"what decides its input","quote":"request words it relies on","decision":"evidence and the exact user decision needed"}],'
+               '"causes":[{"id":"C1","findings":["F1"],"cause":"where it starts, what else it breaks","rule":"what the case rule asks of its test",'
+               '"test":"COMMAND","lines":{"added":0,"removed":0},"functions":{"name":"why the owner could not hold it"},"retires":[["ITEM","COMMAND"]]}],'
+               '"repair":"/scratch/repair.diff"}'),
 }
 RECORD_SHAPES = {
     "preflight": f'{{"authoritativeContract":"text","behaviorMap":[{ITEM_SHAPE}]}}',
-    "advisor-result": "; ".join(f"{stage}: {shape}" for stage, shape in ADVISOR_SHAPES.items()),
+    "advisor-result": "; ".join(f"{stage}: {ADVISOR_SHAPES[stage]}" for stage in ("preflight", "final")),
     "tdd-map": f'{{"items":[{ITEM_SHAPE}]}} or {{"removed":["BM_X"]}}; a recorded item needs only id and changed fields, null removes an optional one; retained proof survives removal',
 }
 

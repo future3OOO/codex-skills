@@ -135,7 +135,7 @@ and the delegate's findings. Reference the applicable observations and unresolve
 acceptance gaps; load only missing evidence, not the verification history.
 
 The final Codex Advisor investigates in the lead checkout using the recorded project executable and original source; its
-answer is one verdict with one repair for all its causes, which the wrapper records and the workflow executes, applying a repair that passes to the checkout. After the first final consult, a correction
+causes are recorded through the workflow while it consults, which runs each cause's test and repair and returns the results; recording its verdict applies the tested repair to the checkout. After the first final consult, a correction
 needs the affected `tdd` rerun, verification for the new tree, and the final advisor's re-check. Reuse independent review and applicable evidence. Retained findings run only at `verify` or `complete`; intermediate review calls skip them. Once every
 final finding is settled (`nextAction` `complete-workflow`), a requested
 reassessment of the unchanged candidate runs the same `final-review` phase and records

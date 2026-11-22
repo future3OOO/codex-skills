@@ -413,13 +413,15 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
     expected = args.expected_candidate_tree
     execution = None
     if args.stage == "final" and intake is not None:
-        from .tdd_workflow import _execution_cache, apply_repair, execute_verdict
+        from .tdd_workflow import _retained, apply_repair, execute_verdict
         intake["tddEvidence"] = args.tdd_evidence or None
         if expected in (None, candidate) and intake["tddEvidence"] == state.get("tddEvidence"):
-            _execution_cache(identity, state)
             execution = execute_verdict(identity, state, intake, candidate)
             intake["findings"] = execution["findings"]
-            intake.pop("causes", None), intake.pop("repair", None)  # each cause is now its recorded finding
+            # the causes this consult recorded on the reviewed tree, one recorded again as last recorded: their tested repair is applied with the verdict
+            repairs = list({finding["id"]: finding for _, finding in _retained(identity, state)
+                            if finding["stage"] == "final" and finding["sourceTree"] == candidate and "change" in finding}.values())
+            execution["repairTree"] = repairs[-1]["execution"]["tree"] if repairs else None
     # The lead's draft; an approving answer's `draft` changes it, whose added items stay until explicitly rejected.
     submitted = preflight_document(args.preflight_file) if args.preflight_file else None
     changes = intake.pop("draft", None) if intake else None
@@ -436,15 +438,10 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
     details = {"intake": recorded} if recorded else {}  # the answer as recorded: the wrapper's digest reads it from here
     if args.stage == "final" and not state.get("finalReviewContextMismatchEvidence") and (reason := (state.get("finalReview") or {}).get("reason")):
         details["repair"] = "not applied: " + reason
-    if not execution or "repair" in details:
-        emit(_receipt(state, identity, obligations=False, **details))
-        return 0
-    if not args.check and (applied := apply_repair(identity, execution, candidate)):
+    if execution and "repair" not in details and not args.check and (applied := apply_repair(identity, {**execution, "findings": repairs}, candidate)):
         state, details["repair"] = read_active(identity), applied
     emit(_receipt(state, identity, obligations=False, **details))
-    if execution["failures"]:  # what the workflow ran, for the advisor that wrote it: recorded, they are report lines and the pass is pending
-        print("the repair is unusable:\n" + "\n".join(execution["failures"]), file=sys.stderr)
-    return int(bool(execution["failures"]))
+    return 0
 
 
 def _dispatch(args: argparse.Namespace) -> int:

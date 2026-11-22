@@ -1019,9 +1019,18 @@ def _maintained_tests(identity: RepoIdentity, batches: list[JsonObject], before:
     return broken, None
 
 
+def _metrics(arm: JsonObject) -> JsonObject:
+    """The counts a case printed, its last WORKFLOW_METRICS=<JSON object> or its whole output as one; None when they are no finite nonnegative numbers."""
+    _, marker, text = ("\n" + arm["output"]).rpartition("\nWORKFLOW_METRICS=")
+    value = json.loads(text.partition("\n")[0] if marker else arm["output"])
+    return value if isinstance(value, dict) and all(type(count) in (int, float) and math.isfinite(count) and count >= 0 for count in value.values()) else None
+
+
 def _run_change(identity: RepoIdentity, batches: list[JsonObject], change: object, candidate: str, probe: object,
                 timeout: float, cached: list[JsonObject], frozen: JsonObject | None, cost_recheck: bool) -> JsonObject:
-    """A repair with its cause's test: the test fails on the candidate and passes with the repair, and the recorded cases hold."""
+    """A repair with its cause's test: the test fails on the candidate and passes with the repair, or passes on both and
+    prints counts the repair lowers without raising any (`counts`: each on the reviewed tree and with the repair), and the
+    recorded cases hold."""
     if not isinstance(change, str) or not change.strip():
         return {"kind": "change", "error": "change must be a unified diff"}
     if not batches:
@@ -1029,8 +1038,8 @@ def _run_change(identity: RepoIdentity, batches: list[JsonObject], change: objec
     measured = _run_probe(identity, probe, candidate, None, timeout, cached, frozen)
     if cost_recheck:
         return measured
-    if "error" in measured or measured["candidate"] == "passed":
-        return {"kind": "change", "error": measured.get("error") or "a cause's test must fail on the reviewed tree and pass with the repair"}
+    if "error" in measured:
+        return {"kind": "change", "error": measured["error"]}
     patch = change.encode("utf-8", "replace") + (b"" if change.endswith("\n") else b"\n")  # unencodable text cannot apply
     try:
         changed = _indexed(identity, candidate, (("apply", "--cached", "-"), patch))
@@ -1038,10 +1047,21 @@ def _run_change(identity: RepoIdentity, batches: list[JsonObject], change: objec
     except RuntimeError:
         return {"kind": "change", "error": "change does not apply to the candidate"}
     maintenance = any(is_test_path(path) for path in _changed_entries(identity, before, after))
-    if not maintenance and measured["candidate"] != "failed":
+    if not maintenance and measured["candidate"] not in {"failed", "passed"}:
         return {"kind": "change", "error": "a cause's test did not finish on the candidate"}
     cost = _compare(identity, candidate, after, measured["comparison"], cached)
-    if (not cost["valid"] or not cost.get("sensitive")) and not maintenance:
+    counts = {}
+    if measured["candidate"] == "passed" and cost["valid"]:  # no result changes: the workflow compares the counts the test printed on each tree
+        try:
+            reviewed, repaired = (_metrics(arm) for arm in (cost["arms"][0], cost["arms"][-1]))
+        except (ValueError, KeyError):
+            reviewed = repaired = None
+        if not reviewed or not repaired or reviewed.keys() != repaired.keys():
+            return {"kind": "change", "error": "a cause's test fails on the reviewed tree and passes with the repair, or passes on both and prints WORKFLOW_METRICS=<JSON object of counts>", "comparison": cost}
+        counts = {name: [count, repaired[name]] for name, count in reviewed.items()}
+        if not any(after < before for before, after in counts.values()) or any(after > before for before, after in counts.values()):
+            return {"kind": "change", "error": f"the repair lowers a count and raises none: {counts}", "comparison": cost}
+    elif (not cost["valid"] or not cost.get("sensitive")) and not maintenance:
         return {"kind": "change", "error": "a cause's test does not pass with the repair", "comparison": cost}
     broken, error = _maintained_tests(identity, batches, before, after, cached, measured["comparison"])
     if error:
@@ -1073,7 +1093,7 @@ def _run_change(identity: RepoIdentity, batches: list[JsonObject], change: objec
     if broken:
         return {"kind": "change", "applied": after == candidate, "candidate": "failed",
                 "failure": "; ".join(f"recorded batch `{run['command']}` failed with the change applied" for run in broken)}
-    return {"kind": "change", "applied": after == candidate, "candidate": "passed", "tree": after, "comparison": cost,
+    return {"kind": "change", "applied": after == candidate, "candidate": "passed", "tree": after, "comparison": cost, **({"counts": counts} if counts else {}),
                                      "selection": "proposer-selected command; exit result checked, source-line reachability and relevance not traced"}
 
 
@@ -1085,7 +1105,7 @@ def binds(execution: JsonObject) -> bool:
         return execution.get("candidate") != "passed"
     if execution["kind"] == "change":
         comparison = execution.get("comparison") or {}
-        return bool(comparison.get("valid") and comparison["arms"][0]["outcome"] == "failed"
+        return bool(comparison.get("valid") and (comparison["arms"][0]["outcome"] == "failed" or execution.get("counts"))
                     and execution.get("candidate") == "passed")
     return execution.get("candidate") in {"failed", "timed-out"} and execution.get("original") == "passed"
 
@@ -1151,9 +1171,18 @@ def execute_findings(identity: RepoIdentity, state: JsonObject, findings: list[J
         if not first:
             frozen = finding["execution"].get("comparison") or _probe_capture(identity, finding["probe"], finding["sourceTree"], timeout)
         prior = (finding.get("execution") or {}).get("comparison") or {}
-        cost_recheck = not first and bool(prior.get("arms")) and prior["arms"][0]["outcome"] == "failed"
-        return (_run_change(identity, batches, finding["change"], candidate, finding["probe"], timeout, cached, frozen, cost_recheck) if "change" in finding
-                else _run_probe(identity, finding["probe"], candidate, original, timeout, cached, frozen))
+        counts = (finding.get("execution") or {}).get("counts")
+        cost_recheck = not first and bool(prior.get("arms")) and (prior["arms"][0]["outcome"] == "failed" or bool(counts))
+        result = (_run_change(identity, batches, finding["change"], candidate, finding["probe"], timeout, cached, frozen, cost_recheck) if "change" in finding
+                  else _run_probe(identity, finding["probe"], candidate, original, timeout, cached, frozen))
+        if cost_recheck and counts and result.get("candidate") == "passed":  # settled while each count stays at or under the repair's
+            try:
+                now = _metrics(result["comparison"]["arms"][-1]) or {}
+            except ValueError:
+                now = {}
+            if any(now.get(name, math.inf) > repaired for name, (_, repaired) in counts.items()):
+                result = {**result, "candidate": "failed"}
+        return result
     for replacement in (False, True):
         probes = [captured[finding["probe"]["command"]] for finding in findings
                   if captured and ("change" in finding) == replacement]
@@ -1176,12 +1205,13 @@ def execute_findings(identity: RepoIdentity, state: JsonObject, findings: list[J
 
 
 def execute_verdict(identity: RepoIdentity, state: JsonObject, verdict: JsonObject, candidate: str) -> JsonObject:
-    """An author's verdict executed at once: its one repair applies to the reviewed tree, each cause's test is compared
-    there and with the repair beside one replay of the recorded cases on that combined tree, and each cause records as
-    one finding naming the findings it decides. A finding under no cause records as a report line, open while it holds
-    the user's decision, as does a finding or cause that fails any other check. `failures` names what makes the repair
-    unusable: it is no diff, it does not apply, a cause's test does not fail on the reviewed tree and pass with it, or a
-    recorded case fails with it. Then no cause of the verdict binds."""
+    """A reviewer's verdict, or the causes of one recording call of the final advisor, executed at once: the one repair
+    applies to the reviewed tree, each cause's test is compared there and with the repair beside one replay of the
+    recorded cases on that combined tree, and each cause records as one finding naming the findings it decides. A
+    finding under no cause records as a report line, open while it holds the user's decision, as does a finding or cause
+    that fails any other check. `failures` names what makes the repair unusable: it is no diff, it does not apply, a
+    cause's test does not hold on the reviewed tree and with it, or a recorded case fails with it. Then no cause of a
+    reviewer's verdict binds, and the final advisor's call records nothing."""
     findings, causes, failures, lines = {item["id"]: item for item in verdict["findings"]}, verdict.get("causes", []), [], []
     def report(item: JsonObject, reason: str) -> None:
         lines.append({"id": item["id"], "claim": f"{item.get('claim') or item.get('cause') or item['id']} (report line: {reason})",
@@ -1200,10 +1230,6 @@ def execute_verdict(identity: RepoIdentity, state: JsonObject, verdict: JsonObje
     elif repair is not None:
         failures.append(f"the repair is no diff file outside the checkout: {repair}")
         repair = None
-    if repair is None and verdict["stage"] == "final":  # nothing to test: each cause is a report line
-        for cause in causes:
-            report(cause, "the causes carry no repair: one diff repairs them all")
-        causes = []
     items, current = current_map(identity, state, fresh=False) if any(cause.get("retires") for cause in causes) else (None, None)
     current = current or {}
     retained, available = _evaluation(identity, state, current) if items is not None else {}, {entry["id"]: {"id": entry["id"], "key": None} for entry in items or []}
@@ -1219,7 +1245,7 @@ def execute_verdict(identity: RepoIdentity, state: JsonObject, verdict: JsonObje
     for cause in causes:
         named = cause["findings"]
         wanted = _case_keys(items or [], current.get("runs", []), retained, [[value] if isinstance(value, str) else list(value) for value in cause.get("retires", [])])
-        if not named or any(not findings.get(name, {}).get("decides") for name in named):
+        if not named and verdict["stage"] == "review" or any(not findings.get(name, {}).get("decides") for name in named):
             report(cause, "a cause names the findings of this verdict it decides, each recording what decides its input")
             continue
         if missing := [key for key in wanted if key not in available]:
@@ -1238,11 +1264,11 @@ def execute_verdict(identity: RepoIdentity, state: JsonObject, verdict: JsonObje
         if "change" in finding and not finding["material"]:
             result = finding["execution"]
             failures.append(f"{finding['id']}: {result.get('error') or result.get('failure') or 'its test does not fail on the reviewed tree and pass with the repair'}")
-    if failures:  # one unusable cause disqualifies the whole diff
+    if failures and verdict["stage"] == "review":  # one unusable cause disqualifies the whole diff; the final advisor's call records none and returns each result
         execution["findings"] = [{**{key: value for key, value in finding.items() if key != "retires"}, "claim": finding["claim"] + " (report line: the repair is unusable)",
                                   "execution": {"kind": "claim"}, "material": False} if finding["material"] and "change" in finding else finding
                                  for finding in execution["findings"]]
-    elif repair is not None and execution["findings"]:
+    elif not failures and repair is not None and execution["findings"]:
         execution["repairTree"] = execution["findings"][0]["execution"]["tree"]
     return {**execution, "findings": [*execution["findings"], *lines], "failures": failures}
 
@@ -1254,9 +1280,9 @@ def apply_repair(identity: RepoIdentity, execution: JsonObject, reviewed: str) -
         return None
     if not _candidate_matches(identity, reviewed):
         return "not applied: the checkout no longer is the reviewed tree"
-    change = next(finding["change"] for finding in execution["findings"] if "change" in finding)
+    change = "".join(dict.fromkeys(finding["change"] + ("" if finding["change"].endswith("\n") else "\n") for finding in execution["findings"] if "change" in finding))
     try:
-        _git(identity, "apply", "-", stdin=change.encode("utf-8", "replace") + (b"" if change.endswith("\n") else b"\n"))
+        _git(identity, "apply", "-", stdin=change.encode("utf-8", "replace"))
     except RuntimeError as exc:
         return f"not applied: {exc}"
     _EXECUTION.get()["candidates"].pop(identity.root, None)
@@ -1423,13 +1449,8 @@ def _work_errors(run):
         ratio = (sizes[1] / sizes[0]) ** sizes[2]
         increased(arms[2].get("work", {}), arms[-1]["work"], ratio)
         try:
-            measurements = []
-            for arm in arms[2:]:
-                _, marker, text = ("\n" + arm["output"]).rpartition("\nWORKFLOW_METRICS=")
-                measurements.append(json.loads(text.partition("\n")[0] if marker else arm["output"]))
-            small, large = measurements
-            if not isinstance(small, dict) or not isinstance(large, dict) or small.keys() != large.keys() or any(
-                    type(value) not in (int, float) or not math.isfinite(value) or value < 0 for metrics in (small, large) for value in metrics.values()):
+            small, large = (_metrics(arm) for arm in arms[2:])
+            if small is None or large is None or small.keys() != large.keys():
                 raise ValueError("growth metrics must be matching objects of finite nonnegative numbers")
             increased(small, large, ratio, small)
         except (ValueError, KeyError, TypeError) as exc:
@@ -1613,13 +1634,15 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None, emit=
     parser.add_argument("--expected-candidate-tree")
     parser.add_argument("--tdd-evidence", default=argparse.SUPPRESS)
     parser.add_argument("--verdict", help="the reviewer's verdict, complete or incomplete: use the source-bound checkpoint command")
-    parser.add_argument("--report", action="append", default=[], help="the reason the lead gives with --retire")
+    parser.add_argument("--report", action="append", default=[], help="the reason the lead gives with --retire; with --as final, the cause")
+    parser.add_argument("--change", help="with --as final: the diff outside the checkout that repairs the cause")
     parser.add_argument("--reject", action="append", nargs="+", default=[], metavar="ID 'COMMAND'",
                         help="the lead closes a map item or final finding it rejects: the workflow runs the command once and, when it "
                              "exits 0, keeps its output with the rejection; with --as, EVIDENCE:ID=REASON withdraws this author's invalid observation")
     parser.add_argument("--retire", action="append", nargs="+", default=[], metavar="CASE [CASE ...] | ITEM COMMAND",
                         help="recorded cases by caseKey, or one by its item and command")
-    parser.add_argument("--as", dest="author", choices=("review",), help="the reviewer's verdict, or the withdrawal of its own observation")
+    parser.add_argument("--as", dest="author", choices=("review", "final"), help="the reviewer's verdict, or the withdrawal of its own observation; final: the final advisor's cause, "
+                        "--report 'CAUSE' --case - 'TEST' --change REPAIR.diff, run on the reviewed tree and with the repair and recorded when it holds")
     parser.add_argument("--input", help="with --as review --verdict: the verdict file, in the checkpoint's responseFormat; the workflow executes it")
     parser.add_argument("--behavior-id", action="append", default=[], help="map item for a single trailing command, or items whose recorded cases replay")
     parser.add_argument("--case", action="append", nargs="+", default=[], metavar="ITEM COMMAND | ITEM:COMMAND",
@@ -1654,8 +1677,12 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None, emit=
             raise WorkflowError("a rejection call carries only --reject ID 'COMMAND'")
         _emit_json(*_reject(identity, state, args.reject))
         return 0
+    recording = args.author == "final"
+    if recording and (command or args.verdict or args.reject or args.input or args.behavior_id or args.correct
+                      or not (args.case and args.change and "".join(args.report).strip()) or any(item != "-" for item, _ in args.case)):
+        raise WorkflowError("the final advisor records a cause as --report 'CAUSE' --case - 'TEST' --change REPAIR.diff, with --retire for a recorded case it disproves")
     if args.author:
-        if (command or args.case or args.retire or args.report or args.behavior_id or args.correct or bool(args.verdict) == bool(args.reject)
+        if not recording and (command or args.case or args.retire or args.report or args.change or args.behavior_id or args.correct or bool(args.verdict) == bool(args.reject)
                 or args.verdict not in {None, "complete", "incomplete"} or args.input and not args.verdict):
             raise WorkflowError("the reviewer records its findings with its verdict, the checkpoint's verdict command with --input VERDICT.json, "
                                 "or withdraws its own observation with --reject EVIDENCE:ID=REASON")
@@ -1675,37 +1702,42 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None, emit=
             findings.append({"id": "REPORT-" + hashlib.sha256(value.encode()).hexdigest()[:16],
                              "claim": reason.strip(), "kind": "nonbehavioral", "rejected": True,
                              "priorFinding": {"evidenceId": evidence, "id": identifier}})
-        if args.input:
+        if args.input or recording:
             from .workflow_documents import advisor_envelope
             _execution_cache(identity, state)
-            verdict = advisor_envelope(args.input, slug=slug, workflow_id=workflow_id, stage="review", producer="code-review")[0]
+            # the final advisor's call is one cause per test under its one diff, named by its statement and test: recorded again, it replaces itself
+            verdict = advisor_envelope(args.input, slug=slug, workflow_id=workflow_id, stage="review", producer="code-review")[0] if args.input else {
+                "stage": "final", "findings": [], "repair": args.change, "causes": [
+                    {"id": "FINDING-" + _digest([args.report, test]), "cause": "\n".join(args.report), "findings": [], "test": test, "retires": args.retire} for _, test in args.case]}
             execution = execute_verdict(identity, state, verdict, candidate)
         else:
             execution = execute_findings(identity, state, findings, candidate=candidate)
-        document = {"schemaVersion": 1, "kind": "intake", "workflowId": workflow_id, "slug": slug, "stage": "code-review", "producer": "code-review",
+        document = {"schemaVersion": 1, "kind": "intake", "workflowId": workflow_id, "slug": slug, **({"stage": "final", "producer": "codex-advisor"} if recording else {"stage": "code-review", "producer": "code-review"}),
                     "candidateTree": args.expected_candidate_tree if args.verdict else execution["measuredTree"],
                     "tddEvidence": reviewed_evidence if args.verdict else execution["measuredEvidence"],
                     "findings": execution["findings"], **({"verdict": args.verdict} if args.verdict else {})}
-        state, evidence = commit_findings(identity, slug, workflow_id, document, execution) if document["findings"] or args.verdict else (state, None)
-        if applied := apply_repair(identity, execution, candidate):
+        # a cause that does not bind goes back, with every result, to the advisor that is still consulting: nothing is recorded
+        unusable = [*execution["failures"], *(finding["claim"] for finding in execution["findings"] if finding["execution"]["kind"] == "claim")] if recording else []
+        state, evidence = commit_findings(identity, slug, workflow_id, document, execution) if not unusable and (document["findings"] or args.verdict) else (state, None)
+        if applied := None if recording else apply_repair(identity, execution, candidate):  # a final cause's repair is applied with its verdict
             state = read_active(identity)
         memory = _given(identity, state, args.author)
         receipt = operation_receipt(state, identity, kind="tdd", obligations=False, known=memory[1]["findings"],
                                     delivered={finding["id"] for finding in execution["findings"]}, **({"summaryId": evidence} if evidence else {}),
-                                    **({"repair": applied} if applied else {}))
-        commands = review_commands(identity, state, candidate, repo=False)  # the verdict commands bound to this source, when the reviewer does not hold them
-        if memory[1].get("verdict") != _digest(commands):
+                                    **({"repair": applied} if applied else {}), **({"notRecorded": unusable} if unusable else {}))
+        commands = {} if recording else review_commands(identity, state, candidate, repo=False)  # the verdict commands bound to this source, when the reviewer does not hold them
+        if commands and memory[1].get("verdict") != _digest(commands):
             receipt.update(commands)
             memory[1]["verdict"] = _digest(commands)
         rows = []
         for finding in execution["findings"]:
             result, compared = finding["execution"], finding["execution"].get("comparison") or {}
-            row = {"findingId": finding["id"], "result": "withdrawn" if finding.get("rejected") else "binds" if finding["material"] else "report line",
+            row = {"findingId": finding["id"], "result": "withdrawn" if finding.get("rejected") else "not recorded" if unusable else "binds" if finding["material"] else "report line",
                    **({"retired": sorted({case["id"] for case in finding["retires"]})} if finding.get("retires") else {}),
-                   **{key: result[key] for key in ("failure", "error") if key in result},
+                   **{key: result[key] for key in ("failure", "error", "counts") if key in result},
                    **({"arms": behavior_map.comparison_view(compared, detail=True)["arms"]} if compared else {})}
             rows.append((finding["id"], row, (finding.get("probe") or {}).get("command"), True))
-        _emit_json(*_deliver(identity, state, memory, receipt, rows if args.input or args.reject else None))
+        _emit_json(*_deliver(identity, state, memory, receipt, rows if args.input or args.reject or recording else None))
         return 0
     if args.case and (command or args.behavior_id):
         raise WorkflowError("use repeated --case entries or one trailing command")

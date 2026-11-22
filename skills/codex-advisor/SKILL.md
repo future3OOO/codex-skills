@@ -65,7 +65,7 @@ The wrapper supplies and cleans an original snapshot at passStartOid and scratch
 This is trusted access;
 preflight skips the candidate-staleness check, which neither restores nor confines writes.
 
-The wrapper records the answer as one verdict: the workflow runs its causes' tests and the recorded cases, and a failing verdict goes back to the same session. `context-mismatch` is reserved for candidate/projection identity mismatch;
+The final advisor records each cause through the workflow while it consults: the workflow runs the cause's test on the reviewed tree and with its repair, and the recorded cases, and returns the results. The wrapper records the answer, a verdict with report lines. `context-mismatch` is reserved for candidate/projection identity mismatch;
 it advances nothing. State never authorizes Git.
 
 ## Failure and disposition

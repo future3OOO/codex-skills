@@ -290,7 +290,7 @@ else
 fi
 
 provider_unset=()
-provider_env=(CODEX_ADVISOR_ACTIVE=1 ADVISOR_ACTIVE=1)
+provider_env=(CODEX_ADVISOR_ACTIVE=1 ADVISOR_ACTIVE=1 ADVISOR_PHASE="$phase")
 model="$codex_model"
 if [[ "$provider" == "claude" ]]; then
   block=$(sed -n '/^alias claudex=/,/^claude --model/p' "$HOME/.bashrc" 2>/dev/null || :)
@@ -341,7 +341,12 @@ Keep an item, case or planned line only if deletion breaks required behavior, de
     phase_prompt='Checkpoint Interface: final-review
 At fixed required behaviour find every regression and the cheapest correct design across the edited code and the whole requested path, existing machinery included, deriving remaining material work inside the repair and collaborators, not wrapper counts; prefer net reduction. Check surviving outcomes at original decision sites beyond the green cases and judge remaining obligations of shared logic; reuse project runners, fixtures and supported matrix. A demonstrated cheaper design that preserves required behaviour on the affected path blocks commit-ready even if the candidate beats the original. The original decides what a preservation sentence keeps; for new behaviour the existing owner or engine decides, the request only where none exists. Use the original overlay for what the workflow'"'"'s runs do not answer. Before accepting a test'"'"'s result, check what drives it: it must enter through the same entry point the real system uses, with inputs the real system meets or the request specifies, as the project'"'"'s own instructions define them. A test that bypasses that entry point or runs on inputs it made up proves nothing, and is a blocking finding.
 Before proposing code, establish which failures share a cause, where it starts and what else it breaks. Repair each cause in the design that produces it: deepen the code that already owns the behaviour (codebase-design), never rebuild beside it what it already decides, never add code per finding; growth needs a cause test it makes pass or measured less work.
-A finding names what decides its input under the case rule; one nothing independent decides is a report line, unless it needs the user'"'"'s decision: then give the evidence and the exact decision. Every other finding sits under one cause, whose test, one command under the case rule, reports each finding by id on its own input and one no finding named, failing on the reviewed tree and passing with the repair. One diff outside the checkout repairs every cause; retire a frozen case a cause disproves. The workflow runs each test on the reviewed tree and with the repair, and every recorded case with it, and returns the results: it owns execution, so do not run those comparisons yourself or build them in scratch. Check your answer with checkCommand as soon as you have a cause, its test and the diff, correct it from what comes back, and return the checked answer. All tests together run within a minute; say what a cut bound leaves out. commit-ready only once every material obligation is settled; context-mismatch only for mismatched supplied identities.'
+Record each cause while you work, with the recording call below: its statement, its test and the one diff, kept outside the checkout, that repairs it; add --retire for a frozen case it disproves. The test is one command under the case rule, naming what decides each input: it fails on the reviewed tree and passes with the repair or, where the repair changes no result, passes on both and prints WORKFLOW_METRICS=<JSON object of counts of the work done>, which the workflow compares: set no threshold. The workflow runs the test on the reviewed tree and with the repair, and every recorded case with the repair, records the cause when it holds and returns every result: it owns execution and measurement, so run no comparison yourself and build none in scratch. Correct a cause from what comes back and record it again. Tests together run within a minute; say what a cut bound leaves out. Your answer is the verdict and report lines only, never a recorded cause: a finding nothing independent decides is a report line, and one that blocks with no cause to record, a test that proves nothing or a choice only the user can make, gives in decision the evidence and exactly what settles it. commit-ready only once every material obligation is settled; context-mismatch only for mismatched supplied identities.'
+    if [[ "$provider" == codex ]]; then  # a tool call returns when the recording does; a codex shell call hands back to be polled
+      phase_prompt+=$'\n'"Recording call, which returns its result: the workflow tool's run, cwd $repo_root and args $(python3 -c 'import json, sys; print(json.dumps(sys.argv[1:]))' tdd --slug "$producer_slug" --workflow-id "$active_wid" --as final --report 'CAUSE' --case - 'TEST' --change REPAIR.diff)"
+    else
+      phase_prompt+=$'\n'"Recording call, which returns its result: $(printf '%q ' python3 "$workflow_cli" tdd --repo "$repo_root" --slug "$producer_slug" --workflow-id "$active_wid" --as final)--report 'CAUSE' --case - 'TEST' --change REPAIR.diff"
+    fi
     if [[ "$mode" == resume ]]; then
       phase_prompt+=$'\n\n=== This consult: a return review\nJudge the open findings, the repair as applied and its effects across callers, from the diff since your tested tree and the lead\'s evidence in the ledger. Reuse current proof.'
     else
@@ -371,9 +376,7 @@ prompt_file="$transport_dir/prompt"
     if [[ "$phase" == final-review ]]; then
       printf 'originalPath: %s\nprojectExecutable: %s\noriginalPrefix: ' "$original_dir" "$python_bin"
       printf '%q ' "${original_prefix[@]}"; printf '\ncandidatePrefix: '
-      printf '%q ' "${candidate_prefix[@]}"; printf '\ncheckCommand (runs everything, returns the result, records nothing): '
-      printf '%q ' python3 "$workflow_cli" record advisor-result --repo "$repo_root" --slug "$producer_slug" --workflow-id "$active_wid" --stage final --source codex-advisor \
-        --design-declaration "$design_declaration_file" --expected-candidate-tree "$candidate" --tdd-evidence "$reviewed_evidence" --check --input; printf 'ANSWER.json\n'
+      printf '%q ' "${candidate_prefix[@]}"; printf '\n'
     fi
     printf '\n--- canonical governing design declaration ---\n'; cat "$design_declaration_file"
     if [[ -n "$design_snapshot" ]]; then
@@ -483,19 +486,16 @@ else
   # Record the answer, then return a digest with the recorded continuation: material findings whole, the others within a
   # shared budget; the whole envelope stays readable from the ledger.
   record_stage=preflight; [[ "$phase" == final-review ]] && record_stage=final
-  record() {  # 0: recorded; 1: recorded, its repair unusable, as report lines; else nothing is recorded. A recording's receipt is kept
-    local code=0
+  record() {
     python3 "$workflow_cli" record advisor-result --repo "$repo_root" --slug "$producer_slug" \
       --workflow-id "$active_wid" --stage "$record_stage" --source codex-advisor \
       --input "$output_file" --design-declaration "$design_declaration_file" \
-      --expected-candidate-tree "$candidate" --tdd-evidence "$reviewed_evidence" "${draft_args[@]}" >"$transport_dir/receipt.new" 2>"$transport_dir/refusal" || code=$?
-    (( code > 1 )) || mv "$transport_dir/receipt.new" "$transport_dir/receipt.json"
-    return "$code"
+      --expected-candidate-tree "$candidate" --tdd-evidence "$reviewed_evidence" "${draft_args[@]}" >"$transport_dir/receipt.json" 2>"$transport_dir/refusal"
   }
-  record || :  # the advisor checked its answer through the workflow while it worked: none goes back after the fact
-  if [[ ! -s "$transport_dir/receipt.json" ]]; then
-    cat "$transport_dir/refusal" >&2
-    answerless 2
+  if ! record; then  # an answer the workflow cannot read goes back to the session that wrote it, once
+    printf 'The workflow could not use your answer:\n%s\nReturn the corrected answer in the same response form.\n' "$(<"$transport_dir/refusal")" >"$prompt_file"
+    ask
+    record || { cat "$transport_dir/refusal" >&2; answerless 2; }
   fi
   python3 - "$script_dir/../../.." "$record_stage" "$repo_root" "$transport_dir/receipt.json" "$scratch_dir" "${reconsult_args[@]}" <<'PY'
 import json, os, sys
@@ -520,7 +520,7 @@ unfinished = "final review ends at commit-ready: " if sys.argv[2] == "final" and
 tail = "" if sys.argv[6:] else (f"{unfinished}nextAction={receipt['nextAction']} next: {receipt['next'].get('tool')}"
                                 + (f" args: {json.dumps(receipt['next']['args'])}" if "args" in receipt["next"] else "") + "\n" + (f"input: {needed}\n" if needed else ""))
 room = max(0, (1900 - len((head + tail).encode())) // max(1, len(shown)) - 1)
-run = lambda item: " ".join(f"{key}={value}" for key, value in (item.get("execution") or {"kind": "none"}).items() if key != "comparison")  # its arms' raw data would crowd out the claim
+run = lambda item: " ".join(f"{key}={value}" for key, value in (item.get("execution") or {"kind": "none"}).items())
 lines = [f"{item['id']} material={str(item['material']).lower()} execution=[{run(item)}]: {item['claim']}" for item in shown]
 sys.stdout.write(head + "".join((line if item["material"] else line.encode()[:room].decode("utf-8", errors="ignore")) + "\n" for item, line in zip(shown, lines)) + tail)
 if sys.argv[2] == "preflight" and not sys.argv[6:] and (left := sorted(os.scandir(sys.argv[5]), key=lambda entry: entry.name)):

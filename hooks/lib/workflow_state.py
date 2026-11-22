@@ -1134,13 +1134,12 @@ def record_advisor_result(
                 state["reviewManifestId"] = reviewed.manifest_id
                 unresolved = _stage_unresolved(state, stage, source)  # commit-ready only once every material finding is settled
                 state["finalReview"] = {
-                    # an unusable repair leaves the lead nothing to settle: the verdict goes back to its advisor
-                    "source": source, "status": "fix-before-commit" if unresolved else "pending" if execution["failures"] else verdict,
+                    "source": source, "status": "fix-before-commit" if unresolved else verdict,
                     "intakeEvidence": intake_write.evidence_id,
                     "findings": "pending" if unresolved else "none",
                 }
                 state["judgedTree"] = expected_candidate_tree or _active_candidate_tree(identity)
-                state["repairTree"] = execution.get("repairTree")  # the tree the verdict tested: a return review's diff starts there
+                state["repairTree"] = execution.get("repairTree")  # the tree the consult's repair was tested on: a return review's diff starts there
                 state.pop("finalReviewContextMismatchEvidence", None)
                 state["phase"] = "final-review"
         else:
@@ -1418,10 +1417,9 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
         "judgedTree": state.get("judgedTree"),
         "caseRule": CASE_RULE,  # outside the answer form and the verdict commands: a role is given it with its first checkpoint
     }
-    shape = json.loads(ADVISOR_SHAPES["preflight" if phase == "preflight-advice" else "final"])
-    if phase == "code-review":  # the reviewer's verdict file: its command carries the verdict
+    shape = json.loads(ADVISOR_SHAPES["preflight" if phase == "preflight-advice" else "review" if phase == "code-review" else "final"])
+    if phase == "code-review":
         result.update(review_commands(identity, state, candidate))
-        del shape["verdict"]
     elif reconsult:  # the second consultation completes the draft in its answer
         shape.update(findings=[{key: value for key, value in shape["findings"][0].items() if key != "material"}], verdict="approved", draft={
             "authoritativeContract": "text", "items": [json.loads(ITEM_SHAPE)], "removed": ["BM_Y"]})
