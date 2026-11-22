@@ -520,7 +520,7 @@ unfinished = "final review ends at commit-ready: " if sys.argv[2] == "final" and
 tail = "" if sys.argv[6:] else (f"{unfinished}nextAction={receipt['nextAction']} next: {receipt['next'].get('tool')}"
                                 + (f" args: {json.dumps(receipt['next']['args'])}" if "args" in receipt["next"] else "") + "\n" + (f"input: {needed}\n" if needed else ""))
 room = max(0, (1900 - len((head + tail).encode())) // max(1, len(shown)) - 1)
-run = lambda item: " ".join(f"{key}={value}" for key, value in (item.get("execution") or {"kind": "none"}).items())
+run = lambda item: " ".join(f"{key}={value}" for key, value in (item.get("execution") or {"kind": "none"}).items() if key != "comparison")  # its arms' raw data would crowd out the claim
 lines = [f"{item['id']} material={str(item['material']).lower()} execution=[{run(item)}]: {item['claim']}" for item in shown]
 sys.stdout.write(head + "".join((line if item["material"] else line.encode()[:room].decode("utf-8", errors="ignore")) + "\n" for item, line in zip(shown, lines)) + tail)
 if sys.argv[2] == "preflight" and not sys.argv[6:] and (left := sorted(os.scandir(sys.argv[5]), key=lambda entry: entry.name)):
