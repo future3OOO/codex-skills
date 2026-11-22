@@ -436,13 +436,13 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
     details = {"intake": recorded} if recorded else {}  # the answer as recorded: the wrapper's digest reads it from here
     if args.stage == "final" and not state.get("finalReviewContextMismatchEvidence") and (reason := (state.get("finalReview") or {}).get("reason")):
         details["repair"] = "not applied: " + reason
-    if not execution or args.check or "repair" in details:
+    if not execution or "repair" in details:
         emit(_receipt(state, identity, obligations=False, **details))
         return 0
-    if applied := apply_repair(identity, execution, candidate):
+    if not args.check and (applied := apply_repair(identity, execution, candidate)):
         state, details["repair"] = read_active(identity), applied
     emit(_receipt(state, identity, obligations=False, **details))
-    if execution["failures"]:  # recorded as report lines, the pass pending; the reasons go back to the advisor that wrote it, once
+    if execution["failures"]:  # what the workflow ran, for the advisor that wrote it: recorded, they are report lines and the pass is pending
         print("the repair is unusable:\n" + "\n".join(execution["failures"]), file=sys.stderr)
     return int(bool(execution["failures"]))
 

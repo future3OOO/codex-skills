@@ -339,9 +339,9 @@ Each proposal keeps a separate asserted runtime bound and fixes workload, refere
 Keep an item, case or planned line only if deletion breaks required behavior, destroys distinct necessary proof or raises whole-system cost. An approved draft cannot authorize changing behavior the request keeps. Return only the checkpoint JSON; approve only when no material gap remains. Findings carry the investigation and deciding evidence.' ;;
   final-review)  # a resumed session is not sent a section it holds unchanged: only this consult's own section differs
     phase_prompt='Checkpoint Interface: final-review
-At fixed required behaviour find every regression and the cheapest correct design across the edited code and the whole requested path, existing machinery included, deriving remaining material work inside the repair and collaborators, not wrapper counts; prefer net reduction. Check surviving outcomes at original decision sites beyond the green cases and judge remaining obligations of shared logic; reuse project runners, fixtures and supported matrix. A demonstrated cheaper design that preserves required behaviour on the affected path blocks commit-ready even if the candidate beats the original. The original decides what a preservation sentence keeps; for new behaviour the existing owner or engine decides, the request only where none exists. Probe in scratch; use the original overlay. Before accepting a test'"'"'s result, check what drives it: it must enter through the same entry point the real system uses, with inputs the real system meets or the request specifies, as the project'"'"'s own instructions define them. A test that bypasses that entry point or runs on inputs it made up proves nothing, and is a blocking finding.
+At fixed required behaviour find every regression and the cheapest correct design across the edited code and the whole requested path, existing machinery included, deriving remaining material work inside the repair and collaborators, not wrapper counts; prefer net reduction. Check surviving outcomes at original decision sites beyond the green cases and judge remaining obligations of shared logic; reuse project runners, fixtures and supported matrix. A demonstrated cheaper design that preserves required behaviour on the affected path blocks commit-ready even if the candidate beats the original. The original decides what a preservation sentence keeps; for new behaviour the existing owner or engine decides, the request only where none exists. Use the original overlay for what the workflow'"'"'s runs do not answer. Before accepting a test'"'"'s result, check what drives it: it must enter through the same entry point the real system uses, with inputs the real system meets or the request specifies, as the project'"'"'s own instructions define them. A test that bypasses that entry point or runs on inputs it made up proves nothing, and is a blocking finding.
 Before proposing code, establish which failures share a cause, where it starts and what else it breaks. Repair each cause in the design that produces it: deepen the code that already owns the behaviour (codebase-design), never rebuild beside it what it already decides, never add code per finding; growth needs a cause test it makes pass or measured less work.
-A finding names what decides its input under the case rule; one nothing independent decides is a report line, unless it needs the user'"'"'s decision: then give the evidence and the exact decision. Every other finding sits under one cause, whose test, one command under the case rule, reports each finding by id on its own input and one no finding named, failing on the reviewed tree and passing with the repair. One diff outside the checkout repairs every cause; retire a frozen case a cause disproves. The workflow runs each test and recorded case and returns a failing verdict to you. All tests together run within a minute; say what a cut bound leaves out. commit-ready only once every material obligation is settled; context-mismatch only for mismatched supplied identities.'
+A finding names what decides its input under the case rule; one nothing independent decides is a report line, unless it needs the user'"'"'s decision: then give the evidence and the exact decision. Every other finding sits under one cause, whose test, one command under the case rule, reports each finding by id on its own input and one no finding named, failing on the reviewed tree and passing with the repair. One diff outside the checkout repairs every cause; retire a frozen case a cause disproves. The workflow runs each test on the reviewed tree and with the repair, and every recorded case with it, and returns the results: it owns execution, so do not run those comparisons yourself or build them in scratch. Check your answer with checkCommand as soon as you have a cause, its test and the diff, correct it from what comes back, and return the checked answer. All tests together run within a minute; say what a cut bound leaves out. commit-ready only once every material obligation is settled; context-mismatch only for mismatched supplied identities.'
     if [[ "$mode" == resume ]]; then
       phase_prompt+=$'\n\n=== This consult: a return review\nJudge the open findings, the repair as applied and its effects across callers, from the diff since your tested tree and the lead\'s evidence in the ledger. Reuse current proof.'
     else
@@ -371,7 +371,9 @@ prompt_file="$transport_dir/prompt"
     if [[ "$phase" == final-review ]]; then
       printf 'originalPath: %s\nprojectExecutable: %s\noriginalPrefix: ' "$original_dir" "$python_bin"
       printf '%q ' "${original_prefix[@]}"; printf '\ncandidatePrefix: '
-      printf '%q ' "${candidate_prefix[@]}"; printf '\n'
+      printf '%q ' "${candidate_prefix[@]}"; printf '\ncheckCommand (runs everything, returns the result, records nothing): '
+      printf '%q ' python3 "$workflow_cli" record advisor-result --repo "$repo_root" --slug "$producer_slug" --workflow-id "$active_wid" --stage final --source codex-advisor \
+        --design-declaration "$design_declaration_file" --expected-candidate-tree "$candidate" --tdd-evidence "$reviewed_evidence" --check --input; printf 'ANSWER.json\n'
     fi
     printf '\n--- canonical governing design declaration ---\n'; cat "$design_declaration_file"
     if [[ -n "$design_snapshot" ]]; then
@@ -481,7 +483,7 @@ else
   # Record the answer, then return a digest with the recorded continuation: material findings whole, the others within a
   # shared budget; the whole envelope stays readable from the ledger.
   record_stage=preflight; [[ "$phase" == final-review ]] && record_stage=final
-  record() {  # 0: recorded; 1: recorded, its repair unusable; else nothing is recorded. A recording's receipt is kept
+  record() {  # 0: recorded; 1: recorded, its repair unusable, as report lines; else nothing is recorded. A recording's receipt is kept
     local code=0
     python3 "$workflow_cli" record advisor-result --repo "$repo_root" --slug "$producer_slug" \
       --workflow-id "$active_wid" --stage "$record_stage" --source codex-advisor \
@@ -490,11 +492,7 @@ else
     (( code > 1 )) || mv "$transport_dir/receipt.new" "$transport_dir/receipt.json"
     return "$code"
   }
-  if ! record; then  # an answer the workflow cannot use goes back to the session that wrote it, once
-    printf 'The workflow could not use your answer:\n%s\nReturn the corrected answer in the same response form.\n' "$(<"$transport_dir/refusal")" >"$prompt_file"
-    ask
-    record || :
-  fi
+  record || :  # the advisor checked its answer through the workflow while it worked: none goes back after the fact
   if [[ ! -s "$transport_dir/receipt.json" ]]; then
     cat "$transport_dir/refusal" >&2
     answerless 2
