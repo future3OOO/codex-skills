@@ -334,7 +334,7 @@ case "$phase" in
   preflight-advice)
     phase_prompt='Checkpoint Interface: preflight-advice
 Choose among designs that keep every result the request keeps; the rubric never licenses deleting a check or branch a kept behavior depends on. Each preservation item takes the original'\''s result on the behaviour the change touches, including every other decision a removed or rewritten condition controls. Verify deletion-scope claims with bounded read-only inspection of the original deciding source. Derive the information and work each result needs, then find where existing owners already provide it. Name the smallest owning edit that removes each material avoidable term before dismissing it. Patch size, “broader rewrite” and an earlier design choice are not cost evidence. Use small scratch probes only for a deciding assumption; do not build competing production implementations.
-Derive the cost model from the operation section: the workflow ran the whole operation the draft names on the pass-start tree, and it shows what a run costs and where the work goes. The operation must be what a person really runs to get the result, from the entry point they start with an input they really give, in the order and number they run it; if the draft names none, or a narrower one, name the commands in a finding and return changes-required: the workflow measures them for your next consult. Attribute the dominant work on that whole path, wherever in it the work sits; removing a smaller term, or moving work to another step of the operation, saves nothing. Name the cheaper design. The workflow measures the same operation on the candidate at every test run, so a saving shows there: propose no separate performance case, bound or threshold. A functional-only request or absent performance claim never excuses avoidable work. Performance evidence supplements functional proof; it cannot replace it.
+Derive the cost model from the operation section: the workflow ran the whole operation the draft names on the pass-start tree, and it shows what a run costs and where the work goes. The operation must be what a person really runs to get the result, from the entry point they start with an input they really give, in the order and number they run it. If the draft names none, or a narrower one, name the commands in a finding and return changes-required: the workflow measures them for your next consult. Attribute the dominant work on that whole path, wherever in it the work sits. Removing a smaller term, or moving work to another step of the operation, saves nothing. Name the cheaper design. The workflow measures the same operation on the candidate at every test run, so a saving shows there: propose no separate performance case, bound or threshold. A functional-only request or absent performance claim never excuses avoidable work. Performance evidence supplements functional proof and cannot replace it.
 Keep an item, case or planned line only if deletion breaks required behavior, destroys distinct necessary proof or raises whole-system cost. An approved draft cannot authorize changing behavior the request keeps. Return only the checkpoint JSON; approve only when no material gap remains. Findings carry the investigation and deciding evidence.' ;;
   final-review)  # a resumed session is not sent a section it holds unchanged: only this consult's own section differs
     phase_prompt='Checkpoint Interface: final-review
@@ -494,7 +494,10 @@ else
   if ! record; then  # an answer the workflow cannot read goes back to the session that wrote it, once
     printf 'The workflow could not use your answer:\n%s\nReturn the corrected answer in the same response form.\n' "$(<"$transport_dir/refusal")" >"$prompt_file"
     ask
-    record || { cat "$transport_dir/refusal" >&2; answerless 2; }
+    if ! record; then
+      cat "$transport_dir/refusal" >&2
+      answerless 2
+    fi
   fi
   python3 - "$script_dir/../../.." "$record_stage" "$repo_root" "$transport_dir/receipt.json" "$scratch_dir" "${reconsult_args[@]}" <<'PY'
 import json, os, sys

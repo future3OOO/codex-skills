@@ -1299,7 +1299,7 @@ CHANNELS = (
     ("finding-ledger", "finding ledger: each finding's immutable claim, status and evidence pointer"),
     ("quality-candidates", "non-blocking gate candidates: locations and matching rules; investigate their actual cost and necessity"),
     ("diff", "current-pass diff: passStartOid^{tree} -> activeCandidateTree; a deleted file is its header and line count"),
-    ("operation", "the whole operation the map names, run and measured by the workflow: what it costs and where the work goes"),
+    ("operation", "the whole operation the map names, run and measured by the workflow: what it costs and where the work goes; the candidate runs as the pass-start commit with its changes uncommitted"),
 )
 
 
