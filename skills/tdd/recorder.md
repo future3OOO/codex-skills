@@ -15,6 +15,8 @@ takes the map change itself, `items` (only the changed fields), `added` and `rem
 `{"items":[{"id":"BM_X","expected":"..."}],"removed":["BM_Y"]}`, and reruns the changed items' cases in the same call; a declared case may be a recorded case's `caseKey`. The receipt gives continuation, failures and evidence access.
 The runner owns source preparation and reuse; do not repeat them.
 
+A scaling case declares `WORKFLOW_GROWTH=SMALL,LARGE,MAX_POWER COMMAND {size}`. The runner executes both sizes on each tree and checks the declared growth bound. Mark a cost item `"measured": true` in preflight. Its case measures the approved workload, including representative construction and reuse when they decide a trade-off. When the measuring instrument changes, `--correct` compares the approved work on the original and current trees and, when needed, on the tree that earned the saving. The prior observation stays in history. A loss on a comparable workload needs a measured rejection.
+
 A testing reply gives its reader each result once. A case's first row carries its command (`commandOf` names the row that
 carries a shared one) and its whole result; a later row carries its `caseKey` and only what changed: fields, `was` for the key a
 new capture replaces, and of `unexpected` the lines that differ as `{line number: text}`, numbered through its entries joined, or the

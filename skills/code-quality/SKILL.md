@@ -1,6 +1,6 @@
 ---
 name: code-quality
-description: Compact quality rubric: the seven principles for judging a change. Use when reviewing or challenging a diff, as an advisor or review rubric, or when another skill needs the quality-rule vocabulary; for implementing production changes use production-code.
+description: Apply the seven quality principles when choosing the first design for production work and when reviewing or challenging a change. Production Code owns implementation and verification.
 ---
 
 # Code Quality Rubric
@@ -10,6 +10,8 @@ them with execution procedure; it does not redefine them.
 
 Judge code the change edits or its requested operation runs through. Cite the
 diff, contract and concrete proof. `AGENTS.md` owns the hard invariants.
+
+For a first design, run the original production operation under its profiler on a representative input. For Python, use `cProfile` on the call and read the busiest internal functions in `pstats`. Record the workload, the function and its call count or time in the draft, then decide which work can be removed.
 
 ## Seven principles
 

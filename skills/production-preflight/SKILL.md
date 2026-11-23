@@ -10,7 +10,6 @@ Use this skill before making tracked edits on preflight-required code turns.
 The [repository workflow](../repo-production-workflow/SKILL.md) owns checkout
 alignment, phase order, advisor consultation and recording. Reuse the active pass
 and governing artifact; stay within its owner slice and verification scope.
-Use [diagnose](../diagnose/SKILL.md) when an observed failure needs causal investigation before choosing a correction.
 
 Apply [Production Code's Lowest-Cost Implementation Decision](../production-code/SKILL.md#lowest-cost-implementation-decision):
 name the affected Interface, existing Module and reuse path, adjacent consumers,

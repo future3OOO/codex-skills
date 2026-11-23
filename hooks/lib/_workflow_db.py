@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterator, NoReturn, Sequence
 from .repo_identity import RepoIdentity
-from .state_store import _candidate_matches, codex_home, repo_state_dir, utc_timestamp
+from .state_store import _EXECUTION, _candidate_matches, codex_home, repo_state_dir, utc_timestamp
 DATABASE_NAME = "workflow.sqlite3"
 DATABASE_FILES = frozenset({DATABASE_NAME, *(f"{DATABASE_NAME}{suffix}" for suffix in ("-journal", "-wal", "-shm"))})
 AUTHORITY = "sqlite-event-ledger-v1"
@@ -33,7 +33,7 @@ POLICY_VERSION = 1
 BUSY_TIMEOUT_MS = 2500
 # Lists stored as content-addressed parts: the same item, run or gate report is
 # written once however many evidence documents carry it.
-PART_PATHS = (("behaviorMap",), ("runs",), ("document", "behaviorMap"), ("preflightDraft", "behaviorMap"), ("report",))
+PART_PATHS = (("behaviorMap",), ("runs",), ("document", "behaviorMap"), ("preflightDraft", "behaviorMap"), ("report",), ("values",))
 # `record --check`: every recorder runs its whole transaction, then rolls back.
 CHECK_ONLY: contextvars.ContextVar[bool] = contextvars.ContextVar("check_only", default=False)
 JsonObject = dict[str, object]
@@ -339,6 +339,15 @@ def _part_holders(document: JsonObject) -> Iterator[tuple[JsonObject, str]]:
         if isinstance(holder, dict) and path[-1] in holder:
             yield holder, path[-1]
 def _insert_evidence(connection: sqlite3.Connection, writes: Sequence[EvidenceWrite]) -> None:
+    # Publish structured results in the same transaction as the comparisons that refer to them.
+    staged = (_EXECUTION.get() or {}).get("resultEvidence", {})
+    if staged and writes:
+        owners = {write.workflow_id for write in writes}
+        pending = {key: value for key, value in staged.items() if value.workflow_id in owners}
+        for key, in connection.execute("SELECT evidence_id FROM evidence WHERE evidence_id IN (SELECT value FROM json_each(?))",
+                                       (_canonical(list(pending)),)):
+            del pending[key]
+        writes = (*pending.values(), *writes)
     for write in writes:
         stored = json.loads(_canonical(write.document))
         for holder, key in _part_holders(stored):

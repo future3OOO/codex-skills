@@ -51,8 +51,7 @@ Derive verification from the user's intended production behavior using
 [Production Code's outcome verification](../production-code/SKILL.md#lowest-cost-implementation-decision).
 The lead owns correctness and performance for every task, through implementation
 and repair; the independent reviewer challenges it. Use the packet to trace affected paths, state skipped and
-preserved surfaces, and establish review-budget fit. Apply `diagnose` when an
-observed failure needs causal investigation before choosing a correction.
+preserved surfaces, and establish review-budget fit.
 
 ### 3. Packet-scoped GitNexus
 
@@ -61,7 +60,7 @@ AGENTS.md's GitNexus checks on what the packet's rows leave unanswered.
 
 ### 4. Draft and advisor review
 
-Invoke `production-preflight` and draft its two-field artifact before consulting.
+Apply `code-quality` when choosing the first design and `production-preflight` to draft its two fields.
 Its map states required outcomes, concrete inputs and any competing readings. Invoke
 `codebase-design` before drafting when the decision is where work or data belongs, including inside an existing Module with an unchanged public Interface. The draft owns
 the contract and planned attacks.

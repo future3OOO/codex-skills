@@ -11,7 +11,7 @@ REQUIRED_FIELDS = frozenset({"id", "basis", "behavior", "seam", "expected"})
 KINDS = frozenset({"conformance", "contract", "preservation"})
 READING_FIELDS = frozenset({"interpretations", "interpretation", "authority"})
 # Optional map fields; witness and reading updates re-judge retained proof. `cases` holds declared commands not yet captured.
-JUDGEMENT_FIELDS = READING_FIELDS | {"kind", "basis", "boundaryInputs", "cases"}
+JUDGEMENT_FIELDS = READING_FIELDS | {"kind", "basis", "boundaryInputs", "cases", "measured"}
 IDENTIFIER = re.compile(r"^[A-Z][A-Z0-9_-]{1,63}$")
 
 
@@ -31,6 +31,8 @@ def _recorded_fields(raw: JsonObject) -> JsonObject:
     fields: JsonObject = {}
     if raw.get("kind") in KINDS:
         fields["kind"] = raw["kind"]
+    if "measured" in raw:
+        fields["measured"] = raw["measured"]
     if "boundaryInputs" in raw:
         fields["boundaryInputs"] = copy.deepcopy(raw["boundaryInputs"])
     if values := _strings(raw.get("cases")):
@@ -57,6 +59,8 @@ def map_errors(value: object, *, allow_runtime: bool) -> list[str]:
         errors.extend(f"probe {identifier} requires {field}" for field in REQUIRED_FIELDS if not _text(raw.get(field)))
         if raw.get("cases") not in (None, []) and _strings(raw["cases"]) is None:
             errors.append(f"probe {identifier} cases must be a list of commands")
+        if "measured" in raw and type(raw["measured"]) is not bool:
+            errors.append(f"probe {identifier} measured must be a boolean")
         if not allow_runtime:
             if not (isinstance(raw.get("kind"), str) and raw["kind"] in KINDS):
                 errors.append(f"probe {identifier} requires kind: conformance, contract or preservation")
@@ -122,15 +126,29 @@ def readings_unsettled(entry: JsonObject) -> bool:
 
 
 def original_outcome(run: JsonObject) -> str:
-    return run["arms"][0]["outcome"]
+    """A growth case's original is judged by its own declared bound when both of its arms ran and produced measurements."""
+    if "WORKFLOW_GROWTH" not in (run.get("execution") or {}).get("assignments", {}):
+        return run["arms"][0]["outcome"]
+    from .tdd_workflow import _work_errors
+    if len(run["arms"]) != 4:
+        return "unmeasured"
+    small, large = run["arms"][1], run["arms"][0]
+    errors = _work_errors({**run, "arms": [small, large, small, large]}) if small["outcome"] == large["outcome"] == "passed" else ["unmeasured"]
+    return "unmeasured" if any(not error.startswith("growth: ") for error in errors) else "failed" if errors else "passed"
 
 
-def _case_question(entry: JsonObject) -> list[str]:
+def _case_question(entry: JsonObject, *, measured: bool | None = None) -> list[str]:
     if entry.get("kind") not in KINDS:
         return ["declare kind (conformance, contract or preservation) through record tdd-map"]
     if readings_unsettled(entry):
         return ["readings unsettled: " + " | ".join(entry["interpretations"]) + " - record interpretation and authority"]
     run = entry.get("comparison") or {}
+    if (saving := entry.get("saving")) and run.get("fresh", True) and original_outcome(run) == "passed":
+        counts = (run.get("counts") or {}).get(entry["id"])
+        if not counts or counts[0] != saving["original"] or run["arms"][0].get("key") != saving["originalKey"]:
+            return [f"the earned {entry['id']} workload on {saving['tree']} needs a comparable measurement"]
+        if counts[1] > saving["best"]:
+            return [f"the earned {entry['id']} saving on {saving['tree']} regressed: {saving['best']} -> {counts[1]}"]
     if run.get("differs"):
         return ["results differ at " + run["differs"]]
     if not producer_proved(entry):
@@ -143,8 +161,8 @@ def _case_question(entry: JsonObject) -> list[str]:
     if current != "passed":
         return ["candidate command " + current + ": " + run["command"]]
     expected = "passed" if entry["kind"] == "preservation" else "failed"
-    if original != expected and not (original == "passed" and _own_count(entry["id"], run)):  # two passing runs prove a saving by the item's own count
-        return [f"{entry['kind']} needs original {expected}, candidate passed" + ("" if entry["kind"] == "preservation" else f", or both passed with the count {entry['id']} lower on the candidate") + f"; original {original}: " + run["command"]]
+    if original != expected and not (measured is not False and original == "passed" and _own_count(entry["id"], run)):  # two passing runs prove a saving by the item's own count
+        return [f"{entry['kind']} needs original {expected}, candidate passed" + ("" if entry["kind"] == "preservation" or measured is False else f", or both passed with the count {entry['id']} lower on the candidate") + f"; original {original}: " + run["command"]]
     return []
 
 
@@ -165,15 +183,18 @@ def _question(entry: JsonObject, proofs: list[JsonObject], keys: bool = False, m
         return ["no case is bound"]
     reasons = []
     for proof in candidates:
-        reasons.extend(_case_question({**proof, "kind": entry.get("kind")}))
+        reasons.extend(_case_question({**proof, "kind": entry.get("kind")}, measured=entry["id"] in measured))
         own = (proof["comparison"].get("counts") or {}).get(entry["id"])  # a measured cost's own count is its claimed saving, whatever its kind
         if own and (entry["id"] in measured or entry.get("kind") != "preservation") and not own[1] < own[0]:
             reasons.append(f"its count must fall on the candidate: {entry['id']} {own[0]} -> {own[1]}")
-    if not reasons and entry["id"] in measured and entry.get("kind") != "preservation":  # one case for several measured costs observes each
-        shared = {(other["comparison"].get("sourceCommand"), other["comparison"].get("command")) for other in proofs
-                  if other["id"] != entry["id"] and other["id"] in measured and other.get("comparison")}
-        reasons = [f'shares its case with another measured cost and prints no falling count of its own: WORKFLOW_METRICS={{"{entry["id"]}": COUNT, ...}} on both trees'
-                   for proof in candidates if (proof["comparison"].get("sourceCommand"), proof["comparison"]["command"]) in shared and not _own_count(entry["id"], proof["comparison"])]
+    if entry["id"] in measured and not any(
+            proof.get("reviewedAssertion") or _own_count(entry["id"], run) or len(run["arms"]) == 4 and original_outcome(run) == "failed" and run["valid"]
+            for proof in candidates if (run := proof["comparison"]).get("valid")):
+        refs = {proof["comparison"]["command"] for proof in candidates}
+        shared = any(other["id"] != entry["id"] and other["id"] in measured
+                     and (other.get("comparison") or {}).get("command") in refs for other in proofs)
+        reasons.append(("shares its case with another measured cost and prints no falling count of its own" if shared
+                        else "measure its own work on both trees") + f': WORKFLOW_METRICS={{"{entry["id"]}": COUNT, ...}}')
     return list(dict.fromkeys(reasons))
 
 
@@ -256,16 +277,36 @@ def retain_evaluation(items: list[JsonObject], required: set[str], retained: Jso
         command = run.get("sourceCommand", run["command"])
         key = entry["id"] if runs is None else case_key(entry["id"], runs[run["runIndex"]])
         earlier = {name: key if runs is None else case_key(old["id"], runs[old["runIndex"]]) for name, old in retained.items()
-                   if (old["id"] == entry["id"] or old["id"] in present and old["id"] not in binders.get(command, ())) and (runs is None or
+                   if not old.get("saving") and (old["id"] == entry["id"] or old["id"] in present and old["id"] not in binders.get(command, ())) and (runs is None or
                    runs[old["runIndex"]].get("sourceCommand", runs[old["runIndex"]]["command"]) == command
                    and (not retired or case_key(old["id"], runs[old["runIndex"]]) not in retired))}
-        if key in retired or key in earlier.values() or earlier and run.get("support"):
+        if key in retired or key in earlier.values() or earlier and run.get("support") or any(
+                old.get("saving") and old["id"] == entry["id"] and key == case_key(old["id"], runs[old["runIndex"]])
+                for old in retained.values() if runs is not None):
             continue
         for name in earlier:
             del retained[name]
         key = entry["id"] if entry["id"] not in retained else key
         retained[key] = {**copy.deepcopy({key: value for key, value in entry.items() if key != "comparison"}),
                          "runIndex": run["runIndex"]}
+
+
+def retain_savings(retained: JsonObject, items: list[JsonObject], runs: list[JsonObject], candidate: str) -> None:
+    """Earn a comparable count on a tree whose bound cases passed. Keep the measured capture through later edits."""
+    if not retained or not any((runs[e["runIndex"]].get("counts") or {}).get(e["id"]) for e in retained.values()):
+        return
+    if not all(proof.get("comparison", {}).get("candidateTree") == candidate and not _case_question(proof)
+               for proof in current_cases(items, runs)):
+        return
+    for entry in retained.values():
+        run = runs[entry["runIndex"]]
+        if run["candidateTree"] != candidate or not run["valid"] or not _own_count(entry["id"], run):
+            continue
+        before, after = run["counts"][entry["id"]]
+        prior = entry.get("saving")
+        if not prior or (before == prior["original"] and run["arms"][0]["key"] == prior["originalKey"] and after < prior["best"]):
+            entry["saving"] = {"original": before, "best": after, "tree": candidate, "originalKey": run["arms"][0]["key"],
+                               **({"originalRef": ref} if (ref := run["arms"][0].get("resultRef")) else {})}
 
 
 def case_key(identifier: str, run: JsonObject) -> str:
@@ -297,6 +338,7 @@ def comparison_view(run: JsonObject, *, detail: bool = False) -> JsonObject:
             "sensitive": run.get("sensitive", False),
             "arms": [{"source": "original" if index < (len(arms) + 1) // 2 else "current", "tree": arm.get("requestedTree", arm.get("sourceTree")),
                       "outcome": arm.get("outcome"), "exitCode": arm.get("exitCode"), "timedOut": arm.get("timedOut", False),
+                      **({"resultRef": arm["resultRef"]} if arm.get("resultRef") else {}),
                       **({"outputTail": str(arm.get("output") or arm.get("error") or arm.get("bindingError") or "")[-1200:]}
                          if arm.get("outcome") != "passed" or detail and arm.get("output") else {})}
                      for index, arm in enumerate(arms)],

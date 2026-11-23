@@ -149,7 +149,7 @@ DESIGN_FILE_SHAPE = (
     '{"schemaVersion":1,"status":"present","sha256":"<64 hex>"} or '
     '{"schemaVersion":1,"status":"absent","reason":"..."}'
 )
-ITEM_SHAPE = ('{"id":"BM_X","kind":"conformance|contract|preservation","basis":"request words or preservation, deciding each input",'
+ITEM_SHAPE = ('{"id":"BM_X","measured":false,"kind":"conformance|contract|preservation","basis":"request words or preservation, deciding each input",'
               '"behavior":"the property","seam":"...","expected":"...",'
               '"boundaryInputs":["the bounds, and what a cut leaves out"],"cases":["COMMAND"],'
               '"interpretations":["reading a","reading b"],"interpretation":"...","authority":"..."}')
@@ -160,7 +160,7 @@ CASE_RULE = ("Before coding, state the property, bounds and what decides each in
              "no testing library. A direct test through the production interface that controls a result, with real collaborators and representative inputs, proves "
              "that result; use the public entry point only for a promise about what that entry point itself does, such as whether a command blocks or succeeds. "
              "Reuse one shared test for inputs governed by the same behavior. To request more proof, identify the specific outcome that test could miss or the cost "
-             "tradeoff that could change the design. A test of kept results or of a saving runs the operation on the tree it is given and prints "
+             "tradeoff that could change the design. Set measured on each item: true for a required saving on its workload, false for a functional change or kept behavior. A case runs the operation on its tree and prints "
              "WORKFLOW_RESULT=<JSON of its results by input> and WORKFLOW_METRICS=<JSON of counts, one named by each item it serves>: the workflow compares the two "
              "trees, so it loads no copy of the original and nests no before-and-after run; repeat a timing or compare another design only when the result could "
              "change what ships. Run all inputs smallest first; only if too many to list, "

@@ -13,7 +13,7 @@ For governed work load the full review package:
 python3 "$HOME/.codex/skills/repo-production-workflow/scripts/workflow.py" checkpoint --repo "$PWD" --phase code-review --channel-dir "$(mktemp -d)"
 ~~~
 
-Read every channel, diff and current file; use the evidence command only for missing details. Reuse graph evidence to trace callers, callees, state writers and unchanged surfaces; reinspect changed targets. Outside a pass review the Git target without creating state.
+On the first review, read every channel, diff and changed file. On return, check the repair since your verdict, outstanding findings and their current evidence. Follow the full diff and source when an affected behavior reaches beyond the repair. Reuse graph evidence to trace callers, callees, state writers and unchanged surfaces; reinspect changed targets. Outside a pass review the Git target without creating state.
 
 ## Independent judgment
 
