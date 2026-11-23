@@ -1762,7 +1762,7 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
             return {"command": shlex.join(command)}
         command = [*cli, "paths", "--repo", str(identity.root), "--workflow-id", str(state["workflowId"])]
     elif action == "code-review":
-        return {"command": None, "input": "Delegate code-review to the pass's reviewer; its checkpoint supplies the verdict command. Repair its pending findings first."}
+        return {"command": None, "input": "Delegate code-review to the pass's reviewer now: until it is tasked the host runs no other call. Its checkpoint supplies the verdict command. Repair its pending findings first."}
     elif action in {"tdd", "address-review-findings"}:
         command = [*cli, "tdd", *bound]
         pending = open_findings(identity, state, known=known, delivered=delivered)

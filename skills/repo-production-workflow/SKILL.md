@@ -88,8 +88,8 @@ Invoke `production-code` for its standards and baseline gate. Reuse the existing
 
 ### 8. Implement and compare
 
-Continue TDD's [required probe loop](../tdd/SKILL.md#required-probe-loop): implement binding outcomes with the lowest-cost justified design against the recorded baseline, reconcile the actual diff, and compare the same
-case commands on the candidate. Add commands for uncovered outcomes; reuse unchanged proof.
+Continue TDD's [required probe loop](../tdd/SKILL.md#required-probe-loop): implement binding outcomes with the lowest-cost justified design against the recorded baseline, reconcile the actual diff with the required outcomes before verification, and compare the same
+case commands on the candidate. Add any missing input to the existing shared case and run focused tests with the repository's working invocation; reuse unchanged proof.
 
 The lead resolves named-case obligations against the original and request, then verifies and obtains the existing independent review. After final review starts, targeted repair returns to that final advisor.
 
@@ -102,9 +102,9 @@ candidate. Follow the receipt for stale comparisons, failed checks and continuat
 
 ### 10. Delegate code review
 
-Do not spawn or task the reviewer until the lead has completed the investigation,
-repair, real outcome assessment and verification in steps 2–9. Missing lead proof
-is work for the lead before initial or return review.
+When verification passes and its receipt says `code-review`, delegate immediately: the
+host runs no other call first. Afterwards reopen work only for a specific uncovered
+outcome or an invalidated result, reusing current test and performance evidence.
 
 Before final advisor review, obtain independent `code-review` of the original
 objective and current candidate. Lead self-cleanup and later GitHub review do not replace this

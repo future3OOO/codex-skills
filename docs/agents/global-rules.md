@@ -102,7 +102,7 @@ reviewer/check event and repeat the reviewer re-query below before merging.
 
 Use FFF first for raw discovery; honor packet scope. Follow `$repo-context-forge` for repo selection.
 
-The packet's rows give the callers, callees and upstream impact of the symbols they list. Query only what no row answers: downstream impact of a symbol you
+The packet's rows give the callers, callees and upstream impact of the symbols they list. Query only a relationship no row answers and a decision depends on, in the current candidate's graph: downstream impact of a symbol you
 delete, move, deepen, consolidate or hide behavior in; shared-state writers and their risk; and the tested owner
 of an internal Seam a new file consumes. Use the packet's exact call forms; never list, search or print tool
 definitions. One relationship: a scoped `cypher` query. Never print raw graph output whole.
