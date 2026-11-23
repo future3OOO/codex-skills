@@ -156,9 +156,7 @@ def _review_ready(review: object, *, final: bool = False) -> bool:
         return False
     if not final:
         return review.get("status") in {"passed", "not-required"}
-    # a fix-before-commit verdict whose open findings the lead rejected, with their recorded measurements, on the tree it judged
-    return review.get("source") in REVIEW_SOURCES and (review.get("status") == "commit-ready"
-                                                       or review.get("status") == "fix-before-commit" and review.get("rejected") is True)
+    return review.get("source") in REVIEW_SOURCES and review.get("status") == "commit-ready"
 
 
 # The one step registry, in workflow order: step -> (state field, readiness).
@@ -610,8 +608,9 @@ def commit_retained_checks(identity: RepoIdentity, slug: str, workflow_id: str, 
 
 
 def commit_rejections(identity: RepoIdentity, slug: str, workflow_id: str, records: list[JsonObject]) -> JsonObject:
-    """The lead's rejections, each holding the output of the one command the workflow ran for it. A rejected map item or
-    final finding no longer blocks; every reader of the pass still lists it."""
+    """The lead's rejections, each holding what the workflow ran for it. A rejection is evidence, never a settlement: a
+    declined map item no longer blocks the lead's steps and a rejected finding returns to its advisor; the review judges
+    what the evidence establishes, and every reader of the pass still lists the target."""
     with mutation(identity) as transaction:
         state = _bound_instance_state(transaction.state, slug, workflow_id)
         state["rejections"] = [*state.get("rejections", []), *records]
@@ -620,9 +619,8 @@ def commit_rejections(identity: RepoIdentity, slug: str, workflow_id: str, recor
             if (entry["stage"] == "final" or entry.get("decision")) and entry["findingId"] in findings:
                 entry["status"] = "rejected"
         final = state.get("finalReview") or {}
-        if (findings and final.get("status") in {"commit-ready", "fix-before-commit"} and state.get("judgedTree") == _active_candidate_tree(identity)
-                and not _stage_unresolved(state, "final", final["source"])):
-            final.update(findings="none", rejected=True)
+        if final.get("status") in {"commit-ready", "fix-before-commit"} and not _stage_unresolved(state, "final", final["source"]):
+            final.update(status="fix-before-commit", findings="addressed")  # the verdict did not judge this evidence: its advisor's return review does
         if len(findings) < len(records) and state.get("tdd") in {"in-progress", "passed"}:
             state["tdd"] = "in-progress" if _readiness_lines(identity, state, keys=True)["open"] else "passed"
         state["nextAction"] = _derive_next_action(state)
@@ -1699,7 +1697,7 @@ def _derived_readiness(identity: RepoIdentity, state: JsonObject, items: list[Js
     """The judgment readiness lines are written from: the map's items, its retained and current cases judged for
     freshness on the candidate, and whether the review is current."""
     from .tdd_workflow import _evaluation, _retired, refresh_proof
-    rejected = rejections(state, "item")  # the lead's measured set-asides
+    rejected = rejections(state, "item")  # declined: the lead's steps go on, the review judges their evidence
     items = [entry for entry in items if entry["id"] not in rejected]
     evaluation = [{**entry, "caseKey": behavior_map.case_key(entry["id"], document["runs"][entry["runIndex"]]),
                    "comparison": dict(document["runs"][entry["runIndex"]])}
@@ -1772,7 +1770,7 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
         text = f"{', '.join(unbound)} need a case: tdd takes each with --case, the item's id and the case's command." if unbound else ""
         if pending:
             operation["findings"] = pending
-            text += " A final finding closes when its repair passes or, having none, at its advisor's return review once the proof has changed; or with tdd --reject, its id and a command whose output shows it does not hold."
+            text += " A final finding closes when its repair passes or, having none, at its advisor's return review once the proof has changed; tdd --reject with its id and a command gives that review the command's result to judge."
         if text := text.strip():
             operation["input"] = text
         return operation

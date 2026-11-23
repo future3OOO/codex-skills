@@ -1635,8 +1635,8 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None, emit=
     parser.add_argument("--report", action="append", default=[], help="the reason the lead gives with --retire; with --as final, the cause")
     parser.add_argument("--change", help="with --as final: the diff outside the checkout that repairs the cause")
     parser.add_argument("--reject", action="append", nargs="+", default=[], metavar="ID 'COMMAND'",
-                        help="the lead closes a map item or final finding it rejects: the workflow runs the command once and, when it "
-                             "exits 0, keeps its output with the rejection; with --as, EVIDENCE:ID=REASON withdraws this author's invalid observation")
+                        help="the lead declines an advisor-added map item or rejects a final finding: the workflow runs the command and, when it "
+                             "exits 0, keeps its result as evidence the review judges; with --as, EVIDENCE:ID=REASON withdraws this author's invalid observation")
     parser.add_argument("--retire", action="append", nargs="+", default=[], metavar="CASE [CASE ...] | ITEM COMMAND",
                         help="recorded cases by caseKey, or one by its item and command")
     parser.add_argument("--as", dest="author", choices=("review", "final"), help="the reviewer's verdict, or the withdrawal of its own observation; final: the final advisor's cause, "
@@ -2112,14 +2112,21 @@ def _advisor_added(identity: RepoIdentity, state: JsonObject) -> list[str]:
     return (evidence_document(identity, (state.get("advisorPreflight") or {}).get("intakeEvidence"), restore_runs=False) or {}).get("added", [])
 
 
+# What a declined item's record says to the lead, the reviewer and the final advisor.
+DECLINED = ("declined by the lead, not settled: its claim stays owed unless a recorded comparison shows its cost removed, this evidence about the same "
+            "operation (original: the pass-start tree; output: the candidate) shows keeping that work is required or cheaper, or the recorded diff "
+            "leaves what the item protects unchanged. A command that passes, a scope statement or one failed removal establishes none of these")
+
+
 def _reject(identity: RepoIdentity, state: JsonObject, requests: list[list[str]]) -> tuple[JsonObject, tuple[str, str, str] | None]:
     """The lead's rejection of an advisor-added map item or a final finding by the id it names: the workflow runs its one
-    command once, in the checkout, and keeps the output with it. Without a command, or unless the command exits 0, the
-    target stays open."""
+    command and keeps the output with it, an item's on the pass-start tree and the candidate. Without a command, or unless
+    the command exits 0, nothing is recorded. A recorded rejection settles nothing: the review judges what it establishes."""
     from .command_runner import _tail
     from .workflow_state import commit_rejections
     added = _advisor_added(identity, state)
-    items = {entry["id"]: entry for entry in current_map(identity, state, fresh=False)[0] or [] if entry["id"] in added}
+    recorded, document = current_map(identity, state, fresh=False)
+    items = {entry["id"]: entry for entry in recorded or [] if entry["id"] in added}
     findings = {ref["id"]: entry for entry in state.get("findingStates", []) if entry["stage"] == "final" or entry.get("decision")
                 for ref in ({"id": entry["findingId"]}, *entry.get("observations", []))}
     records, rows = [], []
@@ -2132,10 +2139,19 @@ def _reject(identity: RepoIdentity, state: JsonObject, requests: list[list[str]]
         if not (command or "").strip():
             rows.append({"target": target, "open": "a rejection closes its target only with one command, which the workflow runs and records"})
             continue
+        declined = {}
         try:
-            words, _, environment = _case_environment(identity, command)
-            raw, code, timed_out = _run(words, identity, MAX_CASE_SECONDS, env=environment)
-        except (OSError, ValueError) as exc:
+            if target in items:  # evidence about a claim is the command's result on both trees: a recorded comparison of it is reused
+                _execution_cache(identity, state)
+                tree = _active_candidate_tree(identity)
+                arms = _compare(identity, _git(identity, "rev-parse", f"{state['passStartOid']}^{{tree}}").decode().strip(), tree,
+                                _probe_capture(identity, {"command": command}, tree, MAX_CASE_SECONDS), list((document or {}).get("runs", [])))["arms"]
+                raw, code, timed_out = arms[-1]["output"].encode(), arms[-1]["exitCode"], arms[-1]["outcome"] not in {"passed", "failed"}
+                declined = {"declined": DECLINED, "original": _tail(arms[0]["output"].encode())}
+            else:
+                words, _, environment = _case_environment(identity, command)
+                raw, code, timed_out = _run(words, identity, MAX_CASE_SECONDS, env=environment)
+        except (OSError, ValueError, WorkflowError) as exc:
             raw, code, timed_out = str(exc).encode(), None, False
         if code is None or timed_out:
             rows.append({"target": target, "command": command, "open": f"the command did not finish: {_tail(raw)[-300:]}"})
@@ -2146,7 +2162,7 @@ def _reject(identity: RepoIdentity, state: JsonObject, requests: list[list[str]]
         claim = items[target]["behavior"] if target in items else next((finding["claim"] for finding in (evidence_document(
             identity, findings[target]["intakeEvidenceId"], restore_runs=False) or {}).get("findings", []) if finding["id"] == target), "")
         records.append({"target": target, "kind": "item" if target in items else "finding", "claim": claim,
-                        "command": command, "exitCode": code, "output": _tail(raw)})
+                        "command": command, "exitCode": code, "output": _tail(raw), **declined})
     if records:
         state = commit_rejections(identity, str(state["slug"]), str(state["workflowId"]), records)
     memory = _given(identity, state, "lead")

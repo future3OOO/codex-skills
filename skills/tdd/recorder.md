@@ -23,8 +23,9 @@ Open lines name cases by `caseKey`; a command names the checkout as `"${PWD}"` a
 A finding given before and unchanged is its id alone, and `probeOf` names the finding that carries a shared probe.
 `evidence --evidence-id` with the reply's `summaryId` gives every recorded result whole.
 
-Only a finding's author can withdraw it, or retire a case with the cause that disproves it; the lead closes an
-advisor-added map item or final finding it rejects with `tdd --reject ID 'COMMAND'`, whose output the workflow records. The lead
+Only a finding's author can withdraw it, or retire a case with the cause that disproves it; the lead declines an
+advisor-added map item or rejects a final finding with `tdd --reject ID 'COMMAND'`: the workflow records the command's result as
+evidence, and the review judges what it establishes. The lead
 retires cases with `--retire` and their `caseKey`s, or one with its item and command. A retired kept-behaviour case
 stays the item's retained proof, holding it open while it fails on the candidate, unless another recorded case
 proves the item and the case fails on the original or no longer passes after the item changed; an item left without a proving case reads open.
