@@ -166,6 +166,9 @@ def _question(entry: JsonObject, proofs: list[JsonObject], keys: bool = False, m
     reasons = []
     for proof in candidates:
         reasons.extend(_case_question({**proof, "kind": entry.get("kind")}))
+        own = (proof["comparison"].get("counts") or {}).get(entry["id"])  # a measured cost's own count is its claimed saving, whatever its kind
+        if own and (entry["id"] in measured or entry.get("kind") != "preservation") and not own[1] < own[0]:
+            reasons.append(f"its count must fall on the candidate: {entry['id']} {own[0]} -> {own[1]}")
     if not reasons and entry["id"] in measured and entry.get("kind") != "preservation":  # one case for several measured costs observes each
         shared = {(other["comparison"].get("sourceCommand"), other["comparison"].get("command")) for other in proofs
                   if other["id"] != entry["id"] and other["id"] in measured and other.get("comparison")}

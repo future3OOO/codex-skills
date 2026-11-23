@@ -1606,7 +1606,7 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None, emit=
     parser.add_argument("--case", action="append", nargs="+", default=[], metavar="ITEM[,ITEM] COMMAND | ITEM:COMMAND",
                         help="one command per case, declared once for every item it names; the ITEM '-' is unbound. A case runs the operation on the tree it is given and prints WORKFLOW_RESULT=<JSON> and WORKFLOW_METRICS=<JSON object of counts>: the workflow compares the two trees.")
     parser.add_argument("--support", action="append", help="an in-checkout test file a kept-behaviour case reads on its candidate bytes; recorded replay uses its captured immutable bytes")
-    parser.add_argument("--correct", action="append", nargs="+", default=[], metavar="ITEM [DECLARATION] COMMAND",
+    parser.add_argument("--correct", action="append", nargs="+", default=[], metavar="ITEM[,ITEM] [DECLARATION] COMMAND",
                         help="replace one declared or recorded command of an item and run it; DECLARATION may be left out when the item has one, or COMMAND is it")
     args = parser.parse_args(values[:dash])
     for position, words in enumerate(args.case):  # ITEM COMMAND, each judged as a case; or the one value ITEM:COMMAND, split at its first colon
@@ -1718,8 +1718,8 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None, emit=
     runs = list((current or {}).get("runs", []))
     evaluation = _evaluation(identity, state, current)
     args.retire = _case_keys(items, runs, evaluation, args.retire)
-    if args.correct:
-        identifier, *replaced, corrected = args.correct
+    for identifier in args.correct[0].split(",") if args.correct else ():  # ITEM,ITEM: one replacement for every item that runs the command
+        replaced, corrected = args.correct[1:-1], args.correct[-1]
         entry = behavior_map.item(items, identifier)
         declared = entry.get("cases", [])
         ran = list(dict.fromkeys(case["comparison"].get("sourceCommand", case["comparison"]["command"]) for case in behavior_map.current_cases([entry], runs)))
@@ -1751,7 +1751,7 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None, emit=
     rejected = rejections(state, "item")  # set aside: never replayed
     drafted = [] if args.behavior_id and update is None else list(dict.fromkeys((entry["id"], value) for entry in items
                                                              if entry["id"] not in rejected and (not args.behavior_id or entry["id"] in args.behavior_id)
-                                                             for value in entry.get("cases", []) if not args.correct or (entry["id"], value) == (args.correct[0], args.correct[-1])))
+                                                             for value in entry.get("cases", []) if not args.correct or entry["id"] in args.correct[0].split(",") and value == args.correct[-1]))
     selected = []
     retired = _retired(state)
     if not specs and not args.correct:
