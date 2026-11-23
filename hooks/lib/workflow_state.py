@@ -456,7 +456,6 @@ def commit_tdd(identity: RepoIdentity, slug: str, workflow_id: str | None,
         write = evidence_write(str(state["workflowId"]), "tdd", summary_doc)
         state["tddEvidence"] = write.evidence_id
         state["activeCandidateTree"] = candidate
-        cost_writes = _record_costs(transaction, state, [run for run in summary_doc["runs"] if run["candidateTree"] == candidate])
         state["tdd"] = "in-progress" if pending else "passed"
         state["phase"] = "tdd"
         state.pop("paused", None)
@@ -468,37 +467,7 @@ def commit_tdd(identity: RepoIdentity, slug: str, workflow_id: str | None,
         elif readiness and readiness["reviewCurrent"]:
             state["codeReview"] = {"status": "passed", "findings": "none"}
         state["nextAction"] = _derive_next_action(state, summary_doc)
-        return _commit(transaction, state, "tdd-comparison", evidence=[write, *cost_writes], manifests=manifests), write.evidence_id, readiness
-
-
-def _record_costs(transaction, state, runs):
-    from .tdd_workflow import _work_errors
-    findings = []
-    for run in runs:
-        if not (errors := _work_errors(run)):
-            continue
-        identifier = "COST-" + hashlib.sha256(run["command"].encode()).hexdigest()[:16]
-        entry = next((entry for entry in state.get("findingStates", []) if entry["findingId"] == identifier), None)
-        if entry:
-            if _finding_unresolved(entry):
-                continue
-            disposition = transaction.evidence(entry.get("dispositionEvidenceId"), restore_runs=False) or {}
-            if any(item.get("rejected") and item.get("priorFinding", {}).get("id") == identifier for item in disposition.get("findings", [])):
-                intake = transaction.evidence(entry["intakeEvidenceId"], restore_runs=False) or {}
-                previous = next((item for item in intake.get("findings", []) if item["id"] == identifier), {})
-                if previous.get("execution", {}).get("comparison", {}).get("candidateKey") == run.get("candidateKey"):
-                    continue
-        comparison = {key: value for key, value in run.items() if key in {
-            "command", "timeout", "support", "probeFiles", "probeTree", "originalTree", "candidateTree", "execution", "candidateKey"}}
-        findings.append({"id": identifier, "claim": "\n".join(errors), "kind": "behavioral", "material": True,
-                         "probe": {"command": run["command"]}, "execution": {"kind": "cost", "candidate": "failed", "comparison": comparison}})
-    if not findings:
-        return []
-    document = {"workflowId": state["workflowId"], "slug": state["slug"], "stage": "code-review", "producer": "code-review",
-                "candidateTree": state["activeCandidateTree"], "tddEvidence": state["tddEvidence"], "findings": findings, "runs": []}
-    write = evidence_write(state["workflowId"], "finding-intake-code-review", document)
-    _register_finding_intake(transaction, state, write.evidence_id, document, {})
-    return [write]
+        return _commit(transaction, state, "tdd-comparison", evidence=[write], manifests=manifests), write.evidence_id, readiness
 
 
 def _finding_unresolved(entry: JsonObject) -> bool:
@@ -516,13 +485,22 @@ def _settle_executed(state: JsonObject, execution: JsonObject, evidence_id: str)
         run, entry = result["execution"], _finding_state(state, result["evidenceId"], result["id"])
         if any(entry is current for current in binding):
             continue
-        settled = run["kind"] == "claim" or "error" not in run and run.get("candidate") != "timed-out" and (run.get("candidate") == "passed" if run["kind"] in {"probe", "cost"}
+        settled = run["kind"] == "claim" or "error" not in run and run.get("candidate") != "timed-out" and (run.get("candidate") == "passed" if run["kind"] == "probe"
                                           else (run["candidate"] == "passed") == run["applied"])
         outcomes.append((entry, settled))
     for entry, _ in outcomes:  # a finding settles only when every binding case it holds does
         if entry is not None:
             entry.update(status="resolved" if all(done for other, done in outcomes if other is entry) else "pending",
                          dispositionEvidenceId=evidence_id)
+
+
+def _settle_accepted(state: JsonObject, stage: str, source: str, findings: list[JsonObject], evidence_id: str, every: bool = False) -> None:
+    """A finding with no test settles by its author's verdict: each one the verdict restates without a decision, its
+    author accepting the recorded proof, and all of them when `every`. The finding and its evidence stay in the ledger."""
+    settled = {finding["id"] for finding in findings if not finding["material"]}
+    for entry in state.get("findingStates") or []:
+        if entry.get("decision") and entry["stage"] == stage and entry["producer"] == source and _finding_unresolved(entry) and (every or entry["findingId"] in settled):
+            entry.update(status="resolved", dispositionEvidenceId=evidence_id)
 
 
 def _stage_unresolved(state: JsonObject, stage: str, source: str) -> bool:
@@ -557,6 +535,8 @@ def commit_findings(
         intake = summary_doc.get("findings", [])
         reference = _register_finding_intake(transaction, state, write.evidence_id, summary_doc, {})
         _settle_executed(state, execution, write.evidence_id)
+        if summary_doc["stage"] == "code-review" and "verdict" in summary_doc:  # the verdict that records the review settles what its reviewer accepts
+            _settle_accepted(state, "code-review", "code-review", intake, write.evidence_id)
         if "verdict" not in summary_doc:
             if summary_doc["stage"] == "code-review":
                 state["codeReviewIntakeEvidence"] = write.evidence_id
@@ -1131,11 +1111,7 @@ def record_advisor_result(
                     transaction, state, intake_write.evidence_id, intake, intakes,
                 )
                 _settle_executed(state, execution, intake_reference)
-                settled = {finding["id"] for finding in intake["findings"] if not finding["material"]}  # restated without a decision: its author accepts the recorded proof
-                for entry in state.get("findingStates") or []:  # a finding with no test settles by its author's verdict: each one it accepts, all of them when ready
-                    if entry.get("decision") and entry["stage"] == stage and entry["producer"] == source and _finding_unresolved(entry) and (
-                            verdict == "commit-ready" or entry["findingId"] in settled):
-                        entry.update(status="resolved", dispositionEvidenceId=intake_reference)
+                _settle_accepted(state, stage, source, intake["findings"], intake_reference, verdict == "commit-ready")
                 state["finalStarted"] = True
                 reviewed = manifest_write(str(state["workflowId"]), "final-review-tree", current_manifest())
                 state["reviewManifestId"] = reviewed.manifest_id
@@ -1689,7 +1665,8 @@ def _readiness_lines(identity: RepoIdentity, state: JsonObject, items: list[Json
     for entry in (*observations, *evaluation):
         if any(reason.endswith(entry["comparison"].get("command") or "\0") for reason in behavior_map._case_question(entry)):  # a reason that shows it
             entry["comparison"]["command"] = (entry.get("caseKey") or behavior_map.case_key(entry["id"], entry["comparison"])) if keys else shown(identity, entry["comparison"])
-    cases = behavior_map.open_obligations(items, evaluation, observations, keys)
+    from .tdd_workflow import _advisor_added
+    cases = behavior_map.open_obligations(items, evaluation, observations, keys, tuple(_advisor_added(identity, state)))
     return {"open": cases, "reviewCurrent": current, "openCount": len(cases),
             "never": [str(entry["id"]) for entry in items if not (entry.get("comparison") or {}).get("arms")]}
 
@@ -1769,11 +1746,12 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
         # A map item without a case is the lead's to write; otherwise the call that reruns and verifies is [].
         unbound = [line.split(" (", 1)[0] for line in (receipt or {}).get("open") or [] if "no case is bound" in line]
         operation: JsonObject = {"command": None if unbound else shlex.join(command), "args": []}
-        text = f"{', '.join(unbound)} need a case: tdd takes each with --case, the item's id and the case's command." if unbound else ""
+        text = f"{', '.join(unbound)} need a case: tdd --case {','.join(unbound)} 'COMMAND' declares one command for every item it names." if unbound else ""
         from .tdd_workflow import _advisor_added
         if owed := [name for name in _advisor_added(identity, state) if any(line.startswith(name + " (") for line in (receipt or {}).get("open") or [])]:
             text += (f" {', '.join(owed)}: a measured cost is open and code review cannot start. Investigate what it measured, implement the cheapest correct removal and let "
-                     "its case measure the saving (tdd --correct ID 'COMMAND' replaces a broken or superseded measure), or prove with tdd --reject ID --change "
+                     "its case measure the saving, a case several of them share by printing WORKFLOW_METRICS={\"ID\": COUNT, ...} on both trees with each item's own count "
+                     "lower on the candidate (tdd --correct ID 'COMMAND' replaces a broken or superseded measure), or prove with tdd --reject ID --change "
                      "REMOVAL.diff that keeping that work is required or cheaper in real use.")
         if pending:
             operation["findings"] = pending

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import os
 import re
@@ -427,8 +428,12 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
     changes = intake.pop("draft", None) if intake else None
     draft = finalised_draft(submitted, changes) if submitted and changes is not None else submitted
     if draft:  # the submitted file itself can first be declared with this answer
-        from .tdd_workflow import unstartable
+        from .tdd_workflow import _unwritten, unstartable
         unstartable(identity, draft["behaviorMap"])
+        mine = {entry["id"]: entry.get("cases", []) for entry in submitted["behaviorMap"]}
+        # A lead's case command stays until the lead replaces it; an approving answer adds a command only for a script that is written.
+        draft["behaviorMap"] = [{**{key: value for key, value in entry.items() if key != "cases"}, **({"cases": cases} if (cases := list(dict.fromkeys(
+            [*mine.get(entry["id"], []), *(case for case in entry.get("cases", []) if not _unwritten(identity, shlex.split(case)))]))) else {})} for entry in draft["behaviorMap"]]
     state = record_advisor_result(
         identity, slug, workflow_id, args.stage, args.source, verdict, reason=args.reason,
         design=design_declaration(args.design_declaration) if args.design_declaration else None,
@@ -506,8 +511,9 @@ def _dispatch(args: argparse.Namespace) -> int:
             for line in refresh_context(identity):
                 print(line, file=sys.stderr)
             if args.phase != "preflight-advice":
-                with redirect_stdout(sys.stderr):
-                    _verify(parser().parse_args(["verify", "--repo", str(identity.root)]), identity, review=True)
+                with redirect_stdout(held := io.StringIO()):  # a verification that holds is the lead's receipt, with the lead's step: its reader here is told only one that fails
+                    failed = _verify(parser().parse_args(["verify", "--repo", str(identity.root)]), identity, review=True)
+                print(held.getvalue() if failed else "", file=sys.stderr, end="")
         result = checkpoint(identity, args.phase, reconsult=args.reconsult, channel_dir=args.channel_dir, preflight_draft=draft)
         marker = args.phase == "code-review" and (reader := os.environ.get("CODEX_THREAD_ID")) and secure_dir(Path(result["scratchPath"]).parent) / ("given-rule-" + hashlib.sha256(reader.encode()).hexdigest())
         _emit_json(result, (str(marker), "", "") if marker else None)

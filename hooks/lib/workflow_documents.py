@@ -160,7 +160,10 @@ CASE_RULE = ("Before coding, state the property, bounds and what decides each in
              "no testing library. A direct test through the production interface that controls a result, with real collaborators and representative inputs, proves "
              "that result; use the public entry point only for a promise about what that entry point itself does, such as whether a command blocks or succeeds. "
              "Reuse one shared test for inputs governed by the same behavior. To request more proof, identify the specific outcome that test could miss or the cost "
-             "tradeoff that could change the design. Run all inputs smallest first; only if too many to list, "
+             "tradeoff that could change the design. A test of kept results or of a saving runs the operation on the tree it is given and prints "
+             "WORKFLOW_RESULT=<JSON of its results by input> and WORKFLOW_METRICS=<JSON of counts, one named by each item it serves>: the workflow compares the two "
+             "trees, so it loads no copy of the original and nests no before-and-after run; repeat a timing or compare another design only when the result could "
+             "change what ships. Run all inputs smallest first; only if too many to list, "
              "run required inputs plus a seeded random sample. Print how many ran and the smallest failing input found. A reported input in the family "
              "joins its item's loop, extending bounds if needed. One property failure, one change at its source, never code per input. One input keeps one case.")
 ADVISOR_SHAPES = {

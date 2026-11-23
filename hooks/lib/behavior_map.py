@@ -122,13 +122,7 @@ def readings_unsettled(entry: JsonObject) -> bool:
 
 
 def original_outcome(run: JsonObject) -> str:
-    """A growth case's original is judged by its own declared bound when both of its arms ran and produced measurements."""
-    if "WORKFLOW_GROWTH" not in (run.get("execution") or {}).get("assignments", {}):
-        return run["arms"][0]["outcome"]
-    from .tdd_workflow import _work_errors
-    small, large = run["arms"][1], run["arms"][0]
-    errors = _work_errors({**run, "arms": [small, large, small, large]}) if small["outcome"] == large["outcome"] == "passed" else ["unmeasured"]
-    return "unmeasured" if any(not error.startswith("growth: ") for error in errors) else "failed" if errors else "passed"
+    return run["arms"][0]["outcome"]
 
 
 def _case_question(entry: JsonObject) -> list[str]:
@@ -137,6 +131,8 @@ def _case_question(entry: JsonObject) -> list[str]:
     if readings_unsettled(entry):
         return ["readings unsettled: " + " | ".join(entry["interpretations"]) + " - record interpretation and authority"]
     run = entry.get("comparison") or {}
+    if run.get("differs"):
+        return ["results differ at " + run["differs"]]
     if not producer_proved(entry):
         if run.get("fresh") is False:
             return [run.get("freshnessReason", "comparison inputs changed")]
@@ -147,12 +143,18 @@ def _case_question(entry: JsonObject) -> list[str]:
     if current != "passed":
         return ["candidate command " + current + ": " + run["command"]]
     expected = "passed" if entry["kind"] == "preservation" else "failed"
-    if original != expected:
-        return [f"{entry['kind']} needs original {expected}, candidate passed; original {original}: " + run["command"]]
+    if original != expected and not (original == "passed" and _own_count(entry["id"], run)):  # two passing runs prove a saving by the item's own count
+        return [f"{entry['kind']} needs original {expected}, candidate passed" + ("" if entry["kind"] == "preservation" else f", or both passed with the count {entry['id']} lower on the candidate") + f"; original {original}: " + run["command"]]
     return []
 
 
-def _question(entry: JsonObject, proofs: list[JsonObject], keys: bool = False) -> list[str]:
+def _own_count(identifier: str, run: JsonObject) -> bool:
+    """Whether the case printed on both trees a count named for this item, lower on the candidate."""
+    original, candidate = (run.get("counts") or {}).get(identifier) or (0, 0)
+    return candidate < original
+
+
+def _question(entry: JsonObject, proofs: list[JsonObject], keys: bool = False, measured: tuple[str, ...] = ()) -> list[str]:
     if readings_unsettled(entry):
         return _case_question(entry)
     if entry.get("cases"):
@@ -161,11 +163,15 @@ def _question(entry: JsonObject, proofs: list[JsonObject], keys: bool = False) -
                   and obligation(proof)[1:] == obligation(entry)[1:]]
     if not candidates:
         return ["no case is bound"]
-    reasons, behavior = [], False
+    reasons = []
     for proof in candidates:
         reasons.extend(_case_question({**proof, "kind": entry.get("kind")}))
-        behavior = behavior or entry.get("kind") != "preservation" or "WORKFLOW_GROWTH" not in (proof.get("comparison", {}).get("execution") or {}).get("assignments", {})
-    return list(dict.fromkeys(reasons)) or ([] if behavior else ["growth cases check scaling only: no behavior case is bound"])
+    if not reasons and entry["id"] in measured and entry.get("kind") != "preservation":  # one case for several measured costs observes each
+        shared = {(other["comparison"].get("sourceCommand"), other["comparison"].get("command")) for other in proofs
+                  if other["id"] != entry["id"] and other["id"] in measured and other.get("comparison")}
+        reasons = [f'shares its case with another measured cost and prints no falling count of its own: WORKFLOW_METRICS={{"{entry["id"]}": COUNT, ...}} on both trees'
+                   for proof in candidates if (proof["comparison"].get("sourceCommand"), proof["comparison"]["command"]) in shared and not _own_count(entry["id"], proof["comparison"])]
+    return list(dict.fromkeys(reasons))
 
 
 def current_cases(items: list[JsonObject], runs: list[JsonObject], retired: set[str] = frozenset()) -> list[JsonObject]:
@@ -190,7 +196,7 @@ def current_cases(items: list[JsonObject], runs: list[JsonObject], retired: set[
 
 
 def open_obligations(items: list[JsonObject], evaluation: list[JsonObject] | None = None, current: list[JsonObject] | None = None,
-                     keys: bool = False) -> list[str]:
+                     keys: bool = False, measured: tuple[str, ...] = ()) -> list[str]:
     """One command is one case. Output and framework names never determine readiness. `keys`: a testing reply's lines, whose
     case rows carry the commands: a declaration is counted, not quoted."""
     retained = evaluation or []
@@ -198,7 +204,7 @@ def open_obligations(items: list[JsonObject], evaluation: list[JsonObject] | Non
     proofs = [*(current or items), *retained]
     for group, retained_item in ((items, False), (retained, True)):
         for entry in group:
-            reasons = _case_question(entry) if retained_item else _question(entry, proofs, keys)
+            reasons = _case_question(entry) if retained_item else _question(entry, proofs, keys, measured)
             if not reasons:
                 continue
             if reasons == ["execution inputs changed or unrecorded"]:
@@ -283,6 +289,7 @@ def comparison_view(run: JsonObject, *, detail: bool = False) -> JsonObject:
     return {"comparison": run.get("comparison", "incomplete"), "valid": run.get("valid", False),
             "runIndex": run.get("runIndex"), "command": run.get("command"),
             **({"behaviorId": run["behaviorId"]} if detail and run.get("behaviorId") else {}),
+            **{key: run[key] for key in ("failedOnSameCode", "differs", "counts") if run.get(key)},
             "probeTree": run.get("probeTree"),
             "sensitive": run.get("sensitive", False),
             "arms": [{"source": "original" if index < (len(arms) + 1) // 2 else "current", "tree": arm.get("requestedTree", arm.get("sourceTree")),
