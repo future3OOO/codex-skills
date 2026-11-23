@@ -44,7 +44,7 @@ of every production task: demonstrated avoidable work in the requested productio
 path is a release blocker. The lead drives it from the first draft. Before consulting
 the advisor, trace the whole requested operation: where it spends work, including in
 unchanged code it calls, what the required result actually needs, and the design that
-removes the rest. Keep looking for savings after the functional fix passes.
+removes the rest. For the first edit, visit each call site and data collection behind the measured cost, including sibling loops in the same method. Use the registered case to compare the remaining work.
 
 The advisor challenges that design in both directions: savings the lead missed, and
 whether the lead's optimizations preserve behavior or shift excessive cost into

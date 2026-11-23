@@ -19,7 +19,7 @@ from ._workflow_db import CHECK_ONLY, LedgerError, _canonical, history, read_act
 from .command_runner import emit_json as _emit_json, print_output as _print_output, run as _run, run_entry as _run_entry
 from .repo_identity import RepoIdentity, RepoIdentityError, resolve_repo_identity
 from .state_prune import prune
-from .state_store import _comparison_scope, _active_candidate_tree, analysis_unchanged, codex_home, repo_state_dir, secure_dir, state_root, tree_manifest, utc_timestamp
+from .state_store import atomic_write_json, _comparison_scope, _active_candidate_tree, analysis_unchanged, codex_home, repo_state_dir, secure_dir, state_root, tree_manifest, utc_timestamp
 from .workflow_documents import (
     RECORD_SHAPES,
     advisor_envelope,
@@ -449,7 +449,7 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
     return 0
 
 
-def _dispatch(args: argparse.Namespace) -> int:
+def _dispatch(args: argparse.Namespace, *, evidence_file: bool = False) -> int:
     if args.command == "prune":
         _emit_json(prune(apply=args.apply))
         return 0
@@ -480,12 +480,18 @@ def _dispatch(args: argparse.Namespace) -> int:
         value = read_evidence(identity, args.evidence_id, restore_runs=lambda kind: args.full or not kind.startswith("finding-intake"))
         if value is None:
             raise WorkflowError("evidence not found")
+        if evidence_file and (args.full or value["kind"] == "case-result" and fields and "values" in fields):
+            directory = repo_state_dir(identity) / "execution-trees" / value["workflowId"] / "scratch"
+            path = secure_dir(directory) / (value["evidenceId"] + ".json")
+            atomic_write_json(path, value)
+            _emit_json({"evidenceId": value["evidenceId"], "path": str(path), "bytes": path.stat().st_size})
+            return 0
         document = value.pop("document")
         if not args.full:
             if value["kind"].startswith("finding-intake"):
                 document.pop("runs", None)
             value.update(bytes=len(_canonical(document).encode()), fields=sorted(document))
-            views = {key: behavior_map.compact(field) for key, field in document.items()}
+            views = behavior_map.compact(document)
             document = {key: view for key, view in views.items() if (key in fields if fields else view != document[key] or key == "findings")}
         _emit_json({**value, **({"document": document} if document or args.full else {})})
     elif args.command == "set-phase":
@@ -528,7 +534,7 @@ def _dispatch(args: argparse.Namespace) -> int:
     return 0
 
 
-def main(argv: list[str] | None = None, *, replace: bool = True) -> int:
+def main(argv: list[str] | None = None, *, replace: bool = True, evidence_file: bool = False) -> int:
     """Run one workflow command; with `replace` false an operation that would replace this process runs as its child."""
     values = list(sys.argv[1:] if argv is None else argv)
     try:
@@ -570,7 +576,7 @@ def main(argv: list[str] | None = None, *, replace: bool = True) -> int:
                 action.choices for action in commands._actions if isinstance(action, argparse._SubParsersAction)):
             raise WorkflowError(f"no workflow command {values[0]!r}; args [] run the pass's next step")
         with _comparison_scope():
-            return _dispatch(commands.parse_args(values))
+            return _dispatch(commands.parse_args(values), evidence_file=evidence_file)
     except (RepoIdentityError, LedgerError, WorkflowError, ValueError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

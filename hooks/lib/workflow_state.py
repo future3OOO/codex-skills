@@ -58,7 +58,7 @@ LIVE_FINDING = {"pending", "accepted-for-proof", "accepted-follow-up", "rejected
 REVIEW_SOURCES = {"codex-advisor"}
 FINAL_VERDICTS = {"commit-ready", "fix-before-commit", "context-mismatch"}
 FIRST_DRAFT = ("Apply codebase-design and code-quality before drafting. Include your original profile's workload, "
-               "hottest internal operation and its measured cost in authoritativeContract. Bind its saving with measured=true. "
+               "hottest internal operation and each site that repeats it, including sibling loops over different data. Design the first change to remove the work at all those sites. "
                "<current-draft.json> has shape ")
 
 READINESS_FIELDS = ("measuredItems", "workflowId", "passStartOid", "tddEvidence", "preflightEvidence", "codeReviewEvidence", "findingStates", "rejections", "finalStarted")  # all a readiness derivation reads
@@ -1056,6 +1056,10 @@ def record_advisor_result(
             if verdict in {"approved", "changes-required"}:
                 if intake is None or preflight_draft is None:
                     raise WorkflowError("draft advice requires its reviewed preflight artifact")
+                if verdict == "approved":
+                    missing = [item["id"] for item in preflight_draft["behaviorMap"] if item.get("measured") and "remaining" not in item]
+                    if missing:
+                        raise WorkflowError("approve an inclusive remaining-work ceiling for " + ", ".join(missing))
                 intake["preflightDraft"] = preflight_draft
                 if submitted_draft not in (None, preflight_draft):
                     intake["draftEdits"] = draft_edits(submitted_draft, preflight_draft)
@@ -1263,7 +1267,7 @@ def _finding_ledger(identity: RepoIdentity, state: JsonObject) -> list[JsonObjec
             "material": entry.get("material"), "status": entry.get("status"),
             "claim": recorded.get("claim"),
             **{key: entry[key] for key in ("canonicalFinding", "observations", "dispositionEvidenceId") if key in entry},
-            **({"rejection": rejected[entry["findingId"]]} if entry.get("status") == "rejected" else {}),
+            **({"rejection": behavior_map.rejection_view(rejected[entry["findingId"]])} if entry.get("status") == "rejected" else {}),
         })
     return ledger
 
@@ -1296,9 +1300,9 @@ def _review_entries(items: list[JsonObject], rejected: dict[str, JsonObject]) ->
     for item in items:
         entry = {**{key: value for key, value in item.items() if key != "comparison"}, **({"rejection": rejected[item["id"]]} if item["id"] in rejected else {})}
         if run := item.get("comparison"):
-            view, arms = behavior_map.comparison_view(run), run.get("arms") or []
+            view, arms = behavior_map.comparison_view(run, detail=True), run.get("arms") or []
             recorded = [*(arm.get("key", "") for arm in arms[:(len(arms) + 1) // 2]), *(arm.get("inputs", "") for arm in arms)]
-            entry["comparison"] = {**{key: value for key, value in view.items() if key not in {"runIndex", "probeTree", "arms"} and value is not None},
+            entry["comparison"] = {**{key: value for key, value in view.items() if key not in {"runIndex", "probeTree", "arms", "behaviorId"} and value is not None},
                                    "proof": hashlib.sha256("".join(recorded).encode()).hexdigest()[:12],
                                    "arms": [{key: value for key, value in arm.items() if key != "tree" and value is not False} for arm in view["arms"]]}
         entries.append(entry)
@@ -1427,6 +1431,13 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
     ledger = _finding_ledger(identity, state)
     contract = ((evidence_document(identity, state.get("preflightEvidence")) or {}).get("document") or {}).get("authoritativeContract")
     entries = _review_entries(items, rejections(state, "item", candidate))
+    earned = {}
+    for key, case in (document or {}).get("evaluation", {}).items():
+        if saving := case.get("saving"):
+            earned.setdefault(case["id"], {})[key] = {field: saving[field] for field in ("original", "best", "tree")}
+    for entry in entries:
+        if entry["id"] in earned:
+            entry["earned"] = earned[entry["id"]]
     owners: dict[str, str] = {}
     # Identical displayed proof renders once; each later owner names the first.
     shared = [{**entry, "comparison": {"sameProofAs": owner}} if (view := entry.get("comparison"))
@@ -1627,6 +1638,8 @@ def public_status(state: JsonObject, identity: RepoIdentity | None = None, *,
         "repoContextForge": stored if ready or stored != "passed" else "pending",
         "gitnexus": "passed" if ready else "pending",
     }
+    if "rejections" in result and (fields is None or "rejections" in fields):
+        result["rejections"] = [behavior_map.rejection_view(record) for record in result["rejections"]]
     if recovery and identity is not None:
         drift = _binding_drift(identity, state, "quality-gate") if state.get("qualityGateEvidence") else None
         if drift:
@@ -1687,10 +1700,9 @@ def _derived_readiness(identity: RepoIdentity, state: JsonObject, items: list[Js
                        review: JsonObject | None, candidate: str) -> tuple[list[JsonObject], tuple[list[JsonObject], list[JsonObject]], bool]:
     """The judgment readiness lines are written from: the map's items, its retained and current cases judged for
     freshness on the candidate, and whether the review is current."""
-    from .tdd_workflow import _evaluation, _retired, refresh_proof
+    from .tdd_workflow import _evaluation, _retired, approved_items, refresh_proof
     rejected = rejections(state, "item", candidate)
-    approved = {entry["id"]: entry for entry in behavior_map.recorded_map(None, evidence_document(
-        identity, state.get("preflightEvidence"))) or []}
+    approved = approved_items(identity, state)
     items = [entry for entry in items if entry["id"] not in rejected]
     evaluation = [{**entry, "caseKey": behavior_map.case_key(entry["id"], document["runs"][entry["runIndex"]]),
                    "comparison": dict(document["runs"][entry["runIndex"]])}
@@ -1792,10 +1804,15 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
         text = f"{', '.join(unbound)} need a case: tdd --case {','.join(unbound)} 'COMMAND' declares one command for every item it names." if unbound else ""
         from .tdd_workflow import _advisor_added
         if owed := [name for name in _advisor_added(identity, state) if any(line.startswith(name + " (") for line in (receipt or {}).get("open") or [])]:
-            text += (f" {', '.join(owed)}: a measured cost is open and code review cannot start. Investigate what it measured, implement the cheapest correct removal and let "
-                     "its case measure the saving, a case several of them share by printing WORKFLOW_METRICS={\"ID\": COUNT, ...} on both trees with each item's own count "
-                     "lower on the candidate (tdd --correct ID 'COMMAND' replaces a broken or superseded measure), or prove with tdd --reject ID --change "
-                     "REMOVAL.diff that keeping that work is required or cheaper in real use.")
+            baseline = (receipt or {}).get("baselineWork", {})
+            missing = [name for name, cost in baseline.items() if cost["original"] is None]
+            if missing:
+                text += f" Before editing production, measure {', '.join(missing)} on the original workload. Define the single-tree measure() and call tdd."
+            else:
+                text += (f" {', '.join(owed)}: a measured cost is open and code review cannot start. "
+                         "Use the baseline outcomes for the first change. Finish the removal at every listed site before submitting that implementation. Call tdd once; it runs both trees and captures all test output. "
+                         "Use --correct for a broken measure or --reject ID --change REMOVAL.diff to compare the approved real-use workload.")
+
         if pending:
             operation["findings"] = pending
             text += " A final finding closes when its repair passes or, having none, at its advisor's return review once the proof has changed, each one the review accepts in that verdict; tdd --reject is for a finding whose premise a command disproves."

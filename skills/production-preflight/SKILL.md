@@ -82,7 +82,7 @@ removes. New terms use the existing owner's result; use request-grounded propert
 only when no owner exists. A round-trip must also establish the requested effect.
 The advisor's deciding work and runtime assertions supplement functional proof.
 
-Describe concrete inputs and outcomes. Name each item's test, existing or to be written; recording preflight runs nothing.
+For a cost, name every site contributing to its count, the real mix of construction and reuse, and the maximum work that should remain. One single-tree case may measure several sites. Describe concrete inputs and outcomes. Name each item's test, existing or to be written; recording preflight runs nothing.
 
 Remove every element whose deletion preserves required behavior and distinct necessary proof without increasing whole-system cost. Use real collaborators and observe results and state effects.
 

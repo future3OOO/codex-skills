@@ -11,7 +11,7 @@ REQUIRED_FIELDS = frozenset({"id", "basis", "behavior", "seam", "expected"})
 KINDS = frozenset({"conformance", "contract", "preservation"})
 READING_FIELDS = frozenset({"interpretations", "interpretation", "authority"})
 # Optional map fields; witness and reading updates re-judge retained proof. `cases` holds declared commands not yet captured.
-JUDGEMENT_FIELDS = READING_FIELDS | {"kind", "basis", "boundaryInputs", "cases", "measured"}
+JUDGEMENT_FIELDS = READING_FIELDS | {"kind", "basis", "boundaryInputs", "cases", "measured", "remaining"}
 IDENTIFIER = re.compile(r"^[A-Z][A-Z0-9_-]{1,63}$")
 
 
@@ -31,8 +31,9 @@ def _recorded_fields(raw: JsonObject) -> JsonObject:
     fields: JsonObject = {}
     if raw.get("kind") in KINDS:
         fields["kind"] = raw["kind"]
-    if "measured" in raw:
-        fields["measured"] = raw["measured"]
+    for field in ("measured", "remaining"):
+        if field in raw:
+            fields[field] = raw[field]
     if "boundaryInputs" in raw:
         fields["boundaryInputs"] = copy.deepcopy(raw["boundaryInputs"])
     if values := _strings(raw.get("cases")):
@@ -59,6 +60,8 @@ def map_errors(value: object, *, allow_runtime: bool) -> list[str]:
         errors.extend(f"probe {identifier} requires {field}" for field in REQUIRED_FIELDS if not _text(raw.get(field)))
         if raw.get("cases") not in (None, []) and _strings(raw["cases"]) is None:
             errors.append(f"probe {identifier} cases must be a list of commands")
+        if "remaining" in raw and (type(raw["remaining"]) is not int or raw["remaining"] < 0 or raw.get("measured") is not True):
+            errors.append(f"probe {identifier} remaining requires measured=true and a nonnegative integer ceiling")
         if "measured" in raw and type(raw["measured"]) is not bool:
             errors.append(f"probe {identifier} measured must be a boolean")
         if not allow_runtime:
@@ -143,6 +146,11 @@ def _case_question(entry: JsonObject, *, measured: bool | None = None) -> list[s
     if readings_unsettled(entry):
         return ["readings unsettled: " + " | ".join(entry["interpretations"]) + " - record interpretation and authority"]
     run = entry.get("comparison") or {}
+    if "remaining" in entry and run.get("valid") and run.get("fresh", True):
+        own = (run.get("counts") or {}).get(entry["id"])
+        if own is None or own[1] > entry["remaining"]:
+            observed = "unmeasured" if own is None else str(own[1])
+            return [f"{entry['id']} remaining work {observed}; approved maximum {entry['remaining']}"]
     if (saving := entry.get("saving")) and run.get("fresh", True) and original_outcome(run) == "passed":
         counts = (run.get("counts") or {}).get(entry["id"])
         if not counts or counts[0] != saving["original"] or run["arms"][0].get("key") != saving["originalKey"]:
@@ -183,7 +191,8 @@ def _question(entry: JsonObject, proofs: list[JsonObject], keys: bool = False, m
         return ["no case is bound"]
     reasons = []
     for proof in candidates:
-        reasons.extend(_case_question({**proof, "kind": entry.get("kind")}, measured=entry["id"] in measured))
+        reasons.extend(_case_question({**proof, "kind": entry.get("kind"),
+                                      **({"remaining": entry["remaining"]} if "remaining" in entry else {})}, measured=entry["id"] in measured))
         own = (proof["comparison"].get("counts") or {}).get(entry["id"])  # a measured cost's own count is its claimed saving, whatever its kind
         if own and (entry["id"] in measured or entry.get("kind") != "preservation") and not own[1] < own[0]:
             reasons.append(f"its count must fall on the candidate: {entry['id']} {own[0]} -> {own[1]}")
@@ -295,9 +304,13 @@ def retain_savings(retained: JsonObject, items: list[JsonObject], runs: list[Jso
     """Earn a comparable count on a tree whose bound cases passed. Keep the measured capture through later edits."""
     if not retained or not any((runs[e["runIndex"]].get("counts") or {}).get(e["id"]) for e in retained.values()):
         return
-    if not all(proof.get("comparison", {}).get("candidateTree") == candidate and not _case_question(proof)
-               for proof in current_cases(items, runs)):
-        return
+    for proof in current_cases(items, runs):
+        run = proof["comparison"]
+        if run["candidateTree"] != candidate or not producer_proved(proof) or run["arms"][-1]["outcome"] != "passed":
+            return
+        # Missing another optimization budget cannot erase savings on a functionally correct candidate.
+        if not proof.get("measured") and _case_question(proof):
+            return
     for entry in retained.values():
         run = runs[entry["runIndex"]]
         if run["candidateTree"] != candidate or not run["valid"] or not _own_count(entry["id"], run):
@@ -327,29 +340,54 @@ def producer_proved(entry: JsonObject) -> bool:
             and recorded[1:4] == obligation(entry)[1:4])
 
 
-def comparison_view(run: JsonObject, *, detail: bool = False) -> JsonObject:
-    """One compact exit-code comparison, shared by receipts, evidence reads and review input; detail adds its item and passing output."""
+def failure_line(arm: JsonObject) -> str:
+    """A failed arm in one line: its last file and line, the smallest failing input it named and its error, else its final line, cut; the evidence keeps it whole."""
+    output = str(arm.get("output") or arm.get("bindingError") or arm.get("outcome", "")).strip()
+    frame, named = re.findall(r'File "[^"]*?([^"/]+)", line (\d+)', output)[-1:], re.findall(r"(?m)^.*smallest failing input.*$", output)[-1:]
+    error = re.findall(r"(?m)^[\w.]*(?:Error|Exception)\b.*$", output)[-1:] or output.splitlines()[-1:]
+    summary = " ".join(dict.fromkeys([*(f"{name}:{line}" for name, line in frame), *named, *error]))
+    return summary.encode("utf-8", "replace")[:300].decode("utf-8", "ignore")
+
+
+def rejection_view(record: JsonObject) -> JsonObject:
+    """The ledger retains the full test output and proposed patch."""
+    return {**{key: value for key, value in record.items() if key not in ("removal", "output")},
+            **({"output": " ".join(record["output"].split()).encode("utf-8", "replace")[:300].decode("utf-8", "ignore")} if record.get("output") else {})}
+
+
+def comparison_view(run: JsonObject, *, detail: bool = False, show_output: bool = True) -> JsonObject:
+    """One compact exit-code comparison, shared by receipts, evidence reads and review input; detail adds its item and its first failed arm's line."""
     arms = run.get("arms") or []
+    failed = next((arm for arm in arms if arm.get("outcome") != "passed"), None) if detail and show_output else None
     return {"comparison": run.get("comparison", "incomplete"), "valid": run.get("valid", False),
             "runIndex": run.get("runIndex"), "command": run.get("command"),
             **({"behaviorId": run["behaviorId"]} if detail and run.get("behaviorId") else {}),
-            **{key: run[key] for key in ("failedOnSameCode", "differs", "counts") if run.get(key)},
+            **{key: run[key] for key in ("differs", "counts") if run.get(key)},
+            **({"failedOnSameCode": True} if run.get("failedOnSameCode") else {}),
             "probeTree": run.get("probeTree"),
             "sensitive": run.get("sensitive", False),
             "arms": [{"source": "original" if index < (len(arms) + 1) // 2 else "current", "tree": arm.get("requestedTree", arm.get("sourceTree")),
                       "outcome": arm.get("outcome"), "exitCode": arm.get("exitCode"), "timedOut": arm.get("timedOut", False),
                       **({"resultRef": arm["resultRef"]} if arm.get("resultRef") else {}),
-                      **({"outputTail": str(arm.get("output") or arm.get("error") or arm.get("bindingError") or "")[-1200:]}
-                         if arm.get("outcome") != "passed" or detail and arm.get("output") else {})}
+                      **({"outputTail": failure_line(arm)} if arm is failed else {})}
                      for index, arm in enumerate(arms)],
             **({"limitations": [run["bindingError"]]} if run.get("bindingError") else {})}
 
 
 def compact(value: object) -> object:
     """An evidence value with every comparison inside it replaced by its detailed view."""
-    if isinstance(value, dict):
-        return comparison_view(value, detail=True) if isinstance(value.get("arms"), list) else {key: compact(item) for key, item in value.items()}
-    return [compact(item) for item in value] if isinstance(value, list) else value
+    show_output = True
+    def visit(item):
+        nonlocal show_output
+        if isinstance(item, dict):
+            if isinstance(item.get("arms"), list):
+                view = comparison_view(item, detail=True, show_output=show_output)
+                if show_output and any("outputTail" in arm for arm in view["arms"]):
+                    show_output = False
+                return view
+            return {key: visit(field) for key, field in item.items()}
+        return [visit(field) for field in item] if isinstance(item, list) else item
+    return visit(value)
 
 
 def recorded_map(
