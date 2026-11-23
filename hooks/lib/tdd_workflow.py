@@ -33,7 +33,7 @@ from .workflow_documents import CASE_RULE
 from .state_store import _EXECUTION, _candidate_matches, _comparison_scope, _active_candidate_tree, _git, is_test_path, blob_reader, tree_manifest, utc_timestamp, repo_state_dir, _flock
 from .workflow_state import (
     NO_INSTANCE_ID, WorkflowError, _bound_instance_state,
-    commit_tdd, commit_findings, evidence_document, instance_id, invalidate_after_edit, operation_receipt, rejections, review_commands, _finding_unresolved, _readiness_lines,
+    commit_tdd, commit_findings, evidence_document, instance_id, invalidate_after_edit, operation_receipt, rejections, review_commands, _finding_unresolved, _readiness_lines, _review_repair_pending, _allows_next,
 )
 
 JsonObject = dict[str, object]
@@ -1955,11 +1955,12 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None, emit=
                                     delivered={finding["id"] for finding in execution["findings"]}, **({"summaryId": evidence} if evidence else {}),
                                     **({"repair": applied} if applied else {}), **({"notRecorded": unusable} if unusable else {}))
         if not recording:  # the reviewer is told what its own verdict left open, never the lead's step to delegate; a finished review hands on the lead's call as given
-            step, done = receipt.pop("next"), receipt.pop("nextAction") != "code-review"
+            step, action = receipt.pop("next"), receipt.pop("nextAction")
+            repair = action == "tdd" and _allows_next(state, "tdd") and _allows_next(state, "verification") and _review_repair_pending(state)
             del receipt["phase"]
             owed = [entry["findingId"] for entry in state.get("findingStates", []) if entry.get("decision") and entry["stage"] == entry["producer"] == "code-review"
                     and _finding_unresolved(entry) and all(entry["findingId"] != finding["id"] for finding in execution["findings"])]
-            if done:
+            if action != "code-review" and not repair:
                 receipt["leadNext"] = step
             if owed and args.verdict:
                 receipt["needsDisposition"] = [

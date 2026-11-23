@@ -96,6 +96,8 @@ def safe_slug(value: str) -> str:
 def _normalise(state: JsonObject | None) -> JsonObject | None:
     if state is None:
         return None
+    if state.get("nextAction") == "code-review" and _review_repair_pending(state):
+        state["nextAction"] = "tdd"
     advisor = state.get("advisorPreflight")
     if isinstance(advisor, dict):
         advisor.setdefault("findings", "pending")
@@ -188,10 +190,17 @@ def _require_predecessor(state: JsonObject, phase: str) -> None:
         raise WorkflowIncomplete(f"{phase} requires {SEQUENCE[position - 1]}")
 
 
+def _review_repair_pending(state: JsonObject) -> bool:
+    """An executable independent-review finding still needs the lead's repair."""
+    return _stage_unresolved(state, "code-review", "code-review", decisions=False)
+
+
 def _derive_next_action(state: JsonObject, tdd_document: JsonObject | None = None) -> str:
     if state.get("finalReviewContextMismatchEvidence"):
         return "re-consult-final-review"
     phase = next((phase for phase in SEQUENCE if not _allows_next(state, phase)), "complete-workflow")
+    if phase == "code-review" and _review_repair_pending(state):
+        return "tdd"
     if phase == "final-review":
         review = state.get("finalReview") or {}
         if state.get("finalStarted") and (review.get("status") == "pending" or review.get("findings") == "addressed"):
@@ -508,11 +517,11 @@ def _settle_accepted(state: JsonObject, stage: str, source: str, findings: list[
             entry.update(status="resolved", dispositionEvidenceId=evidence_id)
 
 
-def _stage_unresolved(state: JsonObject, stage: str, source: str) -> bool:
+def _stage_unresolved(state: JsonObject, stage: str, source: str, *, decisions: bool = True) -> bool:
     """Whether any registered finding of this stage and producer is still open."""
     return any(_finding_unresolved(entry) and any(ref.get("stage") == stage and ref.get("producer") == source
                                                   for ref in (entry, *entry.get("observations", [])))
-               for entry in state.get("findingStates") or [] if isinstance(entry, dict))
+               for entry in state.get("findingStates") or [] if isinstance(entry, dict) and (decisions or not entry.get("decision")))
 
 
 def _review_evidence(state: JsonObject, intake: JsonObject) -> None:
@@ -587,7 +596,7 @@ def commit_retained_checks(identity: RepoIdentity, slug: str, workflow_id: str, 
         if final.get("status") == "commit-ready" and final.get("findings") == "pending" and state.get("judgedTree") == execution["measuredTree"]:
             # the ready verdict's open findings ran on the tree it judged: settled, or left for the lead to fix or reject
             final.update(findings="pending" if _stage_unresolved(state, "final", final["source"]) else "none", checked=True)
-            state["nextAction"] = _derive_next_action(state)
+        state["nextAction"] = _derive_next_action(state)
         state.setdefault("retainedChecks", {})[execution["measuredTree"]] = write.evidence_id
         return _commit(transaction, state, "retained-checks", evidence=[write])
 
@@ -939,6 +948,8 @@ def _register_finding_intake(
                                for finding in intakes[reference]["findings"])):
                 reference = intake_id
             prior["material"] = prior["material"] or item["material"]
+            if prior.get("decision") and item["material"] and "probe" in item and prior["stage"] == intake["stage"] == "code-review":
+                del prior["decision"]  # the binding cause now decides this finding
             if item["kind"] == "behavioral":
                 prior["kind"] = "behavioral"
             pending.append((prior, item, any(all(finding.get(k) == item.get(k) for k in ("id", "claim", "kind", "material", "probe", "change", "retires"))
@@ -1794,7 +1805,7 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
             return {"command": shlex.join(command)}
         command = [*cli, "paths", "--repo", str(identity.root), "--workflow-id", str(state["workflowId"])]
     elif action == "code-review":
-        return {"command": None, "input": "Delegate code-review to the pass's reviewer now: until it is tasked the host runs no other call. Its checkpoint supplies the verdict command. Repair its pending findings first."}
+        return {"command": None, "input": "Delegate code-review to the pass's reviewer now: until it is tasked the host runs no other call. Its checkpoint supplies the verdict command."}
     elif action in {"tdd", "address-review-findings"}:
         command = [*cli, "tdd", *bound]
         pending = open_findings(identity, state, known=known, delivered=delivered)
@@ -1815,7 +1826,10 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
 
         if pending:
             operation["findings"] = pending
-            text += " A final finding closes when its repair passes or, having none, at its advisor's return review once the proof has changed, each one the review accepts in that verdict; tdd --reject is for a finding whose premise a command disproves."
+            if not state.get("finalStarted") and _stage_unresolved(state, "code-review", "code-review"):
+                text += " Finish the code and proof repairs for all reviewer findings together, then run tdd. Return the combined repair to the reviewer once the checks pass."
+            else:
+                text += " A final finding closes when its repair passes or, having none, at its advisor's return review once the proof has changed, each one the review accepts in that verdict; tdd --reject is for a finding whose premise a command disproves."
         if text := text.strip():
             operation["input"] = text
         return operation

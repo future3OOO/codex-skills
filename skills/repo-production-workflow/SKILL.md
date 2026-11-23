@@ -124,8 +124,10 @@ context is unavailable or scope/architecture makes it unusable, naming the reaso
 Required behavior stays fixed. The runtime owns acceptance and rechecks retained findings after
 repair, including reopening when waste returns. For a missing request promise,
 reconcile the requirement and extend affected coverage before implementing it.
-Every map item is closed before review. Verification and return review can run
-with open reviewer findings; those block completion.
+After an incomplete verdict, finish the code fixes and proof corrections together.
+Use TDD as needed during repair. Verification rechecks executable findings. While
+any still fail, the lead keeps working. Return the verified batch once to the same
+reviewer, who settles any outstanding decisions. Every map item closes before review.
 
 ### 11. Final Codex Advisor review
 
