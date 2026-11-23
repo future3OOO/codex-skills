@@ -2126,7 +2126,7 @@ def _reject(identity: RepoIdentity, state: JsonObject, requests: list[list[str]]
     from .workflow_state import commit_rejections
     added = _advisor_added(identity, state)
     recorded, document = current_map(identity, state, fresh=False)
-    items = {entry["id"]: entry for entry in recorded or [] if entry["id"] in added}
+    items, runs = {entry["id"]: entry for entry in recorded or [] if entry["id"] in added}, list((document or {}).get("runs", []))
     findings = {ref["id"]: entry for entry in state.get("findingStates", []) if entry["stage"] == "final" or entry.get("decision")
                 for ref in ({"id": entry["findingId"]}, *entry.get("observations", []))}
     records, rows = [], []
@@ -2145,7 +2145,7 @@ def _reject(identity: RepoIdentity, state: JsonObject, requests: list[list[str]]
                 _execution_cache(identity, state)
                 tree = _active_candidate_tree(identity)
                 arms = _compare(identity, _git(identity, "rev-parse", f"{state['passStartOid']}^{{tree}}").decode().strip(), tree,
-                                _probe_capture(identity, {"command": command}, tree, MAX_CASE_SECONDS), list((document or {}).get("runs", [])))["arms"]
+                                _probe_capture(identity, {"command": command}, tree, MAX_CASE_SECONDS), runs)["arms"]  # one call's targets share a command's result
                 raw, code, timed_out = arms[-1]["output"].encode(), arms[-1]["exitCode"], arms[-1]["outcome"] not in {"passed", "failed"}
                 declined = {"declined": DECLINED, "original": _tail(arms[0]["output"].encode())}
             else:
