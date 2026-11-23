@@ -10,8 +10,9 @@ what follows.
 
 ## `preflight-advice`
 
-- Write the draft, with its operation item, and run the next step. An operation that does not run on the pass-start tree
-  comes back as its error before any consult: correct the case and run the step again.
+- Write the draft, with its operation, and run the next step. An operation that does not run on the pass-start tree
+  comes back as its error before any consult: correct it and run the step again. The first consult may replace it;
+  its replacement stands.
 - After the first consult, check the advisor's source claims against the code and correct the draft; a removal it
   designed leaves the draft only with a measurement showing it costs more than it saves.
 - The second consult finalises and records the draft: preflight is exactly these two consults.

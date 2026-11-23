@@ -6,6 +6,7 @@ import argparse
 import hashlib
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack, suppress
+from datetime import datetime, timezone
 from functools import lru_cache, partial
 import json
 import math
@@ -96,23 +97,54 @@ def refresh_proof(identity: RepoIdentity, items: list[JsonObject], *, candidate:
             proof["sensitive"] = (proof["arms"][0]["outcome"] == "failed" and proof["arms"][-1]["outcome"] == "passed") or bool(_growth(proof.get("execution") or {}))
 
 
-def measured_operation(identity: RepoIdentity, state: JsonObject, items: list[JsonObject], runs: list[JsonObject]) -> str | None:
-    """Each operation case of `items` as the workflow counted it: on the pass-start tree and the candidate from its recorded
-    comparison, or run now on the pass-start tree, where it must succeed, while none is recorded. None: no operation."""
+def measured_operation(identity: RepoIdentity, state: JsonObject, operation: JsonObject | None, candidate: str | None = None) -> JsonObject | None:
+    """An operation as the workflow measured it: each input, at each size, run once on the pass-start tree and once on
+    `candidate`, a tree's results kept. `text` is the report; `failures` names an input that does not run, an input on
+    which the candidate's edited code makes more calls than the original's, and a size step over which it adds
+    more calls than the original's does, unless the lead's recorded rejection of OPERATION holds a measurement for them."""
+    if not operation:
+        return None
     from .workflow_documents import OPERATION
-    recorded = {case["id"]: case["comparison"] for case in behavior_map.current_cases(items, runs) if OPERATION in case["comparison"]["command"]}
-    parts = []
-    for entry in items:
-        for command in [recorded[entry["id"]]["command"]] if entry["id"] in recorded else [text for text in entry.get("cases") or [] if isinstance(text, str) and OPERATION in text]:
-            arms = (recorded.get(entry["id"]) or {}).get("arms")
-            if arms is None:
-                _execution_cache(identity, state)
-                original = _git(identity, "rev-parse", f"{state['passStartOid']}^{{tree}}").decode().strip()
-                arms = _compare(identity, original, original, _probe_capture(identity, {"command": command}, original, MAX_CASE_SECONDS), [])["arms"][:1]
-                if arms[0]["outcome"] != "passed":  # no consult is spent on an operation that does not run
-                    raise WorkflowError(f"the operation of {entry['id']} does not run on the pass-start tree; correct its case, then consult:\n{arms[0]['output'][-1500:]}")
-            parts.append(f"{entry['id']}: {command}\n" + "".join(f"on the {name}:\n{arm['output'].rstrip()}\n" for name, arm in zip(("pass-start tree", "candidate"), (arms[0], *arms[1:][-1:]))))
-    return "\n".join(parts) or None
+    from .workflow_state import commit_runs, rejections
+    _execution_cache(identity, state)
+    began, kept = datetime.now(timezone.utc), []
+    original = _git(identity, "rev-parse", f"{state['passStartOid']}^{{tree}}").decode().strip()
+    trees = [("pass-start tree", original), *([("candidate", candidate)] if candidate not in (None, original) else [])]
+    lines, failures, seconds, runs = [], [], 0.0, 0
+    for entry in operation["inputs"]:
+        commands, sized = [entry] if isinstance(entry, str) else entry, []  # an input's commands run in order in one tree: a repeat is a command given twice
+        for size in operation.get("sizes", [None]) if "{size}" in "".join(commands) else [None]:
+            steps = [text.replace("{size}", str(size)) for text in commands]
+            command = shlex.join(["python3", OPERATION, "--edits", ",".join(operation["edits"]), *steps])
+            arms = _compare(identity, original, trees[-1][1], _probe_capture(identity, {"command": command}, trees[-1][1], MAX_CASE_SECONDS), kept)["arms"]
+            counts = []
+            for (name, _), arm in zip(trees, (arms[0], arms[-1])):
+                runs, seconds = runs + 1, seconds + arm["timing"]["executionSeconds"]
+                lines.append(f"on the {name}:\n{arm['output'].rstrip()}")
+                if arm["outcome"] != "passed":
+                    failures.append(f"{' ; '.join(steps)} does not run on the {name}")
+                counts.append({key: count for key, count in (_metrics(arm) or {}).items() if key.endswith(".editedCalls")} if arm["outcome"] == "passed" else None)
+            for key in counts[0] or {} if len(counts) == 2 and None not in counts else {}:
+                before, after = counts[0][key], counts[1].get(key, 0)
+                lines.append(f"  {key.split('.')[0]}, the edited code's calls, pass-start tree to candidate: {before} to {after}, {before - after} removed")
+                if after > before:
+                    failures.append(f"{steps[int(key[4:].split('.')[0]) - 1]}: the edited code makes {after - before} more calls than on the pass-start tree")
+            sized.append((size, counts))
+        for (small, first), (large, last) in zip(sized, sized[1:]):
+            for key in first[0] or {} if None not in (*first, *last) else {}:
+                # growth is the calls a size step adds: a ratio rises when a change removes work the small size did, and would fail that removal
+                added = [after.get(key, 0) - before.get(key, 0) for before, after in zip(first, last)]
+                lines.append(f"  {key.split('.')[0]}, calls the edited code adds from size {small} to {large}: " + ", ".join(f"{count} on the {name}" for count, (name, _) in zip(added, trees)))
+                if len(added) == 2 and added[1] > added[0]:
+                    failures.append(f"{commands[int(key[4:].split('.')[0]) - 1]}: from size {small} to {large} the edited code adds {added[1]} calls on the candidate, {added[0]} on the pass-start tree")
+    allowed = rejections(state, "item").get("OPERATION") if failures and not any("does not run" in failure for failure in failures) else None
+    if allowed:
+        lines.append("more work than the original, which the lead's recorded command shows the request needs: " + allowed["command"] + "\n" + allowed["output"].rstrip())
+    fresh = [run for run in kept if any(datetime.fromisoformat(arm["at"]) >= began for arm in run["arms"])]
+    if fresh:
+        commit_runs(identity, str(state["slug"]), str(state["workflowId"]), kept)
+    lines.append(f"this measurement: {runs} runs, {seconds:.1f} s; {len(fresh)} of them ran now, the rest are kept from an earlier run in this pass")
+    return {"text": "\n".join(lines), "failures": [] if allowed else failures}
 
 
 def _case_launch(identity: RepoIdentity, command: list[str]) -> tuple[list[str], int | None]:
@@ -2139,6 +2171,8 @@ def _reject(identity: RepoIdentity, state: JsonObject, requests: list[list[str]]
     from .workflow_state import commit_rejections
     added = _advisor_added(identity, state)
     items = {entry["id"]: entry for entry in current_map(identity, state, fresh=False)[0] or [] if entry["id"] in added}
+    if ((evidence_document(identity, state.get("preflightEvidence")) or {}).get("document") or {}).get("operation"):
+        items["OPERATION"] = {"behavior": "the candidate's operation does no more work than the pass-start tree's"}  # closed by a measurement that the request needs the work
     findings = {ref["id"]: entry for entry in state.get("findingStates", []) if entry["stage"] == "final" or entry.get("decision")
                 for ref in ({"id": entry["findingId"]}, *entry.get("observations", []))}
     records, rows = [], []

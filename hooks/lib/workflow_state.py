@@ -34,7 +34,7 @@ from ._workflow_db import (
 )
 from .advisor_diff import current_pass_evidence
 from .repo_identity import RepoIdentity
-from .workflow_documents import ADVISOR_SHAPES, CASE_RULE, ITEM_SHAPE, RECORD_SHAPES, validate_advisor_projection, validate_design_declaration, quality_candidates
+from .workflow_documents import ADVISOR_SHAPES, CASE_RULE, ITEM_SHAPE, OPERATION_RULE, OPERATION_SHAPE, RECORD_SHAPES, validate_advisor_projection, validate_design_declaration, quality_candidates
 from .state_store import (
     _EXECUTION,
     _active_candidate_tree,
@@ -581,6 +581,13 @@ def commit_findings(
         return _commit(transaction, state, "record-code-review", evidence=[write],
                        manifests=[manifest] if manifest else []), write.evidence_id
 
+
+
+def commit_runs(identity: RepoIdentity, slug: str, workflow_id: str, runs: list[JsonObject]) -> None:
+    """Keep an operation's measured runs, and nothing else: a tree's result is not run again in the pass."""
+    with mutation(identity) as transaction:
+        state = _bound_instance_state(transaction.state, slug, workflow_id)
+        _commit(transaction, state, "operation-runs", evidence=[evidence_write(workflow_id, "operation-runs", {"workflowId": workflow_id, "runs": runs})])
 
 
 def finding_references(state: JsonObject) -> str:
@@ -1299,7 +1306,7 @@ CHANNELS = (
     ("finding-ledger", "finding ledger: each finding's immutable claim, status and evidence pointer"),
     ("quality-candidates", "non-blocking gate candidates: locations and matching rules; investigate their actual cost and necessity"),
     ("diff", "current-pass diff: passStartOid^{tree} -> activeCandidateTree; a deleted file is its header and line count"),
-    ("operation", "the operation the design touches, run and counted by the workflow: the calls of the whole and of the code to be edited; the candidate runs as the pass-start commit with its changes uncommitted"),
+    ("operation", "the draft's operation as the workflow ran it, each tree as a commit: per input, the calls in all and of the code to be edited, memory, and the calls each size step adds"),
 )
 
 
@@ -1430,15 +1437,25 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
         result.update(review_commands(identity, state, candidate))
     elif reconsult:  # the second consultation completes the draft in its answer
         shape.update(findings=[{key: value for key, value in shape["findings"][0].items() if key != "material"}], verdict="approved", draft={
-            "authoritativeContract": "text", "items": [json.loads(ITEM_SHAPE)], "removed": ["BM_Y"]})
+            "authoritativeContract": "text", "items": [json.loads(ITEM_SHAPE)], "removed": ["BM_Y"], "operation": json.loads(OPERATION_SHAPE)})
+    elif phase == "preflight-advice":  # the first consult replaces a wrong workload: the workflow runs its operation before the second
+        shape["operation"] = json.loads(OPERATION_SHAPE)
     result["responseFormat"] = json.dumps(shape)
     if state.get("tddEvidence"):
         result["evidenceCommand"] = shlex.join([*WORKFLOW, "evidence", "--repo", identity.root, "--evidence-id", state["tddEvidence"]])
     from .tdd_workflow import current_map, measured_operation
+    def counted(operation: object, tree: str | None) -> str | None:
+        """The operation's report; one that fails ends the checkpoint with it, so no consult or review is spent."""
+        measured = measured_operation(identity, state, operation, tree)
+        if measured and measured["failures"]:
+            raise WorkflowError("the operation stops here:\n" + "\n".join(measured["failures"]) + "\nRemove the work, or record the measurement showing the request's new behaviour "
+                                "needs it with tdd --reject OPERATION 'COMMAND'.\n" + measured["text"])
+        return measured and measured["text"]
+    declared = ((evidence_document(identity, state.get("preflightEvidence")) or {}).get("document") or {}).get("operation")
+    result["operationRule"] = OPERATION_RULE
     if channel_dir is None:
         if phase == "code-review":  # the reviewer checks the operation result the final advisor is given
-            reviewed, recorded = current_map(identity, state, fresh=False)
-            result["operation"] = measured_operation(identity, state, reviewed or [], (recorded or {}).get("runs") or [])
+            result["operation"] = counted(declared, candidate)
         return result
     # The map shows each recorded result; freshness is judged once, by the readiness read_workflow derived in this scope.
     items, document = current_map(identity, state, fresh=False)
@@ -1454,8 +1471,8 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
     context = ({**(readiness or _readiness_lines(identity, state)), **({"retired": document["retired"]} if document.get("retired") else {})}
                if contract or items else {})
     map_content: object = _entry_lines(shared, {"preflightInterpretation": contract, **context}) if context else None
+    previous = evidence_document(identity, (state.get("advisorPreflight") or {}).get("intakeEvidence")) or {}
     if phase == "preflight-advice" and preflight_draft is not None:
-        previous = evidence_document(identity, (state.get("advisorPreflight") or {}).get("intakeEvidence")) or {}
         prior = previous.get("preflightDraft") if reconsult else None
         draft_id = evidence_write(str(workflow_id), "preflight-draft", preflight_draft).evidence_id
         map_content = {"digest": draft_id, "draft": preflight_draft}
@@ -1464,9 +1481,9 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
                            "baseDigest": evidence_write(str(workflow_id), "preflight-draft", prior).evidence_id,
                            "delta": draft_diff(prior, preflight_draft, "last-recorded-draft", "current-draft")}
     since = (state.get("repairTree") or state.get("judgedTree")) if phase == "final-review" else None
-    drafted = phase == "preflight-advice" and preflight_draft is not None  # before approval the draft's operation is run on the pass-start tree
+    drafted = phase == "preflight-advice" and preflight_draft is not None  # before approval the operation runs on the pass-start tree: the first consult's, else the draft's
     values: dict[str, tuple[object, object]] = {
-        "operation": (None, measured_operation(identity, state, preflight_draft["behaviorMap"] if drafted else items, [] if drafted else document.get("runs") or [])),
+        "operation": (None, counted(previous.get("operation") or preflight_draft.get("operation"), None) if drafted else counted(declared, candidate)),
         "intent": (None, state.get("intent") or None),
         "advisor-projection": (evidence_id, projection),
         "behavior-map": (None, map_content or None),
@@ -1764,7 +1781,7 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
                     command += ["--reconsult"]
                 return {"command": shlex.join(command), "args": ["--preflight-file", preflight_file or "<current-draft.json>"],
                         **({} if preflight_file else {"input": "<current-draft.json>: the corrected draft" if isinstance(draft, dict)
-                                                      else "<current-draft.json>: the draft, shaped " + RECORD_SHAPES["preflight"] + ". " + CASE_RULE})}
+                                                      else "<current-draft.json>: the draft, shaped " + RECORD_SHAPES["preflight"] + ". " + CASE_RULE + " " + OPERATION_RULE})}
             return {"command": shlex.join(command)}
         command = [*cli, "paths", "--repo", str(identity.root), "--workflow-id", str(state["workflowId"])]
     elif action == "code-review":
