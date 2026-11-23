@@ -1633,10 +1633,10 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None, emit=
     parser.add_argument("--tdd-evidence", default=argparse.SUPPRESS)
     parser.add_argument("--verdict", help="the reviewer's verdict, complete or incomplete: use the source-bound checkpoint command")
     parser.add_argument("--report", action="append", default=[], help="the reason the lead gives with --retire; with --as final, the cause")
-    parser.add_argument("--change", help="with --as final: the diff outside the checkout that repairs the cause")
+    parser.add_argument("--change", help="with --as final: the diff outside the checkout that repairs the cause; with --reject ITEM: the removal the lead declines")
     parser.add_argument("--reject", action="append", nargs="+", default=[], metavar="ID 'COMMAND'",
-                        help="the lead declines an advisor-added map item or rejects a final finding: the workflow runs the command and, when it "
-                             "exits 0, keeps its result as evidence the review judges; with --as, EVIDENCE:ID=REASON withdraws this author's invalid observation")
+                        help="the lead rejects a final finding, kept for its advisor's return review, or proves with --change that an advisor-added "
+                             "map item's cost is rightly kept; declining alone leaves the item open; with --as, EVIDENCE:ID=REASON withdraws this author's invalid observation")
     parser.add_argument("--retire", action="append", nargs="+", default=[], metavar="CASE [CASE ...] | ITEM COMMAND",
                         help="recorded cases by caseKey, or one by its item and command")
     parser.add_argument("--as", dest="author", choices=("review", "final"), help="the reviewer's verdict, or the withdrawal of its own observation; final: the final advisor's cause, "
@@ -1673,7 +1673,7 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None, emit=
     if args.reject and not args.author:
         if command or args.case or args.retire or args.report or args.verdict or args.behavior_id:
             raise WorkflowError("a rejection call carries only --reject ID 'COMMAND'")
-        _emit_json(*_reject(identity, state, args.reject))
+        _emit_json(*_reject(identity, state, args.reject, args.change))
         return 0
     recording = args.author == "final"
     if recording and (command or args.verdict or args.reject or args.input or args.behavior_id or args.correct
@@ -2112,16 +2112,12 @@ def _advisor_added(identity: RepoIdentity, state: JsonObject) -> list[str]:
     return (evidence_document(identity, (state.get("advisorPreflight") or {}).get("intakeEvidence"), restore_runs=False) or {}).get("added", [])
 
 
-# What a declined item's record says to the lead, the reviewer and the final advisor.
-DECLINED = ("declined by the lead, not settled: its claim stays owed unless a recorded comparison shows its cost removed, this evidence about the same "
-            "operation (original: the pass-start tree; output: the candidate) shows keeping that work is required or cheaper, or the recorded diff "
-            "leaves what the item protects unchanged. A command that passes, a scope statement or one failed removal establishes none of these")
-
-
-def _reject(identity: RepoIdentity, state: JsonObject, requests: list[list[str]]) -> tuple[JsonObject, tuple[str, str, str] | None]:
-    """The lead's rejection of an advisor-added map item or a final finding by the id it names: the workflow runs its one
-    command and keeps the output with it, an item's on the pass-start tree and the candidate. Without a command, or unless
-    the command exits 0, nothing is recorded. A recorded rejection settles nothing: the review judges what it establishes."""
+def _reject(identity: RepoIdentity, state: JsonObject, requests: list[list[str]], removal: str | None = None) -> tuple[JsonObject, tuple[str, str, str] | None]:
+    """The lead's rejection of a final finding, whose command runs once and is kept for its advisor's return review; or
+    its proof that the cost an advisor-added map item measured is rightly kept. Declining leaves an item open. It closes
+    here only by the workflow's own comparison of the command on the candidate and on the candidate with `removal`, the
+    diff the lead declines: the command passes and then fails, so the work is required, or prints the same counts with
+    none lowered, so the removal saves nothing. The proof is kept for the review to judge."""
     from .command_runner import _tail
     from .workflow_state import commit_rejections
     added = _advisor_added(identity, state)
@@ -2136,33 +2132,41 @@ def _reject(identity: RepoIdentity, state: JsonObject, requests: list[list[str]]
             rows.append({"target": target, "open": "no advisor-added map item or final finding has this id"})
             continue
         target = findings[target]["findingId"] if target in findings else target
-        if not (command or "").strip():
-            rows.append({"target": target, "open": "a rejection closes its target only with one command, which the workflow runs and records"})
+        if not (command or "").strip() or target in items and not removal:
+            rows.append({"target": target, "open": "a rejection needs one command, which the workflow runs and records" if target in findings else
+                         f"declining leaves {target} open, and code review cannot start: build the cheapest correct removal and let the item's case show the saving "
+                         f"(tdd --correct {target} 'COMMAND' gives a better design its own measure), or prove the cost is rightly kept with --change REMOVAL.diff "
+                         "and a command printing WORKFLOW_METRICS counts of the real use: it closes when that command fails with the removal or no count falls"})
             continue
-        declined = {}
+        proof = {}
         try:
-            if target in items:  # evidence about a claim is the command's result on both trees: a recorded comparison of it is reused
+            if target in items:  # one call's targets share a command's result
                 _execution_cache(identity, state)
-                tree = _active_candidate_tree(identity)
-                arms = _compare(identity, _git(identity, "rev-parse", f"{state['passStartOid']}^{{tree}}").decode().strip(), tree,
-                                _probe_capture(identity, {"command": command}, tree, MAX_CASE_SECONDS), runs)["arms"]  # one call's targets share a command's result
-                raw, code, timed_out = arms[-1]["output"].encode(), arms[-1]["exitCode"], arms[-1]["outcome"] not in {"passed", "failed"}
-                declined = {"declined": DECLINED, "original": _tail(arms[0]["output"].encode())}
+                tree, patch = _active_candidate_tree(identity), Path(removal).read_bytes()
+                kept, removed = _compare(identity, tree, _indexed(identity, tree, (("apply", "--cached", "-"), patch)),
+                                         _probe_capture(identity, {"command": command}, tree, MAX_CASE_SECONDS), runs)["arms"]
+                raw, code, timed_out = kept["output"].encode(), kept["exitCode"], kept["outcome"] not in {"passed", "failed"}
+                counts = [_metrics(arm) if arm["outcome"] == "passed" and "WORKFLOW_METRICS=" in arm["output"] else None for arm in (kept, removed)]
+                proof = {"removal": _tail(patch), "removed": _tail(removed["output"].encode()),
+                         "ground": "required: the command fails with the removal" if removed["outcome"] == "failed" else
+                                   "no saving: the removal lowers no count" if counts[0] and counts[1] and counts[0].keys() == counts[1].keys()
+                                   and not any(counts[1][name] < count for name, count in counts[0].items()) else None}
             else:
                 words, _, environment = _case_environment(identity, command)
                 raw, code, timed_out = _run(words, identity, MAX_CASE_SECONDS, env=environment)
-        except (OSError, ValueError, WorkflowError) as exc:
+        except (OSError, ValueError, RuntimeError, WorkflowError) as exc:
             raw, code, timed_out = str(exc).encode(), None, False
         if code is None or timed_out:
             rows.append({"target": target, "command": command, "open": f"the command did not finish: {_tail(raw)[-300:]}"})
             continue
-        if code:
-            rows.append({"target": target, "command": command, "open": f"the command exited {code}: {_tail(raw)[-300:]}"})
+        if code or proof.get("ground", "") is None:
+            rows.append({"target": target, "command": command, "open": f"the command exited {code}: {_tail(raw)[-300:]}" if code else
+                         f"{target} stays open: with the removal the command still passes and its counts fall, or it prints none: {proof['removed'][-300:]}"})
             continue
         claim = items[target]["behavior"] if target in items else next((finding["claim"] for finding in (evidence_document(
             identity, findings[target]["intakeEvidenceId"], restore_runs=False) or {}).get("findings", []) if finding["id"] == target), "")
         records.append({"target": target, "kind": "item" if target in items else "finding", "claim": claim,
-                        "command": command, "exitCode": code, "output": _tail(raw), **declined})
+                        "command": command, "exitCode": code, "output": _tail(raw), **proof})
     if records:
         state = commit_rejections(identity, str(state["slug"]), str(state["workflowId"]), records)
     memory = _given(identity, state, "lead")

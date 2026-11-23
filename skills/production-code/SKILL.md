@@ -39,11 +39,15 @@ telemetry needs no action.
 
 ## Lowest-Cost Implementation Decision
 
-Optimization is the default. The lead owns it through diagnosis, implementation
-and repair. Derive the information and work each required result needs; remove
-avoidable work in the requested production path before accelerating it. Choose
-the lowest whole-system cost at fixed behavior. The advisor independently
-challenges that choice.
+Demonstrated avoidable work in the requested production path is a release blocker.
+The lead owns performance from its first investigation: work out what the required
+result actually needs, inspect what the operation does in practice, and eliminate
+the work it does not need, including work in existing code the operation calls,
+before accelerating anything. The advisor independently challenges that design and
+looks for savings the lead missed; its findings are a floor, and the lead is free
+to find a cheaper correct design. Before code review, implement and verify the
+cheapest correct removal of each such cost, or give evidence about that specific
+cost showing why keeping it is required or cheaper in real use.
 
 Establish contract authority before adopting a corrective assertion or edit. Trace
 supported inputs, callers, callees, lifecycle paths and shared-state interactions

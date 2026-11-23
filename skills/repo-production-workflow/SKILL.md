@@ -71,7 +71,7 @@ instructions given after `begin`, each line verbatim after `> `.
 The advisor investigates. The lead checks deletion claims against every original
 outcome controlled by the affected logic and corrects false premises. The advisor
 then finalises and approves the draft in the same session; that consult records it.
-Implement binding outcomes with the lowest-cost justified design. Disprove a proposal's benefit, demonstrate its preservation failure, or improve its design; rejecting its mechanism does not waive addressing the cost.
+Demonstrated avoidable work in the requested production path is a release blocker. Before code review, implement and verify the cheapest correct removal of each measured cost, the advisor's design or a cheaper one, or prove with evidence about that cost that keeping it is required or cheaper in real use; declining its mechanism leaves its item open.
 
 ### 5. One recorded preflight
 

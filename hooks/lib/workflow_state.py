@@ -608,9 +608,8 @@ def commit_retained_checks(identity: RepoIdentity, slug: str, workflow_id: str, 
 
 
 def commit_rejections(identity: RepoIdentity, slug: str, workflow_id: str, records: list[JsonObject]) -> JsonObject:
-    """The lead's rejections, each holding what the workflow ran for it. A rejection is evidence, never a settlement: a
-    declined map item no longer blocks the lead's steps and a rejected finding returns to its advisor; the review judges
-    what the evidence establishes, and every reader of the pass still lists the target."""
+    """The lead's rejections, each holding what the workflow ran for it: a rejected finding returns to its advisor, and a
+    map item whose cost the lead proved rightly kept no longer blocks. Every reader of the pass still lists the target."""
     with mutation(identity) as transaction:
         state = _bound_instance_state(transaction.state, slug, workflow_id)
         state["rejections"] = [*state.get("rejections", []), *records]
@@ -628,8 +627,9 @@ def commit_rejections(identity: RepoIdentity, slug: str, workflow_id: str, recor
 
 
 def rejections(state: JsonObject, kind: str) -> dict[str, JsonObject]:
-    """The lead's recorded rejections of map items ("item") or final findings ("finding"), by target."""
-    return {record["target"]: record for record in state.get("rejections", []) if record["kind"] == kind}
+    """The lead's recorded rejections of final findings ("finding"), or its proofs that a map item's cost is rightly kept
+    ("item": a record without a proved ground closes nothing), by target."""
+    return {record["target"]: record for record in state.get("rejections", []) if record["kind"] == kind and (kind == "finding" or record.get("ground"))}
 
 
 _NO_CAS = object()
@@ -1697,7 +1697,7 @@ def _derived_readiness(identity: RepoIdentity, state: JsonObject, items: list[Js
     """The judgment readiness lines are written from: the map's items, its retained and current cases judged for
     freshness on the candidate, and whether the review is current."""
     from .tdd_workflow import _evaluation, _retired, refresh_proof
-    rejected = rejections(state, "item")  # declined: the lead's steps go on, the review judges their evidence
+    rejected = rejections(state, "item")  # a cost the lead proved rightly kept
     items = [entry for entry in items if entry["id"] not in rejected]
     evaluation = [{**entry, "caseKey": behavior_map.case_key(entry["id"], document["runs"][entry["runIndex"]]),
                    "comparison": dict(document["runs"][entry["runIndex"]])}
@@ -1768,6 +1768,11 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
         unbound = [line.split(" (", 1)[0] for line in (receipt or {}).get("open") or [] if "no case is bound" in line]
         operation: JsonObject = {"command": None if unbound else shlex.join(command), "args": []}
         text = f"{', '.join(unbound)} need a case: tdd takes each with --case, the item's id and the case's command." if unbound else ""
+        from .tdd_workflow import _advisor_added
+        if owed := [name for name in _advisor_added(identity, state) if any(line.startswith(name + " (") for line in (receipt or {}).get("open") or [])]:
+            text += (f" {', '.join(owed)}: a measured cost is open and code review cannot start. Investigate what it measured, implement the cheapest correct removal and let "
+                     "its case measure the saving (tdd --correct ID 'COMMAND' replaces a broken or superseded measure), or prove with tdd --reject ID 'COMMAND' --change "
+                     "REMOVAL.diff that keeping that work is required or cheaper in real use.")
         if pending:
             operation["findings"] = pending
             text += " A final finding closes when its repair passes or, having none, at its advisor's return review once the proof has changed; tdd --reject with its id and a command gives that review the command's result to judge."
