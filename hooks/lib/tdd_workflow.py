@@ -2115,58 +2115,65 @@ def _advisor_added(identity: RepoIdentity, state: JsonObject) -> list[str]:
 def _reject(identity: RepoIdentity, state: JsonObject, requests: list[list[str]], removal: str | None = None) -> tuple[JsonObject, tuple[str, str, str] | None]:
     """The lead's rejection of a final finding, whose command runs once and is kept for its advisor's return review; or
     its proof that the cost an advisor-added map item measured is rightly kept. Declining leaves an item open. It closes
-    here only by the workflow's own comparison of the command on the candidate and on the candidate with `removal`, the
-    diff the lead declines: the command passes and then fails, so the work is required, or prints the same counts with
-    none lowered, so the removal saves nothing. The proof is kept for the review to judge."""
+    here only when `removal`, the diff the lead declines, is shown by the item's own recorded case to remove that cost
+    (the case fails on the candidate and passes with it) and the same replay of the map's cases shows why it is kept:
+    a bound case of another item fails with it, or a counted case of this item has no count lowered by it."""
     from .command_runner import _tail
-    from .workflow_state import commit_rejections
+    from .workflow_state import commit_rejections, rejections
     added = _advisor_added(identity, state)
     recorded, document = current_map(identity, state, fresh=False)
     items, runs = {entry["id"]: entry for entry in recorded or [] if entry["id"] in added}, list((document or {}).get("runs", []))
     findings = {ref["id"]: entry for entry in state.get("findingStates", []) if entry["stage"] == "final" or entry.get("decision")
                 for ref in ({"id": entry["findingId"]}, *entry.get("observations", []))}
-    records, rows = [], []
+    records, rows, replayed = [], [], None
     for target, *words in requests:
         command = shlex.join(words) if len(words) > 1 else next(iter(words), None)
         if target not in items and target not in findings:
             rows.append({"target": target, "open": "no advisor-added map item or final finding has this id"})
             continue
-        target = findings[target]["findingId"] if target in findings else target
-        if not (command or "").strip() or target in items and not removal:
-            rows.append({"target": target, "open": "a rejection needs one command, which the workflow runs and records" if target in findings else
-                         f"declining leaves {target} open, and code review cannot start: build the cheapest correct removal and let the item's case show the saving "
-                         f"(tdd --correct {target} 'COMMAND' gives a better design its own measure), or prove the cost is rightly kept with --change REMOVAL.diff "
-                         "and a command printing WORKFLOW_METRICS counts of the real use: it closes when that command fails with the removal or no count falls"})
+        if target in items:
+            try:
+                if replayed is None and removal:  # one replay of the map's cases, on the candidate and with the removal, serves every target
+                    _execution_cache(identity, state)
+                    tree = _active_candidate_tree(identity)
+                    cases = [case for case in behavior_map.current_cases(recorded or [], runs, _retired(state)) if case["id"] not in rejections(state, "item")]
+                    replayed = [(case, [arm["outcome"] for arm in replay["arms"]], replay["arms"]) for case, replay in zip(cases, _compare_many(
+                        identity, tree, _indexed(identity, tree, (("apply", "--cached", "-"), Path(removal).read_bytes())), [dict(case["comparison"]) for case in cases], runs))]
+            except (OSError, ValueError, RuntimeError, WorkflowError) as exc:
+                rows.append({"target": target, "open": f"the removal could not be measured: {str(exc)[-300:]}"})
+                continue
+            own = [(outcomes, arms) for case, outcomes, arms in replayed or [] if case["id"] == target]
+            broken = [behavior_map.case_key(case["id"], case["comparison"]) for case, outcomes, _ in replayed or [] if case["id"] != target and outcomes == ["passed", "failed"]]
+            flat = [counts for outcomes, arms in own if outcomes == ["passed", "passed"] and all("WORKFLOW_METRICS=" in arm["output"] for arm in arms)
+                    and (counts := [_metrics(arm) for arm in arms])[0].keys() == counts[1].keys() and not any(counts[1][name] < count for name, count in counts[0].items())]
+            if not any(outcomes == ["failed", "passed"] for outcomes, _ in own) or not (broken or flat):
+                rows.append({"target": target, "open": f"declining leaves {target} open, and code review cannot start: build the cheapest correct removal and let the item's case show "
+                             f"the saving (tdd --correct {target} 'COMMAND' replaces a broken or superseded measure), or prove the cost is rightly kept with tdd --reject {target} "
+                             "--change REMOVAL.diff: the item's own case must fail on the candidate and pass with the removal, and then a bound case of another item must fail with "
+                             "it or a case of this item printing WORKFLOW_METRICS counts of the real use must have none lowered by it"
+                             + (f"; this item's cases went {[outcomes for outcomes, _ in own]}, other items' cases it breaks: {broken}" if removal else "")})
+                continue
+            records.append({"target": target, "kind": "item", "claim": items[target]["behavior"], "removal": _tail(Path(removal).read_bytes()),
+                            "ground": "required: with the removal these bound cases fail: " + ", ".join(broken) if broken else f"no saving in real use: with the removal no count falls: {flat}"})
             continue
-        proof = {}
+        target = findings[target]["findingId"]
+        if not (command or "").strip():
+            rows.append({"target": target, "open": "a rejection needs one command, which the workflow runs and records"})
+            continue
         try:
-            if target in items:  # one call's targets share a command's result
-                _execution_cache(identity, state)
-                tree, patch = _active_candidate_tree(identity), Path(removal).read_bytes()
-                kept, removed = _compare(identity, tree, _indexed(identity, tree, (("apply", "--cached", "-"), patch)),
-                                         _probe_capture(identity, {"command": command}, tree, MAX_CASE_SECONDS), runs)["arms"]
-                raw, code, timed_out = kept["output"].encode(), kept["exitCode"], kept["outcome"] not in {"passed", "failed"}
-                counts = [_metrics(arm) if arm["outcome"] == "passed" and "WORKFLOW_METRICS=" in arm["output"] else None for arm in (kept, removed)]
-                proof = {"removal": _tail(patch), "removed": _tail(removed["output"].encode()),
-                         "ground": "required: the command fails with the removal" if removed["outcome"] == "failed" else
-                                   "no saving: the removal lowers no count" if counts[0] and counts[1] and counts[0].keys() == counts[1].keys()
-                                   and not any(counts[1][name] < count for name, count in counts[0].items()) else None}
-            else:
-                words, _, environment = _case_environment(identity, command)
-                raw, code, timed_out = _run(words, identity, MAX_CASE_SECONDS, env=environment)
-        except (OSError, ValueError, RuntimeError, WorkflowError) as exc:
+            words, _, environment = _case_environment(identity, command)
+            raw, code, timed_out = _run(words, identity, MAX_CASE_SECONDS, env=environment)
+        except (OSError, ValueError) as exc:
             raw, code, timed_out = str(exc).encode(), None, False
         if code is None or timed_out:
             rows.append({"target": target, "command": command, "open": f"the command did not finish: {_tail(raw)[-300:]}"})
             continue
-        if code or proof.get("ground", "") is None:
-            rows.append({"target": target, "command": command, "open": f"the command exited {code}: {_tail(raw)[-300:]}" if code else
-                         f"{target} stays open: with the removal the command still passes and its counts fall, or it prints none: {proof['removed'][-300:]}"})
+        if code:
+            rows.append({"target": target, "command": command, "open": f"the command exited {code}: {_tail(raw)[-300:]}"})
             continue
-        claim = items[target]["behavior"] if target in items else next((finding["claim"] for finding in (evidence_document(
+        claim = next((finding["claim"] for finding in (evidence_document(
             identity, findings[target]["intakeEvidenceId"], restore_runs=False) or {}).get("findings", []) if finding["id"] == target), "")
-        records.append({"target": target, "kind": "item" if target in items else "finding", "claim": claim,
-                        "command": command, "exitCode": code, "output": _tail(raw), **proof})
+        records.append({"target": target, "kind": "finding", "claim": claim, "command": command, "exitCode": code, "output": _tail(raw)})
     if records:
         state = commit_rejections(identity, str(state["slug"]), str(state["workflowId"]), records)
     memory = _given(identity, state, "lead")

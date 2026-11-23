@@ -51,8 +51,8 @@ Derive verification from the user's intended production behavior using
 [Production Code's outcome verification](../production-code/SKILL.md#lowest-cost-implementation-decision).
 The lead owns correctness and performance for every task, through implementation
 and repair; the independent reviewer challenges it. Use the packet to trace affected paths, state skipped and
-preserved surfaces, and establish review-budget fit. Apply `diagnose` to bugs,
-regressions and performance failures before choosing a correction.
+preserved surfaces, and establish review-budget fit. Apply `diagnose` when an
+observed failure needs causal investigation before choosing a correction.
 
 ### 3. Packet-scoped GitNexus
 
@@ -63,7 +63,7 @@ AGENTS.md's GitNexus checks on what the packet's rows leave unanswered.
 
 Invoke `production-preflight` and draft its two-field artifact before consulting.
 Its map states required outcomes, concrete inputs and any competing readings. Invoke
-`codebase-design` when changing a Module, public Interface or Seam. The draft owns
+`codebase-design` before drafting when the decision is where work or data belongs, including inside an existing Module with an unchanged public Interface. The draft owns
 the contract and planned attacks.
 
 Submit the exact draft as the next step's `--preflight-file`; after `--`, pass only user
@@ -71,7 +71,7 @@ instructions given after `begin`, each line verbatim after `> `.
 The advisor investigates. The lead checks deletion claims against every original
 outcome controlled by the affected logic and corrects false premises. The advisor
 then finalises and approves the draft in the same session; that consult records it.
-Demonstrated avoidable work in the requested production path is a release blocker. Before code review, implement and verify the cheapest correct removal of each measured cost, the advisor's design or a cheaper one, or prove with evidence about that cost that keeping it is required or cheaper in real use; declining its mechanism leaves its item open.
+Demonstrated avoidable work in the requested production path is a release blocker. Before code review, implement and verify the cheapest correct removal of each measured cost, the advisor's design or a cheaper one, or prove with evidence specific to that cost that keeping it is required or cheaper in real use; declining its mechanism, a scope assertion, a passing behavior test or the size of the change leaves its item open.
 
 ### 5. One recorded preflight
 

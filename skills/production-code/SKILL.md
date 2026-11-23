@@ -39,15 +39,26 @@ telemetry needs no action.
 
 ## Lowest-Cost Implementation Decision
 
-Demonstrated avoidable work in the requested production path is a release blocker.
-The lead owns performance from its first investigation: work out what the required
-result actually needs, inspect what the operation does in practice, and eliminate
-the work it does not need, including work in existing code the operation calls,
-before accelerating anything. The advisor independently challenges that design and
-looks for savings the lead missed; its findings are a floor, and the lead is free
-to find a cheaper correct design. Before code review, implement and verify the
-cheapest correct removal of each such cost, or give evidence about that specific
-cost showing why keeping it is required or cheaper in real use.
+Maximum justified performance at fixed required behavior is an acceptance criterion
+of every production task: demonstrated avoidable work in the requested production
+path is a release blocker. The lead drives it from the first draft. Before consulting
+the advisor, trace the whole requested operation: where it spends work, including in
+unchanged code it calls, what the required result actually needs, and the design that
+removes the rest. Keep looking for savings after the functional fix passes.
+
+The advisor challenges that design in both directions: savings the lead missed, and
+whether the lead's optimizations preserve behavior or shift excessive cost into
+construction, updates, memory, storage or I/O. Its findings are a floor; the lead is
+free to find a cheaper correct design. When avoidable work is identified the lead owns
+the investigation, and its default is to implement the cheapest correct removal, verify
+behavior and measure the result: ship every optimization whose benefit exceeds its cost
+at real usage frequencies, a one-line edit and an architectural change alike.
+
+The burden of proof sits with keeping a cost. Before code review, show the saving in
+the candidate or give evidence specific to that cost showing why keeping it is required
+or cheaper. "Unverified" means investigate. A scope assertion, a passing behavior test,
+the size of the change or a constraint the lead wrote into its own draft closes nothing;
+the reviewer blocks a demonstrated omission.
 
 Establish contract authority before adopting a corrective assertion or edit. Trace
 supported inputs, callers, callees, lifecycle paths and shared-state interactions

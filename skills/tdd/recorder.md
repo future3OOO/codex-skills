@@ -25,7 +25,7 @@ A finding given before and unchanged is its id alone, and `probeOf` names the fi
 
 Only a finding's author can withdraw it, or retire a case with the cause that disproves it; the lead rejects a
 final finding with `tdd --reject ID 'COMMAND'`, whose result goes to its advisor's return review. An advisor-added map item stays
-open until its case shows the saving or `tdd --reject ID 'COMMAND' --change REMOVAL.diff` proves its cost rightly kept. The lead
+open until its case shows the saving or `tdd --reject ID --change REMOVAL.diff` proves its cost rightly kept. The lead
 retires cases with `--retire` and their `caseKey`s, or one with its item and command. A retired kept-behaviour case
 stays the item's retained proof, holding it open while it fails on the candidate, unless another recorded case
 proves the item and the case fails on the original or no longer passes after the item changed; an item left without a proving case reads open.

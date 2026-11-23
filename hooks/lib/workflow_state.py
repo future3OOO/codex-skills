@@ -1771,7 +1771,7 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
         from .tdd_workflow import _advisor_added
         if owed := [name for name in _advisor_added(identity, state) if any(line.startswith(name + " (") for line in (receipt or {}).get("open") or [])]:
             text += (f" {', '.join(owed)}: a measured cost is open and code review cannot start. Investigate what it measured, implement the cheapest correct removal and let "
-                     "its case measure the saving (tdd --correct ID 'COMMAND' replaces a broken or superseded measure), or prove with tdd --reject ID 'COMMAND' --change "
+                     "its case measure the saving (tdd --correct ID 'COMMAND' replaces a broken or superseded measure), or prove with tdd --reject ID --change "
                      "REMOVAL.diff that keeping that work is required or cheaper in real use.")
         if pending:
             operation["findings"] = pending

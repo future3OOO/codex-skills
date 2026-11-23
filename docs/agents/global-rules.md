@@ -17,8 +17,8 @@ Invoke `$repo-production-workflow` first, only when production changes are requi
 phase order, evidence, independent review, advisor checks, and delivery. Do not
 jump from Repo Context Forge straight to edits.
 
-`$production-code` owns the comparison procedure. Use `$diagnose` for bugs,
-failures, flaky behavior, and performance regressions.
+`$production-code` owns the comparison procedure. Use `$diagnose` when an
+observed failure needs causal investigation.
 
 Docs-only work creates no workflow or slug. Verify checkout/branch, inspect files
 directly, edit minimally, clean up, run diff checks, and after any required review,
@@ -34,7 +34,7 @@ handoff.
   consolidate oversized scope before coding.
 - Execute against the governing artifact: requirements, constraints and preserved behavior bind; proposed mechanisms remain revisable unless explicitly required. Approval does not change authority. Keep its checklist current; do not re-invoke `$execution-planning` for an execution-only pass.
 - `$production-preflight` owns Module shape, reuse-before-new, and shallow-helper
-  debt; `$codebase-design` owns Module/Interface/Seam vocabulary.
+  debt; `$codebase-design` owns where work and data belong: Module, Interface and Seam.
 
 Once the task's PR has merged, `git worktree remove` its worktree and remove its
 Repo Context Forge analysis copy. For codex-skills installation, follow
