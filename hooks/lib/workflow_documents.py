@@ -157,7 +157,10 @@ ITEM_SHAPE = ('{"id":"BM_X","kind":"conformance|contract|preservation","basis":"
 # advisor in its consult prompt, the reviewer in its checkpoint.
 CASE_RULE = ("Before coding, state the property, bounds and what decides each input: the request's words, the original's result on the pass-start tree, "
              "a fresh direct run or a relation between two runs; never the changed code's output. Per kind, one COMMAND: a plain loop in one script, "
-             "no testing library, through the narrowest production interface owning the property. Run all inputs smallest first; only if too many to list, "
+             "no testing library. A direct test through the production interface that controls a result, with real collaborators and representative inputs, proves "
+             "that result; use the public entry point only for a promise about what that entry point itself does, such as whether a command blocks or succeeds. "
+             "Reuse one shared test for inputs governed by the same behavior. To request more proof, identify the specific outcome that test could miss or the cost "
+             "tradeoff that could change the design. Run all inputs smallest first; only if too many to list, "
              "run required inputs plus a seeded random sample. Print how many ran and the smallest failing input found. A reported input in the family "
              "joins its item's loop, extending bounds if needed. One property failure, one change at its source, never code per input. One input keeps one case.")
 ADVISOR_SHAPES = {

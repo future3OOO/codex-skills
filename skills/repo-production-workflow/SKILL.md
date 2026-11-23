@@ -68,7 +68,7 @@ the contract and planned attacks.
 
 Submit the exact draft as the next step's `--preflight-file`; after `--`, pass only user
 instructions given after `begin`, each line verbatim after `> `.
-The advisor investigates. The lead checks deletion claims against every original
+Before drafting, the task lead investigates the work the requested operation performs and proposes the lowest-cost correct design. The advisor independently investigates the same operation, finds further savings, and challenges the design and its evidence. The lead checks deletion claims against every original
 outcome controlled by the affected logic and corrects false premises. The advisor
 then finalises and approves the draft in the same session; that consult records it.
 Demonstrated avoidable work in the requested production path is a release blocker. Before code review, implement and verify the cheapest correct removal of each measured cost, the advisor's design or a cheaper one, or prove with evidence specific to that cost that keeping it is required or cheaper in real use; declining its mechanism, a scope assertion, a passing behavior test or the size of the change leaves its item open.

@@ -1131,8 +1131,10 @@ def record_advisor_result(
                     transaction, state, intake_write.evidence_id, intake, intakes,
                 )
                 _settle_executed(state, execution, intake_reference)
-                for entry in state.get("findingStates") or [] if verdict == "commit-ready" else ():  # a finding with no test settles by its author's ready verdict
-                    if entry.get("decision") and entry["stage"] == stage and entry["producer"] == source and _finding_unresolved(entry):
+                settled = {finding["id"] for finding in intake["findings"] if not finding["material"]}  # restated without a decision: its author accepts the recorded proof
+                for entry in state.get("findingStates") or []:  # a finding with no test settles by its author's verdict: each one it accepts, all of them when ready
+                    if entry.get("decision") and entry["stage"] == stage and entry["producer"] == source and _finding_unresolved(entry) and (
+                            verdict == "commit-ready" or entry["findingId"] in settled):
                         entry.update(status="resolved", dispositionEvidenceId=intake_reference)
                 state["finalStarted"] = True
                 reviewed = manifest_write(str(state["workflowId"]), "final-review-tree", current_manifest())
@@ -1775,7 +1777,7 @@ def next_operation(identity: RepoIdentity, state: JsonObject, receipt: JsonObjec
                      "REMOVAL.diff that keeping that work is required or cheaper in real use.")
         if pending:
             operation["findings"] = pending
-            text += " A final finding closes when its repair passes or, having none, at its advisor's return review once the proof has changed; tdd --reject with its id and a command gives that review the command's result to judge."
+            text += " A final finding closes when its repair passes or, having none, at its advisor's return review once the proof has changed, each one the review accepts in that verdict; tdd --reject is for a finding whose premise a command disproves."
         if text := text.strip():
             operation["input"] = text
         return operation
