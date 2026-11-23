@@ -50,33 +50,22 @@ def preflight_document(path: str) -> JsonObject:
     ) if bad] + map_errors(value.get("behaviorMap"), allow_runtime=False)
     if errors:
         raise ValueError("; ".join(errors))
-    return {"authoritativeContract": str(value["authoritativeContract"]).strip(), "behaviorMap": initial_items(value["behaviorMap"]),
-            **({"operation": operation_section(value["operation"])} if "operation" in value else {})}
+    return {"authoritativeContract": str(value["authoritativeContract"]).strip(),
+            "behaviorMap": initial_items(value["behaviorMap"])}
 
 
-def operation_section(value: object) -> JsonObject:
-    """An operation as a draft or a preflight answer declares it."""
-    listed = lambda items: isinstance(items, list) and bool(items) and all(_text(item) for item in items)
-    if not isinstance(value, dict) or set(value) - {"edits", "inputs", "sizes"} or not listed(value.get("edits")) or not isinstance(value.get("inputs"), list) or not value["inputs"] or not all(
-            _text(entry) or listed(entry) for entry in value["inputs"]) or "sizes" in value and not (
-            isinstance(value["sizes"], list) and len(value["sizes"]) > 1 and all(type(size) is int and size > 0 for size in value["sizes"])):
-        raise ValueError("operation is " + OPERATION_SHAPE)
-    return value
-
-
-PREFLIGHT_SECTIONS = frozenset({"authoritativeContract", "behaviorMap", "operation"})
+PREFLIGHT_SECTIONS = frozenset({"authoritativeContract", "behaviorMap"})
 
 
 def finalised_draft(draft: JsonObject, changes: object) -> JsonObject:
     """The lead's draft with the approving consult's changes: the contract text when it changes, then `items` and
     `removed` by tdd-map's merge rule. Commands run at TDD."""
-    if not isinstance(changes, dict) or set(changes) - {"authoritativeContract", "items", "removed", "operation"}:
-        raise ValueError("an answer's draft takes authoritativeContract, items, removed and operation")
+    if not isinstance(changes, dict) or set(changes) - {"authoritativeContract", "items", "removed"}:
+        raise ValueError("an answer's draft takes authoritativeContract, items and removed")
     contract = changes.get("authoritativeContract", draft["authoritativeContract"])
     if not _text(contract):
         raise ValueError("preflight authoritativeContract must be non-empty text")
-    operation = changes.get("operation", draft.get("operation"))
-    return {"authoritativeContract": contract.strip(), "behaviorMap": merge(draft["behaviorMap"], changes)[1], **({"operation": operation_section(operation)} if operation else {})}
+    return {"authoritativeContract": contract.strip(), "behaviorMap": merge(draft["behaviorMap"], changes)[1]}
 
 
 def advisor_envelope(
@@ -91,7 +80,7 @@ def advisor_envelope(
         raise ValueError(f"cannot read advisor envelope JSON: {exc}") from exc
     # a reviewer's verdict file carries no verdict, its command does; the recorder binds workflow, tree and evidence, an echoed id is ignored
     fields = {"schemaVersion", "findings", *(("verdict",) if stage != "review" else ())}
-    extra = {"draft", "operation"} if stage == "preflight" else {"workflowId", "candidateTree", "tddEvidence"} if stage == "final" else {"causes", "repair"}  # the final advisor records its causes while it consults
+    extra = {"draft"} if stage == "preflight" else {"workflowId", "candidateTree", "tddEvidence"} if stage == "final" else {"causes", "repair"}  # the final advisor records its causes while it consults
     if not isinstance(value, dict) or not fields <= set(value) <= fields | extra:
         raise ValueError("advisor envelope fields do not match its stage: " + ", ".join(sorted(fields)))
     findings, verdict = value.get("findings"), value.get("verdict")
@@ -146,7 +135,6 @@ def advisor_envelope(
         "findings": typed,
         **({"causes": causes} if causes else {}), **({"repair": repair} if repair is not None else {}),
         **({"draft": value["draft"]} if "draft" in value else {}),  # the approving consult's changes to the lead's draft
-        **({"operation": operation_section(value["operation"])} if "operation" in value else {}),  # the first consult's replacement of a wrong workload
         "sha256": hashlib.sha256(raw).hexdigest(),
         "recordedAt": utc_timestamp(),
         "observationId": uuid.uuid4().hex,
@@ -165,14 +153,6 @@ ITEM_SHAPE = ('{"id":"BM_X","kind":"conformance|contract|preservation","basis":"
               '"behavior":"the property","seam":"...","expected":"...",'
               '"boundaryInputs":["the bounds, and what a cut leaves out"],"cases":["COMMAND"],'
               '"interpretations":["reading a","reading b"],"interpretation":"...","authority":"..."}')
-OPERATION = str(Path(__file__).with_name("operation.py"))  # runs and measures one input of an operation
-OPERATION_SHAPE = '{"edits":["FILE the change edits"],"inputs":["COMMAND",["COMMAND","COMMAND run again in the same tree"]],"sizes":[100,1000]}'
-# What an operation is, given once to each role that declares or checks one. No test rule governs it.
-OPERATION_RULE = ("operation is the real entry point of the code the change edits, run by the workflow on real data and counted in calls on the pass-start tree and the candidate. "
-                  "Its inputs are production-size inputs that together reach every costly path in your cost model, "
-                  "including how often each operation runs in real use and any work it repeats on inputs that haven't changed: an input given as a list runs its commands in order in one tree. "
-                  "For size-dependent work it uses at least two sizes, growing every input in the deciding term, with the largest at production size: "
-                  "{size} in a command takes each of sizes, cut from the real data at several scales, never a made-up fixture.")
 # The one rule for a check, given to each role that adds one where it first meets it: the lead with the draft's shape, an
 # advisor in its consult prompt, the reviewer in its checkpoint.
 CASE_RULE = ("Before coding, state the property, bounds and what decides each input: the request's words, the original's result on the pass-start tree, "
@@ -192,7 +172,7 @@ ADVISOR_SHAPES = {
                '"repair":"/scratch/repair.diff"}'),
 }
 RECORD_SHAPES = {
-    "preflight": f'{{"authoritativeContract":"text","operation":{OPERATION_SHAPE},"behaviorMap":[{ITEM_SHAPE}]}}',
+    "preflight": f'{{"authoritativeContract":"text","behaviorMap":[{ITEM_SHAPE}]}}',
     "advisor-result": "; ".join(f"{stage}: {ADVISOR_SHAPES[stage]}" for stage in ("preflight", "final")),
     "tdd-map": f'{{"items":[{ITEM_SHAPE}]}} or {{"removed":["BM_X"]}}; a recorded item needs only id and changed fields, null removes an optional one; retained proof survives removal',
 }

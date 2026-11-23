@@ -426,9 +426,6 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
     submitted = preflight_document(args.preflight_file) if args.preflight_file else None
     changes = intake.pop("draft", None) if intake else None
     draft = finalised_draft(submitted, changes) if submitted and changes is not None else submitted
-    supplied = (evidence_document(identity, (state.get("advisorPreflight") or {}).get("intakeEvidence")) or {}).get("operation")
-    if draft and supplied and "operation" not in (changes or {}):  # the first consult's workload stands unless the approving consult replaces it
-        draft = {**draft, "operation": supplied}
     if draft:  # the submitted file itself can first be declared with this answer
         from .tdd_workflow import unstartable
         unstartable(identity, draft["behaviorMap"])

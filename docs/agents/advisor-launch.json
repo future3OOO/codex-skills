@@ -1,11 +1,5 @@
 {
-  "rules": [
-    "proof-invariants.md",
-    "../../skills/code-quality/SKILL.md",
-    "../../skills/codebase-design/SKILL.md"
-  ],
-  "skills": [],
-  "mcp": [
-    "gitnexus"
-  ]
+  "rules": ["proof-invariants.md", "../../skills/code-quality/SKILL.md"],
+  "skills": ["codebase-design"],
+  "mcp": ["gitnexus"]
 }
