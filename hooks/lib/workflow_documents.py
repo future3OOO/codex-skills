@@ -112,6 +112,7 @@ def advisor_envelope(
         # a verdict's finding binds through its cause, or stays open with the user's decision; a preflight finding says itself
         finding = {"id": identifier, "claim": item["claim"], "material": _text(item.get("decision")) if stage != "preflight" else item.get("material") is True,
                    "kind": kind, **({"priorFinding": prior} if prior is not None else {}),
+                   **({"rejected": True} if stage == "review" and item.get("rejected") is True else {}),  # its author's withdrawal
                    **{key: item[key] for key in ("decides", "quote", "decision") if stage != "preflight" and key in item}}
         typed.append(finding)
     if verdict in {"approved", "changes-required"} and ((verdict == "approved") == any(item["material"] for item in typed)):
@@ -161,7 +162,9 @@ CASE_RULE = ("Before coding, state the property, bounds and what decides each in
              "that result; use the public entry point only for a promise about what that entry point itself does, such as whether a command blocks or succeeds. "
              "Reuse one shared test for inputs governed by the same behavior. To request more proof, identify the specific outcome that test could miss or the cost "
              "tradeoff that could change the design. Set measured=false for functional items and omit remaining. For a measured cost set measured=true and remaining to the maximum justified "
-             "count after removal (zero for avoidable work). Trace the costly operation to every call site and data collection in the owner. Name each independent one in the draft and first edit. Share one script; count each site or use one nonnegative event total that covers them all, including replacement work. "
+             "count after removal (zero for avoidable work). Bind each cost family the operation pays as one item, its workloads as inputs: "
+             "trace it to every call site and data collection; count each site or one nonnegative total over them all, "
+             "including replacement work and work inside collaborators (queries, rows, pattern matches, file reads). "
              "Use the caller's actual workload and reuse frequency. For a new Python cost case declare WORKFLOW_CASE=1 python3 FILE.py. "
              "Write a single measure() function returning (kept results by input, counts by item id). The workflow calls it on each tree, captures its values and compares them. Existing stdout cases can still print WORKFLOW_RESULT and WORKFLOW_METRICS. "
              "Submit cases through tdd; for a diagnostic test outside it capture stdout and stderr to a file and display at most one short line. "
@@ -188,17 +191,12 @@ RECORD_SHAPES = {
 
 
 def validate_design_declaration(value: object) -> JsonObject:
-    """The design is a falsifiable hypothesis under attack, not a label registry.
-
-    A declaration recorded before the catalogue was retired still loads: its
-    extra ``catalogue`` field is dropped rather than refused, because prior
-    evidence is append-only history, never a schema hostage.
-    """
+    """The design is a falsifiable hypothesis under attack, not a label registry."""
     if not isinstance(value, dict) or value.get("schemaVersion") != 1:
         raise ValueError("governed design declaration requires schemaVersion 1")
     status = value.get("status")
     if status == "present":
-        if not set(value) <= {"schemaVersion", "status", "sha256", "catalogue"}:
+        if not set(value) <= {"schemaVersion", "status", "sha256"}:
             raise ValueError("present governed design declaration has unknown or missing fields")
         digest = value.get("sha256")
         if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):

@@ -60,14 +60,13 @@ def prepare(provider: str) -> tuple[Path, Path, dict, dict]:
             raise ValueError(f"advisor {key} must be a list of nonempty strings")
         if len(set(values)) != len(values):
             raise ValueError(f"advisor {key} repeats a selection")
-    # The launcher's own role always leads; an older selection names an identical installed copy, delivered once.
-    rules = "\n\n".join(dict.fromkeys(p.read_text() for p in [ROOT / "docs/agents/advisor-role.md", *(
-        config_path.parent / Path(p).expanduser() for p in config["rules"])]))
+    # The launcher's own role always leads.
+    rules = "\n\n".join(p.read_text() for p in [ROOT / "docs/agents/advisor-role.md", *(
+        config_path.parent / Path(p).expanduser() for p in config["rules"])])
     home = Path(os.environ.get("ADVISOR_ESTATE_ROOT", native / "advisor")) / provider
     home.mkdir(parents=True, exist_ok=True, mode=0o700)
-    # Codex receives the rules as its model instructions; an AGENTS.md an older launch left would deliver them again.
+    # Codex receives the rules as its model instructions.
     (home / ("instructions.md" if provider == "codex" else "CLAUDE.md")).write_text(rules)
-    (home / "AGENTS.md").unlink(missing_ok=True)
     skills = home / "skills"
     skills.mkdir(exist_ok=True)
     sources = {}

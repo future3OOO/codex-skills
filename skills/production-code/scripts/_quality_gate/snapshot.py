@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import re
 import subprocess
-import time
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -53,9 +52,9 @@ def _disposition_records(repo: Path) -> tuple[dict[str, object], ...]:
     return tuple(resolved)
 
 
-def _graph_facts(payload: object, base: str, tree: str, paths: list[str]) -> tuple[str, tuple[dict, ...], dict]:
+def _graph_facts(payload: object, base: str, tree: str, paths: list[str]) -> tuple[str, tuple[dict, ...]]:
     if not isinstance(payload, dict) or (payload.get("base"), payload.get("candidate")) != (base, tree) or not payload.get("repo"):
-        return "no current graph identity; structural checks are incomplete", (), {}
+        return "no current graph identity; structural checks are incomplete", ()
     kinds = ["File", "Function", "Method", "Class", "Interface", "Struct", "Enum", "Property"]
     # Encode literal word starts uniformly: upstream's read-only scanner also
     # scans string contents (e.g. a file named copy.py).
@@ -67,22 +66,18 @@ def _graph_facts(payload: object, base: str, tree: str, paths: list[str]) -> tup
              "OPTIONAL MATCH (n)-[r:CodeRelation]->(m) WHERE r.type = 'CALLS' "
              "WITH n, collect(m.id) AS calls RETURN collect({id:n.id, name:n.name, file:n.filePath, "
              "startLine:n.startLine, endLine:n.endLine, calls:calls}) AS symbols")
-    started = time.perf_counter()
-    measured = {"files": len(paths), "queryCount": 1}
     try:
         with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as output:
             result = subprocess.run(["gitnexus", "cypher", "-r", str(payload["repo"]), query],
                                     stdout=output, stderr=subprocess.PIPE, text=True, timeout=30)
             output.seek(0)
             text = output.read()
-        measured["bytes"] = len(text.encode())
         if result.returncode:
             raise ValueError((result.stderr or text)[-300:])
         data = json.loads(text)
         if isinstance(data, dict) and "complete_result" in data:
             path = Path(data["complete_result"])
             try:
-                measured["bytes"] = path.stat().st_size
                 data = json.loads(path.read_text())
             finally:
                 path.unlink(missing_ok=True)
@@ -91,11 +86,9 @@ def _graph_facts(payload: object, base: str, tree: str, paths: list[str]) -> tup
         nodes = json.loads(data["markdown"].splitlines()[2][1:-1].strip())
         if not isinstance(nodes, list):
             raise ValueError("query returned no symbol list")
-        return "", tuple({**node, "calls": node.get("calls") or []} for node in nodes), measured
+        return "", tuple({**node, "calls": node.get("calls") or []} for node in nodes)
     except (OSError, ValueError, KeyError, IndexError, subprocess.TimeoutExpired) as exc:
-        return "graph query failed; structural checks are incomplete: " + str(exc), (), measured
-    finally:
-        measured["seconds"] = time.perf_counter() - started
+        return "graph query failed; structural checks are incomplete: " + str(exc), ()
 
 
 _HUNK_HEADER = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
@@ -155,7 +148,6 @@ class EvaluationSnapshot:
     graph_files: frozenset[str]
     disposition_records: tuple[dict[str, object], ...]
     graph_symbols: tuple[dict[str, object], ...] = ()
-    graph_query: dict[str, object] | None = None
 
     def symbols(self, path: str) -> tuple[dict[str, object], ...]:
         return tuple(value for value in self.graph_symbols if value.get("file") == path
@@ -192,14 +184,13 @@ class EvaluationSnapshot:
         baseline, baseline_gaps, baseline_role_gaps, baseline_scope_gaps = _baseline_index(repo, base, entries)
         paths = sorted({entry.path for entry in entries if entry.current_text is not None} |
                        {file.path for file in baseline if file.text is not None})
-        graph_gap, graph_symbols, graph_query = _graph_facts(graph_data, base, tree, paths)
+        graph_gap, graph_symbols = _graph_facts(graph_data, base, tree, paths)
         graph_files = frozenset(node["file"] for node in graph_symbols)
         return cls(
             gitnexus_warnings=tuple(warnings),
             graph_gap=graph_gap,
             graph_files=graph_files,
             graph_symbols=graph_symbols,
-            graph_query=graph_query,
             disposition_records=_disposition_records(repo),
             base_identity=base,
             base_source=str(scope["base_source"]),

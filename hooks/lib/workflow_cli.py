@@ -393,8 +393,13 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
                 preflight_file=str(Path(args.input).resolve()) if args.input and args.input != "-" else None)})
             return 2
         edits = {"draftEdits": intake["draftEdits"]} if intake.get("draftEdits") else {}
-        emit(_receipt(state, identity, evidenceId=evidence_id, status="passed",
-                      obligations=not all(item.get("cases") and not behavior_map.readings_unsettled(item) for item in document["behaviorMap"]), **edits))
+        from .tdd_workflow import _run_tdd, _unwritten
+        written = all(item.get("cases") and not behavior_map.readings_unsettled(item)
+                      and not any(_unwritten(identity, shlex.split(case)) for case in item["cases"]) for item in document["behaviorMap"])
+        if written and document["behaviorMap"] and not args.check:  # approval starts TDD on its written cases
+            return _run_tdd(["--repo", str(identity.root), "--slug", slug, "--workflow-id", workflow_id],
+                            emit=lambda receipt, given=None: _emit_json({**receipt, **edits}, given)) & 2
+        emit(_receipt(state, identity, evidenceId=evidence_id, status="passed", obligations=not written, **edits))
         return 0
     if args.kind == "tdd-map":
         from .tdd_workflow import map_update
@@ -431,9 +436,11 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
         from .tdd_workflow import _unwritten, unstartable
         unstartable(identity, draft["behaviorMap"])
         mine = {entry["id"]: entry.get("cases", []) for entry in submitted["behaviorMap"]}
-        # A lead's case command stays until the lead replaces it; an approving answer adds a command only for a script that is written.
-        draft["behaviorMap"] = [{**{key: value for key, value in entry.items() if key != "cases"}, **({"cases": cases} if (cases := list(dict.fromkeys(
-            [*mine.get(entry["id"], []), *(case for case in entry.get("cases", []) if not _unwritten(identity, shlex.split(case)))]))) else {})} for entry in draft["behaviorMap"]]
+        for entry in draft["behaviorMap"]:
+            if proposed := entry.pop("cases", None):  # the merge owns removals; filter only a declared replacement
+                prior = mine.get(entry["id"], ())
+                if written := [case for case in proposed if case in prior or not _unwritten(identity, shlex.split(case))] or prior:
+                    entry["cases"] = written
     state = record_advisor_result(
         identity, slug, workflow_id, args.stage, args.source, verdict, reason=args.reason,
         design=design_declaration(args.design_declaration) if args.design_declaration else None,

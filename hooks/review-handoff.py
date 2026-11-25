@@ -18,10 +18,6 @@ try:
     state = read_active(identity) if identity else None
     if not state or state.get("nextAction") != "code-review" or state.get("verification") != "passed":
         sys.exit()
-    if state.get("findingStates"):  # a pass recorded before repair routing can still say code-review
-        from hooks.lib.workflow_state import _review_repair_pending
-        if _review_repair_pending(state):
-            sys.exit()
     delegated = {"workflowId": state["workflowId"], "candidate": _active_candidate_tree(identity)}
     record = state_root() / "_handoff" / f"{identity.key}.json"
     if state.get("activeCandidateTree") != delegated["candidate"] or read_json(record) == delegated:

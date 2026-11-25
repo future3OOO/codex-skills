@@ -22,13 +22,9 @@ DATABASE_NAME = "workflow.sqlite3"
 DATABASE_FILES = frozenset({DATABASE_NAME, *(f"{DATABASE_NAME}{suffix}" for suffix in ("-journal", "-wal", "-shm"))})
 AUTHORITY = "sqlite-event-ledger-v1"
 STATE_SCHEMA_VERSION = 1
-# Format 3 keeps state on workflow rows and evidence lists as zlib-compressed parts
-# (a format-2 ledger's text parts still read). The tables a pre-#96 estate reads first
-# are views over a function no SQLite build defines, and a trigger refuses the format
-# a format-2 estate stamps first, so either fails naming the format and writes nothing.
-# Bumping this: the migration must drop and recreate format_guard.
+# Format 3 keeps state on workflow rows and evidence lists as zlib-compressed parts. A ledger
+# of another format belongs to the workflow tree that wrote it and is refused.
 LEDGER_FORMAT = "3"
-FORMAT_REFUSAL = f"workflow ledger format v{LEDGER_FORMAT} needs the upgraded workflow estate"
 POLICY_VERSION = 1
 BUSY_TIMEOUT_MS = 2500
 # Lists stored as content-addressed parts: the same item, run or gate report is
@@ -242,12 +238,9 @@ def _object(connection: sqlite3.Connection, name: str) -> str | None:
     row = connection.execute("SELECT type FROM sqlite_master WHERE name = ?", (name,)).fetchone()
     return None if row is None else str(row["type"])
 def _metadata(connection: sqlite3.Connection, key: str) -> str | None:
-    """Format 2 keeps metadata in ledger_metadata; an older ledger still has its
-    metadata table until its migration renames it."""
-    table = "metadata" if _object(connection, "metadata") == "table" else "ledger_metadata"
-    if _object(connection, table) is None:
+    if _object(connection, "ledger_metadata") is None:
         return None
-    row = connection.execute(f"SELECT value FROM {table} WHERE key = ?", (key,)).fetchone()
+    row = connection.execute("SELECT value FROM ledger_metadata WHERE key = ?", (key,)).fetchone()
     return str(row["value"]) if row is not None else None
 def _validate_repository_identity(connection: sqlite3.Connection, identity: RepoIdentity) -> None:
     expected = {"repo_key": identity.key, "repo_root": str(identity.root)}
@@ -258,54 +251,19 @@ def _validate_repository_identity(connection: sqlite3.Connection, identity: Repo
 def _validate_state_identity(identity: RepoIdentity, state: JsonObject) -> None:
     if state.get("repo") != identity.as_dict():
         raise LedgerError("canonical workflow state repository identity does not match this checkout")
-def _snapshot_era(connection: sqlite3.Connection) -> bool:
-    return any(row["name"] == "state_json" for row in connection.execute("PRAGMA table_info(workflow_events)"))
 def _ensure_authority(connection: sqlite3.Connection, identity: RepoIdentity) -> None:
-    """Stamp a new ledger, or bring an older one to this format; either commits whole
-    or leaves the ledger untouched. Each check reads one snapshot, and the locked one
-    repeats it: a racing opener may migrate the ledger between reads."""
-    connection.execute("BEGIN")
-    current = _metadata(connection, "format") == LEDGER_FORMAT
-    connection.rollback()
-    if not current:
+    """Stamp a new ledger with its format and repository identity, or check an existing one's; only stamping writes."""
+    if _metadata(connection, "format") is None:
         _begin_write(connection)
-        if current := _metadata(connection, "format") == LEDGER_FORMAT:
-            connection.rollback()
-    if current:
-        _validate_repository_identity(connection, identity)
-        return
-    try:
-        if _object(connection, "metadata") == "table":
-            connection.execute("INSERT INTO ledger_metadata SELECT key, value FROM metadata")
-        if _metadata(connection, "authority") == AUTHORITY:
-            _validate_repository_identity(connection, identity)
-        else:
-            connection.executemany(
-                "INSERT INTO ledger_metadata(key, value) VALUES (?, ?)",
-                (("repo_key", identity.key), ("repo_root", str(identity.root)), ("authority", AUTHORITY)),
-            )
-        if _snapshot_era(connection):
-            if not any(row["name"] == "state_json" for row in connection.execute("PRAGMA table_info(workflows)")):
-                connection.execute("ALTER TABLE workflows ADD COLUMN state_json TEXT")
-            connection.execute(
-                """UPDATE workflows SET state_json = (
-                       SELECT event.state_json FROM workflow_events AS event
-                       WHERE event.workflow_id = workflows.workflow_id
-                       ORDER BY event.event_id DESC LIMIT 1)"""
-            )
-            connection.execute("ALTER TABLE workflow_events DROP COLUMN state_json")
-        connection.execute("INSERT OR REPLACE INTO ledger_metadata(key, value) VALUES ('format', ?)", (LEDGER_FORMAT,))
-        connection.execute(
-            "CREATE TRIGGER IF NOT EXISTS format_guard BEFORE INSERT ON ledger_metadata "
-            f"WHEN NEW.key = 'format' AND NEW.value <> '{LEDGER_FORMAT}' BEGIN SELECT RAISE(ABORT, '{FORMAT_REFUSAL}'); END"
-        )
-        for name in ("metadata", "active_projection", "migration_records"):
-            connection.execute(f"DROP {_object(connection, name) or 'table'} IF EXISTS {name}")
-            connection.execute(f'CREATE VIEW {name} AS SELECT "{FORMAT_REFUSAL}"()')
+        if _metadata(connection, "format") is None:  # a racing opener may have stamped it
+            connection.executemany("INSERT INTO ledger_metadata(key, value) VALUES (?, ?)", (
+                ("repo_key", identity.key), ("repo_root", str(identity.root)), ("authority", AUTHORITY), ("format", LEDGER_FORMAT)))
         connection.commit()
-    except Exception:
-        connection.rollback()
-        raise
+    if (stamped := _metadata(connection, "format")) != LEDGER_FORMAT:
+        raise LedgerError(f"workflow ledger format v{stamped} belongs to the workflow that wrote it; this workflow reads v{LEDGER_FORMAT}")
+    _validate_repository_identity(connection, identity)
+
+
 def _manifest_value(value: object) -> dict[str, str] | None:
     if not isinstance(value, dict):
         return None
@@ -400,7 +358,7 @@ def _document(connection: sqlite3.Connection, text: str, *, restore_runs: bool =
             ).fetchall()) if ids else {}
             if not set(ids) <= set(rows):
                 raise LedgerError("stored evidence references a missing part")
-            holder[key] = [json.loads(zlib.decompress(rows[i]) if isinstance(rows[i], bytes) else rows[i]) for i in ids]
+            holder[key] = [json.loads(zlib.decompress(rows[i])) for i in ids]
             if key == "runs":
                 holder[key] = [{**run, "runIndex": index} for index, run in enumerate(holder[key])]
     return value
@@ -561,7 +519,7 @@ def cached_arms(identity: RepoIdentity, workflow_id: str, contexts, keys) -> lis
         decoded = {}
         def document(raw):
             if raw not in decoded:
-                decoded[raw] = json.loads(zlib.decompress(raw) if isinstance(raw, bytes) else raw)
+                decoded[raw] = json.loads(zlib.decompress(raw))
             return decoded[raw]
         connection.create_function("input_keys", 2, lambda raw, index: json.dumps(keys(document(raw)["arms"][index])))
         rows = connection.execute(
@@ -622,12 +580,8 @@ def _retention_inventory_connection(
         "ORDER BY event_id DESC LIMIT 1"
     ).fetchone()
     active = str(activation["workflow_id"]) if activation else None
-    # A snapshot-era ledger is read where it keeps state, never migrated by a report.
-    state = ("(SELECT latest.state_json FROM workflow_events AS latest WHERE latest.workflow_id = "
-             "workflow.workflow_id ORDER BY latest.event_id DESC LIMIT 1)" if _snapshot_era(connection)
-             else "workflow.state_json")
     rows = connection.execute(
-        f"""SELECT workflow.workflow_id, workflow.repo_key, workflow.slug, {state} AS state_json,
+        """SELECT workflow.workflow_id, workflow.repo_key, workflow.slug, workflow.state_json,
                   MAX(event.event_id) AS latest_event
            FROM workflows AS workflow JOIN workflow_events AS event USING (workflow_id)
            GROUP BY workflow.workflow_id

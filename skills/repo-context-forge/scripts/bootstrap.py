@@ -91,8 +91,7 @@ def _acquire_intake_slot() -> int:
     Slot files are never unlinked: removing one would hand later waiters a
     fresh inode and break exclusion, the same convention as the intake lock.
     Each pass counts every held slot, including reservations above a newly
-    shrunken limit. Updated adapters serialize count-and-claim; older adapters
-    must be upgraded before mixed-version admissions share that guarantee.
+    shrunken limit, and serializes count-and-claim.
     """
     slots = _real_home() / ".cache" / "repo-context-forge" / "intake-slots"
     slots.mkdir(parents=True, exist_ok=True)

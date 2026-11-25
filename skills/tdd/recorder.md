@@ -13,7 +13,7 @@ exit "$rc"
 The workflow stores and compares complete values. Preserve the full program result when inspecting a failure. The baseline receipt lists each measured outcome and ceiling for the first production edit.
 
 A map item's `cases` in the preflight draft holds its test's command: recording the approved
-preflight runs nothing; a bare `tdd` captures and runs it. Submit later cases in one workflow TDD call.
+preflight captures and runs it once written. Submit later cases in one workflow TDD call.
 The submitted command identifies the case; its in-checkout test files are frozen with it, and a test outside the checkout runs where it was written. The probe asserts its required
 outcome and exits non-zero when the assertion fails. Output is diagnostic only;
 printing a value or `name: result` does not assert it.

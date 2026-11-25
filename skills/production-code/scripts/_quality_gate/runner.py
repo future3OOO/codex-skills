@@ -169,8 +169,6 @@ def check(
         },
         "errors": errors,
         "warnings": [],
-        # Retained until its documented consumer migrates; its scorer is gone.
-        "gitnexusQueries": [snapshot.graph_query] if snapshot.graph_query else [],
     }
 
 
