@@ -96,7 +96,8 @@ it does not reinterpret an existing rule ID.
 Schema v2 adds the binding collections `evaluation`, `findings`, and
 `resolvedFindings`. It removes the unconsumed `bloat` and `reuseFindings`
 projections. It retains `checks`, `hardRules`, `errors`, and `warnings` as
-projections from the one typed report.
+projections from the one typed report. The parent decision of 2026-11-26 in `decisions.md` removed the
+`gitnexusQueries` projection, which nothing reads, without a schema version change.
 
 ### 3. Versioned disposition-evidence Interface
 
@@ -260,7 +261,7 @@ that rule's completion projection automatically.
 ```text
 caller selects base
 → capture one base and candidate
-→ classify each path once, including language and compatibility truth
+→ classify each path once, including language
 → decode and structurally validate captured evidence
 → freeze the immutable evaluation
 → immediate safety checks
@@ -633,7 +634,7 @@ binding owners converge:
 
 | Slice | Convergence target |
 |---|---|
-| #75 | canonical evaluation, stored role/language/compatibility truth, rule/result foundation, cumulative growth, authoritative-base provenance, and visible non-blocking hook output; delete superseded context/diff/bloat paths |
+| #75 | canonical evaluation, stored role/language truth, rule/result foundation, cumulative growth, authoritative-base provenance, and visible non-blocking hook output; delete superseded context/diff/bloat paths |
 | #76 | deepen the one redundancy owner with calibrated exact symbol/block/baseline evidence; delete old duplicate paths |
 | #77 | deepen the same owner with duplicate-independent responsibility discovery, trusted disposition evidence, lifecycle and owner-corpus replay; delete lexical reuse paths |
 | Parent #54 | review named calibration results and decide any later rule-specific promotion |

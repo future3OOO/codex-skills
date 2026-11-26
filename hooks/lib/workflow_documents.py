@@ -94,25 +94,24 @@ def advisor_envelope(
     for position, item in enumerate(findings, 1):
         if not isinstance(item, dict) or not {"id", "claim"} <= set(item):
             raise ValueError(f"advisor finding {position} requires id and claim")
-        item = {"material": False, **item}
-        identifier, kind = item.get("id"), item.get("kind")
+        identifier, kind = item["id"], item.get("kind")
         if not _text(identifier) or identifier in identifiers:
             raise ValueError("advisor finding ids must be non-empty and unique")
-        if not _text(item.get("claim")) or not isinstance(item.get("material"), bool):
+        if not _text(item["claim"]) or not isinstance(item.get("material", False), bool):
             raise ValueError(f"advisor finding {identifier} requires claim and material boolean")
-        if not isinstance(kind, str) or kind not in {"behavioral", "nonbehavioral"}:
+        if kind not in ("behavioral", "nonbehavioral"):
             kind = "behavioral"
-        identifiers.add(str(identifier))
+        identifiers.add(identifier)
         if stage != "preflight" and any(key in item and not _text(item[key]) for key in ("decides", "quote", "decision")):
             raise ValueError(f"advisor finding {identifier}: decides, quote and decision are text when given")
-        prior = item.get("priorFinding")
-        if prior is not None and (not isinstance(prior, dict) or set(prior) != {"evidenceId", "id"}
-                                  or not all(_text(v) for v in prior.values())):
+        prior, withdrawn = item.get("priorFinding"), stage == "review" and item.get("rejected") is True  # its author's withdrawal
+        if (prior is not None or withdrawn) and (not isinstance(prior, dict) or set(prior) != {"evidenceId", "id"}
+                                                 or not all(map(_text, prior.values()))):
             raise ValueError("priorFinding requires evidenceId and id")
         # a verdict's finding binds through its cause, or stays open with the user's decision; a preflight finding says itself
         finding = {"id": identifier, "claim": item["claim"], "material": _text(item.get("decision")) if stage != "preflight" else item.get("material") is True,
                    "kind": kind, **({"priorFinding": prior} if prior is not None else {}),
-                   **({"rejected": True} if stage == "review" and item.get("rejected") is True else {}),  # its author's withdrawal
+                   **({"rejected": True} if withdrawn else {}),
                    **{key: item[key] for key in ("decides", "quote", "decision") if stage != "preflight" and key in item}}
         typed.append(finding)
     if verdict in {"approved", "changes-required"} and ((verdict == "approved") == any(item["material"] for item in typed)):

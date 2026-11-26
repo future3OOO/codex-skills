@@ -2003,3 +2003,6 @@ approval at `93abd48` line 140 also runs the written baseline on the candidate, 
 lead that `tdd` call. One passing `tdd --correct` differs only in 72fe5a9e asking for an immediate rerun;
 the next `tdd` reaches code-review on both. The passing `verify` at `2a0023d` line 488 holds TDD on both
 trees with the same measured-cost lines: it reached the quality gate only on the tree that recorded it.
+The same decision named the quality gate's `gitnexusQueries` projection (`runner.py:172-173` at 72fe5a9e) for removal:
+no reader of the gate report in this repository, Repo Context Forge, the resume kit or the benchmark project uses
+it, and none checks the report's `schemaVersion`, so it is removed within schema v2.

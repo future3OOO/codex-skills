@@ -871,13 +871,12 @@ def _register_finding_intake(
     intakes[intake_id] = intake
     for item in intake["findings"]:
         if item.get("rejected") is True:
-            prior = item.get("priorFinding") or {}
-            document = transaction.evidence(prior.get("evidenceId"), restore_runs=False)
-            observed = next((finding for finding in (document or {}).get("findings", []) if finding["id"] == prior.get("id")), None)
+            prior = item["priorFinding"]
+            document = transaction.evidence(prior["evidenceId"], restore_runs=False)
+            observed = next((finding for finding in (document or {}).get("findings", []) if finding["id"] == prior["id"]), None)
             if (not document or document.get("workflowId") != state["workflowId"]
                     or any(document.get(key) != intake.get(key) for key in ("stage", "producer"))
-                    or not observed or not ("probe" in observed or "change" in observed or observed.get("retires"))
-                    or "probe" in item or "change" in item or not str(item.get("claim") or "").strip()):
+                    or not observed or not ("probe" in observed or "change" in observed or observed.get("retires"))):
                 raise WorkflowError("withdrawal must name this author's recorded executable observation and its reason")
             intakes[str(prior["evidenceId"])] = document
             for entry in finding_states:  # a withdrawn observation's retirements end with it

@@ -131,7 +131,7 @@
   Request["Capture request"] --> Base["Resolve supplied base"]
   Base --> Candidate["Capture coherent candidate"]
   Candidate --> Drift["Detect capture drift"]
-  Drift --> Classify["Classify role, language, compatibility"]
+  Drift --> Classify["Classify role and language"]
   Classify --> Hunks["Compute one base-to-candidate hunk set"]
   Hunks --> Index["Record repository coverage"]
   Index --> Evidence["Bind captured evidence"]
@@ -142,7 +142,7 @@
   class Request,Base,Candidate,Drift,Classify,Hunks,Index,Evidence,Gaps,Freeze private;</pre>
           </div>
           <div class="mt-5 grid gap-4 md:grid-cols-3">
-            <div class="rounded-xl border border-slate-200 p-4"><div class="font-semibold">Stored once</div><p class="mt-2 text-sm text-slate-600">Role, language, human-authored status, source status, test-like compatibility, and exclusion reason.</p></div>
+            <div class="rounded-xl border border-slate-200 p-4"><div class="font-semibold">Stored once</div><p class="mt-2 text-sm text-slate-600">Role, language, human-authored status, source status, and exclusion reason.</p></div>
             <div class="rounded-xl border border-slate-200 p-4"><div class="font-semibold">Compared once</div><p class="mt-2 text-sm text-slate-600">Captured texts, deletion state, hunk ranges, contiguous regions, growth, and repository coverage.</p></div>
             <div class="rounded-xl border border-slate-200 p-4"><div class="font-semibold">Incomplete by rule</div><p class="mt-2 text-sm text-slate-600">Capture gaps are global evidence; each rule selects only the scopes it requires.</p></div>
           </div>

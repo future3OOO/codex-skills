@@ -24,8 +24,7 @@ def read_json(path: Path) -> dict:
 
 def user_hooks(document: dict, homes: list[Path], source: Path, target: Path) -> tuple[dict, dict[str, str]]:
     """Remove this estate's commands; preserve unrelated hooks and settings."""
-    owned = {str(home / "hooks" / name) for home in homes for name in
-             ("code-quality-gate.py", "skill-discipline-rearm.py", "rcf-intake-gate.py")}
+    directories, home = {root / "hooks" for root in set(homes)}, str(Path.home())
     identities = {}
     for event, groups in document.get("hooks", {}).items():
         kept = []
@@ -33,14 +32,16 @@ def user_hooks(document: dict, homes: list[Path], source: Path, target: Path) ->
         for group_index, group in enumerate(groups):
             hooks = []
             for hook_index, hook in enumerate(group.get("hooks", [])):
-                tokens = shlex.split(hook.get("command", ""))
+                tokens = shlex.split(re.sub(r'(?<!\S)("?)\$\{CODEX_HOME:-([^}]*)\}(?="?/hooks/)',
+                                            lambda m: shlex.quote(os.getenv("CODEX_HOME") or m[2]) + m[1], hook.get("command", "")))
                 command = tokens[1] if len(tokens) > 1 and Path(tokens[0]).name == "python3" else next(iter(tokens), "")
-                if str(Path(command.replace("$HOME", str(Path.home()))).expanduser()) in owned:
+                path = Path(command.replace("$HOME", home)).expanduser()
+                if path.name in {"code-quality-gate.py", "skill-discipline-rearm.py", "rcf-intake-gate.py", "review-handoff.py"} and path.parent in directories:
                     continue
                 identities[f"{source}:{event_key}:{group_index}:{hook_index}"] = f"{target}:{event_key}:{len(kept)}:{len(hooks)}"
                 hooks.append(hook)
             group["hooks"] = hooks
-            if group["hooks"]:
+            if hooks:
                 kept.append(group)
         document["hooks"][event] = kept
     return document, identities
@@ -60,9 +61,8 @@ def prepare(provider: str) -> tuple[Path, Path, dict, dict]:
             raise ValueError(f"advisor {key} must be a list of nonempty strings")
         if len(set(values)) != len(values):
             raise ValueError(f"advisor {key} repeats a selection")
-    # The launcher's own role always leads.
-    rules = "\n\n".join(p.read_text() for p in [ROOT / "docs/agents/advisor-role.md", *(
-        config_path.parent / Path(p).expanduser() for p in config["rules"])])
+    paths = [ROOT / "docs/agents/advisor-role.md", *(config_path.parent / Path(p).expanduser() for p in config["rules"])]
+    rules = "\n\n".join(dict.fromkeys(map(Path.read_text, dict.fromkeys(paths))))
     home = Path(os.environ.get("ADVISOR_ESTATE_ROOT", native / "advisor")) / provider
     home.mkdir(parents=True, exist_ok=True, mode=0o700)
     # Codex receives the rules as its model instructions.
