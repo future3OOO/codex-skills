@@ -61,8 +61,9 @@ def prepare(provider: str) -> tuple[Path, Path, dict, dict]:
             raise ValueError(f"advisor {key} must be a list of nonempty strings")
         if len(set(values)) != len(values):
             raise ValueError(f"advisor {key} repeats a selection")
-    paths = [ROOT / "docs/agents/advisor-role.md", *(config_path.parent / Path(p).expanduser() for p in config["rules"])]
-    rules = "\n\n".join(dict.fromkeys(map(Path.read_text, dict.fromkeys(paths))))
+    # The launcher's own role always leads.
+    rules = "\n\n".join(p.read_text() for p in [ROOT / "docs/agents/advisor-role.md", *(
+        config_path.parent / Path(p).expanduser() for p in config["rules"])])
     home = Path(os.environ.get("ADVISOR_ESTATE_ROOT", native / "advisor")) / provider
     home.mkdir(parents=True, exist_ok=True, mode=0o700)
     # Codex receives the rules as its model instructions.
