@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import os
 import re
@@ -18,7 +19,7 @@ from ._workflow_db import CHECK_ONLY, LedgerError, _canonical, history, read_act
 from .command_runner import emit_json as _emit_json, print_output as _print_output, run as _run, run_entry as _run_entry
 from .repo_identity import RepoIdentity, RepoIdentityError, resolve_repo_identity
 from .state_prune import prune
-from .state_store import _comparison_scope, _active_candidate_tree, analysis_unchanged, codex_home, repo_state_dir, secure_dir, state_root, tree_manifest, utc_timestamp
+from .state_store import atomic_write_json, _comparison_scope, _active_candidate_tree, analysis_unchanged, codex_home, repo_state_dir, secure_dir, state_root, tree_manifest, utc_timestamp
 from .workflow_documents import (
     RECORD_SHAPES,
     advisor_envelope,
@@ -41,7 +42,6 @@ from .workflow_state import (
     bound_state,
     checkpoint,
     commit_evidence_phase,
-    commit_runs,
     commit_verification,
     complete,
     evidence_document,
@@ -101,7 +101,7 @@ def parser() -> argparse.ArgumentParser:
 
     command = _repo(commands.add_parser("status"), instance=True)
     command.add_argument("--fields", nargs="+", help="comma- or space-separated fields; default is full status")
-    _repo(commands.add_parser("summary"))
+    _repo(commands.add_parser("summary"), instance=True)
     command = _repo(commands.add_parser("paths", help="print the resolved workflow-state paths; "
                                         "with --workflow-id also the governing-design path"))
     command.add_argument("--workflow-id")
@@ -393,8 +393,13 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
                 preflight_file=str(Path(args.input).resolve()) if args.input and args.input != "-" else None)})
             return 2
         edits = {"draftEdits": intake["draftEdits"]} if intake.get("draftEdits") else {}
-        emit(_receipt(state, identity, evidenceId=evidence_id, status="passed",
-                      obligations=not all(item.get("cases") and not behavior_map.readings_unsettled(item) for item in document["behaviorMap"]), **edits))
+        from .tdd_workflow import _run_tdd, _unwritten
+        written = all(item.get("cases") and not behavior_map.readings_unsettled(item)
+                      and not any(_unwritten(identity, shlex.split(case)) for case in item["cases"]) for item in document["behaviorMap"])
+        if written and document["behaviorMap"] and not args.check:  # approval starts TDD on its written cases
+            return _run_tdd(["--repo", str(identity.root), "--slug", slug, "--workflow-id", workflow_id],
+                            emit=lambda receipt, given=None: _emit_json({**receipt, **edits}, given)) & 2
+        emit(_receipt(state, identity, evidenceId=evidence_id, status="passed", obligations=not written, **edits))
         return 0
     if args.kind == "tdd-map":
         from .tdd_workflow import map_update
@@ -412,36 +417,46 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
     elif verdict is None:
         raise ValueError("record advisor-result requires --input or --verdict unavailable --reason")
     expected = args.expected_candidate_tree
-    if args.stage != "preflight" and expected not in (None, candidate):  # a preflight verdict judges its draft
-        raise WorkflowError("active candidate changed after the advisor checkpoint")
     execution = None
     if args.stage == "final" and intake is not None:
-        from .tdd_workflow import _execution_cache, execute_verdict
+        from .tdd_workflow import _retained, apply_repair, execute_verdict
         intake["tddEvidence"] = args.tdd_evidence or None
-        _execution_cache(identity, state)
-        execution = execute_verdict(identity, state, intake, candidate)
-        if execution["failures"]:  # back to the advisor that wrote it; its runs stay, so the corrected verdict reuses them
-            commit_runs(identity, slug, workflow_id, execution)
-            raise WorkflowError("the verdict fails the workflow's checks:\n" + "\n".join(execution["failures"]))
-        intake["findings"] = execution["findings"]
-        intake.pop("causes", None), intake.pop("repair", None)  # each cause is now its recorded finding
+        if expected in (None, candidate) and intake["tddEvidence"] == state.get("tddEvidence"):
+            execution = execute_verdict(identity, state, intake, candidate)
+            intake["findings"] = execution["findings"]
+            target = state.get("repairTree")
+            repair = next((finding for _, finding in _retained(identity, state) if finding["stage"] == "final" and finding["sourceTree"] == candidate
+                           and finding["execution"].get("tree") == target and "change" in finding), None) if target else None
+            execution["repairTree"] = target if repair else None
     # The lead's draft; an approving answer's `draft` changes it, whose added items stay until explicitly rejected.
     submitted = preflight_document(args.preflight_file) if args.preflight_file else None
     changes = intake.pop("draft", None) if intake else None
     draft = finalised_draft(submitted, changes) if submitted and changes is not None else submitted
     if draft:  # the submitted file itself can first be declared with this answer
-        from .tdd_workflow import unstartable
+        from .tdd_workflow import _unwritten, unstartable
         unstartable(identity, draft["behaviorMap"])
+        mine = {entry["id"]: entry.get("cases", []) for entry in submitted["behaviorMap"]}
+        for entry in draft["behaviorMap"]:
+            if proposed := entry.pop("cases", None):  # the merge owns removals; filter only a declared replacement
+                prior = mine.get(entry["id"], ())
+                if written := [case for case in proposed if case in prior or not _unwritten(identity, shlex.split(case))] or prior:
+                    entry["cases"] = written
     state = record_advisor_result(
         identity, slug, workflow_id, args.stage, args.source, verdict, reason=args.reason,
         design=design_declaration(args.design_declaration) if args.design_declaration else None,
         intake=intake, expected_candidate_tree=expected or candidate, execution=execution,
         preflight_draft=draft, submitted_draft=submitted if changes is not None else None)
-    emit(_receipt(state, identity, obligations=False))
+    recorded = state.get("finalReviewContextMismatchEvidence") or (state.get("advisorPreflight" if args.stage == "preflight" else "finalReview") or {}).get("intakeEvidence")
+    details = {"intake": recorded} if recorded else {}  # the answer as recorded: the wrapper's digest reads it from here
+    if args.stage == "final" and not state.get("finalReviewContextMismatchEvidence") and (reason := (state.get("finalReview") or {}).get("reason")):
+        details["repair"] = "not applied: " + reason
+    if execution and "repair" not in details and not args.check and (applied := apply_repair(identity, {**execution, "findings": [repair]}, candidate)):
+        state, details["repair"] = read_active(identity), applied
+    emit(_receipt(state, identity, obligations=False, **details))
     return 0
 
 
-def _dispatch(args: argparse.Namespace) -> int:
+def _dispatch(args: argparse.Namespace, *, evidence_file: bool = False) -> int:
     if args.command == "prune":
         _emit_json(prune(apply=args.apply))
         return 0
@@ -465,19 +480,25 @@ def _dispatch(args: argparse.Namespace) -> int:
             out["designPath"] = str(directory / "designs" / f"{args.workflow_id}.md")
         _emit_json(out)
     elif args.command == "summary":
-        print(summary(identity))
+        print(summary(identity, args.slug, args.workflow_id))
     elif args.command == "history":
         _emit_json(history(identity, args.workflow_id))
     elif args.command == "evidence":
         value = read_evidence(identity, args.evidence_id, restore_runs=lambda kind: args.full or not kind.startswith("finding-intake"))
         if value is None:
             raise WorkflowError("evidence not found")
+        if evidence_file and (args.full or value["kind"] == "case-result" and fields and "values" in fields):
+            directory = repo_state_dir(identity) / "execution-trees" / value["workflowId"] / "scratch"
+            path = secure_dir(directory) / (value["evidenceId"] + ".json")
+            atomic_write_json(path, value)
+            _emit_json({"evidenceId": value["evidenceId"], "path": str(path), "bytes": path.stat().st_size})
+            return 0
         document = value.pop("document")
         if not args.full:
             if value["kind"].startswith("finding-intake"):
                 document.pop("runs", None)
             value.update(bytes=len(_canonical(document).encode()), fields=sorted(document))
-            views = {key: behavior_map.compact(field) for key, field in document.items()}
+            views = behavior_map.compact(document)
             document = {key: view for key, view in views.items() if (key in fields if fields else view != document[key] or key == "findings")}
         _emit_json({**value, **({"document": document} if document or args.full else {})})
     elif args.command == "set-phase":
@@ -503,8 +524,9 @@ def _dispatch(args: argparse.Namespace) -> int:
             for line in refresh_context(identity):
                 print(line, file=sys.stderr)
             if args.phase != "preflight-advice":
-                with redirect_stdout(sys.stderr):
-                    _verify(parser().parse_args(["verify", "--repo", str(identity.root)]), identity, review=True)
+                with redirect_stdout(held := io.StringIO()):  # a verification that holds is the lead's receipt, with the lead's step: its reader here is told only one that fails
+                    failed = _verify(parser().parse_args(["verify", "--repo", str(identity.root)]), identity, review=True)
+                print(held.getvalue() if failed else "", file=sys.stderr, end="")
         result = checkpoint(identity, args.phase, reconsult=args.reconsult, channel_dir=args.channel_dir, preflight_draft=draft)
         marker = args.phase == "code-review" and (reader := os.environ.get("CODEX_THREAD_ID")) and secure_dir(Path(result["scratchPath"]).parent) / ("given-rule-" + hashlib.sha256(reader.encode()).hexdigest())
         _emit_json(result, (str(marker), "", "") if marker else None)
@@ -519,7 +541,7 @@ def _dispatch(args: argparse.Namespace) -> int:
     return 0
 
 
-def main(argv: list[str] | None = None, *, replace: bool = True) -> int:
+def main(argv: list[str] | None = None, *, replace: bool = True, evidence_file: bool = False) -> int:
     """Run one workflow command; with `replace` false an operation that would replace this process runs as its child."""
     values = list(sys.argv[1:] if argv is None else argv)
     try:
@@ -561,7 +583,7 @@ def main(argv: list[str] | None = None, *, replace: bool = True) -> int:
                 action.choices for action in commands._actions if isinstance(action, argparse._SubParsersAction)):
             raise WorkflowError(f"no workflow command {values[0]!r}; args [] run the pass's next step")
         with _comparison_scope():
-            return _dispatch(commands.parse_args(values))
+            return _dispatch(commands.parse_args(values), evidence_file=evidence_file)
     except (RepoIdentityError, LedgerError, WorkflowError, ValueError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

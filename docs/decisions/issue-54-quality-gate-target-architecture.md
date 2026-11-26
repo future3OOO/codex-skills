@@ -47,7 +47,7 @@ owner, Interface, behavior, and deletion contract remain intact.
 | `runner.py` | The stable call Interface, fixed evaluation order, rule-policy projection, and result serialization | Git/filesystem reads, classification, diff parsing, detector algorithms, workflow state |
 | `context.py` | One immutable evaluation containing captured base/candidate evidence, stored classification, hunks, growth, capture gaps, and external evidence | Rule severity, display strings, persistence |
 | `git_scope.py` | Resolve the base it is given and capture one coherent base-to-candidate comparison | Choosing workflow/PR policy, path roles, findings, ownership inference |
-| `path_policy.py` | The quality gate's sole path/role/language classifier and the standalone test-like compatibility predicate consumed by workflow state | Snapshot, findings, or workflow imports |
+| `path_policy.py` | The quality gate's sole path/role/language classifier, whose test predicate workflow state consumes | Snapshot, findings, or workflow imports |
 | `inputs.py` | Decode and structurally validate captured evidence and the versioned disposition data Interface selected by #77 | Trust, semantic authority, finding state, severity |
 | `checks.py` | Existing immediate safety blockers and cumulative production/test/test-support growth | Duplicate or responsibility analysis, independent role/diff walks |
 | `redundancy.py` | One deep Module containing independently driveable exact-duplication and owner-competition paths plus disposition/resolution; neither rule family gates the other | Classification, Git/filesystem reads, live advisor/GitNexus calls, persistence |
@@ -95,8 +95,9 @@ it does not reinterpret an existing rule ID.
 
 Schema v2 adds the binding collections `evaluation`, `findings`, and
 `resolvedFindings`. It removes the unconsumed `bloat` and `reuseFindings`
-projections. It retains `checks`, `hardRules`, `errors`, `warnings`, and
-`gitnexusQueries` as projections from the one typed report.
+projections. It retains `checks`, `hardRules`, `errors`, and `warnings` as
+projections from the one typed report. The parent decision of 2026-11-26 in `decisions.md` removed the
+`gitnexusQueries` projection, which nothing reads, without a schema version change.
 
 ### 3. Versioned disposition-evidence Interface
 
@@ -197,7 +198,6 @@ role: production | test | test-support | docs | generated | vendored | unknown
 language: python | javascript | go | rust | shell | php | ruby | other
 humanAuthored: bool
 source: bool
-testLikeCompat: bool
 exclusionReason: string | null
 ```
 
@@ -205,18 +205,12 @@ The role and language are stored once. Checks, redundancy analysis, symbol
 extraction, runner counts, and result projection never call `path_policy`
 again.
 
-`is_test_like_path(path)` remains standalone-loadable at
-`skills/production-code/scripts/_quality_gate/path_policy.py` and returns the
-result of `classify_path(path).testLikeCompat`; it is not inferred from role
-alone and does not require an evaluation snapshot. The
-pre-#75 truth must remain identical, including generated paths and
-`*.schema.json` being test-like. A full-history characterization over every
-repository path proves zero differences between the old and new predicates.
-
-The real compatibility dependency is:
+`is_test_path(path)` remains standalone-loadable at
+`skills/production-code/scripts/_quality_gate/path_policy.py` and needs no
+evaluation snapshot. The workflow dependency is:
 
 ```text
-workflow_state → state_store → path_policy.is_test_like_path
+workflow_state → state_store → path_policy.is_test_path
 ```
 
 `state_store` retains its own reviewable, governance, code, and documentation
@@ -267,7 +261,7 @@ that rule's completion projection automatically.
 ```text
 caller selects base
 → capture one base and candidate
-→ classify each path once, including language and compatibility truth
+→ classify each path once, including language
 → decode and structurally validate captured evidence
 → freeze the immutable evaluation
 → immediate safety checks
@@ -436,7 +430,6 @@ to rerun it on a later evaluation.
 | resolved owner evidence | `resolvedFindings` only; never an active warning |
 | cumulative metrics | `evaluation.growth`; no legacy `bloat` object |
 | owner/reuse evidence | structured findings; no legacy `reuseFindings` object |
-| graph follow-up query | retained `gitnexusQueries` projection until its documented consumer migrates |
 
 `hardRules` is computed from blocker policy only. A QG54 warning cannot flip a
 hard rule to failed through a compatibility key.
@@ -537,8 +530,6 @@ result parsing.
 Required public proof includes:
 
 - all base/candidate modes and schema-v2 serialization;
-- full-history `is_test_like_path` equivalence, including generated paths and
-  `*.schema.json`;
 - real PostToolUse warning visibility with exit zero;
 - separate hunks, Python indentation, strings containing comment markers,
   one-token differences, rename/move identity, and retained-baseline deletion;
@@ -643,7 +634,7 @@ binding owners converge:
 
 | Slice | Convergence target |
 |---|---|
-| #75 | canonical evaluation, stored role/language/compatibility truth, rule/result foundation, cumulative growth, authoritative-base provenance, and visible non-blocking hook output; delete superseded context/diff/bloat paths |
+| #75 | canonical evaluation, stored role/language truth, rule/result foundation, cumulative growth, authoritative-base provenance, and visible non-blocking hook output; delete superseded context/diff/bloat paths |
 | #76 | deepen the one redundancy owner with calibrated exact symbol/block/baseline evidence; delete old duplicate paths |
 | #77 | deepen the same owner with duplicate-independent responsibility discovery, trusted disposition evidence, lifecycle and owner-corpus replay; delete lexical reuse paths |
 | Parent #54 | review named calibration results and decide any later rule-specific promotion |

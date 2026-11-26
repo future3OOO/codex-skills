@@ -10,13 +10,12 @@ Use this skill before making tracked edits on preflight-required code turns.
 The [repository workflow](../repo-production-workflow/SKILL.md) owns checkout
 alignment, phase order, advisor consultation and recording. Reuse the active pass
 and governing artifact; stay within its owner slice and verification scope.
-Use [diagnose](../diagnose/SKILL.md) for bugs before choosing a correction.
 
 Apply [Production Code's Lowest-Cost Implementation Decision](../production-code/SKILL.md#lowest-cost-implementation-decision):
 name the affected Interface, existing Module and reuse path, adjacent consumers,
 no-change surfaces and real test surface for the design judgment. Invoke
-[codebase-design](../codebase-design/SKILL.md) for a new Module or public Seam,
-or a changed public Interface. Deepen the existing owner; a new Module must earn
+[codebase-design](../codebase-design/SKILL.md) before drafting when the decision is where work or data
+belongs, including inside an existing Module whose public Interface stays unchanged. Deepen the existing owner; a new Module must earn
 its Interface. Absorb touched shallow helpers or name a concrete blocker.
 
 For transaction-sensitive work apply the [transaction doctrine](../production-code/references/transaction-doctrine.md).
@@ -83,7 +82,7 @@ removes. New terms use the existing owner's result; use request-grounded propert
 only when no owner exists. A round-trip must also establish the requested effect.
 The advisor's deciding work and runtime assertions supplement functional proof.
 
-Describe concrete inputs and outcomes. Name each item's test, existing or to be written; recording preflight runs nothing.
+For a cost, name every site contributing to its count, the real mix of construction and reuse, and the maximum work that should remain. One single-tree case may measure several sites. Describe concrete inputs and outcomes. Name each item's test, existing or to be written; recording preflight runs nothing.
 
 Remove every element whose deletion preserves required behavior and distinct necessary proof without increasing whole-system cost. Use real collaborators and observe results and state effects.
 

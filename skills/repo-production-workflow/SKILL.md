@@ -51,8 +51,7 @@ Derive verification from the user's intended production behavior using
 [Production Code's outcome verification](../production-code/SKILL.md#lowest-cost-implementation-decision).
 The lead owns correctness and performance for every task, through implementation
 and repair; the independent reviewer challenges it. Use the packet to trace affected paths, state skipped and
-preserved surfaces, and establish review-budget fit. Apply `diagnose` to bugs,
-regressions and performance failures before choosing a correction.
+preserved surfaces, and establish review-budget fit.
 
 ### 3. Packet-scoped GitNexus
 
@@ -61,17 +60,17 @@ AGENTS.md's GitNexus checks on what the packet's rows leave unanswered.
 
 ### 4. Draft and advisor review
 
-Invoke `production-preflight` and draft its two-field artifact before consulting.
+Apply `code-quality` when choosing the first design and `production-preflight` to draft its two fields.
 Its map states required outcomes, concrete inputs and any competing readings. Invoke
-`codebase-design` when changing a Module, public Interface or Seam. The draft owns
+`codebase-design` before drafting when the decision is where work or data belongs, including inside an existing Module with an unchanged public Interface. The draft owns
 the contract and planned attacks.
 
 Submit the exact draft as the next step's `--preflight-file`; after `--`, pass only user
 instructions given after `begin`, each line verbatim after `> `.
-The advisor investigates. The lead checks deletion claims against every original
+Before drafting, trace the measured work through every place the operation repeats it. The first implementation must meet the approved remaining count on that whole operation. The advisor independently investigates the same operation, finds further savings, and challenges the design and its evidence. The lead checks deletion claims against every original
 outcome controlled by the affected logic and corrects false premises. The advisor
 then finalises and approves the draft in the same session; that consult records it.
-Implement binding outcomes with the lowest-cost justified design. Disprove a proposal's benefit, demonstrate its preservation failure, or improve its design; rejecting its mechanism does not waive addressing the cost.
+Demonstrated avoidable work in the requested production path is a release blocker. Before code review, implement and verify the cheapest correct removal of each measured cost, the advisor's design or a cheaper one, or prove with evidence specific to that cost that keeping it is required or cheaper in real use; declining its mechanism, a scope assertion, a passing behavior test or the size of the change leaves its item open.
 
 ### 5. One recorded preflight
 
@@ -88,8 +87,8 @@ Invoke `production-code` for its standards and baseline gate. Reuse the existing
 
 ### 8. Implement and compare
 
-Continue TDD's [required probe loop](../tdd/SKILL.md#required-probe-loop): implement binding outcomes with the lowest-cost justified design against the recorded baseline, reconcile the actual diff, and compare the same
-case commands on the candidate. Add commands for uncovered outcomes; reuse unchanged proof.
+Continue TDD's [required probe loop](../tdd/SKILL.md#required-probe-loop): implement binding outcomes with the lowest-cost justified design against the recorded baseline, reconcile the actual diff with the required outcomes before verification, and compare the same
+case commands on the candidate. Add any missing input to the existing shared case and run focused tests with the repository's working invocation; reuse unchanged proof.
 
 The lead resolves named-case obligations against the original and request, then verifies and obtains the existing independent review. After final review starts, targeted repair returns to that final advisor.
 
@@ -102,9 +101,9 @@ candidate. Follow the receipt for stale comparisons, failed checks and continuat
 
 ### 10. Delegate code review
 
-Do not spawn or task the reviewer until the lead has completed the investigation,
-repair, real outcome assessment and verification in steps 2–9. Missing lead proof
-is work for the lead before initial or return review.
+When verification passes and its receipt says `code-review`, delegate immediately: the
+host runs no other call first. Afterwards reopen work only for a specific uncovered
+outcome or an invalidated result, reusing current test and performance evidence.
 
 Before final advisor review, obtain independent `code-review` of the original
 objective and current candidate. Lead self-cleanup and later GitHub review do not replace this
@@ -125,8 +124,10 @@ context is unavailable or scope/architecture makes it unusable, naming the reaso
 Required behavior stays fixed. The runtime owns acceptance and rechecks retained findings after
 repair, including reopening when waste returns. For a missing request promise,
 reconcile the requirement and extend affected coverage before implementing it.
-Every map item is closed before review. Verification and return review can run
-with open reviewer findings; those block completion.
+After an incomplete verdict, finish the code fixes and proof corrections together.
+Use TDD as needed during repair. Verification rechecks executable findings. While
+any still fail, the lead keeps working. Return the verified batch once to the same
+reviewer, who settles any outstanding decisions. Every map item closes before review.
 
 ### 11. Final Codex Advisor review
 
@@ -135,7 +136,7 @@ and the delegate's findings. Reference the applicable observations and unresolve
 acceptance gaps; load only missing evidence, not the verification history.
 
 The final Codex Advisor investigates in the lead checkout using the recorded project executable and original source; its
-answer is one verdict with one repair for all its causes, which the wrapper records and the workflow executes. After the first final verdict, a correction
+causes are recorded through the workflow while it consults, which runs each cause's test and repair, returns the results and records a cause only when it holds; recording its verdict applies the tested repair while the checkout still is the reviewed tree. After the first final consult, a correction
 needs the affected `tdd` rerun, verification for the new tree, and the final advisor's re-check. Reuse independent review and applicable evidence. Retained findings run only at `verify` or `complete`; intermediate review calls skip them. Once every
 final finding is settled (`nextAction` `complete-workflow`), a requested
 reassessment of the unchanged candidate runs the same `final-review` phase and records

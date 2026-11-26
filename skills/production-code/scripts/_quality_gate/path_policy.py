@@ -36,16 +36,8 @@ GENERATED_MARKERS = ("/generated/",)
 SUPPORT_MARKERS = ("/__fixtures__/", "/__mocks__/", "/__snapshots__/", "/fixture/", "/fixtures/", "/snapshots/")
 
 
-_LEGACY_TEST_MARKERS = SUPPORT_MARKERS + GENERATED_MARKERS + ("/__tests__/", "/test/", "/tests/")
-
-# One resolved classification, computed once and stored on the snapshot. A
-# namedtuple, not a dataclass: workflow state loads this file standalone via
-# spec_from_file_location without registering it in sys.modules, and dataclass
-# creation resolves annotations through sys.modules on Python 3.12.
-PathClass = namedtuple(
-    "PathClass",
-    ["role", "language", "human_authored", "source", "test_like_compat", "exclusion_reason"],
-)
+# Standalone workflow loading does not register this module for dataclass annotation resolution.
+PathClass = namedtuple("PathClass", "role language human_authored source exclusion_reason")
 
 
 def normalize_path(value: str) -> str:
@@ -71,17 +63,11 @@ def is_excluded_path(path: str) -> bool:
 
 
 def is_test_like_path(path: str) -> bool:
-    lowered = f"/{normalize_path(path).lower()}"
-    if any(marker in lowered for marker in _LEGACY_TEST_MARKERS):
-        return True
-    name = Path(path).name.lower()
-    # pytest discovers test_*.py and *_test.py with no tests/ directory in the
-    # path, and reads conftest.py wherever it sits, so name alone decides those;
-    # .test./.spec. cover the JS convention.
-    if re.fullmatch(r"(?:test_.+|.+_test|conftest)\.py", name):
-        return True
-    return bool(re.search(r"\.(?:test|spec)\.", name)) or name.endswith(".schema.json")
-
+    """Paths excluded as both definitions and references by the unreferenced-code check."""
+    lowered, name = "/" + normalize_path(path).lower(), Path(path).name.lower()
+    return (any(marker in lowered for marker in SUPPORT_MARKERS + GENERATED_MARKERS + ("/__tests__/", "/test/", "/tests/"))
+            or bool(re.fullmatch(r"(?:test_.+|.+_test|conftest)\.py", name) or re.search(r"\.(?:test|spec)\.", name))
+            or name.endswith(".schema.json"))
 
 
 def is_test_path(path: str) -> bool:
@@ -102,36 +88,31 @@ def is_source_path(path: str) -> bool:
 
 
 def classify_path(path: str) -> PathClass:
-    """The single classification every quality-gate consumer reads.
-
-    The filename rule governs test capture and quality roles; the legacy hint
-    keeps its existing meaning.
-    """
+    """The single classification stored on the quality-gate snapshot."""
     test_like = is_test_path(path)
-    compat = is_test_like_path(path)
     lowered = f"/{normalize_path(path).lower()}"
     if is_source_path(path):
         # The stored language enum reserves real parser names for source
         # entries; every non-source classification is "other".
         language = language_for_path(path)
         if any(marker in lowered for marker in GENERATED_MARKERS):
-            return PathClass(ROLE_GENERATED, language, False, True, compat, "generated path")
+            return PathClass(ROLE_GENERATED, language, False, True, "generated path")
         if not test_like:
-            return PathClass(ROLE_PRODUCTION, language, True, True, compat, None)
+            return PathClass(ROLE_PRODUCTION, language, True, True, None)
         support = any(marker in lowered for marker in SUPPORT_MARKERS)
-        return PathClass(ROLE_TEST_SUPPORT if support else ROLE_TEST, language, True, True, compat, None)
+        return PathClass(ROLE_TEST_SUPPORT if support else ROLE_TEST, language, True, True, None)
     if not path:
-        return PathClass(ROLE_UNKNOWN, "other", False, False, compat, "empty path")
+        return PathClass(ROLE_UNKNOWN, "other", False, False, "empty path")
     if is_excluded_path(path):
         parts = {part for part in lowered.split("/") if part}
         role = ROLE_VENDORED if parts & VENDORED_DIRS else ROLE_UNKNOWN
-        return PathClass(role, "other", False, False, compat, "excluded directory")
+        return PathClass(role, "other", False, False, "excluded directory")
     if is_binary_path(path):
-        return PathClass(ROLE_UNKNOWN, "other", False, False, compat, "binary extension")
+        return PathClass(ROLE_UNKNOWN, "other", False, False, "binary extension")
     if is_dependency_manifest(path):
-        return PathClass(ROLE_PRODUCTION, "other", True, False, compat, None)
+        return PathClass(ROLE_PRODUCTION, "other", True, False, None)
     role = ROLE_DOCS if Path(path).suffix.lower() in DOC_EXTENSIONS else ROLE_UNKNOWN
-    return PathClass(role, "other", False, False, compat, "non-source extension")
+    return PathClass(role, "other", False, False, "non-source extension")
 
 
 def is_dependency_manifest(path: str) -> bool:

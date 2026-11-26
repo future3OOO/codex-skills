@@ -80,7 +80,7 @@ def advisor_envelope(
         raise ValueError(f"cannot read advisor envelope JSON: {exc}") from exc
     # a reviewer's verdict file carries no verdict, its command does; the recorder binds workflow, tree and evidence, an echoed id is ignored
     fields = {"schemaVersion", "findings", *(("verdict",) if stage != "review" else ())}
-    extra = {"draft"} if stage == "preflight" else {"causes", "repair", *(("workflowId", "candidateTree", "tddEvidence") if stage == "final" else ())}
+    extra = {"draft"} if stage == "preflight" else {"workflowId", "candidateTree", "tddEvidence"} if stage == "final" else {"causes", "repair"}  # the final advisor records its causes while it consults
     if not isinstance(value, dict) or not fields <= set(value) <= fields | extra:
         raise ValueError("advisor envelope fields do not match its stage: " + ", ".join(sorted(fields)))
     findings, verdict = value.get("findings"), value.get("verdict")
@@ -94,29 +94,29 @@ def advisor_envelope(
     for position, item in enumerate(findings, 1):
         if not isinstance(item, dict) or not {"id", "claim"} <= set(item):
             raise ValueError(f"advisor finding {position} requires id and claim")
-        item = {"material": False, **item}
-        identifier, kind = item.get("id"), item.get("kind")
+        identifier, kind = item["id"], item.get("kind")
         if not _text(identifier) or identifier in identifiers:
             raise ValueError("advisor finding ids must be non-empty and unique")
-        if not _text(item.get("claim")) or not isinstance(item.get("material"), bool):
+        if not _text(item["claim"]) or not isinstance(item.get("material", False), bool):
             raise ValueError(f"advisor finding {identifier} requires claim and material boolean")
-        if not isinstance(kind, str) or kind not in {"behavioral", "nonbehavioral"}:
+        if kind not in ("behavioral", "nonbehavioral"):
             kind = "behavioral"
-        identifiers.add(str(identifier))
+        identifiers.add(identifier)
         if stage != "preflight" and any(key in item and not _text(item[key]) for key in ("decides", "quote", "decision")):
             raise ValueError(f"advisor finding {identifier}: decides, quote and decision are text when given")
-        prior = item.get("priorFinding")
-        if prior is not None and (not isinstance(prior, dict) or set(prior) != {"evidenceId", "id"}
-                                  or not all(_text(v) for v in prior.values())):
+        prior, withdrawn = item.get("priorFinding"), stage == "review" and item.get("rejected") is True  # its author's withdrawal
+        if (prior is not None or withdrawn) and (not isinstance(prior, dict) or set(prior) != {"evidenceId", "id"}
+                                                 or not all(map(_text, prior.values()))):
             raise ValueError("priorFinding requires evidenceId and id")
         # a verdict's finding binds through its cause, or stays open with the user's decision; a preflight finding says itself
         finding = {"id": identifier, "claim": item["claim"], "material": _text(item.get("decision")) if stage != "preflight" else item.get("material") is True,
                    "kind": kind, **({"priorFinding": prior} if prior is not None else {}),
+                   **({"rejected": True} if withdrawn else {}),
                    **{key: item[key] for key in ("decides", "quote", "decision") if stage != "preflight" and key in item}}
         typed.append(finding)
     if verdict in {"approved", "changes-required"} and ((verdict == "approved") == any(item["material"] for item in typed)):
         raise ValueError("advisor envelope verdict is incompatible with finding materiality")
-    causes, repair = value.get("causes", []), value.get("repair")
+    causes, repair = value.get("causes", []), value.get("repair") or None  # a blank repair names none
     if not isinstance(causes, list) or not all(isinstance(cause, dict) and _text(cause.get("id")) and _text(cause.get("test"))
                                                and isinstance(cause.get("findings"), list) and all(_text(name) for name in cause["findings"])
                                                and isinstance(cause.get("retires", []), list) and all(_text(value) or isinstance(value, list) and all(map(_text, value))
@@ -149,7 +149,7 @@ DESIGN_FILE_SHAPE = (
     '{"schemaVersion":1,"status":"present","sha256":"<64 hex>"} or '
     '{"schemaVersion":1,"status":"absent","reason":"..."}'
 )
-ITEM_SHAPE = ('{"id":"BM_X","kind":"conformance|contract|preservation","basis":"request words or preservation, deciding each input",'
+ITEM_SHAPE = ('{"id":"BM_X","measured":true,"remaining":0,"kind":"conformance|contract|preservation","basis":"request words or preservation, deciding each input",'
               '"behavior":"the property","seam":"...","expected":"...",'
               '"boundaryInputs":["the bounds, and what a cut leaves out"],"cases":["COMMAND"],'
               '"interpretations":["reading a","reading b"],"interpretation":"...","authority":"..."}')
@@ -157,36 +157,45 @@ ITEM_SHAPE = ('{"id":"BM_X","kind":"conformance|contract|preservation","basis":"
 # advisor in its consult prompt, the reviewer in its checkpoint.
 CASE_RULE = ("Before coding, state the property, bounds and what decides each input: the request's words, the original's result on the pass-start tree, "
              "a fresh direct run or a relation between two runs; never the changed code's output. Per kind, one COMMAND: a plain loop in one script, "
-             "no testing library, through the narrowest production interface owning the property. Run all inputs smallest first; only if too many to list, "
+             "no testing library. A direct test through the production interface that controls a result, with real collaborators and representative inputs, proves "
+             "that result; use the public entry point only for a promise about what that entry point itself does, such as whether a command blocks or succeeds. "
+             "Reuse one shared test for inputs governed by the same behavior. To request more proof, identify the specific outcome that test could miss or the cost "
+             "tradeoff that could change the design. Set measured=false for functional items and omit remaining. For a measured cost set measured=true and remaining to the maximum justified "
+             "count after removal (zero for avoidable work). Bind each cost family the operation pays as one item, its workloads as inputs: "
+             "trace it to every call site and data collection; count each site or one nonnegative total over them all, "
+             "including replacement work and work inside collaborators (queries, rows, pattern matches, file reads). "
+             "Use the caller's actual workload and reuse frequency. For a new Python cost case declare WORKFLOW_CASE=1 python3 FILE.py. "
+             "Write a single measure() function returning (kept results by input, counts by item id). The workflow calls it on each tree, captures its values and compares them. Existing stdout cases can still print WORKFLOW_RESULT and WORKFLOW_METRICS. "
+             "Submit cases through tdd; for a diagnostic test outside it capture stdout and stderr to a file and display at most one short line. "
+             "Repeat a timing or compare another design only when the result could "
+             "change what ships. Run all inputs smallest first; only if too many to list, "
              "run required inputs plus a seeded random sample. Print how many ran and the smallest failing input found. A reported input in the family "
              "joins its item's loop, extending bounds if needed. One property failure, one change at its source, never code per input. One input keeps one case.")
 ADVISOR_SHAPES = {
     "preflight": '{"schemaVersion":1,"findings":[{"id":"SPEC-1","claim":"...","material":true}],"verdict":"approved|changes-required"}',
     "final": ('{"schemaVersion":1,"verdict":"commit-ready|fix-before-commit|context-mismatch","findings":[{"id":"F1","claim":"...",'
-              '"decides":"what decides its input","quote":"request words it relies on","decision":"evidence and the exact user decision needed"}],'
-              '"causes":[{"id":"C1","findings":["F1"],"cause":"where it starts, what else it breaks","rule":"what the case rule asks of its test",'
-              '"test":"COMMAND","lines":{"added":0,"removed":0},"functions":{"name":"why the owner could not hold it"},"retires":[["ITEM","COMMAND"]]}],'
-              '"repair":"/scratch/repair.diff"}'),
+              '"decision":"only when it blocks with no cause to record: the evidence and exactly what settles it"}]}'),
+    # the reviewer's verdict file: its command carries the verdict
+    "review": ('{"schemaVersion":1,"findings":[{"id":"F1","claim":"...",'
+               '"decides":"what decides its input","quote":"request words it relies on","decision":"evidence and the exact user decision needed"}],'
+               '"causes":[{"id":"C1","findings":["F1"],"cause":"where it starts, what else it breaks","rule":"what the case rule asks of its test",'
+               '"test":"COMMAND","lines":{"added":0,"removed":0},"functions":{"name":"why the owner could not hold it"},"retires":[["ITEM","COMMAND"]]}],'
+               '"repair":"/scratch/repair.diff"}'),
 }
 RECORD_SHAPES = {
     "preflight": f'{{"authoritativeContract":"text","behaviorMap":[{ITEM_SHAPE}]}}',
-    "advisor-result": "; ".join(f"{stage}: {shape}" for stage, shape in ADVISOR_SHAPES.items()),
+    "advisor-result": "; ".join(f"{stage}: {ADVISOR_SHAPES[stage]}" for stage in ("preflight", "final")),
     "tdd-map": f'{{"items":[{ITEM_SHAPE}]}} or {{"removed":["BM_X"]}}; a recorded item needs only id and changed fields, null removes an optional one; retained proof survives removal',
 }
 
 
 def validate_design_declaration(value: object) -> JsonObject:
-    """The design is a falsifiable hypothesis under attack, not a label registry.
-
-    A declaration recorded before the catalogue was retired still loads: its
-    extra ``catalogue`` field is dropped rather than refused, because prior
-    evidence is append-only history, never a schema hostage.
-    """
+    """The design is a falsifiable hypothesis under attack, not a label registry."""
     if not isinstance(value, dict) or value.get("schemaVersion") != 1:
         raise ValueError("governed design declaration requires schemaVersion 1")
     status = value.get("status")
     if status == "present":
-        if not set(value) <= {"schemaVersion", "status", "sha256", "catalogue"}:
+        if not set(value) <= {"schemaVersion", "status", "sha256"}:
             raise ValueError("present governed design declaration has unknown or missing fields")
         digest = value.get("sha256")
         if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):

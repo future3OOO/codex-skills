@@ -17,8 +17,8 @@ Invoke `$repo-production-workflow` first, only when production changes are requi
 phase order, evidence, independent review, advisor checks, and delivery. Do not
 jump from Repo Context Forge straight to edits.
 
-`$production-code` owns the comparison procedure. Use `$diagnose` for bugs,
-failures, flaky behavior, and performance regressions.
+`$production-code` owns the comparison procedure. Use `$diagnose` when an
+observed failure needs causal investigation.
 
 Docs-only work creates no workflow or slug. Verify checkout/branch, inspect files
 directly, edit minimally, clean up, run diff checks, and after any required review,
@@ -34,7 +34,7 @@ handoff.
   consolidate oversized scope before coding.
 - Execute against the governing artifact: requirements, constraints and preserved behavior bind; proposed mechanisms remain revisable unless explicitly required. Approval does not change authority. Keep its checklist current; do not re-invoke `$execution-planning` for an execution-only pass.
 - `$production-preflight` owns Module shape, reuse-before-new, and shallow-helper
-  debt; `$codebase-design` owns Module/Interface/Seam vocabulary.
+  debt; `$codebase-design` owns where work and data belong: Module, Interface and Seam.
 
 Once the task's PR has merged, `git worktree remove` its worktree and remove its
 Repo Context Forge analysis copy. For codex-skills installation, follow
@@ -55,14 +55,14 @@ Repo Context Forge analysis copy. For codex-skills installation, follow
 
 ## Minimal Whole-System Cost
 
-- Performance is a requirement: the objective is the minimal whole-system cost for the required behavior. Ask what the change costs the person using it: they demand bare-metal performance with no regressions. A measured or obvious cost in code the change touches or its operation runs through, including behavior intersecting it, is part of the change: optimize and remove it in this pass. Skip one only when measured to cost more than it saves.
+- Performance is a requirement: the objective is the minimal whole-system cost for the required behavior. Ask what the change costs the person using it: they demand bare-metal performance with no regressions. A measured or obvious cost in code the change touches or its operation runs through, including behavior intersecting it, is part of the change. Include every optimization whose measured cost is less than what it saves, in lines, in work on every operation it touches and in stored data. A cost stays only with a measurement showing its cheapest removal costs more.
 - Assume your first implementation is bloated. Find the best justified whole-system design for the objective, including production code,
   tests, scripts, documentation, maintenance and execution; keep only what it needs while preserving required behavior and proof. Retain real
   attack probes; cut redundant scaffolding and mocked unit-test bloat from this change.
 - Every change must remove unnecessary workflow ceremony. Reviewer-requested
   follow-up commits must reduce net lines of code unless a demonstrated lower whole-system cost at the same required behavior justifies necessary growth.
 - Preserve required behavior and proof. Every changed line must serve the request; lowering the whole-system cost of code the change touches serves it.
-- Patch size and verification effort alone do not justify leaving demonstrated avoidable cost.
+- Patch size, verification effort and the kind of change (a cache, a stored field, a schema version, a wider edit) are not measurements.
 
 ## Root-Cause Changes
 
@@ -102,7 +102,7 @@ reviewer/check event and repeat the reviewer re-query below before merging.
 
 Use FFF first for raw discovery; honor packet scope. Follow `$repo-context-forge` for repo selection.
 
-The packet's rows give the callers, callees and upstream impact of the symbols they list. Query only what no row answers: downstream impact of a symbol you
+The packet's rows give the callers, callees and upstream impact of the symbols they list. Query only a relationship no row answers and a decision depends on, in the current candidate's graph: downstream impact of a symbol you
 delete, move, deepen, consolidate or hide behavior in; shared-state writers and their risk; and the tested owner
 of an internal Seam a new file consumes. Use the packet's exact call forms; never list, search or print tool
 definitions. One relationship: a scoped `cypher` query. Never print raw graph output whole.

@@ -1982,3 +1982,27 @@ Decisions:
   commands; such a command still runs, without a receipt).
 
 Delivery status: in progress on `fix/pr102-review-followup`; merge awaits explicit authorization.
+
+## 2026-11-26 — PR #180 restore: legacy readers retired
+
+User decision: keep no legacy or compatibility path. Every lead and benchmark run has its own fresh estate,
+so no pass crosses an install; a recorded run that needs old behaviour replays on the workflow tree it was
+recorded with. This retires the in-place ledger migration and the older-writer refusal (`format_guard` and
+the refusing views) from the 2026-09-23 entry; a ledger of another format is refused. It also retires the
+untyped-draft reader: an approved item without `measured: true` is unmeasured. A case that relied on a
+retired reader is rebuilt in the current format. Step-2 screening: the two 72fe5a9e benchmark runs hold
+0 failed workflow calls. Both recording roots' PR #180 arms hold 17 failed and 22 same-verb passing calls.
+Each was replayed with `run_at.py` on 72fe5a9e and on the candidate from the state it met, typed in the
+current format (`measuredItems` from the intake's additions), as the workflow tool runs it (`next` before
+step arguments). At the model boundary a `codex` first on `PATH` records the prompt and returns the
+advisor's recorded answer for each of the six passing consults (exit 7 elsewhere). After ids, paths and
+timings are normalised, all 39 replies end in the same outcome (`screen3-summary.txt`,
+`screen4-summary.txt` and `screen.py` beside the PR #180 restore cases). Consult prompts differ only by
+this change's instruction text; each recorded answer records the same verdict on both trees, and the
+approval at `93abd48` line 140 also runs the written baseline on the candidate, where 72fe5a9e hands the
+lead that `tdd` call. One passing `tdd --correct` differs only in 72fe5a9e asking for an immediate rerun;
+the next `tdd` reaches code-review on both. The passing `verify` at `2a0023d` line 488 holds TDD on both
+trees with the same measured-cost lines: it reached the quality gate only on the tree that recorded it.
+The same decision named the quality gate's `gitnexusQueries` projection (`runner.py:172-173` at 72fe5a9e) for removal:
+no reader of the gate report in this repository, Repo Context Forge, the resume kit or the benchmark project uses
+it, and none checks the report's `schemaVersion`, so it is removed within schema v2.

@@ -62,7 +62,7 @@ def lead(args: list[str]) -> int:
             print(begun.getvalue(), end="")
             raise
         return code or main(["next"], replace=False)
-    return main(args, replace=False)
+    return main(args, replace=False, evidence_file=True)
 
 
 def serve() -> None:

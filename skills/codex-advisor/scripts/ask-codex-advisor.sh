@@ -206,7 +206,6 @@ if [[ -n "$phase" ]]; then
     IFS= read -r -d '' candidate
     IFS= read -r -d '' reviewed_evidence
     IFS= read -r -d '' scratch_root
-    IFS= read -r -d '' judged_tree
   } < <(python3 - "$checkpoint_file" "$channels_prompt" "$phase" <<'PY'
 import hashlib, json, sys
 checkpoint_path, prompt_path, phase = sys.argv[1:]
@@ -235,7 +234,6 @@ values = (
     "yes" if state.get("ready") else "no", ",".join(state.get("missing") or []),
     state.get("nextAction") or "", state.get("sessionMode") or "",
     state.get("passStartOid") or "", state.get("activeCandidateTree") or "", state.get("tddEvidence") or "", state.get("scratchPath") or "",
-    state.get("judgedTree") or "",
 )
 for value in values:
     sys.stdout.write(str(value) + "\0")
@@ -252,7 +250,7 @@ PY
   # Every consult of the pass shares its scratch, kept with the pass's execution state: a later consult finds an earlier one's probes.
   mkdir -p "$scratch_root"; scratch_dir=$scratch_root
 fi
-sid_file="$state_dir/${repo_key}-${normalized_slug}${active_wid:+-$active_wid}.${provider}.sid"
+sid_file="$state_dir/${repo_key}-${normalized_slug}${phase:+-$phase}${active_wid:+-$active_wid}.${provider}.sid"  # each phase its own session
 if [[ ${#reconsult_args[@]} -gt 0 && ! -s "$sid_file" ]]; then
   printf 'error: --reconsult requires an existing advisor session; no session id is available\n' >&2
   exit 2
@@ -292,7 +290,7 @@ else
 fi
 
 provider_unset=()
-provider_env=(CODEX_ADVISOR_ACTIVE=1 ADVISOR_ACTIVE=1)
+provider_env=(CODEX_ADVISOR_ACTIVE=1 ADVISOR_ACTIVE=1 ADVISOR_PHASE="$phase")
 model="$codex_model"
 if [[ "$provider" == "claude" ]]; then
   block=$(sed -n '/^alias claudex=/,/^claude --model/p' "$HOME/.bashrc" 2>/dev/null || :)
@@ -335,16 +333,21 @@ phase_prompt=""
 case "$phase" in
   preflight-advice)
     phase_prompt='Checkpoint Interface: preflight-advice
-Compare designs at fixed required behaviour. For preservation use the original result for every decision a removed or rewritten condition controlled; verify deletion scope by bounded read-only inspection of the original deciding source. Derive necessary work and data; find their existing owners. Name the smallest owning edit that removes each material avoidable cost. Patch size, past decisions and rewrite scope are not cost evidence. Probe deciding assumptions in scratch; do not implement competing designs.
-Model calls, scans, copies, retained resources, their multipliers, real frequency and unchanged-input repetition. Attribute dominant work; reducing another term does not save it. Propose the cheaper design and bounded cases for the lead to record. Each case counts the material work inside the real operation, compares equivalent correct operations and asserts the saving against the original or an executed reference. Printed timings, growth allowances and unchanged counts prove no saving.
-In behavior and expected fields fix workload, reference, repetitions, runtime budget, tolerance and inclusive boundary; assert runtime and material memory separately. Grow all deciding inputs across at least two sizes up to production size. For new behavior use an existing owner or engine or justify a resource target, never invent an original ratio. Timing noise cannot refute work saved. Functional-only changes still require efficiency; cost evidence never replaces functional proof.
+Choose among designs that keep every result the request keeps; the rubric never licenses deleting a check or branch a kept behavior depends on. Each preservation item takes the original'\''s result on the behaviour the change touches, including every other decision a removed or rewritten condition controls. Verify deletion-scope claims with bounded read-only inspection of the original deciding source. Derive the information and work each result needs, then find where existing owners already provide it. Name the smallest owning edit that removes each material avoidable term before dismissing it. Patch size, “broader rewrite”, a stored field, a schema version and an earlier design choice are not cost evidence. Use small scratch probes only for a deciding assumption; do not build competing production implementations.
+Derive the cost model: repeated calls and scans, copies, retained resources and the inputs that multiply their work, including how often each operation runs in real use and any work it repeats on inputs that haven'\''t changed. Attribute the dominant work to its term; removing a smaller or unrelated term does not reduce the remaining dominant work. Name the cheaper design and propose the performance cases that prove it, with their bounds, for the lead to record and run; you need not author or run them yourself. The lead writes one small single-tree script per cost; related costs can share it. The workflow compares its reported results and counts on both trees, including the previous best when needed. Reuse existing evidence and the same script through repair and final review.
+Approve one item per cost family the operation pays, its workloads as inputs, with an inclusive remaining count. Trace the measured operation to every caller and data collection, including sibling loops in the same function. List the sites in the approved case. Require a count for each site a partial edit could leave behind, or one nonnegative total instrumented across all of them. Count equivalent replacement work. Use a zero ceiling for an avoidable scan. For a positive ceiling, cite what necessary work remains and measure it. A combined case may print separate item counts. Bind the workload and build/read frequency to actual callers. Compare competing designs on that mix. Check growth and storage separately when they affect the choice. Keep the functional assertions too.
 Keep an item, case or planned line only if deletion breaks required behavior, destroys distinct necessary proof or raises whole-system cost. An approved draft cannot authorize changing behavior the request keeps. Return only the checkpoint JSON; approve only when no material gap remains. Findings carry the investigation and deciding evidence.' ;;
   final-review)  # a resumed session is not sent a section it holds unchanged: only this consult's own section differs
     phase_prompt='Checkpoint Interface: final-review
-At fixed required behaviour find every regression and the cheapest correct design across the edited code and the whole requested path, existing machinery included, deriving remaining material work inside the repair and collaborators, not wrapper counts; prefer net reduction. Check surviving outcomes at original decision sites beyond the green cases and judge remaining obligations of shared logic; reuse project runners, fixtures and supported matrix. A demonstrated cheaper design that preserves required behaviour on the affected path blocks commit-ready even if the candidate beats the original. The original decides what a preservation sentence keeps; for new behaviour the existing owner or engine decides, the request only where none exists. Probe in scratch; use the original overlay.
+Read each approved cost, its ceiling, workload, current count and earned best first. Reuse those comparisons. Investigate an uncovered path, dominant original work no item covers, or a new regression once. At fixed required behaviour find every regression and the cheapest correct design across the edited code and the whole requested path, existing machinery included, deriving remaining material work inside the repair and collaborators, not wrapper counts; prefer net reduction. Check surviving outcomes at original decision sites beyond the green cases and judge remaining obligations of shared logic; reuse project runners, fixtures and supported matrix. A demonstrated cheaper design that preserves required behaviour on the affected path blocks commit-ready even if the candidate beats the original. The original decides what a preservation sentence keeps; for new behaviour the existing owner or engine decides, the request only where none exists. Use the original overlay for what the workflow'"'"'s runs do not answer.
 Before proposing code, establish which failures share a cause, where it starts and what else it breaks. Repair each cause in the design that produces it: deepen the code that already owns the behaviour (codebase-design), never rebuild beside it what it already decides, never add code per finding; growth needs a cause test it makes pass or measured less work.
-A finding names what decides its input under the case rule; one nothing independent decides is a report line, unless it needs the user'"'"'s decision: then give the evidence and the exact decision. Every other finding sits under one cause, whose test, one command under the case rule, reports each finding by id on its own input and one no finding named, failing on the reviewed tree and passing with the repair. One diff outside the checkout repairs every cause; retire a frozen case a cause disproves. The workflow runs each test and recorded case and returns a failing verdict to you. All tests together run within a minute; say what a cut bound leaves out. commit-ready only once every material obligation is settled; context-mismatch only for mismatched supplied identities.'
-    if [[ -n "$judged_tree" ]]; then
+Record each cause while you work, with the recording call below: its statement, its test and the one diff, kept outside the checkout, that repairs it; add --retire for a frozen case it disproves. The test is one command under the case rule, naming what decides each input: it fails on the reviewed tree and passes with the repair or, where the repair changes no result, passes on both and prints WORKFLOW_METRICS=<JSON object of counts of the work done>, which the workflow compares: set no threshold. The workflow runs the test on the reviewed tree and with the repair, and every recorded case with the repair, records the cause when it holds and returns every result: it owns execution and measurement, so run no comparison yourself and build none in scratch. Correct a cause from what comes back and record it again: the last diff recorded is the one applied, so it carries every repair. Tests together run within a minute; say what a cut bound leaves out. Your answer is the verdict and report lines only, never a recorded cause: a finding nothing independent decides is a report line, and one that blocks with no cause to record, a test that proves nothing or a choice only the user can make, gives in decision the evidence and exactly what settles it. commit-ready only once every material obligation is settled; context-mismatch only for mismatched supplied identities.'
+    if [[ "$provider" == codex ]]; then  # a tool call returns when the recording does; a codex shell call hands back to be polled
+      phase_prompt+=$'\n'"Recording call, which returns its result: the workflow tool's run, cwd $repo_root and args $(python3 -c 'import json, sys; print(json.dumps(sys.argv[1:]))' tdd --slug "$producer_slug" --workflow-id "$active_wid" --as final --report 'CAUSE' --case - 'TEST' --change REPAIR.diff)"
+    else
+      phase_prompt+=$'\n'"Recording call, which returns its result: $(printf '%q ' python3 "$workflow_cli" tdd --repo "$repo_root" --slug "$producer_slug" --workflow-id "$active_wid" --as final)--report 'CAUSE' --case - 'TEST' --change REPAIR.diff"
+    fi
+    if [[ "$mode" == resume ]]; then
       phase_prompt+=$'\n\n=== This consult: a return review\nJudge the open findings, the repair as applied and its effects across callers, from the diff since your tested tree and the lead\'s evidence in the ledger. Reuse current proof.'
     else
       phase_prompt+=$'\n\n=== This consult: the first final review\nJudge the whole change.'
@@ -352,11 +355,11 @@ A finding names what decides its input under the case rule; one nothing independ
 esac
 if [[ "$phase" == preflight-advice ]]; then
   if (( ${#reconsult_args[@]} == 0 )); then
-    phase_prompt+=$'\n'"Own architecture and core efficiency. Verify draft owners and reuse against source. Before design, profile the real operation on production-size inputs covering all costly paths. Report the largest measured shares; remove each material avoidable cost and measure why the rest must stay. Derive the minimum work, resolve deciding assumptions via existing owners, and return every functional and performance finding now with model, cheaper design, proposed cases and evidence."
+    phase_prompt+=$'\n'"This consult owns architecture and core efficiency. Use the draft's owner paths and reuse proposals, verify them against source, and replace costly design choices. Measure before designing: profile construction and repeated use at the frequencies established by actual callers on production-size inputs that reach each costly path in the requested operation; report the largest costs of each part by calls, and design the removal of every material one in each part, doing work that depends only on stored data once where the data is stored, not on each read; where a cost stays, give the measurement that shows it must. Derive the least required work and settle the deciding assumption through existing owners. Return every material finding, functional and performance, in this consult: the cost model, cheaper design, proposed cases and deciding evidence."
   else
-    # The session holds the first consult's block; this one carries only the second consult's instructions.
     phase_prompt="Checkpoint Interface: preflight-advice
-Use your investigation and the lead's checked corrections; raise only what the lead's corrections introduced. Ground expectations in the request, an executed original operation, or the existing owner or engine on the same input. Use request-grounded properties only when no owner exists; establish the requested effect, not just a round-trip. Required outcomes are authoritative.
+Start with your investigation and the lead's corrections. Reconcile the draft with the whole-operation profile before approval; add any material remaining work the first proposal missed. Ground expectations in the request, an executed original operation, or the existing owner or engine on the same input. Use request-grounded properties only when no owner exists; establish the requested effect, not just a round-trip. Required outcomes are authoritative.
+Before sealing a measured cost, trace it through every data collection and caller in the operation. Name the separate sites in the outcome; the script counts each or one event that covers all. Set remaining to the justified final count. Reuse literal case commands and existing workloads. New Python cases can use WORKFLOW_CASE=1 python3 FILE.py with measure() returning results and counts. The workflow performs every comparison.
 Finalise the draft with required outcomes in your answer's draft: the contract text when it changes, each item you add or change by id with only the changed fields (null removes an optional one), and the ids you remove. Add any proposed case the lead left out as you proposed it, without new probes; add each designed removal of a measured cost as an item, and state your model, chosen design and deciding evidence in your findings: the lead builds that design, performance improvements included, in its first implementation.
 Return approved: you own every remaining change, so this consultation has no changes-required verdict."
   fi
@@ -426,6 +429,10 @@ printf 'codex_advisor_session raw_slug=%q normalized_slug=%q mode=%s sid_prefix=
   "$slug" "$normalized_slug" "$mode" "${sid:0:8}" "${phase:-none}" "$model" "$provider" >&2
 
 output_file="$transport_dir/provider-output"
+answerless() {  # no answer is recorded: the pass stays where it is, and the same call resumes this final session
+  [[ "$phase" != final-review ]] || printf 'no verdict recorded: the pass is not commit-ready; mcp__workflow__run args [] resumes this advisor session\n' >&2
+  exit "$1"
+}
 ask() {  # one provider turn: $prompt_file in, $output_file out; a codex session's id is kept for the next turn
   if [[ "$provider" == "codex" ]]; then
     if [[ -n "$codex_resume_sid" ]]; then
@@ -463,11 +470,11 @@ ask() {  # one provider turn: $prompt_file in, $output_file out; a codex session
   fi
   if [[ "$status" -ne 0 ]]; then
     printf 'error: %s advisor returned status %s\n' "$provider" "$status" >&2
-    exit "$status"
+    answerless "$status"
   fi
   if [[ ! -s "$output_file" ]] || [[ -z "$(tr -d '[:space:]' <"$output_file")" ]]; then
     printf 'error: %s advisor returned empty output\n' "$provider" >&2
-    exit 2
+    answerless 2
   fi
 }
 ask
@@ -476,8 +483,8 @@ ask
 if [[ -z "$phase" ]]; then
   cat "$output_file"
 else
-  # Record the complete answer, then return a digest with the recorded continuation: material findings whole, the
-  # others within a shared budget; the whole envelope stays readable from the ledger. A recording refusal returns the whole answer.
+  # Record the answer, then return a digest with the recorded continuation: material findings whole, the others within a
+  # shared budget; the whole envelope stays readable from the ledger.
   record_stage=preflight; [[ "$phase" == final-review ]] && record_stage=final
   record() {
     python3 "$workflow_cli" record advisor-result --repo "$repo_root" --slug "$producer_slug" \
@@ -485,46 +492,38 @@ else
       --input "$output_file" --design-declaration "$design_declaration_file" \
       --expected-candidate-tree "$candidate" --tdd-evidence "$reviewed_evidence" "${draft_args[@]}" >"$transport_dir/receipt.json" 2>"$transport_dir/refusal"
   }
-  until record; do  # a refused answer goes back to the session that wrote it, until it records or is refused as before
-    if [[ "$(<"$transport_dir/refusal")" == "${refused-}" ]]; then
-      cat "$transport_dir/refusal" >&2
-      cat "$output_file"
-      exit 2
-    fi
-    refused=$(<"$transport_dir/refusal")
-    printf 'The workflow refused to record your answer:\n%s\nReturn the corrected answer in the same response form.\n' "$refused" >"$prompt_file"
+  if ! record; then  # an answer the workflow cannot read goes back to the session that wrote it, once
+    printf 'The workflow could not use your answer:\n%s\nReturn the corrected answer in the same response form.\n' "$(<"$transport_dir/refusal")" >"$prompt_file"
     ask
-  done
-  python3 "$workflow_cli" status --repo "$repo_root" --fields advisorPreflight,finalReview,finalReviewContextMismatchEvidence,findingStates,workflowId \
-    >"$transport_dir/recorded.json"
-  python3 - "$script_dir/../../.." "$record_stage" "$transport_dir/recorded.json" "$repo_root" "$transport_dir/receipt.json" "$scratch_dir" "${reconsult_args[@]}" <<'PY'
+    record || { cat "$transport_dir/refusal" >&2; answerless 2; }
+  fi
+  python3 - "$script_dir/../../.." "$record_stage" "$repo_root" "$transport_dir/receipt.json" "$scratch_dir" "${reconsult_args[@]}" <<'PY'
 import json, os, sys
 sys.path.insert(0, sys.argv[1])
 from hooks.lib.repo_identity import resolve_repo_identity
-from hooks.lib.workflow_state import evidence_document, open_findings
-state = json.load(open(sys.argv[3], encoding="utf-8"))
-receipt = json.load(open(sys.argv[5], encoding="utf-8"))
-record = state.get("advisorPreflight" if sys.argv[2] == "preflight" else "finalReview") or {}
-intake = state.get("finalReviewContextMismatchEvidence") or record.get("intakeEvidence") or "none"
-identity = resolve_repo_identity(sys.argv[4])
+from hooks.lib.workflow_state import evidence_document, open_findings, read_workflow
+identity = resolve_repo_identity(sys.argv[3])
+state = read_workflow(identity)
+receipt = json.load(open(sys.argv[4], encoding="utf-8"))
+intake = receipt.get("intake") or "none"
 envelope = evidence_document(identity, intake)
-# Each open finding as its author recorded it, whole: its claim, its diff as a file, its probe as a command and both results.
+# Each open finding as its author recorded it, whole: its claim, its probe as a command and both results.
 recorded = open_findings(identity, state, detail=True) if sys.argv[2] == "final" else []
 findings = [item for item in envelope["findings"] if item["id"] not in {row["findingId"] for row in recorded}]
 shown = findings[:40]
 head = f"verdict={envelope['verdict']} findings={len(recorded) + len(findings)} shown={len(recorded) + len(shown)}" + ("" if sys.argv[2] == "final" else f" intake={intake}") + "\n"
-head += "".join(f"{row['findingId']}: {row['claim']}\n" + "".join(f"  {key}: {row[key]}\n" for key in ("diff", "probe") if key in row)
-                + "".join(f"  {line}\n" for line in row.get("results", ())) for row in recorded)
+head += "".join(f"{row['findingId']}: {row['claim']}\n" + (f"  probe: {row['probe']}\n" if "probe" in row else "")
+                + "".join(f"  {line}\n" for line in row.get("results", ())) for row in recorded) + (f"repair {receipt['repair']}\n" if "repair" in receipt else "")
 needed = (receipt["next"].get("input") or "").partition("\n")[0].encode()  # both ends: the argument and the command form
 needed = (needed if len(needed) <= 200 else needed[:97] + b" ... " + needed[-98:]).decode("utf-8", errors="ignore")
 unfinished = "final review ends at commit-ready: " if sys.argv[2] == "final" and receipt["nextAction"] != "complete-workflow" else ""
-tail = "" if sys.argv[7:] else (f"{unfinished}nextAction={receipt['nextAction']} next: {receipt['next'].get('tool')}"
+tail = "" if sys.argv[6:] else (f"{unfinished}nextAction={receipt['nextAction']} next: {receipt['next'].get('tool')}"
                                 + (f" args: {json.dumps(receipt['next']['args'])}" if "args" in receipt["next"] else "") + "\n" + (f"input: {needed}\n" if needed else ""))
 room = max(0, (1900 - len((head + tail).encode())) // max(1, len(shown)) - 1)
 run = lambda item: " ".join(f"{key}={value}" for key, value in (item.get("execution") or {"kind": "none"}).items())
 lines = [f"{item['id']} material={str(item['material']).lower()} execution=[{run(item)}]: {item['claim']}" for item in shown]
 sys.stdout.write(head + "".join((line if item["material"] else line.encode()[:room].decode("utf-8", errors="ignore")) + "\n" for item, line in zip(shown, lines)) + tail)
-if sys.argv[2] == "preflight" and not sys.argv[7:] and (left := sorted(os.scandir(sys.argv[6]), key=lambda entry: entry.name)):
+if sys.argv[2] == "preflight" and not sys.argv[6:] and (left := sorted(os.scandir(sys.argv[5]), key=lambda entry: entry.name)):
     # Round one is the pass's first consult, so scratch holds only what it left: each file, each directory once with its count.
     sys.stdout.write("This consult left in scratch:\n" + "".join(entry.path + (f"/ ({sum(len(files) for _, _, files in os.walk(entry.path))} files)"
                                                                          if entry.is_dir(follow_symlinks=False) else "") + "\n" for entry in left))

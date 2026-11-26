@@ -39,11 +39,26 @@ telemetry needs no action.
 
 ## Lowest-Cost Implementation Decision
 
-Optimization is the default. The lead owns it through diagnosis, implementation
-and repair. Derive the information and work each required result needs; remove
-avoidable work in the requested production path before accelerating it. Choose
-the lowest whole-system cost at fixed behavior. The advisor independently
-challenges that choice.
+Maximum justified performance at fixed required behavior is an acceptance criterion
+of every production task: demonstrated avoidable work in the requested production
+path is a release blocker. The lead drives it from the first draft. Before consulting
+the advisor, trace the whole requested operation: where it spends work, including in
+unchanged code it calls, what the required result actually needs, and the design that
+removes the rest. For the first edit, visit each call site and data collection behind the measured cost, including sibling loops in the same method. Use the registered case to compare the remaining work.
+
+The advisor challenges that design in both directions: savings the lead missed, and
+whether the lead's optimizations preserve behavior or shift excessive cost into
+construction, updates, memory, storage or I/O. Its findings are a floor; the lead is
+free to find a cheaper correct design. When avoidable work is identified the lead owns
+the investigation, and its default is to implement the cheapest correct removal, verify
+behavior and measure the result: ship every optimization whose benefit exceeds its cost
+at real usage frequencies, a one-line edit and an architectural change alike.
+
+The burden of proof sits with keeping a cost. Before code review, show the saving in
+the candidate or give evidence specific to that cost showing why keeping it is required
+or cheaper. "Unverified" means investigate. A scope assertion, a passing behavior test,
+the size of the change or a constraint the lead wrote into its own draft closes nothing;
+the reviewer blocks a demonstrated omission.
 
 Establish contract authority before adopting a corrective assertion or edit. Trace
 supported inputs, callers, callees, lifecycle paths and shared-state interactions
@@ -87,7 +102,7 @@ Resolve ownership placement inside that decision:
 1. Reuse an existing Interface when real evidence verifies the required behavior and cost; otherwise implement the best justified design found.
 2. Choose the responsible owner using preflight's Module-shape reasoning. When the turn required no preflight, deepen the existing Module; proposing a new Module or Seam requires preflight first. Delete every surface the change supersedes.
 3. Inside that owner, reuse a capability whose Interface already owns the required semantics, invariant, or failure policy: standard library; native platform, runtime, datastore, or protocol; or an already-installed dependency. These are peers; choose by authority, not list order.
-4. Treat the whole change as bloated. **Reduce it first.** Whole-system cost includes production code, tests, scripts, documentation, maintenance and execution. Delete duplication and unnecessary maintained surfaces. Every change targets fewer lines; justify necessary growth against the requirement and demonstrated cost. Preserve required behavior, immutable proof, surviving tests and necessary regression coverage. Moving complexity or compressing formatting does not count.
+4. Treat the whole change as bloated. **Reduce it first.** Whole-system cost includes production code, tests, scripts, documentation, maintenance and execution. Delete duplication and unnecessary maintained surfaces. Ship the fewest maintainable lines that deliver the required behavior, justified performance, and necessary proof. Delete superseded code. Keep an added line only when removing it would lose one of those outcomes. Preserve required behavior, immutable proof, surviving tests and necessary regression coverage. Moving complexity or compressing formatting does not count.
 
 Implementation mechanism never chooses placement: a library or native capability does not justify a new Module or Seam. Every choice must preserve required behavior, boundary validation, security, accessibility, data-loss protection, cleanup, and affected-surface proof.
 

@@ -1,6 +1,6 @@
 ---
 name: diagnose
-description: Use for bugs, failures, flaky behavior and performance regressions; require real reproduction and a cause witness.
+description: Use when an observed failure needs causal investigation, a bug, flaky behavior or performance regression whose cause is not established; require real reproduction and a cause witness.
 ---
 
 # Diagnose
