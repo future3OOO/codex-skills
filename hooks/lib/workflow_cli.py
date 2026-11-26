@@ -101,7 +101,7 @@ def parser() -> argparse.ArgumentParser:
 
     command = _repo(commands.add_parser("status"), instance=True)
     command.add_argument("--fields", nargs="+", help="comma- or space-separated fields; default is full status")
-    _repo(commands.add_parser("summary"))
+    _repo(commands.add_parser("summary"), instance=True)
     command = _repo(commands.add_parser("paths", help="print the resolved workflow-state paths; "
                                         "with --workflow-id also the governing-design path"))
     command.add_argument("--workflow-id")
@@ -480,7 +480,7 @@ def _dispatch(args: argparse.Namespace, *, evidence_file: bool = False) -> int:
             out["designPath"] = str(directory / "designs" / f"{args.workflow_id}.md")
         _emit_json(out)
     elif args.command == "summary":
-        print(summary(identity))
+        print(summary(identity, args.slug, args.workflow_id))
     elif args.command == "history":
         _emit_json(history(identity, args.workflow_id))
     elif args.command == "evidence":

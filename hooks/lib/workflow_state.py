@@ -434,10 +434,10 @@ def commit_tdd(identity: RepoIdentity, slug: str, workflow_id: str | None,
         from .tdd_workflow import _archive, _evaluation, _retired
         if "evaluation" not in summary_doc:
             summary_doc["evaluation"] = _evaluation(state, transaction.evidence(state.get("tddEvidence")))
+        behavior_map.retain_evaluation(items, items, summary_doc["evaluation"], summary_doc["runs"], _retired(state))
+        behavior_map.retain_savings(summary_doc["evaluation"], items, summary_doc["runs"], candidate)
         readiness = None if selected_only else _readiness_lines(identity, state, items,
                     documents=(summary_doc, None), candidate=candidate, keys=True)
-        behavior_map.retain_evaluation(items, {item["id"] for item in items}, summary_doc["evaluation"], summary_doc["runs"], _retired(state))
-        behavior_map.retain_savings(summary_doc["evaluation"], items, summary_doc["runs"], candidate)
         archived = _archive(identity, str(state["workflowId"]), summary_doc)
         pending = readiness is None or bool(readiness["open"])
         runs = summary_doc["runs"]
@@ -1713,7 +1713,7 @@ def _derived_readiness(identity: RepoIdentity, state: JsonObject, items: list[Js
                   for entry in _evaluation(state, document, True).values() if entry["id"] not in rejected]
     retired = _retired(state)
     observations = behavior_map.current_cases(items, (document or {}).get("runs", []), retired)
-    refresh_proof(identity, [*observations, *evaluation], candidate=candidate, runs=(document or {}).get("runs", []))
+    refresh_proof(identity, [*observations, *evaluation], state["workflowId"], candidate=candidate)
     review = review if review is not None else evidence_document(identity, state.get("codeReviewEvidence"))
     return items, (evaluation, observations), _review_current(state, review, candidate)
 
@@ -1883,12 +1883,13 @@ def operation_receipt(state: JsonObject, identity: RepoIdentity, *, readiness: J
 
 
 @_comparison_scope()
-def summary(identity: RepoIdentity, limit: int = 3000, *, labels: bool = True) -> str:
+def summary(identity: RepoIdentity, slug=None, workflow_id=None, *, labels: bool = True) -> str:
     """The pass for a resuming lead; the compaction re-arm drops the review labels
     which include settled review labels."""
     state = read_workflow(identity)
     if state is None:
         return "Workflow state unavailable; do not infer that any workflow step passed."
+    _require_instance(state, slug, workflow_id)
     state = public_status(state, identity, recovery=True,
                           fields=set(state) | {"activeCandidateTree", "bindingError"})
     gate_drift = state.get("bindingError")
@@ -1926,4 +1927,4 @@ def summary(identity: RepoIdentity, limit: int = 3000, *, labels: bool = True) -
         + " Missing state is pending, never success."
     )
     suffix = " …"
-    return text if len(text) <= limit else text[:max(0, limit - len(suffix))].rsplit(" ", 1)[0] + suffix
+    return text if len(text) <= 3000 else text[:3000 - len(suffix)].rsplit(" ", 1)[0] + suffix

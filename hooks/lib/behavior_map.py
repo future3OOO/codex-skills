@@ -152,11 +152,10 @@ def _case_question(entry: JsonObject, *, measured: bool | None = None) -> list[s
             observed = "unmeasured" if own is None else str(own[1])
             return [f"{entry['id']} remaining work {observed}; approved maximum {entry['remaining']}"]
     if (saving := entry.get("saving")) and run.get("fresh", True) and original_outcome(run) == "passed":
-        counts = (run.get("counts") or {}).get(entry["id"])
-        if not counts or counts[0] != saving["original"] or run["arms"][0].get("key") != saving["originalKey"]:
+        if not _comparable(saving, run, entry["id"]):
             return [f"the earned {entry['id']} workload on {saving['tree']} needs a comparable measurement"]
-        if counts[1] > saving["best"]:
-            return [f"the earned {entry['id']} saving on {saving['tree']} regressed: {saving['best']} -> {counts[1]}"]
+        if (best := run["counts"][entry["id"]][1]) > saving["best"]:
+            return [f"the earned {entry['id']} saving on {saving['tree']} regressed: {saving['best']} -> {best}"]
     if run.get("differs"):
         return ["results differ at " + run["differs"]]
     if not producer_proved(entry):
@@ -268,28 +267,24 @@ def release(items: list[JsonObject], owner: JsonObject, run: JsonObject, runs: l
                 entry["comparison"] = {**runs[max(kept.values())], "obligation": recorded, "caseRuns": kept}
 
 
-def retain_evaluation(items: list[JsonObject], required: set[str], retained: JsonObject,
-                      runs: list[JsonObject] | None = None, retired: set[str] = frozenset()) -> None:
+def retain_evaluation(items: list[JsonObject], required: list[JsonObject], retained: JsonObject, runs: list[JsonObject], retired: set[str]) -> None:
     """Retain each first proved command and every later distinct one. A proved recapture of a command replaces its earlier captures
     under its item and under map items no longer bound to the command, except a retired one and except when it names support:
     candidate bytes of a pass-start test file never displace a frozen capture."""
     binders: dict[str, set[str]] = {}  # per command, the map items bound to it
-    for case in current_cases(items, runs) if runs is not None else ():
+    for case in current_cases(items, runs):
         binders.setdefault(case["comparison"]["command"], set()).add(case["id"])
-    present = {entry["id"] for entry in items} if runs is not None else set()  # a removed item keeps its captures
-    for entry in items:
-        if entry["id"] not in required or _case_question(entry):
+    present = {entry["id"] for entry in items}
+    for entry in required:
+        if _case_question(entry):
             continue
         run = entry["comparison"]
-        command = run["command"]
-        key = entry["id"] if runs is None else case_key(entry["id"], runs[run["runIndex"]])
-        earlier = {name: key if runs is None else case_key(old["id"], runs[old["runIndex"]]) for name, old in retained.items()
-                   if not old.get("saving") and (old["id"] == entry["id"] or old["id"] in present and old["id"] not in binders.get(command, ())) and (runs is None or
-                   runs[old["runIndex"]]["command"] == command
-                   and (not retired or case_key(old["id"], runs[old["runIndex"]]) not in retired))}
-        if key in retired or key in earlier.values() or earlier and run.get("support") or any(
-                old.get("saving") and old["id"] == entry["id"] and key == case_key(old["id"], runs[old["runIndex"]])
-                for old in retained.values() if runs is not None):
+        command, key = run["command"], case_key(entry["id"], run)
+        related = {name: case_key(old["id"], prior) for name, old in retained.items()
+                   if (prior := runs[old["runIndex"]])["command"] == command and
+                   (old["id"] == entry["id"] or old["id"] in present and old["id"] not in binders.get(command, ()))}
+        earlier = [name for name, capture in related.items() if capture not in retired and not retained[name].get("saving")]
+        if key in retired or key in related.values() or earlier and run.get("support"):
             continue
         for name in earlier:
             del retained[name]
@@ -299,25 +294,41 @@ def retain_evaluation(items: list[JsonObject], required: set[str], retained: Jso
 
 
 def retain_savings(retained: JsonObject, items: list[JsonObject], runs: list[JsonObject], candidate: str) -> None:
-    """Earn a comparable count on a tree whose bound cases passed. Keep the measured capture through later edits."""
-    if not retained or not any((runs[e["runIndex"]].get("counts") or {}).get(e["id"]) for e in retained.values()):
+    """Each surviving archive earns its own best. The live earning also replaces earlier equal or worse meters of its workload."""
+    if not any(e["id"] in (runs[e["runIndex"]].get("counts") or {}) for e in retained.values()):
         return
-    for proof in current_cases(items, runs):
-        run = proof["comparison"]
-        if run["candidateTree"] != candidate or not producer_proved(proof) or run["arms"][-1]["outcome"] != "passed":
-            return
-        # Missing another optimization budget cannot erase savings on a functionally correct candidate.
-        if not proof.get("measured") and _case_question(proof):
-            return
-    for entry in retained.values():
-        run = runs[entry["runIndex"]]
-        if run["candidateTree"] != candidate or not run["valid"] or not _own_count(entry["id"], run):
-            continue
-        before, after = run["counts"][entry["id"]]
-        prior = entry.get("saving")
-        if not prior or (before == prior["original"] and run["arms"][0]["key"] == prior["originalKey"] and after < prior["best"]):
-            entry["saving"] = {"original": before, "best": after, "tree": candidate, "originalKey": run["arms"][0]["key"],
-                               **({"originalRef": ref} if (ref := run["arms"][0].get("resultRef")) else {})}
+    cases = current_cases(items, runs)
+    live = {(case["id"], case["comparison"]["command"]): case["comparison"] for case in cases if "measuring" not in case["comparison"]}
+    def workload(entry):
+        return entry["id"], entry.get("workload") or runs[entry["runIndex"]]["command"]
+    # Missing another optimization budget cannot erase savings on a functionally correct candidate.
+    if all(producer_proved(case) and (run := case["comparison"])["candidateTree"] == candidate and run["arms"][-1]["outcome"] == "passed"
+           and (case.get("measured") or not _case_question(case)) for case in cases):
+        for entry in retained.values():
+            own = runs[entry["runIndex"]]
+            for run in (own, live.get(workload(entry), own)) if entry.get("saving") else (own,):
+                if run["candidateTree"] != candidate or not run["valid"] or not _own_count(entry["id"], run):
+                    continue
+                before, after = run["counts"][entry["id"]]
+                prior = entry.get("saving")
+                if not prior or (after < prior["best"] if _comparable(prior, run, entry["id"])
+                                 else after <= prior["best"] and "measuring" not in run):
+                    entry.update(runIndex=run["runIndex"], saving=dict(original=before, best=after, tree=candidate,
+                                                                       originalRef=run["arms"][0].get("resultRef")))
+    current, kept = {case["comparison"]["runIndex"] for case in cases}, {}
+    for name, entry in sorted(((name, entry) for name, entry in retained.items() if entry.get("saving")),
+                              key=lambda pair: (pair[1]["saving"]["best"], pair[1]["runIndex"] not in current)):
+        group, best = workload(entry), entry["saving"]["best"]
+        if kept.get(group, ...) in (None, best):
+            del retained[name]
+        else:
+            kept[group] = None if entry["runIndex"] in current else best
+
+
+def _comparable(saving: JsonObject, run: JsonObject, identifier: str) -> bool:
+    """A measurement of the earned workload: its original count and stored original result."""
+    counts = (run.get("counts") or {}).get(identifier)
+    return bool(counts) and counts[0] == saving["original"] and run["arms"][0].get("resultRef") == saving.get("originalRef")
 
 
 def case_key(identifier: str, run: JsonObject) -> str:
