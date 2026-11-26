@@ -160,11 +160,10 @@ with open(sys.argv[4], "w", encoding="utf-8") as handle:
 PY
 fi
 
-if [[ "$phase" == preflight-advice ]]; then
-  [[ -n "$preflight_file" ]] || { printf 'error: preflight-advice requires --preflight-file\n' >&2; exit 2; }
+if [[ "$phase" == preflight-advice && -n "$preflight_file" ]]; then  # without a draft the consult answers the lead's declines; the checkpoint says which it is
   snapshot_file "$preflight_file" "$transport_dir/preflight.json" "preflight draft"
   draft_args=(--preflight-file "$transport_dir/preflight.json")
-elif [[ -n "$preflight_file" ]]; then
+elif [[ -n "$preflight_file" && "$phase" != preflight-advice ]]; then
   printf 'error: --preflight-file requires preflight-advice\n' >&2; exit 2
 fi
 repo_identity="$script_dir/../../../hooks/lib/repo_identity.py"
@@ -353,7 +352,10 @@ Record each cause while you work, with the recording call below: its statement, 
       phase_prompt+=$'\n\n=== This consult: the first final review\nJudge the whole change.'
     fi ;;
 esac
-if [[ "$phase" == preflight-advice ]]; then
+if [[ "$phase" == preflight-advice && -z "$preflight_file" ]]; then
+  phase_prompt="Checkpoint Interface: preflight-advice, the lead's declines
+The behavior map shows each measured item you bound that the lead declines, with its measurement's output and reason. Release an item only when that measurement shows keeping its cost is cheaper in real use than removing it; list each released id in your draft's removed and keep the others. Return approved, with your reasons in findings."
+elif [[ "$phase" == preflight-advice ]]; then
   if (( ${#reconsult_args[@]} == 0 )); then
     phase_prompt+=$'\n'"This consult owns architecture and core efficiency. Use the draft's owner paths and reuse proposals, verify them against source, and replace costly design choices. Measure before designing: profile construction and repeated use at the frequencies established by actual callers on production-size inputs that reach each costly path in the requested operation; report the largest costs of each part by calls, and design the removal of every material one in each part, doing work that depends only on stored data once where the data is stored, not on each read; where a cost stays, give the measurement that shows it must. Derive the least required work and settle the deciding assumption through existing owners. Return every material finding, functional and performance, in this consult: the cost model, cheaper design, proposed cases and deciding evidence."
   else
@@ -524,11 +526,10 @@ run = lambda item: " ".join(f"{key}={value}" for key, value in (item.get("execut
 lines = [f"{item['id']} material={str(item['material']).lower()} execution=[{run(item)}]: {item['claim']}" for item in shown]
 sys.stdout.write(head + "".join((line if item["material"] else line.encode()[:room].decode("utf-8", errors="ignore")) + "\n" for item, line in zip(shown, lines)) + tail)
 if sys.argv[2] == "preflight" and not sys.argv[6:] and (left := sorted(os.scandir(sys.argv[5]), key=lambda entry: entry.name)):
-    # Round one is the pass's first consult, so scratch holds only what it left: each file, each directory once with its count.
-    sys.stdout.write("This consult left in scratch:\n" + "".join(entry.path + (f"/ ({sum(len(files) for _, _, files in os.walk(entry.path))} files)"
-                                                                         if entry.is_dir(follow_symlinks=False) else "") + "\n" for entry in left))
+    # Round one is the pass's first consult, so scratch holds only what it left.
+    sys.stdout.write(f"This consult left in {sys.argv[5]}: " + ", ".join(entry.name + "/" * entry.is_dir(follow_symlinks=False) for entry in left) + "\n")
 PY
-  if (( ${#reconsult_args[@]} )); then
+  if (( ${#reconsult_args[@]} )) && [[ -n "$preflight_file" ]]; then
     # The approving consult records the draft it finalised: the recording's output and exit status end the call; the consult's diagnostics stay held.
     quiet=0
     python3 "$workflow_cli" record preflight --repo "$repo_root" --slug "$producer_slug" --workflow-id "$active_wid" 2>&7

@@ -47,7 +47,7 @@ _MEMINFO = Path("/proc/meminfo")
 INTAKE_MEM_RESERVE_MB = 6000
 INTAKE_PRODUCER_PEAK_MB = 1700
 INTAKE_POLL_SECONDS = 0.25
-PACKET_BLOCKS = re.compile(rb"^[ \t]*<(coverage_plan|gitnexus_analysis)[ >].*?^[ \t]*</\1>\n", re.M | re.S)
+FIXED_STEPS = re.compile(rb"^(?:critical_area_steps|required_behavior):\n(?:- .*\n)*", re.M)
 
 
 def _real_home() -> Path:
@@ -220,9 +220,9 @@ def _run_producer(args: list[str]) -> int:
 
 
 def _emit_packet(code: int, output: bytes) -> None:
-    """A lead reading past 6-7k tokens loses the middle, where the analysis sits (V44 leads saw 0-3 of 20 checks): print
-    the banner, coverage plan and analysis, a plan step the banner already states only there, and save the packet whole
-    under its content hash in the account's own cache, which a HOME override cannot move; print anything else as it came."""
+    """Print the banner, its coverage plan once and without the fixed steps every packet repeats, and the path of the whole
+    packet, GitNexus analysis included, saved under its content hash in the account's own cache, which a HOME override
+    cannot move; print anything else as it came."""
     marker = b"\nEND_REPO_CONTEXT_FORGE_REQUIRED_INTAKE\n"
     end = output.find(marker) + len(marker)
     if code or end < len(marker):
@@ -230,9 +230,7 @@ def _emit_packet(code: int, output: bytes) -> None:
         return
     saved = _real_home() / ".cache" / "repo-context-forge" / "packets" / f"{hashlib.sha256(output).hexdigest()[:16]}.txt"
     atomic_write_bytes(saved, output)
-    stated = {b"<step>" + line[2:] + b"</step>" for line in output[:end].splitlines() if line.startswith(b"- ")}
-    blocks = [line for match in PACKET_BLOCKS.finditer(output, end) for line in match.group(0).splitlines(keepends=True) if line.strip() not in stated]
-    sys.stdout.buffer.write(b"".join([output[:end], *blocks, b"full_packet: " + os.fsencode(saved) + b"\n"]))
+    sys.stdout.buffer.write(FIXED_STEPS.sub(b"", output[:end]) + b"full_packet: " + os.fsencode(saved) + b"\n")
 
 
 def _git(root: Path, *args: str, env: dict[str, str] | None = None) -> tuple[str, str]:

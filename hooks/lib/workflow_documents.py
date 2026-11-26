@@ -156,21 +156,19 @@ ITEM_SHAPE = ('{"id":"BM_X","measured":true,"remaining":0,"kind":"conformance|co
 # The one rule for a check, given to each role that adds one where it first meets it: the lead with the draft's shape, an
 # advisor in its consult prompt, the reviewer in its checkpoint.
 CASE_RULE = ("Before coding, state the property, bounds and what decides each input: the request's words, the original's result on the pass-start tree, "
-             "a fresh direct run or a relation between two runs; never the changed code's output. Per kind, one COMMAND: a plain loop in one script, "
-             "no testing library. A direct test through the production interface that controls a result, with real collaborators and representative inputs, proves "
-             "that result; use the public entry point only for a promise about what that entry point itself does, such as whether a command blocks or succeeds. "
-             "Reuse one shared test for inputs governed by the same behavior. To request more proof, identify the specific outcome that test could miss or the cost "
-             "tradeoff that could change the design. Set measured=false for functional items and omit remaining. For a measured cost set measured=true and remaining to the maximum justified "
-             "count after removal (zero for avoidable work). Bind each cost family the operation pays as one item, its workloads as inputs: "
-             "trace it to every call site and data collection; count each site or one nonnegative total over them all, "
-             "including replacement work and work inside collaborators (queries, rows, pattern matches, file reads). "
-             "Use the caller's actual workload and reuse frequency. For a new Python cost case declare WORKFLOW_CASE=1 python3 FILE.py. "
-             "Write a single measure() function returning (kept results by input, counts by item id). The workflow calls it on each tree, captures its values and compares them. Existing stdout cases can still print WORKFLOW_RESULT and WORKFLOW_METRICS. "
-             "Submit cases through tdd; for a diagnostic test outside it capture stdout and stderr to a file and display at most one short line. "
-             "Repeat a timing or compare another design only when the result could "
-             "change what ships. Run all inputs smallest first; only if too many to list, "
-             "run required inputs plus a seeded random sample. Print how many ran and the smallest failing input found. A reported input in the family "
-             "joins its item's loop, extending bounds if needed. One property failure, one change at its source, never code per input. One input keeps one case.")
+             "a fresh direct run or a relation between two runs, never the changed code's output. Per kind, one COMMAND: a plain loop in one script, no testing "
+             "library, through the production interface that controls the result, with real collaborators and representative inputs; the public entry point "
+             "only for a promise about that entry point itself. One shared test serves the inputs one behavior governs; to ask for more proof, name the outcome "
+             "it could miss or the cost tradeoff that could change the design. A functional item has measured=false "
+             "and no remaining. A cost is one item per cost family, its workloads as inputs, measured=true, remaining the maximum justified count after removal "
+             "(zero for avoidable work): count every site and data collection it reaches, replacement work and collaborators' queries, rows, matches and reads "
+             "included, at the caller's real workload and reuse frequency, and report beside it what users pay for that operation (time, bytes or a named target). "
+             "A Python cost case is WORKFLOW_CASE=1 python3 FILE.py with one measure() returning (results by input, counts by name); other cases print "
+             "WORKFLOW_RESULT=<JSON> and WORKFLOW_METRICS=<JSON counts>. The workflow runs each case on both trees and compares them: submit cases through tdd, "
+             "keep diagnostics in a file and show at most one short line. Repeat a timing or compare another design only when the result could change what "
+             "ships. Run inputs smallest first (too many to list: the required ones plus a seeded random sample), printing how many ran and the smallest "
+             "failing one; a reported input joins its family's loop, extending bounds if needed. One property failure takes one change at its source, never "
+             "code per input; one input keeps one case.")
 ADVISOR_SHAPES = {
     "preflight": '{"schemaVersion":1,"findings":[{"id":"SPEC-1","claim":"...","material":true}],"verdict":"approved|changes-required"}',
     "final": ('{"schemaVersion":1,"verdict":"commit-ready|fix-before-commit|context-mismatch","findings":[{"id":"F1","claim":"...",'

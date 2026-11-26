@@ -30,8 +30,8 @@ Standalone exploration or review with no governed pass and no described work —
 python3 "$HOME/.codex/skills/repo-context-forge/scripts/bootstrap.py" --repo "$PWD"
 ```
 
-2. The script prints the packet's intake banner, `<coverage_plan>` and
-`<gitnexus_analysis>`, then `full_packet: <path>`: the whole packet, saved
+2. The script prints the packet's intake banner with its coverage plan, then
+`full_packet: <path>`: the whole packet, GitNexus analysis included, saved
 outside the checkout, where the other elements are read as needed. The banner,
 `REPO_CONTEXT_FORGE_REQUIRED_INTAKE`, is the enforced startup contract and must
 be reported before any code reasoning, review findings, edits, or GitNexus claims.
@@ -49,8 +49,8 @@ rerun the bootstrap.
 - before code reasoning, review, or GitNexus calls, surface a short intake from
   `<context_digest>`: mode, head SHA, token budget, semantic source counts, top
   targets, SoulForge impact headline, GitNexus repo/status, and the generated
-  `<coverage_plan>`
-- satisfy every required `<coverage_plan>` area before GitNexus calls, GitHub
+  coverage plan
+- satisfy every required coverage plan area before GitNexus calls, GitHub
   review comments, review findings, or edits
 - this skill is the user's standing explicit request for one consolidated
   specialist sub-agent whenever the required intake lists `delegation_tasks`;

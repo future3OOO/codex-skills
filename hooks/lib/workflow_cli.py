@@ -239,12 +239,9 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity, *, review: bool = 
     if (base and last.get("valid") is True and last.get("baseCommit") == base
             and last.get("graphEvidenceId") == state.get("repoContextForgeEvidence") and _tree_drift(
             identity, state, field="qualityGateManifestId", missing="missing", stale="stale") is None):
-        if not review:
-            from .tdd_workflow import check_retained
-            state = check_retained(identity, slug, workflow_id)
-        # The same typed gate is reused; retained observations have their own tree cache.
-        _emit_json(_receipt(state, identity, evidenceId=state["qualityGateEvidence"], kind="quality-gate", reused=True,
-                            verification="passed", valid=True, runIndex=last["runIndex"], workflowId=workflow_id, **cases))
+        from .tdd_workflow import check_retained
+        state = check_retained(identity, slug, workflow_id)  # the same typed gate is reused; each tree checks its observations once
+        _emit_json(_receipt(state, identity, verification="passed", **cases))
         return 0  # verification holds; a finding still open is the receipt's continuation and closes only completion
 
     # The tree this run's result will describe. The recorder compares it with
@@ -325,7 +322,7 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity, *, review: bool = 
         baseRef=args.base_ref, baseCommit=base or None, gate=gate, bindingError=binding_error,
         graphEvidenceId=graph_evidence_id,
     )
-    if valid and not review:
+    if valid:
         from .tdd_workflow import check_retained
         check_retained(identity, slug, workflow_id)
     state, evidence_id, recorded = commit_verification(identity, slug, workflow_id, run, tree_before=tree_before,
@@ -336,20 +333,12 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity, *, review: bool = 
         location.write_text(json.dumps(read_evidence(identity, str(recorded["reportEvidenceId"]))), encoding="utf-8")
         shown += (f"complete report: {len(report['findings'])} findings ({sum(item.get('status') == 'finding' for item in report['findings'])} "
                   f"active), {len(json.dumps(report)):,} bytes, at {location}; its failing checks and first active findings:\n").encode() + _report_projection(report)
-    with redirect_stdout(sys.stderr):  # stdout carries only the receipt
-        _print_output(shown)
+    if recorded["valid"] is not True:  # a passing gate's report stays in the ledger; stdout carries only the receipt
+        with redirect_stdout(sys.stderr):
+            _print_output(shown)
     state = read_workflow(identity) or state
-    _emit_json(_receipt(state, identity, **{
-        "evidenceId": evidence_id,
-        "exitCode": exit_code,
-        "kind": args.kind,
-        "verification": state["verification"],
-        "valid": recorded["valid"],
-        "runIndex": recorded["runIndex"],
-        "workflowId": workflow_id,
-        "treeManifestId": recorded.get("treeManifestId"),
-        **cases,
-    }))
+    _emit_json(_receipt(state, identity, verification=state["verification"], **cases,
+                        **({} if recorded["valid"] is True else {"evidenceId": evidence_id, "exitCode": exit_code, "valid": recorded["valid"]})))
     if recorded["valid"] is not True:
         reason = recorded.get("bindingError") or "the quality gate failed"
         print(f"{reason}; verification stays pending until its rerun is green", file=sys.stderr)
@@ -375,7 +364,7 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
              else bound_state(identity, args.slug, args.workflow_id))
     slug, workflow_id = str(state["slug"]), str(state["workflowId"])
     def emit(receipt: dict[str, object], given: tuple[str, str, str] | None = None) -> None:  # a rolled-back --check names none of its rows
-        _emit_json({key: value for key, value in receipt.items() if key not in {"evidenceId", "summaryId"}}
+        _emit_json({key: value for key, value in receipt.items() if key != "evidenceId"}
                    | {"checked": True} if args.check else receipt, given)
     if args.kind == "preflight":
         intake = evidence_document(identity, (state.get("advisorPreflight") or {}).get("intakeEvidence")) or {}
@@ -428,9 +417,15 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
             repair = next((finding for _, finding in _retained(identity, state) if finding["stage"] == "final" and finding["sourceTree"] == candidate
                            and finding["execution"].get("tree") == target and "change" in finding), None) if target else None
             execution["repairTree"] = target if repair else None
+    changes = intake.pop("draft", None) if intake else None
+    if args.stage == "preflight" and intake and any(record.get("status") == "pending" for record in state.get("rejections", [])):
+        from .tdd_workflow import release  # the answer to the lead's declines: the advisor that bound the items releases or keeps them
+        intake.update(candidateTree=expected, tddEvidence=args.tdd_evidence or None)
+        state = release(identity, state, (changes or {}).get("removed") or [], intake)
+        emit(_receipt(state, identity, obligations=False, intake=next(record["advice"] for record in reversed(state["rejections"]) if record.get("advice"))))
+        return 0
     # The lead's draft; an approving answer's `draft` changes it, whose added items stay until explicitly rejected.
     submitted = preflight_document(args.preflight_file) if args.preflight_file else None
-    changes = intake.pop("draft", None) if intake else None
     draft = finalised_draft(submitted, changes) if submitted and changes is not None else submitted
     if draft:  # the submitted file itself can first be declared with this answer
         from .tdd_workflow import _unwritten, unstartable

@@ -5,7 +5,7 @@ description: TDD for production behavior changes through recorded original/candi
 
 # TDD through recorded source comparisons
 
-The original source is the baseline. The request decides which differences are correct. One direct batch proves both: the workflow runner executes it on the original and the edited source. Probe quality is in [tests.md](tests.md); the runner and the Behavior Map fields are in [recorder.md](recorder.md).
+The original source is the baseline. The request decides which differences are correct. One direct batch proves both: the workflow runner executes it on the original and the edited source. Probe quality is in [tests.md](tests.md).
 
 A new Python cost case can be just `def measure():` returning `(results, counts)`. Declare it as `WORKFLOW_CASE=1 python3 FILE.py [arguments]`. A bare `tdd` runs the registered cases after each edit. Keep manual diagnostic output in a file and show at most one short line.
 
@@ -13,8 +13,8 @@ A new Python cost case can be just `def measure():` returning `(results, counts)
 
 Do these steps in order for each coherent production edit. Submit the whole focused batch during TDD; the existing review checks completeness against the original and request.
 
-1. **Establish the original's responsibilities.** Start from the preflight's [Behavior Map](recorder.md#behavior-map) and the deciding original source. Trace every consumer of a producer or guard the edit will remove or rewrite. Find the affected decisions' decisive contexts and value boundaries with [MC/DC](tests.md#mcdc). A plan's sole-use claim is not evidence. A decision the request keeps has its inputs in a preservation test.
-2. **Record the baseline before editing production.** Reuse relevant cases and assertions through the responsible Interface with real inputs and collaborators. Approval runs the approved map's written cases on the original; [recorder.md](recorder.md#record-a-case) has the arguments. Reuse the original defect's failure as sensitivity proof. Requested failures are expected here: implement the requirement without weakening the check. Use [mocking.md](mocking.md) for runtime and failure-path selection.
+1. **Establish the original's responsibilities.** Start from the preflight's Behavior Map and the deciding original source. Trace every consumer of a producer or guard the edit will remove or rewrite. Find the affected decisions' decisive contexts and value boundaries with [MC/DC](tests.md#mcdc). A plan's sole-use claim is not evidence. A decision the request keeps has its inputs in a preservation test.
+2. **Record the baseline before editing production.** Reuse relevant cases and assertions through the responsible Interface with real inputs and collaborators. Approval runs the approved map's written cases on the original. Reuse the original defect's failure as sensitivity proof. Requested failures are expected here: implement the requirement without weakening the check. Use [mocking.md](mocking.md) for runtime and failure-path selection.
 3. **Implement and reconcile the actual diff.** Implement the best justified architecture and remove what it does not need. Before verification, check changed conditions, branches, writes and returns against the required outcomes, the original responsibilities and callees. Add any missing input to the existing shared case and run focused tests with the repository's working invocation.
 4. **Compare.** Re-run the case commands; unchanged original executions are cached. Restore unrequested effects or repair their shared cause. Inspect the receipt and raw output. The call that closes the last item also verifies: when its receipt says `code-review`, delegate immediately.
 5. **Judge and continue.** No surviving candidate reads does not mean an original producer had no other job. A passing case proves its observed behavior, not a whole hunk. The lead and existing reviewer judge coverage and authority. Never weaken frozen expectations; retained cases survive a narrowed current map. After final review starts, continue with that final advisor.
@@ -26,6 +26,6 @@ Bound claims to executed inputs. Equal failures establish no success. The existi
 
 Follow the runner's finding receipt. Verify its premise against required behavior;
 repair it or demonstrate why its proposed alternative is invalid. Reuse valid
-executions. Do not revert edits to manufacture a failure.
+executions.
 
 After coherent repair and cleanup, follow the [verification step](../repo-production-workflow/SKILL.md#9-verification).

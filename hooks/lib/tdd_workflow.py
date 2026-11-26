@@ -34,7 +34,7 @@ from .state_store import (_EXECUTION, _candidate_matches, _comparison_scope, _ac
                           utc_timestamp, repo_state_dir, _flock, atomic_write_bytes)
 from .workflow_state import (
     NO_INSTANCE_ID, WorkflowError, _bound_instance_state,
-    commit_tdd, commit_findings, evidence_document, instance_id, invalidate_after_edit, operation_receipt, rejections, review_commands, _finding_unresolved, _readiness_lines, _review_repair_pending, _allows_next,
+    commit_tdd, commit_findings, evidence_document, instance_id, invalidate_after_edit, operation_receipt, review_commands, _finding_unresolved, _readiness_lines, _review_repair_pending, _allows_next,
 )
 
 JsonObject = dict[str, object]
@@ -1237,10 +1237,8 @@ def execute_findings(identity: RepoIdentity, state: JsonObject, findings: list[J
                 "reexecuted": withdrawn, "runs": []}
     original = _git(identity, "rev-parse", f"{state['passStartOid']}^{{tree}}").decode().strip()
     current = current if current is not None else evidence_document(identity, state.get("tddEvidence")) or {}
-    set_aside = rejections(state, "item", candidate)  # a rejected item's cases replay nowhere
-    maintained = [entry for entry in [*behavior_map.current_cases(current.get("behaviorMap") or [], current.get("runs") or [], _retired(state)), *(
+    maintained = [*behavior_map.current_cases(current.get("behaviorMap") or [], current.get("runs") or [], _retired(state)), *(
         {**entry, "comparison": current["runs"][entry["runIndex"]]} for entry in _evaluation(state, current, True).values())]
-        if entry["id"] not in set_aside]
     used = {(item.get("comparison") or {}).get("runIndex") for item in maintained}
     batches = [run for run in current.get("runs") or [] if run["runIndex"] in used]
     cached = list(current.get("runs") or [])
@@ -1386,31 +1384,40 @@ def _execution_cache(identity, state):
 
 @_comparison_scope()
 def check_retained(identity: RepoIdentity, slug: str | None, workflow_id: str | None) -> JsonObject:
-    from .workflow_state import commit_retained_checks, finding_references
+    """Each retained observation's disposition on the current tree. A result recorded for it on this tree, by an earlier
+    check or by the verdict that executed it here, is restored; only the others run, once."""
+    from .workflow_state import _finding_state, commit_retained_checks, finding_references
     state = _bound_instance_state(read_active(identity), slug, workflow_id)
-    _execution_cache(identity, state)
-    state = _bound_instance_state(read_active(identity), slug, workflow_id)
-    tree = _active_candidate_tree(identity)
-    references = finding_references(state)
-    cached = evidence_document(identity, state.get("retainedChecks", {}).get(tree), restore_runs=False) or {}
-    if cached.get("workflowId") != state["workflowId"] or cached.get("candidateTree") != tree:
-        cached = {}
-    retained = _retained(identity, state)
-    if (cached.get("findingRefs") == references and isinstance(cached.get("inputIdentities"), list)
-            and not any(_finding_unresolved(entry) for entry, _ in retained)):  # a pending finding replays: a missing input of its probe may be back
-        try:
-            reusable = all(record["digest"] == _input_identity(identity, record["execution"], record) for record in cached["inputIdentities"])
-        except (WorkflowError, OSError):
-            reusable = False
-        if reusable:
-            return state
+    tree, references = _active_candidate_tree(identity), finding_references(state)
+    checked = state.get("retainedChecks", {}).get(tree)
+    cached = evidence_document(identity, checked, restore_runs=False) or {}
+    known, restore = {}, False
+    for row in cached.get("results", ()):
+        key = row["evidenceId"], row["id"]
+        if (entry := _finding_state(state, *key)) and entry.get("status") != "rejected":
+            known[key] = row
+            restore |= entry.get("dispositionEvidenceId") != checked
     reports = [{"evidenceId": entry["intakeEvidenceId"], "id": entry["findingId"], "execution": {"kind": "claim"}}
                for entry in state.get("findingStates", []) if _finding_unresolved(entry) and not entry.get("decision")  # a user's decision stays open
-               and all(entry is not other for other, _ in retained)]
-    current = evidence_document(identity, state.get("tddEvidence")) or {}
-    execution = execute_findings(identity, state, [], retained=retained, current=current)
-    execution["reexecuted"].extend(reports)
-    execution["inputIdentities"] = [value for value in _EXECUTION.get()["inputs"].values() if isinstance(value, dict)]
+               and (entry["intakeEvidenceId"], entry["findingId"]) not in known]
+    execution = {"measuredTree": tree, "measuredEvidence": state.get("tddEvidence"), "findings": [], "reexecuted": list(known.values()), "runs": []}
+    if "results" in cached and cached["findingRefs"] == references and not reports:  # this tree's results hold every finding: restored, or as they stand
+        return commit_retained_checks(identity, state["slug"], state["workflowId"], execution, references) if restore else state
+    results, stale = [], []
+    for entry, finding in _retained(identity, state):
+        run = finding["execution"]
+        if (key := (finding["ref"]["evidenceId"], finding["ref"]["id"])) in known:
+            results.append(known[key])
+        elif tree in (finding["sourceTree"], run.get("tree")):  # its verdict executed it here: with its repair applied on the repair tree
+            results.append({**finding["ref"], "execution": {**run, "applied": run.get("tree") == tree}})
+        else:
+            stale.append((entry, finding))
+    if not (results or stale or reports):  # nothing retained to check on this tree
+        return state
+    if stale:
+        _execution_cache(identity, state)
+        execution = execute_findings(identity, state, [], retained=stale)
+    execution["reexecuted"] = reports + execution["reexecuted"] + results  # a claim first: any result of its finding stands over it where results are read by finding
     return commit_retained_checks(identity, str(state["slug"]), str(state["workflowId"]), execution, references)
 
 
@@ -1744,28 +1751,6 @@ def _unexpected(entry: JsonObject | None, run: JsonObject, baseline: bool):
     return errors + (["results differ at " + run["differs"]] if run.get("differs") else []), failure
 
 
-def _corrected_uses(document: JsonObject | None) -> set[tuple[str, str]]:
-    return {(row["caseKey"].rpartition(":")[0], row["correctedUse"]) for row in (document or {}).get("retired", ())
-            if row.get("correctedUse")}
-
-
-def _same_workload(identity: RepoIdentity, old: JsonObject, new: JsonObject) -> bool:
-    """Transfer an unearned Python measure only with the same original results, workload arguments and assignments."""
-    left, right = (r["arms"][0] for r in (old, new))
-    if (not new.get("valid") or not left.get("resultRef") or left["resultRef"] != right.get("resultRef")
-            or old["execution"]["assignments"] != new["execution"]["assignments"]):
-        return False
-    signatures = []
-    for arm in (left, right):
-        command = arm["executedCommand"]
-        try:
-            _, script = _case_launch(identity, command, True)
-        except Unstartable:
-            return False
-        signatures.append((command[:script], command[script + 1:]))
-    return signatures[0] == signatures[1]
-
-
 def _archive(identity: RepoIdentity, workflow_id: str, document: JsonObject) -> list:
     """Bind each newly earned saving to the files outside the checkout its run read, each stored once by content, that
     the saving's own copy of the run replays from then on; the item's case reads them live. The evidence to write."""
@@ -1840,11 +1825,11 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None, emit=
     parser.add_argument("--expected-candidate-tree")
     parser.add_argument("--tdd-evidence", default=argparse.SUPPRESS)
     parser.add_argument("--verdict", help="the reviewer's verdict, complete or incomplete: use the source-bound checkpoint command")
-    parser.add_argument("--report", action="append", default=[], help="the reason the lead gives with --retire; with --as final, the cause")
-    parser.add_argument("--change", help="with --as final: the diff outside the checkout that repairs the cause; with --reject ITEM: the removal the lead declines")
-    parser.add_argument("--reject", action="append", nargs="+", default=[], metavar="ID 'COMMAND'",
-                        help="the lead rejects a final finding, kept for its advisor's return review, or proves with --change that an advisor-added "
-                             "map item's cost is rightly kept; declining alone leaves the item open; with --as, EVIDENCE:ID=REASON withdraws this author's invalid observation")
+    parser.add_argument("--report", action="append", default=[], help="the reason the lead gives with --retire or --reject; with --as final, the cause")
+    parser.add_argument("--change", help="with --as final: the diff outside the checkout that repairs the cause")
+    parser.add_argument("--reject", action="append", nargs="+", default=[], metavar="ID ['COMMAND']",
+                        help="the lead rejects a final finding, kept for its advisor's return review, or declines a measured map item with the "
+                             "measurement its preflight advisor judges in this call; with --as, EVIDENCE:ID=REASON withdraws this author's invalid observation")
     parser.add_argument("--retire", action="append", nargs="+", default=[], metavar="CASE [CASE ...] | ITEM COMMAND",
                         help="recorded cases by caseKey, or one by its item and command")
     parser.add_argument("--as", dest="author", choices=("review", "final"), help="the reviewer's verdict, or the withdrawal of its own observation; final: the final advisor's cause, "
@@ -1880,9 +1865,9 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None, emit=
         raise WorkflowError(NO_INSTANCE_ID)
     slug = str(state["slug"])
     if args.reject and not args.author:
-        if command or args.case or args.retire or args.report or args.verdict or args.behavior_id:
-            raise WorkflowError("a rejection call carries only --reject ID 'COMMAND'")
-        _emit_json(*_reject(identity, state, args.reject, args.change))
+        if command or args.case or args.retire or args.change or args.verdict or args.behavior_id:
+            raise WorkflowError("a rejection call carries only --reject ID ['COMMAND'] and --report 'REASON'")
+        _emit_json(*_reject(identity, state, args.reject, " ".join(args.report).strip() or None))
         return 0
     recording = args.author == "final"
     if recording and (command or args.verdict or args.reject or args.input or args.behavior_id or args.correct
@@ -1930,7 +1915,7 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None, emit=
             state = read_active(identity)
         memory = _given(identity, state, args.author)
         receipt = operation_receipt(state, identity, kind="tdd", obligations=False, known=memory[1]["findings"],
-                                    delivered={finding["id"] for finding in execution["findings"]}, **({"summaryId": evidence} if evidence else {}),
+                                    delivered={finding["id"] for finding in execution["findings"]},
                                     **({"repair": applied} if applied else {}), **({"notRecorded": unusable} if unusable else {}))
         if not recording:  # the reviewer is told what its own verdict left open, never the lead's step to delegate; a finished review hands on the lead's call as given
             step, action = receipt.pop("next"), receipt.pop("nextAction")
@@ -1970,7 +1955,7 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None, emit=
     runs = list((current or {}).get("runs", []))
     evaluation = _evaluation(state, current)
     args.retire = _case_keys(items, runs, evaluation, args.retire)
-    corrections = {}
+    corrections = set()
     for identifier in args.correct[0].split(",") if args.correct else ():  # ITEM,ITEM: one replacement for every item that runs the command
         replaced, corrected = args.correct[1:-1], args.correct[-1]
         entry = behavior_map.item(items, identifier)
@@ -1991,7 +1976,7 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None, emit=
             entry["cases"] = [corrected if value == declaration else value for value in entry["cases"]]
         else:  # it already ran: the corrected command runs as the item's case and the declaration's recorded case is retired
             args.retire += ran
-            corrections.update(dict.fromkeys(ran, corrected))
+            corrections.update(ran)
             args.case.append([identifier, corrected])
     frozen_signature = json.dumps(evaluation, sort_keys=True)
     candidate = _active_candidate_tree(identity)
@@ -2002,15 +1987,14 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None, emit=
         specs = [(next(iter(args.behavior_id), None), shlex.join(command))]
     # A call that selects no item also captures the commands map items still declare and judges the whole map: beside
     # named cases the rest is judged as recorded, never run. A captured command leaves its item's `cases`.
-    rejected = rejections(state, "item", candidate)  # set aside: never replayed
     drafted = [] if args.behavior_id and update is None else list(dict.fromkeys((entry["id"], value) for entry in items
-                                                             if entry["id"] not in rejected and (not args.behavior_id or entry["id"] in args.behavior_id)
+                                                             if not args.behavior_id or entry["id"] in args.behavior_id
                                                              for value in entry.get("cases", []) if not args.correct or entry["id"] in args.correct[0].split(",") and value == args.correct[-1]))
     selected = []
     retired = _retired(state)
     if not specs and not args.correct:
         for entry in items:
-            if args.behavior_id and entry["id"] not in args.behavior_id or entry["id"] in rejected:
+            if args.behavior_id and entry["id"] not in args.behavior_id:
                 continue
             for case in behavior_map.current_cases([entry], runs, retired):
                 selected.append((entry, case["comparison"]))
@@ -2035,14 +2019,16 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None, emit=
             raise WorkflowError("recorded replay support must name a captured test or command input; supply a command to capture new support")
         selected = [(entry, support_overrides[probe["runIndex"]]) for entry, probe in selected]
     inventory = _probe_files([], identity, args.support or []) if specs or drafted else None
-    refused, asked = [], []
+    refused, asked, captures = [], [], {}
     for identifier, value in dict.fromkeys([*specs, *drafted]):
         entry = captured = None
         try:  # a case that cannot be captured or prepared is refused alone; the rest of the call is recorded
             entry = behavior_map.item(items, identifier) if identifier else None
-            captured = _probe_capture(identity, {"command": value}, candidate, MAX_CASE_SECONDS, args.support, inventory,
-                                      original if entry and entry.get("kind") == "preservation" else None)
-            _comparison_input(identity, captured)
+            kept = original if entry and entry.get("kind") == "preservation" else None
+            if (value, kept) not in captures:  # one capture of a command serves every item it names
+                captures[value, kept] = _probe_capture(identity, {"command": value}, candidate, MAX_CASE_SECONDS, args.support, inventory, kept)
+                _comparison_input(identity, captures[value, kept])
+            captured = dict(captures[value, kept])
         except (ValueError, RuntimeError, OSError) as exc:
             refused.append({"case": value, "refused": str(exc), "item": identifier})
             if entry is not None and value not in entry.get("cases", []) and not isinstance(exc, Unstartable):
@@ -2067,7 +2053,7 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None, emit=
     for case in behavior_map.current_cases([entry for entry in items if not args.behavior_id or entry["id"] in args.behavior_id], runs):
         run, key = case["comparison"], behavior_map.case_key(case["id"], case["comparison"])
         source = (case["id"], run["command"])
-        if source in named or key in args.retire or case["id"] in rejected or not (key in retired or behavior_map._case_question(case)):
+        if source in named or key in args.retire or not (key in retired or behavior_map._case_question(case)):
             continue
         entry, captured = behavior_map.item(items, case["id"]), None
         try:
@@ -2088,7 +2074,7 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None, emit=
     replacing = {(probe.get("behaviorId"), probe["command"]) for _, probe in selected if "runIndex" not in probe and not probe["support"]}  # a capture naming support replaces nothing
     selected.extend((None, dict(support_overrides.get(index, runs[index])))
                     for frozen in evaluation.values() if (frozen.get("saving") or behavior_map.case_key(frozen["id"], runs[frozen["runIndex"]]) not in retired) and (not args.behavior_id or frozen["id"] in args.behavior_id)
-                    and frozen["id"] not in rejected and (index := frozen["runIndex"]) not in selected_indexes
+                    and (index := frozen["runIndex"]) not in selected_indexes
                     and (frozen.get("saving") or (frozen["id"], runs[index]["command"]) not in again | replacing)
                     and (frozen.get("saving") and runs[index]["candidateTree"] != candidate or not specs or behavior_map._case_question({**frozen, "comparison": runs[index]})))
     def frozen_names():  # the retained first proofs by case key, as they stand: a case proved in this call is retained by it
@@ -2101,8 +2087,6 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None, emit=
         if run is None:  # superseded by a later capture, released to another item, or its item removed: nothing is left to retire
             continue
         retiring[key] = run["runIndex"]
-        if all(probe.get("runIndex") != run["runIndex"] for _, probe in selected):
-            selected.append((None, dict(run)))
         # the key of a reply row stands for every item it lists
         if case and key not in corrections and (row := _unexpected(case, run, candidate == original)[0]):
             named += [other for other, alike in live.items() if other not in named and alike["comparison"]["command"] == run["command"]
@@ -2139,6 +2123,9 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None, emit=
     del compared[len(selected):]
     indexes = {probe["runIndex"]: run["runIndex"] for (_, probe), run in zip(selected, compared) if "runIndex" in probe}
     released, approved = [], approved_items(identity, state)
+    named = {**approved}  # a command this call names for an item stays its own, as an approved declaration does
+    for identifier, value in specs:
+        named[identifier] = {**named.get(identifier, {}), "cases": [*named.get(identifier, {}).get("cases", ()), value]}
     for (entry, _), run in zip(selected, compared):
         if entry is not None:
             prior = entry.get("comparison") or {}
@@ -2151,13 +2138,15 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None, emit=
             references = {**(prior.get("caseRuns") or {case["comparison"]["command"]: case["comparison"]["runIndex"]
                                                         for case in behavior_map.current_cases([entry], runs)}), run["command"]: run["runIndex"]}
             if prior.get("caseRuns") != references or any(prior.get(key) != run.get(key) for key in ("runIndex", "candidateKey", "sensitive")) or prior.get("obligation") != behavior_map.obligation(entry):
-                entry["comparison"] = {**run, "obligation": behavior_map.obligation(entry), "caseRuns": references}
+                entry["comparison"] = behavior_map.binding({**prior, "obligation": behavior_map.obligation(entry)}, run, references)  # its credit stays
+            if "remaining" in entry and run["valid"] and run["candidateTree"] == candidate and entry["id"] in (run.get("counts") or {}):
+                entry["comparison"] = {**entry["comparison"], "credited": behavior_map.credit(prior.get("credited"), entry["id"], run["counts"], {item["id"] for item in items})}
             if (specs or drafted) and not behavior_map._case_question(entry):  # a recording that has not proved its own item takes nothing
-                behavior_map.release(items, entry, run, runs, approved)
+                behavior_map.release(items, entry, run, runs, named)
                 released.append((entry, run))
             behavior_map.retain_evaluation(items, [entry], evaluation, runs, retired)
     for entry, run in released:  # again on this call's results: a later rerun of another item can bind the command again
-        behavior_map.release(items, entry, run, runs, approved)
+        behavior_map.release(items, entry, run, runs, named)
     for frozen in evaluation.values() if indexes else ():
         if frozen.get("saving") or behavior_map.case_key(frozen["id"], runs[frozen["runIndex"]]) not in retired:
             frozen["runIndex"] = indexes.get(frozen["runIndex"], frozen["runIndex"])
@@ -2166,52 +2155,18 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None, emit=
         if references := proof.get("caseRuns"):
             updated = {command: indexes.get(index, index) for command, index in references.items()}
             if updated != references or indexes.get(proof["runIndex"], proof["runIndex"]) != proof["runIndex"]:
-                entry["comparison"] = {**runs[indexes.get(proof["runIndex"], proof["runIndex"])], "obligation": proof["obligation"], "caseRuns": updated}
-    latest = {probe.get("runIndex"): run for (_, probe), run in zip(selected, compared)} if retiring else {}
-    held = frozen_names()
-    present = {entry["id"]: entry for entry in items}  # an item's recorded cases that hold, current and retained, beside those this call retires
-    proving = {case["id"] for case in [*behavior_map.current_cases(items, runs, retired), *(
-        {**present[frozen["id"]], "comparison": {**runs[frozen["runIndex"]], "obligation": behavior_map.obligation(frozen)}}
-        for frozen in evaluation.values() if frozen["id"] in present)]
-        if (key := behavior_map.case_key(case["id"], case["comparison"])) not in retiring and key not in retired
-        and not behavior_map._case_question(case)} if retiring else ()
-    gone = []
-    corrected_uses = _corrected_uses(current) if corrections else set()
-    for key, index in retiring.items():
-        # The lead's retirement leaves the item's cases and is listed for review. A kept-behaviour case stays the item's
-        # retained proof, replayed and holding the item open while it fails on the candidate, unless another recorded case
-        # proves the item and the case either fails on the original or no longer passes after the item changed.
-        # An item left without a case that proves it reads open.
-        identifier, run = key.rpartition(":")[0], latest[index]
-        entry, first = next((entry for entry in items if entry["id"] == identifier), None), evaluation.get(held.get(key))
-        withdrawn = (first and entry and behavior_map.obligation(first)[1:] != behavior_map.obligation(entry)[1:]
-                     and run["arms"][-1]["outcome"] != "passed")
-        others = [case for case in behavior_map.current_cases([entry] if entry else [], runs) if behavior_map.case_key(identifier, case["comparison"]) != key]
-        kept_proof = (entry is not None and entry.get("kind") == "preservation"
-                      and not (identifier in proving and (behavior_map.original_outcome(run) != "passed" or withdrawn))
-                      and not any(case["comparison"]["command"] == run["command"] and not behavior_map._case_question(case)
-                                  for case in others if not case["comparison"].get("support")))  # a proved recapture of its command has replaced it; one naming support replaces nothing
-        if entry is not None and (proof := entry.get("comparison")):
-            kept = {case["comparison"]["command"]: case["comparison"]["runIndex"] for case in others}
-            entry.pop("comparison")
-            if kept:
-                entry["comparison"] = {**runs[max(kept.values())], "obligation": proof["obligation"], "caseRuns": kept}
-        if not (first and first.get("saving") and behavior_map.original_outcome(run) == "passed"):  # a saving keeps its own run
-            if kept_proof:
-                evaluation[held.get(key, key)] = {**{name: value for name, value in (first or entry).items() if name not in ("comparison", "cases")}, "runIndex": run["runIndex"]}
-            else:
-                evaluation.pop(held.get(key), None)
-        use_key = None
-        if key in corrections and (new := next((case["comparison"] for case in others if case["comparison"]["command"] == corrections[key]), None)):
-            for frozen in evaluation.values():  # the corrected command, once it ran, measures the workload from now on
-                if (frozen["id"], frozen.get("workload", runs[frozen["runIndex"]]["command"])) == (identifier, run["command"]):
-                    frozen["workload"] = corrections[key]
-            old = runs[index]
-            if old["command"] in approved.get(identifier, {}).get("cases", ()) or (identifier, old["arms"][0]["key"]) in corrected_uses:
-                use_key = new["arms"][0]["key"] if _same_workload(identity, old, new) else None
-        gone.append({"caseKey": key, "command": run["command"], "exits": [arm["exitCode"] for arm in run["arms"]],
-                     **({"correctedUse": use_key} if use_key else {}),
-                     **({"reason": " ".join(args.report)} if args.report else {})})
+                entry["comparison"] = behavior_map.binding(proof, runs[indexes.get(proof["runIndex"], proof["runIndex"])], updated)
+    held, gone = frozen_names(), []
+    for key, index in retiring.items():  # the lead's correction or retirement leaves no current or retained record and is listed for review
+        identifier, run = key.rpartition(":")[0], runs[index]
+        entry, first = behavior_map.item(items, identifier) if any(entry["id"] == identifier for entry in items) else None, evaluation.get(held.get(key))
+        others = {case["comparison"]["command"]: case["comparison"]["runIndex"] for case in behavior_map.current_cases([entry] if entry else [], runs)
+                  if behavior_map.case_key(identifier, case["comparison"]) != key}
+        if entry is not None and (proof := entry.pop("comparison", None)) and others:  # an item left without a case reads open
+            entry["comparison"] = behavior_map.binding(proof, runs[max(others.values())], others)
+        if not (first and first.get("saving")):  # a saving keeps its own run until a measurement that covers it retires it
+            evaluation.pop(held.get(key), None)
+        gone.append({"caseKey": key, "command": run["command"], "exits": [arm["exitCode"] for arm in run["arms"]], **({"reason": " ".join(args.report)} if args.report else {})})
     cases = behavior_map.current_cases(items, runs, retired)
     selected_only = bool(args.behavior_id) and update is None  # a map update's batch judges the whole map
     reused = bool(current and len(runs) == len(current.get("runs", [])) and signature == json.dumps(items, sort_keys=True)
@@ -2221,27 +2176,24 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None, emit=
     if reused:
         readiness = None if selected_only else _readiness_lines(identity, state, items,
                     documents=(current, None), candidate=_active_candidate_tree(identity), keys=True)
-        evidence = state["tddEvidence"]
     else:
         document = {"workflowId": workflow_id, "slug": slug, "kind": "comparison", "behaviorMap": items,
                     "evaluation": evaluation, "runs": runs, "comparedRuns": [run["runIndex"] for run in compared],
                     "candidateTree": candidate, "updatedAt": utc_timestamp(),
                     **({"retired": lapsed} if (lapsed := [*((current or {}).get("retired") or []), *gone]) else {})}
-        state, evidence, readiness = commit_tdd(identity, slug, workflow_id, document,
+        state, _, readiness = commit_tdd(identity, slug, workflow_id, document,
                     expected_evidence_id=state.get("tddEvidence"), tree_before=before, selected_only=selected_only)
     memory = _given(identity, state, "lead")
     rows, baseline = [], candidate == original  # before any edit the candidate is the original: a map item's case is expected to behave as on it
     bound = {case["comparison"]["runIndex"] for case in cases}  # a run its item no longer binds, a moved case's, gets no row
-    reported = {run["runIndex"]: (entry, run) for (entry, probe), run in zip(selected, compared)
-                if all(latest[retiring[done["caseKey"]]] is not run for done in gone)
-                and (entry is None or run["runIndex"] in bound)}
+    reported = {run["runIndex"]: (entry, run) for (entry, probe), run in zip(selected, compared) if entry is None or run["runIndex"] in bound}
     # A row for each case the call names and each recorded case that does not hold on this candidate; the rest are counted.
     # `_deliver` then sends of each row what its reader has not been given, and of a case given as failing its result now.
     asked = set(map(id, asked))
     called = {run["runIndex"] for (_, probe), run in zip(selected, compared) if args.behavior_id or id(probe) in asked}
     recorded = {case["comparison"]["runIndex"]: (None, case["comparison"]) for name, case in frozen_cases.items()
-                if name in evaluation and case["id"] not in rejected}  # the publication's survivors
-    recorded.update((case["comparison"]["runIndex"], (case, case["comparison"])) for case in cases if case["id"] not in rejected)
+                if name in evaluation}  # the publication's survivors
+    recorded.update((case["comparison"]["runIndex"], (case, case["comparison"])) for case in cases)
     listed, failing, taken, proving, merged = set(), False, {entry["id"] for entry in items}, None, {}
     diagnostic = True
     for index, (entry, run) in {**{index: pair for index, pair in recorded.items() if pair[1]["candidateTree"] == candidate}, **reported}.items():
@@ -2258,7 +2210,7 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None, emit=
             # item it leaves this one: an item that declares or runs its command will do that, else the complete call declares
             # it under a new change item stating this item's obligation.
             if proving is None:  # each change item's commands, read once for the rows that ask
-                owners = [other for other in items if other.get("kind") in ("conformance", "contract") and other["id"] not in rejected]
+                owners = [other for other in items if other.get("kind") in ("conformance", "contract")]
                 proving = {**{case["comparison"]["command"]: case["id"] for case in behavior_map.current_cases(owners, runs)},
                            **{command: other["id"] for other in owners for command in other.get("cases", ())}}
             change = proving.get(source) or next(name for name in (f"{entry['id'][:54]}_CHANGE{number}" for number in ("", *range(2, 99))) if name not in taken)
@@ -2291,7 +2243,7 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None, emit=
         name, run = case["id"], case["comparison"]
         if name in budgets and not run.get("timedOut") and (counts := (run.get("counts") or {}).get(name)):
             budgets[name]["original"] = max(counts[0], budgets[name]["original"] or 0)
-    receipt = operation_receipt(state, identity, kind="tdd", summaryId=evidence, readiness=readiness,
+    receipt = operation_receipt(state, identity, kind="tdd", readiness=readiness,
                                 **({"baselineWork": budgets} if budgets else {}), obligations=not selected_only, known=memory[1]["findings"],
                                 otherCases=len(recorded.keys() - listed), **({"retired": [done["caseKey"] for done in gone]} if gone else {}),
                                 **({"unmatched": missing} if (missing := [key for key in dict.fromkeys(args.retire) if key not in retiring]) else {}))
@@ -2326,7 +2278,7 @@ def map_update(identity: RepoIdentity, state: JsonObject, value: JsonObject) -> 
     runs = (current or {}).get("runs", [])
     approved = approved_items(identity, state)
     earned = {entry["id"] for entry in _evaluation(state, current).values() if entry.get("saving")}
-    measured = earned.union(_advisor_added(identity, state))
+    measured = earned.union(state.get("measuredItems", []))
     bound = {"behavior", "basis", "seam", "expected", "measured", "remaining", "boundaryInputs"}
     for part in ("items", "added"):
         for entry in value.get(part, ()) if isinstance(value.get(part), list) else ():
@@ -2338,7 +2290,7 @@ def map_update(identity: RepoIdentity, state: JsonObject, value: JsonObject) -> 
                     # Keep the previous map atomically. A different implementation may use the same obligation.
                     memory = _given(identity, state, "lead")
                     return _deliver(identity, state, memory, operation_receipt(
-                        state, identity, kind="tdd", summaryId=state.get("tddEvidence") or state["preflightEvidence"],
+                        state, identity, kind="tdd",
                         readiness=_readiness_lines(identity, state, keys=True), known=memory[1]["findings"], reused=True, kept=[message]))
     declared = [entry for part in ("items", "added") if isinstance(value.get(part), list) for entry in value[part]
                 if isinstance(entry, dict) and isinstance(entry.get("cases"), list)]
@@ -2366,7 +2318,7 @@ def map_update(identity: RepoIdentity, state: JsonObject, value: JsonObject) -> 
     memory = _given(identity, state, "lead")
     if items == previous:
         return _deliver(identity, state, memory, operation_receipt(
-            state, identity, summaryId=state.get("tddEvidence") or state["preflightEvidence"], kind="tdd", known=memory[1]["findings"],
+            state, identity, kind="tdd", known=memory[1]["findings"],
             readiness=_readiness_lines(identity, state, keys=True), reused=True, **notice))
     try:
         tree_manifest(identity)
@@ -2381,9 +2333,9 @@ def map_update(identity: RepoIdentity, state: JsonObject, value: JsonObject) -> 
         refresh_proof(identity, items, state["workflowId"])
         receipt, given = _run_tdd(["--repo", str(identity.root), *(word for identifier in rerun for word in ("--behavior-id", identifier))], update=items)
         return {**receipt, **notice}, given
-    state, evidence, readiness = commit_tdd(identity, str(state["slug"]), str(state["workflowId"]), document,
+    state, _, readiness = commit_tdd(identity, str(state["slug"]), str(state["workflowId"]), document,
                                 expected_evidence_id=state.get("tddEvidence"))
-    return _deliver(identity, state, memory, operation_receipt(state, identity, summaryId=evidence, kind="tdd", readiness=readiness,
+    return _deliver(identity, state, memory, operation_receipt(state, identity, kind="tdd", readiness=readiness,
                                                                 known=memory[1]["findings"], **notice))
 
 
@@ -2393,107 +2345,61 @@ def approved_items(identity: RepoIdentity, state: JsonObject) -> dict[str, JsonO
         item["id"]: item for item in behavior_map.recorded_map(None, evidence_document(identity, ref)) or []})
 
 
-def _advisor_added(identity: RepoIdentity, state: JsonObject) -> list[str]:
-    """The measured items of the approved preflight."""
-    return state.get("measuredItems", [])
+def release(identity: RepoIdentity, state: JsonObject, removed: list[str], intake: JsonObject) -> JsonObject:
+    """The answer of the advisor that bound the lead's pending declines: in one commit each measured decline it removes
+    leaves the current map, its retained cases and measuredItems; every other pending decline is kept, its item open."""
+    pending = {record["target"] for record in state.get("rejections", []) if record["kind"] == "item" and record.get("status") == "pending"}
+    released = pending.intersection(removed)
+    items, document = current_map(identity, state, fresh=False)
+    document = document or {"workflowId": state["workflowId"], "runs": []}  # a decline before the first comparison: the preflight map
+    document = {**document, "behaviorMap": [entry for entry in items or [] if entry["id"] not in released], "updatedAt": utc_timestamp(),
+                "evaluation": {name: entry for name, entry in document.get("evaluation", {}).items() if entry["id"] not in released}}
+    return commit_tdd(identity, str(state["slug"]), str(state["workflowId"]), document, expected_evidence_id=intake["tddEvidence"],
+                      release={"released": released, "intake": intake})[0]
 
 
-def _reject(identity: RepoIdentity, state: JsonObject, requests: list[list[str]], removal: str | None = None) -> tuple[JsonObject, tuple[str, str, str] | None]:
-    """The lead's rejection of a final finding, whose command runs once and is kept for its advisor's return review; or
-    its proof that the cost an advisor-added map item measured is rightly kept. Declining leaves an item open. It closes
-    here only when `removal`, the diff the lead declines, is shown by the item's own recorded case to remove that cost
-    (the case fails on the candidate and passes with it) and the same replay shows it saves nothing in real use: a counted
-    case of this item has no count lowered by it. A removal that breaks another item disproves that patch, not the saving."""
+def _reject(identity: RepoIdentity, state: JsonObject, requests: list[list[str]], reason: str | None = None) -> tuple[JsonObject, tuple[str, str, str] | None]:
+    """The lead's rejection of a final finding, kept for its advisor's return review: its command runs once, or a user rule
+    or decision stands as its reason. Or its decline of a measured map item: the measurement runs once and goes, with the
+    reason, to the preflight advisor that bound the item, in this call; that advisor releases or keeps it."""
     from .command_runner import _tail
-    from .workflow_state import commit_rejections, rejections
-    added = _advisor_added(identity, state)
-    recorded, document = current_map(identity, state, fresh=False)
-    evaluation = _evaluation(state, document)
-    earned = {e["id"] for e in evaluation.values() if e.get("saving")}
-    approved = approved_items(identity, state)
-    workloads = {name: set(item.get("cases", ())) for name, item in approved.items()}
-    earned_cases = {(item["id"], item["runIndex"]) for item in evaluation.values() if item.get("saving")}
-    corrected_uses = _corrected_uses(document)
-    items, runs = {entry["id"]: entry for entry in recorded or [] if entry["id"] in added or entry["id"] in earned}, list((document or {}).get("runs", []))
+    from .workflow_state import commit_rejections, next_operation
+    recorded, _ = current_map(identity, state, fresh=False)
+    items = {entry["id"]: entry for entry in recorded or [] if entry["id"] in state.get("measuredItems", [])}
     findings = {ref["id"]: entry for entry in state.get("findingStates", []) if entry["stage"] == "final" or entry.get("decision")
                 for ref in ({"id": entry["findingId"]}, *entry.get("observations", []))}
-    records, rows, replayed = [], [], None
+    records, rows = [], []
     for target, *words in requests:
-        command = shlex.join(words) if len(words) > 1 else next(iter(words), None)
+        command = (shlex.join(words) if len(words) > 1 else next(iter(words), "")).strip()
         if target not in items and target not in findings:
-            rows.append({"target": target, "open": "no advisor-added map item or final finding has this id"})
+            rows.append({"target": target, "open": "no measured map item or final finding has this id"})
             continue
-        if target in items:
+        target = target if target in items else findings[target]["findingId"]
+        record = {"target": target, "kind": "item" if target in items else "finding", **({"reason": reason} if reason else {})}
+        if not command and (target in items or not reason):
+            rows.append({"target": target, "open": f"tdd --reject {target} 'COMMAND' runs the measurement that shows keeping it costs less" if target in items
+                         else f"tdd --reject {target} 'COMMAND' runs a command that disproves its premise; --report 'REASON' gives the user rule or decision instead"})
+            continue
+        if command:
             try:
-                if replayed is None and removal:  # one replay of the requested items' cases, on the candidate and with the removal
-                    _execution_cache(identity, state)
-                    tree = _active_candidate_tree(identity)
-                    active = behavior_map.current_cases(recorded or [], runs, _retired(state))
-                    captures = {(case["id"], case["comparison"]["runIndex"]): case for case in active}
-                    for entry in evaluation.values():
-                        if entry.get("saving"):
-                            captures.setdefault((entry["id"], entry["runIndex"]), {**entry, "comparison": runs[entry["runIndex"]]})
-                    cases = [case for case in captures.values()
-                             if case["id"] in {request[0] for request in requests} and case["id"] not in rejections(state, "item", tree)]
-                    measured = _compare_many(identity, tree, _indexed(identity, tree, (("apply", "--cached", "-"), Path(removal).read_bytes())),
-                                             [dict(case["comparison"]) for case in cases], runs)
-                    replayed = list(zip(cases, measured))
-            except (OSError, ValueError, RuntimeError, WorkflowError) as exc:
-                rows.append({"target": target, "open": f"the removal could not be measured: {str(exc)[-300:]}"})
+                words, _, environment = _case_environment(identity, command)
+                raw, code, timed_out = _run(words, identity, MAX_CASE_SECONDS, env=environment)
+            except (OSError, ValueError) as exc:
+                raw, code, timed_out = str(exc).encode(), None, False
+            if code is None or timed_out or code:
+                rows.append({"target": target, "command": command, "open": ("the command did not finish: " if code is None or timed_out else f"the command exited {code}: ")
+                             + behavior_map.failure_line({"output": _tail(raw)})})
                 continue
-            own, flat, removed_metrics, removes_cost, saving_on_use = [], [], set(), False, False
-            for case, replay in ((case, replay) for case, replay in replayed or () if case["id"] == target):
-                outcomes, bound_run = [arm["outcome"] for arm in replay["arms"]], case["comparison"]
-                representative = (bound_run["command"] in workloads.get(target, ()) or (target, bound_run["runIndex"]) in earned_cases
-                                  or (target, bound_run["arms"][0]["key"]) in corrected_uses)
-                own.append(outcomes)
-                if not replay["valid"]:
-                    continue
-                counts = replay.get("counts") or {}
-                if outcomes == ["failed", "passed"] or target in counts and counts[target][1] < counts[target][0]:
-                    removes_cost = True
-                    removed_metrics.update(replay["arms"][0].get("metrics", {}))
-                    if representative and target in counts and counts[target][1] < counts[target][0]:
-                        saving_on_use = True
-                # A dedicated real-use case may name the operation it measures; a shared one must identify its item.
-                command = case["comparison"]["command"]
-                dedicated = not any(other["id"] != target and other["comparison"]["command"] == command for other in captures.values())
-                if (outcomes == ["passed", "passed"] and counts and
-                        (representative or "remaining" not in approved.get(target, {})) and
-                        (target in counts or dedicated and counts.keys() == (case["comparison"].get("counts") or {}).keys())):
-                    if not any(after < before for before, after in counts.values()):
-                        flat.append(counts)
-            flat = [] if saving_on_use else [counts for counts in flat if target in counts or counts.keys() <= removed_metrics]
-            if not removes_cost or not flat:
-                rows.append({"target": target, "open": f"declining leaves {target} open, and code review cannot start: build the cheapest correct removal and let the item's case show "
-                             f"the saving (tdd --correct {target} 'COMMAND' replaces a broken or superseded measure), or prove the cost is rightly kept with tdd --reject {target} "
-                             "--change REMOVAL.diff: the item's own case must fail on the candidate and pass with the removal, and a case "
-                             "of this item printing WORKFLOW_METRICS counts of the real use must have none lowered by it"
-                             + (f"; this item's cases went {own}" if removal else "")})
-                continue
-            records.append({"target": target, "kind": "item", "candidateTree": tree, "claim": items[target]["behavior"], "removal": _tail(Path(removal).read_bytes()),
-                            "ground": f"no saving in real use: with the removal no count falls: {flat}"})
-            continue
-        target = findings[target]["findingId"]
-        if not (command or "").strip():
-            rows.append({"target": target, "open": "a rejection needs one command, which the workflow runs and records"})
-            continue
-        try:
-            words, _, environment = _case_environment(identity, command)
-            raw, code, timed_out = _run(words, identity, MAX_CASE_SECONDS, env=environment)
-        except (OSError, ValueError) as exc:
-            raw, code, timed_out = str(exc).encode(), None, False
-        if code is None or timed_out:
-            rows.append({"target": target, "command": command, "open": "the command did not finish: " + behavior_map.failure_line({"output": _tail(raw)})})
-            continue
-        if code:
-            rows.append({"target": target, "command": command, "open": f"the command exited {code}: " + behavior_map.failure_line({"output": _tail(raw)})})
-            continue
-        claim = next((finding["claim"] for finding in (evidence_document(
+            record.update(command=command, exitCode=code, output=_tail(raw))
+        record["claim"] = items[target]["behavior"] if target in items else next((finding["claim"] for finding in (evidence_document(
             identity, findings[target]["intakeEvidenceId"], restore_runs=False) or {}).get("findings", []) if finding["id"] == target), "")
-        records.append({"target": target, "kind": "finding", "claim": claim, "command": command, "exitCode": code, "output": _tail(raw)})
+        records.append({**record, **({"status": "pending"} if target in items else {})})
+    advice = None
     if records:
         state = commit_rejections(identity, str(state["slug"]), str(state["workflowId"]), records)
+        if any(record["kind"] == "item" for record in records):  # the advisor that bound the items judges them now; a failed consult stays the next step
+            consult = subprocess.run(shlex.split(next_operation(identity, state)["command"]), cwd=identity.root, capture_output=True, text=True, check=False)
+            state, advice = read_active(identity), consult.stdout.strip() or consult.stderr.strip()[-600:]
     memory = _given(identity, state, "lead")
-    return _deliver(identity, state, memory, operation_receipt(state, identity, kind="tdd", readiness=_readiness_lines(identity, state, keys=True),
-                                                                known=memory[1]["findings"], rejected=[*(behavior_map.rejection_view(r) for r in records), *rows]))
+    return _deliver(identity, state, memory, operation_receipt(state, identity, kind="tdd", readiness=_readiness_lines(identity, state, keys=True), known=memory[1]["findings"],
+                                                                rejected=[*(behavior_map.rejection_view(r) for r in records), *rows], **({"advisor": advice} if advice else {})))
