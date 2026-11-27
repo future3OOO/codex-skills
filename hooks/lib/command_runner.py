@@ -9,6 +9,7 @@ import sys
 import tempfile
 import threading
 import time
+from collections import deque
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -70,9 +71,9 @@ def run(
         output.seek(start)
         raw = output.read()
         code = 124 if timed_out else int(process.returncode)
-        if start and declared and not code and b"\n" + declared not in raw:
+        if declared and not code and b"\n" + declared not in raw:  # the last declared line before the tail, read line by line
             output.seek(0)
-            raw = output.read(start) + raw
+            raw = b"".join(deque((line for line in iter(output.readline, b"") if line.startswith(declared)), 1)) + raw
     return raw, code, timed_out
 
 

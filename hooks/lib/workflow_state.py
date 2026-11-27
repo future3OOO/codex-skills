@@ -474,8 +474,9 @@ def commit_tdd(identity: RepoIdentity, slug: str, workflow_id: str | None, summa
             if record.get("status") == "pending":
                 record.update(status="released" if record["target"] in release["released"] else "decided" if record["target"] in release["decided"] else "kept",
                               advice=advice[0].evidence_id)
-                if record["target"] in release["released"]:
-                    state["measuredItems"].remove(record["target"])
+
+        if release:  # a repeated decline of one item settles as one
+            state["measuredItems"] = [name for name in state["measuredItems"] if name not in release["released"]]
         write = evidence_write(state["workflowId"], "tdd", summary_doc)
         state["tddEvidence"] = write.evidence_id
         owed = [entry for entry in state.get("findingStates", []) if entry.get("proof") and _finding_unresolved(entry)]

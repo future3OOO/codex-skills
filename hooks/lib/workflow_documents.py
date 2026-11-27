@@ -97,7 +97,7 @@ def advisor_envelope(
         if kind not in ("behavioral", "nonbehavioral"):
             kind = "behavioral"
         identifiers.add(identifier)
-        if stage != "preflight" and any(key in item and not _text(item[key]) for key in ("decides", "quote", "decision")) or "items" in item and (stage != "review" or not _strings(item["items"])):
+        if stage != "preflight" and any(key in item and not _text(item[key]) for key in ("decides", "quote", "decision")) or "items" in item and (stage != "review" or _strings(item["items"]) != item["items"]):  # exact map ids
             raise ValueError(f"advisor finding {identifier}: decides, quote and decision are text when given; a review finding's items, map ids")
         prior, withdrawn = item.get("priorFinding"), stage == "review" and item.get("rejected") is True  # its author's withdrawal
         if (prior is not None or withdrawn) and (not isinstance(prior, dict) or set(prior) != {"evidenceId", "id"}
@@ -156,7 +156,7 @@ ADVISOR_SHAPES = {
     # the reviewer's verdict file: its command carries the verdict
     "review": ('{"schemaVersion":1,"findings":[{"id":"F1","claim":"...",'
                '"decides":"what decides its input","quote":"request words it relies on","decision":"evidence and the exact user decision needed",'
-               '"items":["BM_X: a map item whose claimed boundary no recorded case reaches"]}],'
+               '"items":["BM_X"]}],'
                '"causes":[{"id":"C1","findings":["F1"],"cause":"where it starts, what else it breaks",'
                '"test":"COMMAND","lines":{"added":0,"removed":0},"functions":{"name":"why the owner could not hold it"},"retires":[["ITEM","COMMAND"]]}],'
                '"repair":"/scratch/repair.diff"}'),

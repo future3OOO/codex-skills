@@ -2366,7 +2366,7 @@ def release(identity: RepoIdentity, state: JsonObject, draft: JsonObject, intake
         if entry["id"] in accepted | costs and entry["id"] in (counts := proof.get("counts", {})):
             credited = behavior_map.credit(None, entry["id"], counts, set(mapped), accept=True)
             if entry["id"] not in accepted:  # its costs alone: both the case and its original execution must be replaced
-                credited.update(best=proof.get("credited", credited)["best"], held="kept open by its advisor until its meter changes: correct its case as its advisor's findings ask with tdd --correct",
+                credited.update(best=(proof.get("credited") or credited)["best"], held="kept open by its advisor until its meter changes: correct its case as its advisor's findings ask with tdd --correct",
                                 unproved=[proof["captureKey"], proof["arms"][0]["key"]])
             proof["credited"] = credited
     document = {**document, "behaviorMap": [entry for entry in items if entry["id"] not in released], "updatedAt": utc_timestamp(),
