@@ -421,7 +421,7 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
     if args.stage == "preflight" and intake and any(record.get("status") == "pending" for record in state.get("rejections", [])):
         from .tdd_workflow import release  # the answer to the lead's declines: the advisor that bound the items releases or keeps them
         intake.update(candidateTree=expected, tddEvidence=args.tdd_evidence or None)
-        state = release(identity, state, (changes or {}).get("removed") or [], intake)
+        state = release(identity, state, changes or {}, intake)
         emit(_receipt(state, identity, obligations=False, intake=next(record["advice"] for record in reversed(state["rejections"]) if record.get("advice"))))
         return 0
     # The lead's draft; an approving answer's `draft` changes it, whose added items stay until explicitly rejected.

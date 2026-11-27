@@ -902,10 +902,10 @@ def _deliver(identity: RepoIdentity, state: JsonObject, memory: tuple[Path, Json
     if CHECK_ONLY.get():
         return _placed(identity, receipt), None
     path, given, before = memory
+    sending = set()  # the items whose rows this reply sends: their open lines show again
     cases, commands, sent, unchanged, replaced, standing = given["cases"], given["commands"], [], 0, {}, set(given["open"])
     count_rows = {}
     diagnostic_sent = False
-    fresh = [line for line in receipt.get("open", ()) if _digest(line) not in standing]
     for name, row, source, listed in rows or ():
         name, key, held = _digest(name), row.get("caseKey") or row.get("findingId"), cases.get(_digest(name))
         output = row["unexpected"] if isinstance(row.get("unexpected"), list) else []
@@ -946,6 +946,8 @@ def _deliver(identity: RepoIdentity, state: JsonObject, memory: tuple[Path, Json
             if represented != key:
                 out.pop("counts")
                 out["countsOf"] = represented
+        if row.get("caseKey"):
+            sending.update(row.get("items") or [row["caseKey"].partition(":")[0]])
         sent.append(out)
     if replaced:  # a command held under a replaced key is held under the new one, in this reply's rows too
         given["commands"] = {digest: replaced.get(holder, holder) for digest, holder in commands.items()}
@@ -955,6 +957,8 @@ def _deliver(identity: RepoIdentity, state: JsonObject, memory: tuple[Path, Json
     if unchanged:
         receipt["unchanged"] = unchanged
     if "open" in receipt:
+        labels = tuple(label for name in sending for label in (f"{name} (", f"retained {name}:"))
+        fresh = [line for line in receipt["open"] if _digest(line) not in standing or line.startswith(labels)]
         receipt["open"], given["open"] = fresh + ([f"{len(receipt['open']) - len(fresh)} as given"] if len(receipt["open"]) > len(fresh) else []), [_digest(line) for line in receipt["open"]]
     return _placed(identity, receipt), (str(path), before, after) if (after := json.dumps(given, sort_keys=True)) != before else None
 
@@ -1114,10 +1118,6 @@ def _protocol(raw: bytes, growth: bool) -> dict:
         fields["protocol"] = 1
     fields["output"] = _tail(diagnostic)
     return fields
-
-
-def _same_metrics(left: JsonObject, right: JsonObject) -> bool:
-    return ("metrics" in left) == ("metrics" in right) and left.get("metrics", {}).keys() == right.get("metrics", {}).keys()
 
 
 def _captured(arm: JsonObject) -> bool:
@@ -1483,10 +1483,28 @@ def _startable(identity: RepoIdentity, text: str) -> list[str]:
 
 
 def _unwritten(identity: RepoIdentity, command: list[str]) -> str | None:
-    """The script a case command gives Python that is not on disk, as written: the runner starts a command without a shell."""
-    start = next((position for position, word in enumerate(command) if re.fullmatch(r"python[\d.]*", os.path.basename(word))), len(command))
-    script = next((word for word in command[start + 1:] if word.endswith(".py") or word in ("-m", "-c")), "-c")
-    return None if script in ("-m", "-c") or os.path.isfile(os.path.join(identity.root, script)) else script
+    """The entry script a case command's Python is given that is not on disk, as written: the runner starts a command
+    without a shell. Python is the program, past assignments and an env or timeout wrapper; its script is its first
+    operand past its options (-W, -X and --check-hash-based-pycs take one; -- ends them); -c, -m and - run none."""
+    words = iter(_assigned(command)[0])
+    word = next(words, "")
+    if re.fullmatch(r"(.*/)?(env|timeout)", word):  # the wrapper's options, assignments and duration
+        while re.fullmatch(r"(.*/)?(env|timeout)|-.*|[A-Za-z_]\w*=.*|[\d.]+[smhd]?", word):
+            word = next(words, "")
+    if not re.fullmatch(r"python[\d.]*", os.path.basename(word)):
+        return None
+    for word in words:
+        option = re.fullmatch(r"-(?:[bBdEiIOPqRsSuvx]+|[bBdEiIOPqRsSuvx]*([WX])(.*))|(--check-hash-based-pycs)", word)
+        if option:
+            if option[3] or option[1] and not option[2]:
+                next(words, None)
+            continue
+        if word == "--":
+            word = next(words, "-")
+        elif word.startswith("-"):
+            return None
+        return None if word == "-" or os.path.exists(os.path.join(identity.root, word)) else word
+    return None
 
 
 def unstartable(identity: RepoIdentity, items: list[JsonObject], refuse: bool = True) -> list[str]:
@@ -1620,8 +1638,9 @@ def _compare_many(identity: RepoIdentity, original: str, candidate: str, probes:
                         differs = _difference(*(doc["values"][0] for doc in docs)) or "different JSON values"
                     else:
                         differs = "structured result evidence unavailable"
-            if not _same_metrics(left, right):
-                differs = differs or "WORKFLOW_METRICS missing or different keys"
+            one_sided = sorted(set(left.get("metrics", {})) ^ set(right.get("metrics", {})))
+            if one_sided or ("metrics" in left) != ("metrics" in right):
+                differs = differs or "WORKFLOW_METRICS on one tree only: " + (", ".join(one_sided) or "the line itself")
         counts = [arm.get("metrics") for arm in (arms[0], arms[-1])]
         valid = all(arm["outcome"] == "passed" for arm in arms[len(arms) // 2:]) and not any(arm["timedOut"] for arm in arms) and outcomes[0] in {"passed", "failed"} and not differs
         run = {**metadata, **({"differs": differs} if differs else {}), **({"resultRefs": result_refs} if result_refs else {}), "runIndex": len(runs), "candidateKey": keys[-1],
@@ -1921,14 +1940,17 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None, emit=
             step, action = receipt.pop("next"), receipt.pop("nextAction")
             repair = action == "tdd" and _allows_next(state, "tdd") and _allows_next(state, "verification") and _review_repair_pending(state)
             del receipt["phase"]
-            owed = [entry["findingId"] for entry in state.get("findingStates", []) if entry["stage"] == entry["producer"] == "code-review"
-                    and _finding_unresolved(entry) and all(entry["findingId"] != finding["id"] for finding in execution["findings"])]
+            unresolved = [entry for entry in state.get("findingStates", []) if entry["stage"] == entry["producer"] == "code-review" and _finding_unresolved(entry)]
+            waiting = [entry["findingId"] for entry in unresolved if not entry.get("decision") and candidate in entry.get("bindings", {}).values()]  # no verdict on this tree changes it
+            owed = [entry["findingId"] for entry in unresolved if entry["findingId"] not in waiting and all(entry["findingId"] != finding["id"] for finding in execution["findings"])]
             if action != "code-review" and not repair:
                 receipt["leadNext"] = step
             if owed and args.verdict:
                 receipt["needsDisposition"] = [
                     f"{name}: restate it by id in this verdict's findings, without a decision once the current evidence settles it, with its decision while it holds" for name in owed]
-        commands = {} if recording else review_commands(identity, state, candidate, repo=False)  # the verdict commands bound to this source, when the reviewer does not hold them
+            if waiting:
+                receipt["waiting"] = f"{', '.join(waiting)} binds on this tree: the review waits for the lead's repair"
+        commands = {} if recording or "waiting" in receipt else review_commands(identity, state, candidate, repo=False)  # the verdict commands bound to this source, when the reviewer does not hold them
         if commands and memory[1].get("verdict") != _digest(commands):
             receipt.update(commands)
             memory[1]["verdict"] = _digest(commands)
@@ -2140,7 +2162,10 @@ def _run_tdd(values: list[str], *, update: list[JsonObject] | None = None, emit=
             if prior.get("caseRuns") != references or any(prior.get(key) != run.get(key) for key in ("runIndex", "candidateKey", "sensitive")) or prior.get("obligation") != behavior_map.obligation(entry):
                 entry["comparison"] = behavior_map.binding({**prior, "obligation": behavior_map.obligation(entry)}, run, references)  # its credit stays
             if "remaining" in entry and run["valid"] and run["candidateTree"] == candidate and entry["id"] in (run.get("counts") or {}):
-                entry["comparison"] = {**entry["comparison"], "credited": behavior_map.credit(prior.get("credited"), entry["id"], run["counts"], {item["id"] for item in items})}
+                credit = prior.get("credited") or {}
+                held = credit.get("unproved", ())
+                if not held or run["captureKey"] not in held and run["arms"][0]["key"] not in held:
+                    entry["comparison"]["credited"] = behavior_map.credit(credit, entry["id"], run["counts"], {item["id"] for item in items})
             if (specs or drafted) and not behavior_map._case_question(entry):  # a recording that has not proved its own item takes nothing
                 behavior_map.release(items, entry, run, runs, named)
                 released.append((entry, run))
@@ -2279,12 +2304,13 @@ def map_update(identity: RepoIdentity, state: JsonObject, value: JsonObject) -> 
     approved = approved_items(identity, state)
     earned = {entry["id"] for entry in _evaluation(state, current).values() if entry.get("saving")}
     measured = earned.union(state.get("measuredItems", []))
+    recorded = {entry["id"]: entry for entry in previous or []}  # an approved cost as its advisor last decided it
     bound = {"behavior", "basis", "seam", "expected", "measured", "remaining", "boundaryInputs"}
     for part in ("items", "added"):
         for entry in value.get(part, ()) if isinstance(value.get(part), list) else ():
             name = str(entry.get("id", "")).strip() if isinstance(entry, dict) else None
             if name in measured and name in approved:
-                changed = sorted(key for key in bound.intersection(entry) if entry[key] != approved[name].get(key))
+                changed = sorted(key for key in bound.intersection(entry) if entry[key] != recorded.get(name, approved[name]).get(key))
                 if changed:
                     message = f"{name}: approved cost requirement stays ({', '.join(changed)}); compare the implementation on its approved workload"
                     # Keep the previous map atomically. A different implementation may use the same obligation.
@@ -2300,7 +2326,6 @@ def map_update(identity: RepoIdentity, state: JsonObject, value: JsonObject) -> 
         for entry in declared:
             entry["cases"] = [keyed.get(case, case) if isinstance(case, str) else case for case in entry["cases"]]
         unstartable(identity, [entry for entry in declared if all(isinstance(case, str) for case in entry["cases"])])
-    recorded = {entry["id"]: entry for entry in previous or []}
     added = set(approved) | earned
     updates, items = behavior_map.merge(previous or [], value, keep=added)
     for entry in updates:
@@ -2345,17 +2370,32 @@ def approved_items(identity: RepoIdentity, state: JsonObject) -> dict[str, JsonO
         item["id"]: item for item in behavior_map.recorded_map(None, evidence_document(identity, ref)) or []})
 
 
-def release(identity: RepoIdentity, state: JsonObject, removed: list[str], intake: JsonObject) -> JsonObject:
-    """The answer of the advisor that bound the lead's pending declines: in one commit each measured decline it removes
-    leaves the current map, its retained cases and measuredItems; every other pending decline is kept, its item open."""
+def release(identity: RepoIdentity, state: JsonObject, draft: JsonObject, intake: JsonObject) -> JsonObject:
+    """The answer of the advisor that bound the lead's pending declines, in one commit: each measured decline its draft
+    removes leaves the current map, its retained cases and measuredItems; its draft's items change the fields they name
+    (a corrected ceiling), and an item it lists as accepted has its recorded reading, every reported cost with it,
+    credited as the one later readings are judged against: each decided; every other pending decline is kept, its item open."""
     pending = {record["target"] for record in state.get("rejections", []) if record["kind"] == "item" and record.get("status") == "pending"}
-    released = pending.intersection(removed)
+    released = pending.intersection(draft.get("removed") or [])
     items, document = current_map(identity, state, fresh=False)
-    document = document or {"workflowId": state["workflowId"], "runs": []}  # a decline before the first comparison: the preflight map
-    document = {**document, "behaviorMap": [entry for entry in items or [] if entry["id"] not in released], "updatedAt": utc_timestamp(),
+    items, document = items or [], document or {"workflowId": state["workflowId"], "runs": []}  # a decline before the first comparison: the preflight map
+    current = {entry["id"]: entry for entry in items}  # an edit decides an item only where it changes a field: a restated one keeps it
+    edits = {update["id"]: update for update in behavior_map.merge(items, {"items": draft.get("items") or []})[0]
+             if update["id"] in pending - released and any(current[update["id"]].get(key) != value for key, value in update.items())}
+    accepted, costs = (pending.intersection(draft.get(key) or []) - released for key in ("accepted", "costs"))
+    for entry in items:
+        entry.update(edits.get(entry["id"], {}))
+        if entry["id"] in accepted | costs and "runIndex" in entry.get("comparison", {}) and entry["id"] in (counts := document["runs"][entry["comparison"]["runIndex"]].get("counts") or {}):
+            credited = behavior_map.credit(None, entry["id"], counts, {item["id"] for item in items}, accept=True)
+            if entry["id"] not in accepted:  # its costs alone: both the case and its original execution must be replaced
+                proof = entry["comparison"]
+                credited.update(best=(proof.get("credited") or credited)["best"], held="kept open by its advisor until its meter changes",
+                                unproved=[proof["captureKey"], proof["arms"][0]["key"]])
+            entry["comparison"]["credited"] = credited
+    document = {**document, "behaviorMap": [entry for entry in items if entry["id"] not in released], "updatedAt": utc_timestamp(),
                 "evaluation": {name: entry for name, entry in document.get("evaluation", {}).items() if entry["id"] not in released}}
     return commit_tdd(identity, str(state["slug"]), str(state["workflowId"]), document, expected_evidence_id=intake["tddEvidence"],
-                      release={"released": released, "intake": intake})[0]
+                      release={"released": released, "decided": accepted | costs | set(edits), "intake": intake})[0]
 
 
 def _reject(identity: RepoIdentity, state: JsonObject, requests: list[list[str]], reason: str | None = None) -> tuple[JsonObject, tuple[str, str, str] | None]:
@@ -2368,7 +2408,7 @@ def _reject(identity: RepoIdentity, state: JsonObject, requests: list[list[str]]
     items = {entry["id"]: entry for entry in recorded or [] if entry["id"] in state.get("measuredItems", [])}
     findings = {ref["id"]: entry for entry in state.get("findingStates", []) if entry["stage"] == "final" or entry.get("decision")
                 for ref in ({"id": entry["findingId"]}, *entry.get("observations", []))}
-    records, rows = [], []
+    records, rows, measured = [], [], {}
     for target, *words in requests:
         command = (shlex.join(words) if len(words) > 1 else next(iter(words), "")).strip()
         if target not in items and target not in findings:
@@ -2380,12 +2420,14 @@ def _reject(identity: RepoIdentity, state: JsonObject, requests: list[list[str]]
             rows.append({"target": target, "open": f"tdd --reject {target} 'COMMAND' runs the measurement that shows keeping it costs less" if target in items
                          else f"tdd --reject {target} 'COMMAND' runs a command that disproves its premise; --report 'REASON' gives the user rule or decision instead"})
             continue
-        if command:
+        if command and command not in measured:  # one measurement serves every decline that names it
             try:
                 words, _, environment = _case_environment(identity, command)
-                raw, code, timed_out = _run(words, identity, MAX_CASE_SECONDS, env=environment)
+                measured[command] = _run(words, identity, MAX_CASE_SECONDS, env=environment, tail=True)  # its record keeps the tail
             except (OSError, ValueError) as exc:
-                raw, code, timed_out = str(exc).encode(), None, False
+                measured[command] = str(exc).encode(), None, False
+        if command:
+            raw, code, timed_out = measured[command]
             if code is None or timed_out or code:
                 rows.append({"target": target, "command": command, "open": ("the command did not finish: " if code is None or timed_out else f"the command exited {code}: ")
                              + behavior_map.failure_line({"output": _tail(raw)})})
@@ -2400,6 +2442,7 @@ def _reject(identity: RepoIdentity, state: JsonObject, requests: list[list[str]]
         if any(record["kind"] == "item" for record in records):  # the advisor that bound the items judges them now; a failed consult stays the next step
             consult = subprocess.run(shlex.split(next_operation(identity, state)["command"]), cwd=identity.root, capture_output=True, text=True, check=False)
             state, advice = read_active(identity), consult.stdout.strip() or consult.stderr.strip()[-600:]
+        records = state["rejections"][-len(records):]  # as its advisor settled them in this call
     memory = _given(identity, state, "lead")
     return _deliver(identity, state, memory, operation_receipt(state, identity, kind="tdd", readiness=_readiness_lines(identity, state, keys=True), known=memory[1]["findings"],
                                                                 rejected=[*(behavior_map.rejection_view(r) for r in records), *rows], **({"advisor": advice} if advice else {})))

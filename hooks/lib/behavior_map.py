@@ -6,6 +6,7 @@ import copy
 import hashlib
 import json
 import re
+from collections import Counter
 
 
 JsonObject = dict[str, object]
@@ -144,6 +145,8 @@ def original_outcome(run: JsonObject) -> str:
 
 RERUN = "; tdd reruns it"  # the fix of a reason the next bare tdd settles
 CORRECT = "tdd --correct ID[,ID] 'CASE' 'NEW' replaces the case for each item named, tdd --retire 'CASE' drops it"
+HELD = {"sees": "measure the whole original workload again", "omits": "report that cost again", "came": "remove that rise in the code",
+        "is": "report the operation's other costs beside it", "kept": "correct its case as its advisor's findings ask with tdd --correct"}  # a held reading's fix, by its reason's first word
 
 
 def _case_question(entry: JsonObject, *, measured: bool | None = None) -> list[str]:
@@ -154,20 +157,23 @@ def _case_question(entry: JsonObject, *, measured: bool | None = None) -> list[s
         return ["readings unsettled: " + " | ".join(entry["interpretations"]) + " - record interpretation and authority through record tdd-map"]
     run = entry.get("comparison") or {}
     if "remaining" in entry and run.get("valid") and run.get("fresh", True):
-        own = (run.get("counts") or {}).get(entry["id"])
-        credited = run.get("credited") or {}
-        count = None if own is None else max(own[1], credited.get("best", own[1]))
-        if count is None or count > entry["remaining"] or credited.get("held"):
-            return [f"{entry['id']} remaining work {'unmeasured' if own is None else count}; approved maximum {entry['remaining']}"
-                    + (f"; its reading of {own[1]} {credited['held']}" if own is not None and credited.get("held") else "")
-                    + f": remove it in the code, or tdd --reject {entry['id']} 'MEASUREMENT' asks its advisor to keep it"]
+        counts, credited, name = run.get("counts") or {}, run.get("credited") or {}, entry["id"]
+        if (own := counts.get(name)) is None:
+            return [f"{name} remaining work unmeasured: its case reports {', '.join(counts) or 'no counts'}, none keyed {name}; print "
+                    f"WORKFLOW_METRICS={{\"{name}\": COUNT}} or key measure()'s counts \"{name}\"" + RERUN]
+        if (count := max(own[1], credited.get("best", own[1]))) > entry["remaining"] or credited.get("held"):
+            over = own[1] > entry["remaining"] or not credited.get("held")
+            return [f"{name} remaining work {count}; approved maximum {entry['remaining']}" + (f"; its reading of {own[1]} {credited['held']}" if credited.get("held") else "")
+                    + f": {'remove it in the code' if over else HELD[credited['held'].split()[0]]}, or tdd --reject {name} 'MEASUREMENT' asks its advisor to "
+                    + ("keep it" if over else "accept this reading")]
     if (saving := entry.get("saving")) and run.get("fresh", True) and original_outcome(run) == "passed":
         if not _comparable(saving, run, entry["id"]):
             return [f"the earned {entry['id']} saving on {saving['tree']} needs a comparable measurement: its own meter as it was, or one that covers its workload"]
         if (best := run["counts"][entry["id"]][1]) > saving["best"]:
             return [f"the earned {entry['id']} saving on {saving['tree']} regressed: {saving['best']} -> {best}; restore that removal in the code"]
     if run.get("differs"):
-        return ["results differ at " + run["differs"] + "; change the code until the candidate's result there is the original's"]
+        return ["results differ at " + run["differs"] + ("; print each count on both trees, a zero included" if run["differs"].startswith("WORKFLOW_METRICS")
+                                                          else "; change the code until the candidate's result there is the original's")]
     if not producer_proved(entry):
         if run.get("fresh") is False:
             return [run.get("freshnessReason", "comparison inputs changed") + RERUN]
@@ -187,11 +193,11 @@ def _case_question(entry: JsonObject, *, measured: bool | None = None) -> list[s
     return []
 
 
-def credit(prior: JsonObject | None, identifier: str, counts: JsonObject, mapped: set[str]) -> JsonObject:
+def credit(prior: JsonObject | None, identifier: str, counts: JsonObject, mapped: set[str], accept: bool = False) -> JsonObject:
     """An item's best credited reading: its original count, its best count and the other costs its case reported with it.
     The original run is the first best. A reading below the best is credited only when it sees at least the original
     work the best saw, no other cost its case reports rose, and, below a best that already gained on the original, the
-    case reports such a cost; a rise never resets the best."""
+    case reports such a cost; a rise never resets the best. `accept`: its advisor decided this reading, credited as it stands."""
     original, count = counts[identifier]
     costs = {name: pair for name, pair in counts.items() if name not in mapped}
     before = {name: pair[0] for name, pair in costs.items()}
@@ -202,8 +208,8 @@ def credit(prior: JsonObject | None, identifier: str, counts: JsonObject, mapped
             next((f"omits {name}" if name not in after else f"came while {name} rose {value} -> {after[name]}"
                   for name, value in previous.items() if name not in mapped and (name not in after or after[name] > value)), None)
             or ("is shown by no cost besides the map's counts" if not costs and count < prior["best"] < prior["original"] else None))
-    if held or count >= prior["best"]:
-        return {**prior, "held": held, "costs": previous}
+    if not accept and (held or count >= prior["best"]):
+        return {"original": prior["original"], "best": prior["best"], "held": held, "costs": previous}
     return {"original": original, "best": count, "costs": after}
 
 
@@ -371,7 +377,7 @@ def retain_savings(retained: JsonObject, items: list[JsonObject], runs: list[Jso
                 newer["id"] == older["id"] and newer["saving"]["original"] >= earned["original"]
                 and (newer["saving"]["best"] == earned["best"] if now is None else now <= newer["saving"]["best"] <= earned["best"])
                 and (runs[newer["runIndex"]]["arms"] == latest["arms"]
-                     or _holds(recorded(newer), recorded(older))) and holds(newer["saving"], earned) for _, newer in savings[position + 1:]):
+                     or _covers(recorded(newer), recorded(older))) and holds(newer["saving"], earned) for _, newer in savings[position + 1:]):
             del retained[name]
 
 
@@ -392,6 +398,13 @@ def meter_logic(source: bytes | None) -> JsonObject | None:
                 inputs[f"{index}:{pos}"] = ast.dump(item)
             sequence.elts.clear()
     return {**inputs, "code": hashlib.sha256(ast.dump(tree).encode()).hexdigest()}
+
+
+def _covers(wider: JsonObject | None, narrower: JsonObject | None) -> bool:
+    """Whether one meter's logic covers another's: the same code, each literal loop's inputs including the other's, each
+    as often, in any order; whether order changed a result is the original results' to say."""
+    loops = lambda logic: Counter((key.partition(":")[0], value) for key, value in logic.items() if key != "code")
+    return bool(wider and narrower) and wider["code"] == narrower["code"] and not loops(narrower) - loops(wider)
 
 
 def _holds(wider: object, narrower: object) -> bool:

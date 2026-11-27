@@ -163,7 +163,7 @@ CASE_RULE = ("Before coding, state the property, bounds and what decides each in
              "and no remaining. A cost is one item per cost family, its workloads as inputs, measured=true, remaining the maximum justified count after removal "
              "(zero for avoidable work): count every site and data collection it reaches, replacement work and collaborators' queries, rows, matches and reads "
              "included, at the caller's real workload and reuse frequency, and report beside it what users pay for that operation (time, bytes or a named target). "
-             "A Python cost case is WORKFLOW_CASE=1 python3 FILE.py with one measure() returning (results by input, counts by name); other cases print "
+             "A Python cost case is WORKFLOW_CASE=1 python3 FILE.py with one measure() returning (results by input, counts by item id); other cases print "
              "WORKFLOW_RESULT=<JSON> and WORKFLOW_METRICS=<JSON counts>. The workflow runs each case on both trees and compares them: submit cases through tdd, "
              "keep diagnostics in a file and show at most one short line. Repeat a timing or compare another design only when the result could change what "
              "ships. Run inputs smallest first (too many to list: the required ones plus a seeded random sample), printing how many ran and the smallest "

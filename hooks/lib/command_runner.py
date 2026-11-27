@@ -42,12 +42,13 @@ def interruptible():
 def run(
     command: list[str], identity: RepoIdentity, timeout: float,
     env: dict[str, str] | None = None,
-    cancel: threading.Event | None = None,
+    cancel: threading.Event | None = None, tail: bool = False,
 ) -> tuple[bytes, int, bool]:
     """Run one command; a command is complete when its owned process group is.
 
     Output goes to a regular file, so the timeout cannot be extended by a
-    descendant that escaped the group while holding the inherited stdout.
+    descendant that escaped the group while holding the inherited stdout. `tail`
+    reads only its last MAX_CAPTURE bytes and the three a cut character may need.
     """
     deadline = time.monotonic() + timeout
     with interruptible(), tempfile.TemporaryFile() as output:
@@ -65,7 +66,7 @@ def run(
         finally:
             if timed_out:
                 _terminate(process)
-        output.seek(0)
+        output.seek(max(0, output.seek(0, os.SEEK_END) - MAX_CAPTURE - 3) if tail else 0)
         raw = output.read()
     return raw, 124 if timed_out else int(process.returncode), timed_out
 

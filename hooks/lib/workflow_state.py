@@ -469,7 +469,8 @@ def commit_tdd(identity: RepoIdentity, slug: str, workflow_id: str | None, summa
         advice = [evidence_write(str(state["workflowId"]), "finding-intake-preflight", release["intake"])] if release else []
         if release:
             for record in (record for record in state["rejections"] if record.get("status") == "pending"):
-                record.update(status="released" if record["target"] in release["released"] else "kept", advice=advice[0].evidence_id)
+                record.update(status="released" if record["target"] in release["released"] else "decided" if record["target"] in release["decided"] else "kept",
+                              advice=advice[0].evidence_id)
             state["measuredItems"] = [name for name in state.get("measuredItems", []) if name not in release["released"]]
         write = evidence_write(str(state["workflowId"]), "tdd", summary_doc)
         state["tddEvidence"] = write.evidence_id
@@ -975,6 +976,12 @@ def _register_finding_intake(
                 entry["canonicalFinding"] = {"evidenceId": root[0], "id": root[1]}
             finding_states.append(entry)
         current = prior if joining else entry
+        if intake["stage"] == "code-review":  # a withdrawal names one executable observation, not its whole finding
+            if item.get("rejected"):
+                ref = item["priorFinding"]
+                current.get("bindings", {}).pop(f'{ref["evidenceId"]}:{ref["id"]}', None)
+            elif item["material"] and "probe" in item:
+                current.setdefault("bindings", {})[f'{intake_id}:{item["id"]}'] = intake["candidateTree"]
         root = current.get("canonicalFinding") or {
             "evidenceId": current["intakeEvidenceId"], "id": current["findingId"],
         }
@@ -1439,8 +1446,9 @@ def checkpoint(identity: RepoIdentity, phase: str, *, reconsult: bool = False,
     shape = json.loads(ADVISOR_SHAPES["preflight" if phase == "preflight-advice" else "review" if phase == "code-review" else "final"])
     if phase == "code-review":
         result.update(review_commands(identity, state, candidate))
-    elif reconsult:  # the second consultation completes the draft in its answer
+    elif reconsult:  # the second consultation completes the draft in its answer; one on the lead's declines decides each
         shape.update(findings=[{key: value for key, value in shape["findings"][0].items() if key != "material"}], verdict="approved", draft={
+            "items": [{"id": "BM_X", "remaining": 0}], "removed": ["BM_Y"], "accepted": ["BM_Z"], "costs": ["BM_W"]} if declining else {
             "authoritativeContract": "text", "items": [json.loads(ITEM_SHAPE)], "removed": ["BM_Y"]})
     result["responseFormat"] = json.dumps(shape)
     if state.get("tddEvidence"):
