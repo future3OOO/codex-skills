@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import io
 import json
 import os
@@ -44,6 +43,7 @@ from .workflow_state import (
     commit_evidence_phase,
     commit_verification,
     complete,
+    declined,
     evidence_document,
     next_operation,
     next_step,
@@ -211,13 +211,13 @@ def _intent(args: argparse.Namespace) -> str:
 
 def _verify(args: argparse.Namespace, identity: RepoIdentity, *, review: bool = False, continuation: bool = False) -> int:
     """`continuation`: the tdd verb without a selection, which stops at the cases with the status tdd gives them."""
+    from .tdd_workflow import _run_tdd, check_retained
     # Before tdd judges the map itself only the pass's identity is read: its readiness is not derived twice.
     state = bound_state(identity, args.slug, args.workflow_id) if review else _bound_instance_state(read_active(identity), args.slug, args.workflow_id)
-    slug, workflow_id = str(state["slug"]), str(state["workflowId"])
+    slug, workflow_id = state["slug"], state["workflowId"]
     cases = {}
     if not review:
-        from .tdd_workflow import _run_tdd
-        result = _run_tdd(["--repo", str(identity.root), "--slug", slug, "--workflow-id", workflow_id], emit=lambda *reply, kept=(replies := []): kept.extend(reply))
+        result = _run_tdd(["--repo", identity.root, "--slug", slug, "--workflow-id", workflow_id], emit=lambda *reply, kept=(replies := []): kept.extend(reply))
         if result or replies[0]["open"]:  # the cases stop the call: their receipt is its reply
             _emit_json(*replies)
             return result & 2 if continuation else 2
@@ -232,46 +232,37 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity, *, review: bool = 
     args.base_ref = args.base_ref or state.get("baseOid") or state.get("passStartOid")
     if not args.base_ref:
         raise ValueError("quality-gate verification needs the recorded base or --base-ref")
-    base = subprocess.run(["git", "-C", str(identity.root), "rev-parse", "--verify", "--quiet", "--end-of-options",
+    base = subprocess.run(["git", "-C", identity.root, "rev-parse", "--verify", "--quiet", "--end-of-options",
                            f"{args.base_ref}^{{commit}}"], capture_output=True, text=True, check=False).stdout.strip()
     passed = evidence_document(identity, state.get("qualityGateEvidence")) if _evidence_ready(state, "verification") else None
     last = (passed or {}).get("runs", [{}])[-1]
     if (base and last.get("valid") is True and last.get("baseCommit") == base
             and last.get("graphEvidenceId") == state.get("repoContextForgeEvidence") and _tree_drift(
             identity, state, field="qualityGateManifestId", missing="missing", stale="stale") is None):
-        from .tdd_workflow import check_retained
         state = check_retained(identity, slug, workflow_id)  # the same typed gate is reused; each tree checks its observations once
         _emit_json(_receipt(state, identity, verification="passed", **cases))
         return 0  # verification holds; a finding still open is the receipt's continuation and closes only completion
 
     # The tree this run's result will describe. The recorder compares it with
     # the tree at commit; a run that could not sample it is recorded invalid.
-    binding_error: str | None = None
-    tree_before: dict[str, str] | None = None
-    graph_evidence_id: str | None = None
-    graph_context_path: str | None = None
+    binding_error = tree_before = graph_evidence_id = graph_context_path = None
     try:
         tree_before = tree_manifest(identity)
     except RuntimeError as exc:
         binding_error = str(exc)
     command = [sys.executable, str(ROOT / "skills" / "production-code" / "scripts" / "code_quality_gate.py"),
-               "check", "--repo", str(identity.root), "--base-ref", base or args.base_ref]
+               "check", "--repo", identity.root, "--base-ref", base or args.base_ref]
     # The pass's recorded Repo Context Forge evidence, handed to the gate
     # unchanged when it carries the producer's snapshot-bound gate context;
     # the gate's own binding check adjudicates match, stale, or absent.
     recorded = state.get("repoContextForgeEvidence")
-    graph_document = evidence_document(identity, recorded if isinstance(recorded, str) else None)
-    graph_context = (
-        graph_document.get("gateContext")
-        if isinstance(graph_document, dict) and graph_document.get("workflowId") == workflow_id
-        else None
-    )
-    if isinstance(graph_context, dict):
+    graph_document = evidence_document(identity, recorded) or {}
+    if isinstance(graph_context := graph_document.get("gateContext") if graph_document.get("workflowId") == workflow_id else None, dict):
         candidate = _active_candidate_tree(identity)
         indexed = str(graph_context.get("candidate", ""))
         if indexed != candidate and analysis_unchanged(identity, indexed, candidate):
             graph_context = {**graph_context, "candidate": candidate, "reusedFromCandidate": indexed}
-        graph_evidence_id = str(recorded)
+        graph_evidence_id = recorded
         handle = tempfile.NamedTemporaryFile(
             "w", encoding="utf-8", prefix="quality-gate-graph-", suffix=".json", delete=False,
         )
@@ -286,8 +277,7 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity, *, review: bool = 
         if graph_context_path is not None:
             os.unlink(graph_context_path)
     valid = binding_error is None and not timed_out and exit_code == 0
-    gate: dict[str, object] | None = None
-    report: dict[str, object] | None = None
+    gate = report = None
     shown = raw
     try:
         # Text mode: the bounded summary for the lead, then the complete report the ledger keeps.
@@ -296,14 +286,7 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity, *, review: bool = 
         gate = validate_gate_result(report)
         shown, raw = summary.rstrip(b"\n") + b"\n", (json.dumps(gate, sort_keys=True) + "\n").encode()
         valid = valid and gate.get("ok") is True
-        errors = gate.get("errors")
-        capture = next(
-            (
-                error for error in (errors if isinstance(errors, list) else ())
-                if isinstance(error, str) and error.startswith("candidate capture ")
-            ),
-            None,
-        )
+        capture = next((error for error in gate["errors"] if str(error).startswith("candidate capture ")), None)
         if binding_error is None and capture is not None:
             # Drift and outright capture failure are one condition here: the gate
             # never held a tree still, so nothing it reports binds to one.
@@ -323,7 +306,6 @@ def _verify(args: argparse.Namespace, identity: RepoIdentity, *, review: bool = 
         graphEvidenceId=graph_evidence_id,
     )
     if valid:
-        from .tdd_workflow import check_retained
         check_retained(identity, slug, workflow_id)
     state, evidence_id, recorded = commit_verification(identity, slug, workflow_id, run, tree_before=tree_before,
                                                        report=report if gate is not None else None)
@@ -359,11 +341,12 @@ def _document(args: argparse.Namespace, label: str) -> dict[str, object]:
 
 def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
     """One ingest seam; --check runs the whole recording and rolls it back."""
+    from .tdd_workflow import _retained, _run_tdd, _unwritten, apply_repair, execute_verdict, map_update, release, unstartable
     CHECK_ONLY.set(args.check)
     state = (_bound_instance_state(read_active(identity), args.slug, args.workflow_id) if args.kind == "advisor-result"
              else bound_state(identity, args.slug, args.workflow_id))
-    slug, workflow_id = str(state["slug"]), str(state["workflowId"])
-    def emit(receipt: dict[str, object], given: tuple[str, str, str] | None = None) -> None:  # a rolled-back --check names none of its rows
+    slug, workflow_id = state["slug"], state["workflowId"]
+    def emit(receipt, given=None):  # a rolled-back --check names none of its rows
         _emit_json({key: value for key, value in receipt.items() if key != "evidenceId"}
                    | {"checked": True} if args.check else receipt, given)
     if args.kind == "preflight":
@@ -382,16 +365,14 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
                 preflight_file=str(Path(args.input).resolve()) if args.input and args.input != "-" else None)})
             return 2
         edits = {"draftEdits": intake["draftEdits"]} if intake.get("draftEdits") else {}
-        from .tdd_workflow import _run_tdd, _unwritten
         written = all(item.get("cases") and not behavior_map.readings_unsettled(item)
                       and not any(_unwritten(identity, shlex.split(case)) for case in item["cases"]) for item in document["behaviorMap"])
         if written and document["behaviorMap"] and not args.check:  # approval starts TDD on its written cases
-            return _run_tdd(["--repo", str(identity.root), "--slug", slug, "--workflow-id", workflow_id],
+            return _run_tdd(["--repo", identity.root, "--slug", slug, "--workflow-id", workflow_id],
                             emit=lambda receipt, given=None: _emit_json({**receipt, **edits}, given)) & 2
         emit(_receipt(state, identity, evidenceId=evidence_id, status="passed", obligations=not written, **edits))
         return 0
     if args.kind == "tdd-map":
-        from .tdd_workflow import map_update
         emit(*map_update(identity, state, _document(args, "TDD map update")))
         return 0
     candidate = _active_candidate_tree(identity)
@@ -408,7 +389,6 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
     expected = args.expected_candidate_tree
     execution = None
     if args.stage == "final" and intake is not None:
-        from .tdd_workflow import _retained, apply_repair, execute_verdict
         intake["tddEvidence"] = args.tdd_evidence or None
         if expected in (None, candidate) and intake["tddEvidence"] == state.get("tddEvidence"):
             execution = execute_verdict(identity, state, intake, candidate)
@@ -418,8 +398,7 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
                            and finding["execution"].get("tree") == target and "change" in finding), None) if target else None
             execution["repairTree"] = target if repair else None
     changes = intake.pop("draft", None) if intake else None
-    if args.stage == "preflight" and intake and any(record.get("status") == "pending" for record in state.get("rejections", [])):
-        from .tdd_workflow import release  # the answer to the lead's declines: the advisor that bound the items releases or keeps them
+    if args.stage == "preflight" and intake and declined(state):  # the answer to the lead's declines: the advisor that bound the items releases or keeps them
         intake.update(candidateTree=expected, tddEvidence=args.tdd_evidence or None)
         state = release(identity, state, changes or {}, intake)
         emit(_receipt(state, identity, obligations=False, intake=next(record["advice"] for record in reversed(state["rejections"]) if record.get("advice"))))
@@ -428,14 +407,16 @@ def _record(args: argparse.Namespace, identity: RepoIdentity) -> int:
     submitted = preflight_document(args.preflight_file) if args.preflight_file else None
     draft = finalised_draft(submitted, changes) if submitted and changes is not None else submitted
     if draft:  # the submitted file itself can first be declared with this answer
-        from .tdd_workflow import _unwritten, unstartable
         unstartable(identity, draft["behaviorMap"])
         mine = {entry["id"]: entry.get("cases", []) for entry in submitted["behaviorMap"]}
         for entry in draft["behaviorMap"]:
-            if proposed := entry.pop("cases", None):  # the merge owns removals; filter only a declared replacement
-                prior = mine.get(entry["id"], ())
-                if written := [case for case in proposed if case in prior or not _unwritten(identity, shlex.split(case))] or prior:
-                    entry["cases"] = written
+            cases = entry.pop("cases", ())
+            required = verdict == "approved" and entry.get("measured")
+            prior = () if required else mine.get(entry["id"], ())
+            if written := [case for case in cases if case in prior or not _unwritten(identity, shlex.split(case))] or cases and prior:
+                entry["cases"] = written
+            if required and (not written or written != cases):
+                raise ValueError(f"{entry['id']}: the case it is approved with is not written")
     state = record_advisor_result(
         identity, slug, workflow_id, args.stage, args.source, verdict, reason=args.reason,
         design=design_declaration(args.design_declaration) if args.design_declaration else None,
@@ -470,7 +451,7 @@ def _dispatch(args: argparse.Namespace, *, evidence_file: bool = False) -> int:
         _emit_json(result)
     elif args.command == "paths":
         directory = repo_state_dir(identity)
-        out: dict[str, object] = {"stateRoot": str(state_root()), "repoKey": identity.key, "repoStateDir": str(directory)}
+        out = {"stateRoot": str(state_root()), "repoKey": identity.key, "repoStateDir": str(directory)}
         if args.workflow_id:
             out["designPath"] = str(directory / "designs" / f"{args.workflow_id}.md")
         _emit_json(out)
@@ -520,11 +501,10 @@ def _dispatch(args: argparse.Namespace, *, evidence_file: bool = False) -> int:
                 print(line, file=sys.stderr)
             if args.phase != "preflight-advice":
                 with redirect_stdout(held := io.StringIO()):  # a verification that holds is the lead's receipt, with the lead's step: its reader here is told only one that fails
-                    failed = _verify(parser().parse_args(["verify", "--repo", str(identity.root)]), identity, review=True)
+                    failed = _verify(parser().parse_args(["verify", "--repo", identity.root]), identity, review=True)
                 print(held.getvalue() if failed else "", file=sys.stderr, end="")
         result = checkpoint(identity, args.phase, reconsult=args.reconsult, channel_dir=args.channel_dir, preflight_draft=draft)
-        marker = args.phase == "code-review" and (reader := os.environ.get("CODEX_THREAD_ID")) and secure_dir(Path(result["scratchPath"]).parent) / ("given-rule-" + hashlib.sha256(reader.encode()).hexdigest())
-        _emit_json(result, (str(marker), "", "") if marker else None)
+        _emit_json(result)
     elif args.command == "complete":
         state = complete(identity, slug=args.slug, workflow_id=args.workflow_id, expected_candidate_tree=_active_candidate_tree(identity))
         rejections = {"finalReportBeginsWith": state["rejections"]} if state.get("rejections") else {}

@@ -7,7 +7,7 @@ description: TDD for production behavior changes through recorded original/candi
 
 The original source is the baseline. The request decides which differences are correct. One direct batch proves both: the workflow runner executes it on the original and the edited source. Probe quality is in [tests.md](tests.md).
 
-A new Python cost case can be just `def measure():` returning `(results, counts)`. Declare it as `WORKFLOW_CASE=1 python3 FILE.py [arguments]`. A bare `tdd` runs the registered cases after each edit. Keep manual diagnostic output in a file and show at most one short line.
+A bare `tdd` runs the registered cases after each edit. Keep manual diagnostic output in a file and show at most one short line.
 
 ## Required probe loop
 

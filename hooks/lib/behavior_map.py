@@ -31,7 +31,7 @@ def _strings(value: object) -> list[str] | None:
 
 def _recorded_fields(raw: JsonObject) -> JsonObject:
     """Preserve input context; normalize the optional reading choices."""
-    fields: JsonObject = {}
+    fields = {}
     if raw.get("kind") in KINDS:
         fields["kind"] = raw["kind"]
     for field in ("measured", "remaining"):
@@ -145,8 +145,6 @@ def original_outcome(run: JsonObject) -> str:
 
 RERUN = "; tdd reruns it"  # the fix of a reason the next bare tdd settles
 CORRECT = "tdd --correct ID[,ID] 'CASE' 'NEW' replaces the case for each item named, tdd --retire 'CASE' drops it"
-HELD = {"sees": "measure the whole original workload again", "omits": "report that cost again", "came": "remove that rise in the code",
-        "is": "report the operation's other costs beside it", "kept": "correct its case as its advisor's findings ask with tdd --correct"}  # a held reading's fix, by its reason's first word
 
 
 def _case_question(entry: JsonObject, *, measured: bool | None = None) -> list[str]:
@@ -157,15 +155,14 @@ def _case_question(entry: JsonObject, *, measured: bool | None = None) -> list[s
         return ["readings unsettled: " + " | ".join(entry["interpretations"]) + " - record interpretation and authority through record tdd-map"]
     run = entry.get("comparison") or {}
     if "remaining" in entry and run.get("valid") and run.get("fresh", True):
-        counts, credited, name = run.get("counts") or {}, run.get("credited") or {}, entry["id"]
+        counts, credited, name = run.get("counts", {}), run.get("credited", {}), entry["id"]  # a held reading names its fix
         if (own := counts.get(name)) is None:
             return [f"{name} remaining work unmeasured: its case reports {', '.join(counts) or 'no counts'}, none keyed {name}; print "
-                    f"WORKFLOW_METRICS={{\"{name}\": COUNT}} or key measure()'s counts \"{name}\"" + RERUN]
-        if (count := max(own[1], credited.get("best", own[1]))) > entry["remaining"] or credited.get("held"):
-            over = own[1] > entry["remaining"] or not credited.get("held")
-            return [f"{name} remaining work {count}; approved maximum {entry['remaining']}" + (f"; its reading of {own[1]} {credited['held']}" if credited.get("held") else "")
-                    + f": {'remove it in the code' if over else HELD[credited['held'].split()[0]]}, or tdd --reject {name} 'MEASUREMENT' asks its advisor to "
-                    + ("keep it" if over else "accept this reading")]
+                    f"WORKFLOW_METRICS={{\"{name}\": COUNT}}" + RERUN]
+        held, count = credited.get("held"), max(own[1], credited.get("best", own[1]))
+        if held or count > entry["remaining"]:
+            return [f"{name} remaining work {count}; approved maximum {entry['remaining']}" + (f": remove it in the code, or tdd --reject {name} 'MEASUREMENT' asks its advisor to keep it"
+                    if own[1] > entry["remaining"] or not held else f"; its reading of {own[1]} {held}, or tdd --reject {name} 'MEASUREMENT' asks its advisor to accept this reading")]
     if (saving := entry.get("saving")) and run.get("fresh", True) and original_outcome(run) == "passed":
         if not _comparable(saving, run, entry["id"]):
             return [f"the earned {entry['id']} saving on {saving['tree']} needs a comparable measurement: its own meter as it was, or one that covers its workload"]
@@ -196,22 +193,20 @@ def _case_question(entry: JsonObject, *, measured: bool | None = None) -> list[s
 def credit(prior: JsonObject | None, identifier: str, counts: JsonObject, mapped: set[str], accept: bool = False) -> JsonObject:
     """An item's best credited reading: its original count, its best count and the other costs its case reported with it.
     The original run is the first best. A reading below the best is credited only when it sees at least the original
-    work the best saw, no other cost its case reports rose, and, below a best that already gained on the original, the
-    case reports such a cost; a rise never resets the best. `accept`: its advisor decided this reading, credited as it stands."""
+    work the best saw, every other cost its case reported is reported and did not rise, and, below a best that already
+    gained on the original, the case reports such a cost; a rise never resets the best.
+    `accept`: its advisor decided this reading, credited as it stands."""
     original, count = counts[identifier]
-    costs = {name: pair for name, pair in counts.items() if name not in mapped}
-    before = {name: pair[0] for name, pair in costs.items()}
-    after = {name: pair[1] for name, pair in costs.items()}
-    prior = prior or {"original": original, "best": original, "costs": before}
-    previous = {**before, **prior["costs"]}
-    held = (f"sees {original} of the {prior['original']} original work" if original < prior["original"] else
-            next((f"omits {name}" if name not in after else f"came while {name} rose {value} -> {after[name]}"
-                  for name, value in previous.items() if name not in mapped and (name not in after or after[name] > value)), None)
-            or ("is shown by no cost besides the map's counts" if not costs and count < prior["best"] < prior["original"] else None))
+    after = {name: pair[1] for name, pair in counts.items() if name not in mapped}
+    prior = prior or {"original": original, "best": original, "costs": {}}
+    previous = {**{name: counts[name][0] for name in after}, **prior["costs"]}
+    held = (f"sees {original} of the {prior['original']} original work: measure the whole original workload again" if original < prior["original"] else
+            next((f"omits {name}: report that cost again" if name not in after else f"came while {name} rose {value} -> {after[name]}: remove that rise in the code"
+                  for name, value in previous.items() if name not in mapped and after.get(name, value + 1) > value), None)
+            or ("is shown by no cost besides the map's counts: report the operation's other costs beside it" if not after and count < prior["best"] < prior["original"] else None))
     if not accept and (held or count >= prior["best"]):
         return {"original": prior["original"], "best": prior["best"], "held": held, "costs": previous}
     return {"original": original, "best": count, "costs": after}
-
 
 
 def _own_count(identifier: str, run: JsonObject, remaining: int | None = None) -> str | None:
@@ -234,10 +229,10 @@ def _question(entry: JsonObject, proofs: list[JsonObject], keys: bool = False, m
         reasons.extend(_case_question({**proof, "kind": entry.get("kind"),
                                       **({"remaining": entry["remaining"]} if "remaining" in entry else {})}, measured=entry["id"] in measured))
         own = (proof["comparison"].get("counts") or {}).get(entry["id"])  # a measured cost's own count is its claimed saving, whatever its kind
-        if (own and (entry["id"] in measured or entry.get("kind") != "preservation") and not any(" remaining work " in reason for reason in reasons)
+        if (own and (entry["id"] in measured or entry.get("kind") != "preservation") and " remaining work " not in "; ".join(reasons)
                 and not _own_count(entry["id"], proof["comparison"], entry.get("remaining"))):
             reasons.append(f"its count must fall on the candidate: {entry['id']} {own[0]} -> {own[1]}; remove that work in the code")
-    if entry["id"] in measured and not any(" remaining work " in reason for reason in reasons) and not any(
+    if entry["id"] in measured and " remaining work " not in "; ".join(reasons) and not any(
             _own_count(entry["id"], run, entry.get("remaining"))
             or len(run["arms"]) == 4 and original_outcome(run) == "failed" and run["valid"]
             for proof in candidates if (run := proof["comparison"]).get("valid")):
@@ -292,15 +287,15 @@ def open_obligations(items: list[JsonObject], evaluation: list[JsonObject] | Non
     return lines
 
 
-def release(items: list[JsonObject], owner: JsonObject, run: JsonObject, runs: list[JsonObject], approved: dict[str, JsonObject]) -> None:
+def release(items: list[JsonObject], owner: JsonObject, run: JsonObject, runs: list[JsonObject], named: set[tuple[str, str]]) -> None:
     """A command proved under `owner` leaves every other item it does not satisfy; an item it proves keeps it, and a
-    kept-behaviour item keeps one that passes on the original, and one its `approved` draft declares: each its own verdict."""
+    kept-behaviour item keeps one that passes on the original, and one `named` for it (item, command): each its own verdict."""
     source = run["command"]
     for entry in items:
         cases = current_cases([entry], runs) if entry is not owner and (entry.get("comparison") or {}).get("caseRuns") else []
         kept = {case["comparison"]["command"]: case["comparison"]["runIndex"] for case in cases
                 if case["comparison"]["command"] != source or not _case_question(case)
-                or source in approved.get(entry["id"], {}).get("cases", ())
+                or (entry["id"], source) in named
                 or entry.get("kind") == "preservation" and original_outcome(case["comparison"]) == "passed"}
         if len(kept) < len(cases):
             proof = entry.pop("comparison")
@@ -312,7 +307,7 @@ def retain_evaluation(items: list[JsonObject], required: list[JsonObject], retai
     """Retain each first proved command and every later distinct one. A proved recapture of a command replaces its earlier captures
     under its item and under map items no longer bound to the command, except a retired one and except when it names support:
     candidate bytes of a pass-start test file never displace a frozen capture."""
-    binders: dict[str, set[str]] = {}  # per command, the map items bound to it
+    binders = {}  # per command, the map items bound to it
     for case in current_cases(items, runs):
         binders.setdefault(case["comparison"]["command"], set()).add(case["id"])
     present = {entry["id"] for entry in items}
@@ -334,8 +329,7 @@ def retain_evaluation(items: list[JsonObject], required: list[JsonObject], retai
                          "runIndex": run["runIndex"]}
 
 
-def retain_savings(retained: JsonObject, items: list[JsonObject], runs: list[JsonObject], candidate: str, result=lambda reference: None,
-                   source=lambda run: None) -> None:
+def retain_savings(retained: JsonObject, items: list[JsonObject], runs: list[JsonObject], candidate: str, result, source) -> None:
     """Each retained measurement earns its own best on a functionally correct candidate. A newer saving of an item retires
     an archived older one it covers: the older's measuring logic unchanged over inputs extended to at least its original
     count (the meters' `source`, preserving the prior loop inputs), an original `result` holding the older's, and a best no higher than
@@ -344,80 +338,70 @@ def retain_savings(retained: JsonObject, items: list[JsonObject], runs: list[Jso
     rose holds its item open. A saving records its meter's logic when earned; each result and meter loads once."""
     if not any(e["id"] in (runs[e["runIndex"]].get("counts") or {}) for e in retained.values()):
         return
-    cases = current_cases(items, runs)
-    loaded: dict[object, object] = {}
+    cases, loaded = current_cases(items, runs), {}
     def once(key, load):
-        if key not in loaded:
-            loaded[key] = load()
-        return loaded[key]
-    def logic(run):  # one read per meter command and archived bytes
-        return once((run["command"], json.dumps(run.get("measuring") or {}, sort_keys=True)), lambda: meter_logic(source(run)))
+        return loaded[key] if key in loaded else loaded.setdefault(key, load())
+    def logic(entry):  # its saving's meter logic, recorded once: one read per meter command and archived bytes
+        saving, run = entry["saving"], runs[entry["runIndex"]]
+        if "logic" not in saving:
+            saving["logic"] = once((run["command"], json.dumps(run.get("measuring", {}), sort_keys=True)), lambda: meter_logic(source(run)))
+        return saving["logic"]
     # Missing another optimization budget cannot erase savings on a functionally correct candidate.
     if all(producer_proved(case) and (run := case["comparison"])["candidateTree"] == candidate and run["arms"][-1]["outcome"] == "passed"
            and (case.get("measured") or not _case_question(case)) for case in cases):
         for entry in retained.values():
             run, prior = runs[entry["runIndex"]], entry.get("saving")
-            if (run["candidateTree"] == candidate and run["valid"] and _own_count(entry["id"], run)
-                    and not (prior and (not _comparable(prior, run, entry["id"]) or run["counts"][entry["id"]][1] >= prior["best"]))):
-                entry["saving"] = dict(original=run["counts"][entry["id"]][0], best=run["counts"][entry["id"]][1], tree=candidate,
-                                       originalRef=run["arms"][0].get("resultRef"), logic=logic(run))
+            if run["candidateTree"] == candidate and run["valid"] and _own_count(entry["id"], run):
+                original, best = run["counts"][entry["id"]]
+                if not (prior and (not _comparable(prior, run, entry["id"]) or best >= prior["best"])):
+                    entry["saving"] = dict(original=original, best=best, tree=candidate, originalRef=run["arms"][0].get("resultRef"))
+                    logic(entry)
     bound = {case_key(case["id"], case["comparison"]) for case in cases}
     savings = [(name, entry) for name, entry in retained.items() if entry.get("saving")]
-    def recorded(entry):  # a saving earned before its logic was recorded records it now
-        if "logic" not in entry["saving"]:
-            entry["saving"]["logic"] = logic(runs[entry["runIndex"]])
-        return entry["saving"]["logic"]
-    def holds(newer, older):
-        refs = newer["originalRef"], older["originalRef"]
-        return refs[0] == refs[1] or _holds(*(once(ref, lambda ref=ref: result(ref)) for ref in refs))
+    def holds(newer, older):  # its original results hold the older's: a dict, results by input, its entries; an unknown one holds nothing
+        if None in (refs := (newer["originalRef"], older["originalRef"])) or refs[0] == refs[1]:
+            return None not in refs
+        wider, narrower = (once(ref, lambda ref=ref: result(ref)) for ref in refs)
+        return narrower.items() <= wider.items() if isinstance(wider, dict) and isinstance(narrower, dict) else wider is not None and wider == narrower
+    loops = lambda logic: Counter((key.partition(":")[0], value) for key, value in logic.items() if key != "code")
+    def covers(wider, narrower):  # the same code, each literal loop's inputs including the other's, each as often, in any order
+        return bool(wider and narrower) and wider["code"] == narrower["code"] and not loops(narrower) - loops(wider)
     for position, (name, older) in enumerate(savings):
         latest, earned = runs[older["runIndex"]], older["saving"]
-        now = (latest.get("counts") or {}).get(older["id"], (0, None))[1] if latest["candidateTree"] == candidate and latest["valid"] else None
+        now = latest.get("counts", {}).get(older["id"], (0, None))[1] if latest["candidateTree"] == candidate and latest["valid"] else None
         if case_key(older["id"], latest) not in bound and any(
                 newer["id"] == older["id"] and newer["saving"]["original"] >= earned["original"]
                 and (newer["saving"]["best"] == earned["best"] if now is None else now <= newer["saving"]["best"] <= earned["best"])
                 and (runs[newer["runIndex"]]["arms"] == latest["arms"]
-                     or _covers(recorded(newer), recorded(older))) and holds(newer["saving"], earned) for _, newer in savings[position + 1:]):
+                     or covers(logic(newer), logic(older))) and holds(newer["saving"], earned) for _, newer in savings[position + 1:]):
             del retained[name]
 
 
 def meter_logic(source: bytes | None) -> JsonObject | None:
     """Measuring code with its literal loop inputs indexed separately, so extending a loop can preserve the old inputs;
     a changed predicate, subscript, query or other measured expression remains a change to the code."""
-    if source is None:
-        return None
     try:
         tree = ast.parse(source)
-    except SyntaxError:
+    except (SyntaxError, TypeError):  # no source, or none Python reads: unknown
         return None
     inputs = {}
     for index, node in enumerate(node for node in ast.walk(tree) if isinstance(node, ast.For)):
-        sequence = node.iter
-        if isinstance(sequence, (ast.Tuple, ast.List)) and all(isinstance(item, ast.Constant) for item in sequence.elts):
-            for pos, item in enumerate(sequence.elts):
-                inputs[f"{index}:{pos}"] = ast.dump(item)
-            sequence.elts.clear()
+        if isinstance(node.iter, (ast.Tuple, ast.List)) and all(isinstance(item, ast.Constant) for item in node.iter.elts):
+            inputs.update((f"{index}:{pos}", ast.dump(item)) for pos, item in enumerate(node.iter.elts))
+            node.iter.elts.clear()
     return {**inputs, "code": hashlib.sha256(ast.dump(tree).encode()).hexdigest()}
-
-
-def _covers(wider: JsonObject | None, narrower: JsonObject | None) -> bool:
-    """Whether one meter's logic covers another's: the same code, each literal loop's inputs including the other's, each
-    as often, in any order; whether order changed a result is the original results' to say."""
-    loops = lambda logic: Counter((key.partition(":")[0], value) for key, value in logic.items() if key != "code")
-    return bool(wider and narrower) and wider["code"] == narrower["code"] and not loops(narrower) - loops(wider)
-
-
-def _holds(wider: object, narrower: object) -> bool:
-    """Whether one original result holds another: a dict (results by input) its entries, else equality."""
-    if isinstance(wider, dict) and isinstance(narrower, dict):
-        return all(key in wider and wider[key] == value for key, value in narrower.items())
-    return wider is not None and wider == narrower
 
 
 def _comparable(saving: JsonObject, run: JsonObject, identifier: str) -> bool:
     """A measurement of the earned workload: its original count and stored original result."""
     counts = (run.get("counts") or {}).get(identifier)
     return bool(counts) and counts[0] == saving["original"] and run["arms"][0].get("resultRef") == saving.get("originalRef")
+
+
+def item_keys(items: list[JsonObject], runs: list[JsonObject], named: set[str], valid: bool = False) -> dict[str, list[str]]:
+    """Project the named items' bindings once, keeping only valid captures on settlement."""
+    return {entry["id"]: sorted(case_key(entry["id"], runs[i]) for i in set((entry.get("comparison") or {}).get("caseRuns", {}).values())
+                                if not valid or runs[i].get("valid")) for entry in items if entry["id"] in named} if named else {}
 
 
 def case_key(identifier: str, run: JsonObject) -> str:

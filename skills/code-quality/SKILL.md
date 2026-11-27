@@ -11,7 +11,7 @@ them with execution procedure; it does not redefine them.
 Judge code the change edits or its requested operation runs through. Cite the
 diff, contract and concrete proof. `AGENTS.md` owns the hard invariants.
 
-For a first design, run the original production operation under its profiler on a representative input. For Python, use `cProfile` on the call and read the busiest internal functions in `pstats`. Follow the expensive operation to every caller that repeats it on this workload. Record the work at those sites and the count that must remain after the first implementation. For a reusable index, measure construction once and lookups at the observed reuse frequency.
+For a first design, run the original production operation under its profiler on a representative input, once: in a governed pass the preflight advisor does it and binds that measurement as each cost's case, which the lead implements against and reuses. For Python, use `cProfile` on the call and read the busiest internal functions in `pstats`. Follow the expensive operation to every caller that repeats it on this workload. Record the work at those sites and the count that must remain after the first implementation. For a reusable index, measure construction once and lookups at the observed reuse frequency.
 
 ## Seven principles
 
