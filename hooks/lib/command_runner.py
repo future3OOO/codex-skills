@@ -71,9 +71,10 @@ def run(
         output.seek(start)
         raw = output.read()
         code = 124 if timed_out else int(process.returncode)
-        if declared and not code and b"\n" + declared not in raw:  # the last declared line before the tail, read line by line
+        if start and declared and not code and b"\n" + declared not in raw:
             output.seek(0)
-            raw = b"".join(deque((line for line in iter(output.readline, b"") if line.startswith(declared)), 1)) + raw
+            # End the declaration even at EOF. A truncated first diagnostic line is not a declaration.
+            raw = b"".join(deque((line for line in output if line.startswith(declared)), 1)) + b"\n " + raw
     return raw, code, timed_out
 
 

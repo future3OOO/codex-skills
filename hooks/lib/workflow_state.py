@@ -469,13 +469,13 @@ def commit_tdd(identity: RepoIdentity, slug: str, workflow_id: str | None, summa
         summary_doc["evaluation"] = {key: {**entry, "runIndex": positions[entry["runIndex"]]}
                                      for key, entry in summary_doc["evaluation"].items()}
         summary_doc.pop("comparedRuns", None)
-        advice = [evidence_write(state["workflowId"], "finding-intake-preflight", release["intake"])] if release else []
-        for record in state["rejections"] if release else ():
-            if record.get("status") == "pending":
-                record.update(status="released" if record["target"] in release["released"] else "decided" if record["target"] in release["decided"] else "kept",
-                              advice=advice[0].evidence_id)
-
-        if release:  # a repeated decline of one item settles as one
+        advice = []
+        if release:
+            advice.append(evidence_write(state["workflowId"], "finding-intake-preflight", release["intake"]))
+            for record in state["rejections"]:
+                if record.get("status") == "pending":
+                    record.update(status="released" if record["target"] in release["released"] else "decided" if record["target"] in release["decided"] else "kept",
+                                  advice=advice[0].evidence_id)
             state["measuredItems"] = [name for name in state["measuredItems"] if name not in release["released"]]
         write = evidence_write(state["workflowId"], "tdd", summary_doc)
         state["tddEvidence"] = write.evidence_id

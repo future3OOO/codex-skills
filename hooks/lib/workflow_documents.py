@@ -97,7 +97,7 @@ def advisor_envelope(
         if kind not in ("behavioral", "nonbehavioral"):
             kind = "behavioral"
         identifiers.add(identifier)
-        if stage != "preflight" and any(key in item and not _text(item[key]) for key in ("decides", "quote", "decision")) or "items" in item and (stage != "review" or _strings(item["items"]) != item["items"]):  # exact map ids
+        if stage != "preflight" and any(key in item and not _text(item[key]) for key in ("decides", "quote", "decision")) or "items" in item and (stage != "review" or (_strings(item["items"]) or ()) != item["items"]):  # exact map ids
             raise ValueError(f"advisor finding {identifier}: decides, quote and decision are text when given; a review finding's items, map ids")
         prior, withdrawn = item.get("priorFinding"), stage == "review" and item.get("rejected") is True  # its author's withdrawal
         if (prior is not None or withdrawn) and (not isinstance(prior, dict) or set(prior) != {"evidenceId", "id"}
