@@ -45,7 +45,7 @@ Resume the same pass. When the user drops it, `args` `["abandon"]` asks them, th
 `begin` returns the context packet. Stop on packet blockers. The packet fixes the
 initial target and coverage surface.
 
-### 2. Task contract and diagnosis
+### 2. Task contract
 
 Derive verification from the user's intended production behavior using
 [Production Code's outcome verification](../production-code/SKILL.md#lowest-cost-implementation-decision).
@@ -60,17 +60,13 @@ AGENTS.md's GitNexus checks on what the packet's rows leave unanswered.
 
 ### 4. Draft and advisor review
 
-Apply `code-quality` when choosing the first design and `production-preflight` to draft its two fields.
-Its map states required outcomes, concrete inputs and any competing readings. Invoke
-`codebase-design` before drafting when the decision is where work or data belongs, including inside an existing Module with an unchanged public Interface. The draft owns
-the contract and planned attacks.
+Draft the two fields with `production-preflight`; the draft owns the contract and planned attacks.
 
 Submit the exact draft as the next step's `--preflight-file`; after `--`, pass only user
 instructions given after `begin`, each line verbatim after `> `.
-Before drafting, trace the measured work through every place the operation repeats it. The first implementation must meet the approved remaining count on that whole operation. The advisor independently investigates the same operation, finds further savings, and challenges the design and its evidence. The lead checks deletion claims against every original
+The lead checks deletion claims against every original
 outcome controlled by the affected logic and corrects false premises. The advisor
 then finalises and approves the draft in the same session; that consult records it.
-Demonstrated avoidable work in the requested production path is a release blocker. Before code review, implement and verify the cheapest correct removal of each measured cost, the advisor's design or a cheaper one, or prove with evidence specific to that cost that keeping it is required or cheaper in real use; declining its mechanism, a scope assertion, a passing behavior test or the size of the change leaves its item open.
 
 ### 5. One recorded preflight
 
@@ -137,7 +133,7 @@ acceptance gaps; load only missing evidence, not the verification history.
 
 The final Codex Advisor investigates in the lead checkout using the recorded project executable and original source; its
 causes are recorded through the workflow while it consults, which runs each cause's test and repair, returns the results and records a cause only when it holds; recording its verdict applies the tested repair while the checkout still is the reviewed tree. After the first final consult, a correction
-needs the affected `tdd` rerun, verification for the new tree, and the final advisor's re-check. Reuse independent review and applicable evidence. Retained findings run only at `verify` or `complete`; intermediate review calls skip them. Once every
+needs the affected `tdd` rerun, verification for the new tree, and the final advisor's re-check. Reuse independent review and applicable evidence. Each retained finding runs once per tree, before the review that reads it. Once every
 final finding is settled (`nextAction` `complete-workflow`), a requested
 reassessment of the unchanged candidate runs the same `final-review` phase and records
 as a fresh final result.
@@ -145,8 +141,7 @@ as a fresh final result.
 ### 12. Delivery and reviewer completion
 
 After the final advisor finds the candidate ready, commit, push, and open/update
-the PR when intended for integration. Run AGENTS.md's reviewer completion gate
-(Reviewer Findings And Completion) on the current head. Merge only with explicit
+the PR when intended for integration, following [PR delivery](PR-DELIVERY.md) on the current head. Merge only with explicit
 maintainer authorization; passing checks and reviews do not authorize merge.
 Keep the pass active through reviewer closure; corrections repeat only the
 affected steps.
@@ -155,7 +150,7 @@ affected steps.
 
 Complete after the current-head reviewer gate closes, or on the no-PR route below.
 
-`complete` first checks uncached retained findings for its candidate tree. A repair the candidate already holds runs only its cause's test; current candidate proof covers maintained cases.
+`complete` first checks the retained findings its candidate tree has no result for; current candidate proof covers maintained cases.
 
 `complete` refuses, from inside its transaction, unless every current probe has fresh successful comparison evidence and no proof gap remains, required phases are ready, and no binding code-review or final finding is open. The immutable raw verdict remains evidence; `context-mismatch` still blocks. The reviewable working tree must match the manifest recorded by the lead review, and every evidence phase must carry its producer's evidence reference — a passed phase without one is a bare claim and reads pending, including legacy in-flight state at upgrade time. It changes workflow state only. It does not inspect, intercept, authorize, or execute Git.
 

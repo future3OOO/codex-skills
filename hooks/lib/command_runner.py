@@ -9,11 +9,12 @@ import sys
 import tempfile
 import threading
 import time
-from contextlib import contextmanager, nullcontext
+from collections import deque
+from contextlib import contextmanager
 from pathlib import Path
 
 from .repo_identity import RepoIdentity
-from .state_store import _flock, read_json, utc_timestamp
+from .state_store import read_json, utc_timestamp
 
 MAX_CAPTURE = 16000
 HELD = os.environ.pop("CODEX_WORKFLOW_HELD", None)  # where the tool relaying this call takes what its reply gives; nothing this call starts inherits it
@@ -42,12 +43,13 @@ def interruptible():
 def run(
     command: list[str], identity: RepoIdentity, timeout: float,
     env: dict[str, str] | None = None,
-    cancel: threading.Event | None = None,
+    cancel: threading.Event | None = None, declared: bytes | None = None,
 ) -> tuple[bytes, int, bool]:
     """Run one command; a command is complete when its owned process group is.
 
     Output goes to a regular file, so the timeout cannot be extended by a
-    descendant that escaped the group while holding the inherited stdout.
+    descendant that escaped the group while holding the inherited stdout. With
+    `declared`, read a diagnostic tail. A nonempty prefix also needs its last declared line on success.
     """
     deadline = time.monotonic() + timeout
     with interruptible(), tempfile.TemporaryFile() as output:
@@ -65,9 +67,15 @@ def run(
         finally:
             if timed_out:
                 _terminate(process)
-        output.seek(0)
+        start = max(0, output.seek(0, os.SEEK_END) - MAX_CAPTURE - 3) if declared is not None else 0
+        output.seek(start)
         raw = output.read()
-    return raw, 124 if timed_out else int(process.returncode), timed_out
+        code = 124 if timed_out else int(process.returncode)
+        if start and declared and not code and b"\n" + declared not in raw:
+            output.seek(0)
+            # End the declaration even at EOF. A truncated first diagnostic line is not a declaration.
+            raw = b"".join(deque((line for line in output if line.startswith(declared)), 1)) + b"\n " + raw
+    return raw, code, timed_out
 
 
 def _group_exits_by(process: subprocess.Popen[bytes], deadline: float, cancel: threading.Event | None = None) -> bool:
@@ -142,16 +150,8 @@ def run_entry(raw: bytes, exit_code: int, timed_out: bool, **fields: object) -> 
 
 def emit_json(value: object, given: tuple[str, str, str] | None = None, *, sort_keys: bool = True, send=None) -> None:
     """Choose and record at the final write. Only a relay's pending first package needs that choice handed along."""
-    marker = given and not given[2] and Path(given[0])
-    with _flock(Path(f"{marker}.lock")) if marker and not HELD and not marker.exists() else nullcontext():
-        if marker and marker.exists():
-            value.pop("caseRule")
-            given = None
-        if marker and given and HELD:
-            Path(HELD).write_text(json.dumps((value, given)), encoding="utf-8")
-            return
-        remember = given and (lambda: Path(HELD).write_text(json.dumps((None, given)), encoding="utf-8") if HELD else marker.touch() if marker else record(*given))
-        (send or print_output)("" if send and value is None else json.dumps(value, sort_keys=sort_keys) + "\n", remember)
+    remember = given and (lambda: Path(HELD).write_text(json.dumps((None, given)), encoding="utf-8") if HELD else record(*given))
+    (send or print_output)("" if send and value is None else json.dumps(value, sort_keys=sort_keys) + "\n", remember)
 
 
 def record(path: str, before: str, after: str) -> None:

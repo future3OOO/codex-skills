@@ -1,4 +1,3 @@
-"""Validation for documents accepted by the public workflow Interface."""
 from __future__ import annotations
 
 import hashlib
@@ -8,7 +7,7 @@ import re
 import sys
 import uuid
 from pathlib import Path
-from .behavior_map import initial_items, map_errors, merge
+from .behavior_map import _strings, initial_items, map_errors, merge
 from .state_store import utc_timestamp
 
 JsonObject = dict[str, object]
@@ -26,7 +25,7 @@ def load_json(path: str, *, label: str) -> JsonObject:
 
 
 def _unique(pairs: list[tuple[str, object]]) -> JsonObject:
-    result: JsonObject = {}
+    result = {}
     for key, value in pairs:
         if key in result:
             raise ValueError(f"document repeats field: {key}")
@@ -35,7 +34,6 @@ def _unique(pairs: list[tuple[str, object]]) -> JsonObject:
 
 
 def preflight_document(path: str) -> JsonObject:
-    """Validate the contract and declarations; TDD prepares and executes their commands."""
     try:
         raw = sys.stdin.read() if path == "-" else Path(path).read_text(encoding="utf-8")
         value = json.loads(raw, object_pairs_hook=_unique)
@@ -58,8 +56,6 @@ PREFLIGHT_SECTIONS = frozenset({"authoritativeContract", "behaviorMap"})
 
 
 def finalised_draft(draft: JsonObject, changes: object) -> JsonObject:
-    """The lead's draft with the approving consult's changes: the contract text when it changes, then `items` and
-    `removed` by tdd-map's merge rule. Commands run at TDD."""
     if not isinstance(changes, dict) or set(changes) - {"authoritativeContract", "items", "removed"}:
         raise ValueError("an answer's draft takes authoritativeContract, items and removed")
     contract = changes.get("authoritativeContract", draft["authoritativeContract"])
@@ -71,7 +67,6 @@ def finalised_draft(draft: JsonObject, changes: object) -> JsonObject:
 def advisor_envelope(
     path: str, *, slug: str, workflow_id: str, stage: str, producer: str,
 ) -> tuple[JsonObject, str]:
-    """Retain typed findings once; the response digest preserves byte identity."""
     try:
         raw = sys.stdin.buffer.read() if path == "-" else Path(path).read_bytes()
         text = raw.decode("utf-8")
@@ -89,8 +84,8 @@ def advisor_envelope(
     allowed = {"approved", "changes-required"} if stage == "preflight" else FINAL_ENVELOPE_VERDICTS if stage == "final" else {None}
     if verdict not in allowed:
         raise ValueError(f"advisor envelope verdict {verdict!r} is incompatible with stage {stage}")
-    typed: list[JsonObject] = []
-    identifiers: set[str] = set()
+    typed = []
+    identifiers = set()
     for position, item in enumerate(findings, 1):
         if not isinstance(item, dict) or not {"id", "claim"} <= set(item):
             raise ValueError(f"advisor finding {position} requires id and claim")
@@ -102,8 +97,8 @@ def advisor_envelope(
         if kind not in ("behavioral", "nonbehavioral"):
             kind = "behavioral"
         identifiers.add(identifier)
-        if stage != "preflight" and any(key in item and not _text(item[key]) for key in ("decides", "quote", "decision")):
-            raise ValueError(f"advisor finding {identifier}: decides, quote and decision are text when given")
+        if stage != "preflight" and any(key in item and not _text(item[key]) for key in ("decides", "quote", "decision")) or "items" in item and (stage != "review" or (_strings(item["items"]) or ()) != item["items"]):  # exact map ids
+            raise ValueError(f"advisor finding {identifier}: decides, quote and decision are text when given; a review finding's items, map ids")
         prior, withdrawn = item.get("priorFinding"), stage == "review" and item.get("rejected") is True  # its author's withdrawal
         if (prior is not None or withdrawn) and (not isinstance(prior, dict) or set(prior) != {"evidenceId", "id"}
                                                  or not all(map(_text, prior.values()))):
@@ -112,7 +107,7 @@ def advisor_envelope(
         finding = {"id": identifier, "claim": item["claim"], "material": _text(item.get("decision")) if stage != "preflight" else item.get("material") is True,
                    "kind": kind, **({"priorFinding": prior} if prior is not None else {}),
                    **({"rejected": True} if withdrawn else {}),
-                   **{key: item[key] for key in ("decides", "quote", "decision") if stage != "preflight" and key in item}}
+                   **{key: item[key] for key in ("decides", "quote", "decision", "items") if stage != "preflight" and key in item}}
         typed.append(finding)
     if verdict in {"approved", "changes-required"} and ((verdict == "approved") == any(item["material"] for item in typed)):
         raise ValueError("advisor envelope verdict is incompatible with finding materiality")
@@ -153,32 +148,16 @@ ITEM_SHAPE = ('{"id":"BM_X","measured":true,"remaining":0,"kind":"conformance|co
               '"behavior":"the property","seam":"...","expected":"...",'
               '"boundaryInputs":["the bounds, and what a cut leaves out"],"cases":["COMMAND"],'
               '"interpretations":["reading a","reading b"],"interpretation":"...","authority":"..."}')
-# The one rule for a check, given to each role that adds one where it first meets it: the lead with the draft's shape, an
-# advisor in its consult prompt, the reviewer in its checkpoint.
-CASE_RULE = ("Before coding, state the property, bounds and what decides each input: the request's words, the original's result on the pass-start tree, "
-             "a fresh direct run or a relation between two runs; never the changed code's output. Per kind, one COMMAND: a plain loop in one script, "
-             "no testing library. A direct test through the production interface that controls a result, with real collaborators and representative inputs, proves "
-             "that result; use the public entry point only for a promise about what that entry point itself does, such as whether a command blocks or succeeds. "
-             "Reuse one shared test for inputs governed by the same behavior. To request more proof, identify the specific outcome that test could miss or the cost "
-             "tradeoff that could change the design. Set measured=false for functional items and omit remaining. For a measured cost set measured=true and remaining to the maximum justified "
-             "count after removal (zero for avoidable work). Bind each cost family the operation pays as one item, its workloads as inputs: "
-             "trace it to every call site and data collection; count each site or one nonnegative total over them all, "
-             "including replacement work and work inside collaborators (queries, rows, pattern matches, file reads). "
-             "Use the caller's actual workload and reuse frequency. For a new Python cost case declare WORKFLOW_CASE=1 python3 FILE.py. "
-             "Write a single measure() function returning (kept results by input, counts by item id). The workflow calls it on each tree, captures its values and compares them. Existing stdout cases can still print WORKFLOW_RESULT and WORKFLOW_METRICS. "
-             "Submit cases through tdd; for a diagnostic test outside it capture stdout and stderr to a file and display at most one short line. "
-             "Repeat a timing or compare another design only when the result could "
-             "change what ships. Run all inputs smallest first; only if too many to list, "
-             "run required inputs plus a seeded random sample. Print how many ran and the smallest failing input found. A reported input in the family "
-             "joins its item's loop, extending bounds if needed. One property failure, one change at its source, never code per input. One input keeps one case.")
+CASE = "A case is one command the workflow runs on both trees, printing WORKFLOW_RESULT=<JSON> and, for a cost, WORKFLOW_METRICS=<JSON counts by item id>."
 ADVISOR_SHAPES = {
     "preflight": '{"schemaVersion":1,"findings":[{"id":"SPEC-1","claim":"...","material":true}],"verdict":"approved|changes-required"}',
     "final": ('{"schemaVersion":1,"verdict":"commit-ready|fix-before-commit|context-mismatch","findings":[{"id":"F1","claim":"...",'
               '"decision":"only when it blocks with no cause to record: the evidence and exactly what settles it"}]}'),
     # the reviewer's verdict file: its command carries the verdict
     "review": ('{"schemaVersion":1,"findings":[{"id":"F1","claim":"...",'
-               '"decides":"what decides its input","quote":"request words it relies on","decision":"evidence and the exact user decision needed"}],'
-               '"causes":[{"id":"C1","findings":["F1"],"cause":"where it starts, what else it breaks","rule":"what the case rule asks of its test",'
+               '"decides":"what decides its input","quote":"request words it relies on","decision":"evidence and the exact user decision needed",'
+               '"items":["BM_X"]}],'
+               '"causes":[{"id":"C1","findings":["F1"],"cause":"where it starts, what else it breaks",'
                '"test":"COMMAND","lines":{"added":0,"removed":0},"functions":{"name":"why the owner could not hold it"},"retires":[["ITEM","COMMAND"]]}],'
                '"repair":"/scratch/repair.diff"}'),
 }
@@ -190,7 +169,6 @@ RECORD_SHAPES = {
 
 
 def validate_design_declaration(value: object) -> JsonObject:
-    """The design is a falsifiable hypothesis under attack, not a label registry."""
     if not isinstance(value, dict) or value.get("schemaVersion") != 1:
         raise ValueError("governed design declaration requires schemaVersion 1")
     status = value.get("status")
@@ -232,8 +210,6 @@ def design_absence(reason: str) -> JsonObject:
 
 
 def validate_gate_result(value: object) -> JsonObject:
-    """The gate verdict as recorded: its outcome and errors, the only parts any
-    reader consumes; the full findings stay in the gate's own output."""
     if not isinstance(value, dict) or not all((
         isinstance(value.get("checks"), list),
         isinstance(value.get("gateVersion"), str),
@@ -252,14 +228,6 @@ def _git_oid(value: object) -> bool:
 
 
 def _resolved_graph(value: object) -> JsonObject:
-    """The producer's graph result, accepted only when it resolved every check.
-
-    Contract validation, not re-analysis: Repo Context Forge already owns checkout
-    identity, index freshness, plan selection, GitNexus invocation and normalisation,
-    and blocks rather than returning an unresolved answer. What is checked here is
-    only that the answer this consumer is about to persist really is that resolved
-    answer, so a blocked, partial or placeholder result can never become evidence.
-    """
     if not isinstance(value, dict) or value.get("status") != "resolved":
         raise ValueError("the producer returned no resolved graph result; rerun Repo Context Forge")
     if value.get("unresolved_checks") != []:
@@ -359,15 +327,6 @@ def graph_evidence_document(
     snapshot: JsonObject | None = None,
     snapshot_gap: str | None = None,
 ) -> JsonObject:
-    """The repo-context-forge evidence document built from the producer's machine packet.
-
-    `snapshot` is the adapter's measured claim that the analysis covered exactly
-    one base commit and candidate tree; when it holds, the document carries only
-    their identity and the graph selector. The gate queries its captured files
-    after re-indexing; no symbol export is stored. `snapshot_gap` records the measured reason no such
-    claim could be made, so an unbound pass names its gap instead of implying one
-    was never measured. The gate alone adjudicates match, stale, or absent.
-    """
     if snapshot is not None and snapshot_gap is not None:
         raise ValueError("a snapshot binding and a snapshot gap are mutually exclusive")
     packet = load_json(path, label="packet")
@@ -432,7 +391,7 @@ def graph_evidence_document(
             f"the advisor projection was produced for committed head "
             f"{projection['committedHeadOid']!r}, not {committed_head!r}"
         )
-    document: JsonObject = {
+    document = {
         "schemaVersion": 1,
         "slug": slug,
         "workflowId": workflow_id,
@@ -457,7 +416,6 @@ def graph_evidence_document(
 
 
 def quality_candidates(report: JsonObject) -> list[str]:
-    """The gate's located warnings, as the same data for lead and reviewers."""
     lines = []
     for finding in report.get("findings", []):
         if finding.get("status") != "finding" or finding.get("region", {}).get("scope") == "evaluation":
